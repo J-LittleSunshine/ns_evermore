@@ -87,6 +87,6 @@ urlpatterns = [
     # auth api
     path("auth/login/", AuthPublicViewSet.as_view({"post": "login"})),
     path("auth/refresh-token/", AuthPublicViewSet.as_view({"post": "refresh_token"})),
-    path("auth/logout/", AuthPublicViewSet.as_view({"post": "logout"})),
+    path("auth/logout/", AuthPrivateViewSet.as_view({"post": "logout"})),
     path("auth/current-user/", AuthPrivateViewSet.as_view({"post": "current_user"})),
 ]
