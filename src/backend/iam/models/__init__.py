@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .company import IamCompany
 from .department import IamSubsidiary, IamDepartment
+from .device import IamUserDevice, IamUserSession
 from .grant import IamUserPermission, IamDepartmentPermission, IamSubsidiaryPermission
 from .login_lock import IamLoginFailureLock
 from .operation_audit import IamOperationAudit
@@ -13,6 +14,8 @@ from .user import IamUser
 
 __all__ = [
     "IamCompany",
+    "IamUserDevice",
+    "IamUserSession",
     "IamSubsidiary",
     "IamDepartment",
     "IamUser",
