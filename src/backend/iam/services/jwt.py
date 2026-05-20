@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import base64
 import hashlib
-import hmac
-import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from typing import TYPE_CHECKING
 
 from django.conf import settings
+from joserfc import jwt
+from joserfc.errors import JoseError
+from joserfc.jwk import OctKey
 
 if TYPE_CHECKING:
     pass
@@ -18,11 +18,17 @@ if TYPE_CHECKING:
 
 class JwtService:
     ALGORITHM = "HS256"
+    TOKEN_TYPE = "JWT"
+    ACCESS_TYPE = "access"
+    REFRESH_TYPE = "refresh"
 
     SECRET_KEY = settings.JWT_SECRET_KEY
 
     ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
     REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
+    ISSUER = settings.JWT_ISSUER
+    LEEWAY_SECONDS = settings.JWT_LEEWAY_SECONDS
+    MIN_SECRET_LENGTH = settings.JWT_MIN_SECRET_LENGTH
 
     @classmethod
     def create_access_token(cls, user_id: int, user_type: str) -> tuple[str, str]:
@@ -31,10 +37,13 @@ class JwtService:
 
         payload = {
             "uid": user_id,
+            "sub": str(user_id),
             "utp": user_type,
-            "typ": "access",
+            "iss": cls.ISSUER,
+            "typ": cls.ACCESS_TYPE,
             "jti": jti,
             "iat": int(now.timestamp()),
+            "nbf": int(now.timestamp()),
             "exp": int(
                 (now + timedelta(minutes=cls.ACCESS_TOKEN_EXPIRE_MINUTES)).timestamp()
             ),
@@ -50,9 +59,12 @@ class JwtService:
 
         payload = {
             "uid": user_id,
-            "typ": "refresh",
+            "sub": str(user_id),
+            "iss": cls.ISSUER,
+            "typ": cls.REFRESH_TYPE,
             "jti": jti,
             "iat": int(now.timestamp()),
+            "nbf": int(now.timestamp()),
             "exp": int(expired_at.timestamp()),
         }
 
@@ -63,33 +75,19 @@ class JwtService:
 
     @classmethod
     def decode_access_token(cls, token: str) -> dict[str, Any] | None:
-        payload = cls._decode(token)
+        payload = cls._decode(token, expected_type=cls.ACCESS_TYPE)
 
         if not payload:
             return None
 
-        if payload.get("typ") != "access":
-            return None
-
-        if not payload.get("jti"):
-            return None
-
-        if not payload.get("uid"):
+        if not payload.get("utp"):
             return None
 
         return payload
 
     @classmethod
     def decode_refresh_token(cls, token: str) -> dict[str, Any] | None:
-        payload = cls._decode(token)
-
-        if not payload:
-            return None
-
-        if payload.get("typ") != "refresh":
-            return None
-
-        return payload
+        return cls._decode(token, expected_type=cls.REFRESH_TYPE)
 
     @staticmethod
     def hash_token(token: str) -> str:
@@ -97,71 +95,64 @@ class JwtService:
 
     @classmethod
     def _encode(cls, payload: dict[str, Any]) -> str:
+        cls._validate_secret_key()
+
         header = {
-            "typ": "JWT",
+            "typ": cls.TOKEN_TYPE,
             "alg": cls.ALGORITHM,
         }
 
-        header_b64 = cls._base64url_encode_json(header)
-        payload_b64 = cls._base64url_encode_json(payload)
-
-        signing_input = f"{header_b64}.{payload_b64}"
-        signature = cls._sign(signing_input)
-
-        return f"{signing_input}.{signature}"
+        return jwt.encode(
+            header,
+            payload,
+            cls._get_key(),
+            algorithms=[cls.ALGORITHM],
+        )
 
     @classmethod
-    def _decode(cls, token: str) -> dict[str, Any] | None:
-        try:
-            header_b64, payload_b64, signature = token.split(".")
-        except ValueError:
-            return None
+    def _decode(cls, token: str, expected_type: str) -> dict[str, Any] | None:
+        cls._validate_secret_key()
 
-        signing_input = f"{header_b64}.{payload_b64}"
-        expected_signature = cls._sign(signing_input)
-
-        if not hmac.compare_digest(signature, expected_signature):
+        if not isinstance(token, str) or len(token) > 4096:
             return None
 
         try:
-            header = cls._base64url_decode_json(header_b64)
-            payload = cls._base64url_decode_json(payload_b64)
-        except Exception:  # noqa
+            token_obj = jwt.decode(
+                token,
+                cls._get_key(),
+                algorithms=[cls.ALGORITHM],
+            )
+        except JoseError:
+            return None
+
+        header = token_obj.header
+
+        if header.get("typ") != cls.TOKEN_TYPE:
             return None
 
         if header.get("alg") != cls.ALGORITHM:
             return None
 
-        exp = payload.get("exp")
-        if not isinstance(exp, int):
+        payload = dict(token_obj.claims)
+
+        if payload.get("iss") != cls.ISSUER:
             return None
 
-        if exp <= int(cls._utc_now().timestamp()):
+        if payload.get("typ") != expected_type:
+            return None
+
+        try:
+            cls._claims_registry().validate(payload)
+        except JoseError:
+            return None
+
+        if not cls._validate_registered_claims(payload):
+            return None
+
+        if not cls._validate_subject_claims(payload):
             return None
 
         return payload
-
-    @classmethod
-    def _sign(cls, signing_input: str) -> str:
-        digest = hmac.new(cls.SECRET_KEY.encode("utf-8"), signing_input.encode("utf-8"), hashlib.sha256).digest()
-
-        return cls._base64url_encode_bytes(digest)
-
-    @staticmethod
-    def _base64url_encode_json(data: dict[str, Any]) -> str:
-        raw = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-
-        return JwtService._base64url_encode_bytes(raw)
-
-    @staticmethod
-    def _base64url_encode_bytes(data: bytes) -> str:
-        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
-
-    @staticmethod
-    def _base64url_decode_json(data: str) -> dict[str, Any]:
-        padding = "=" * (-len(data) % 4)
-        raw = base64.urlsafe_b64decode((data + padding).encode("utf-8"))
-        return json.loads(raw.decode("utf-8"))
 
     @staticmethod
     def _new_jti() -> str:
@@ -170,3 +161,73 @@ class JwtService:
     @staticmethod
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
+
+    @classmethod
+    def _validate_secret_key(cls) -> None:
+        if not isinstance(cls.SECRET_KEY, str) or not cls.SECRET_KEY:
+            raise RuntimeError("jwt_secret_key is not set")
+
+        if not settings.DEBUG and len(cls.SECRET_KEY.encode("utf-8")) < cls.MIN_SECRET_LENGTH:
+            raise RuntimeError(
+                f"jwt_secret_key must be at least {cls.MIN_SECRET_LENGTH} bytes when DEBUG is false"
+            )
+
+    @classmethod
+    def _validate_registered_claims(cls, payload: dict[str, Any]) -> bool:
+        now = int(cls._utc_now().timestamp())
+        leeway = int(cls.LEEWAY_SECONDS)
+
+        exp = payload.get("exp")
+        iat = payload.get("iat")
+        nbf = payload.get("nbf")
+
+        if not all(isinstance(value, int) for value in (exp, iat, nbf)):
+            return False
+
+        if exp <= now - leeway:
+            return False
+
+        if nbf > now + leeway:
+            return False
+
+        if iat > now + leeway:
+            return False
+
+        return True
+
+    @classmethod
+    def _get_key(cls):
+        return OctKey.import_key(cls.SECRET_KEY)
+
+    @classmethod
+    def _claims_registry(cls):
+        return jwt.JWTClaimsRegistry(
+            iss={"essential": True, "value": cls.ISSUER},
+            sub={"essential": True},
+            exp={"essential": True},
+            nbf={"essential": True},
+            iat={"essential": True},
+            jti={"essential": True},
+        )
+
+    @staticmethod
+    def _validate_subject_claims(payload: dict[str, Any]) -> bool:
+        user_id = payload.get("uid")
+        subject = payload.get("sub")
+        jti = payload.get("jti")
+
+        if not isinstance(user_id, int) or user_id <= 0:
+            return False
+
+        if subject != str(user_id):
+            return False
+
+        if not isinstance(jti, str) or len(jti) != 32:
+            return False
+
+        try:
+            uuid.UUID(hex=jti)
+        except ValueError:
+            return False
+
+        return True

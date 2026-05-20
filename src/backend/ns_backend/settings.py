@@ -43,6 +43,9 @@ if not JWT_SECRET_KEY:
 
 ACCESS_TOKEN_EXPIRE_MINUTES = BACKEND_CONFIG.get("access_token_expire_minutes", 30)
 REFRESH_TOKEN_EXPIRE_DAYS = BACKEND_CONFIG.get("refresh_token_expire_days", 14)
+JWT_ISSUER = BACKEND_CONFIG.get("jwt_issuer", "ns_evermore")
+JWT_LEEWAY_SECONDS = BACKEND_CONFIG.get("jwt_leeway_seconds", 30)
+JWT_MIN_SECRET_LENGTH = BACKEND_CONFIG.get("jwt_min_secret_length", 32)
 
 LOGIN_MAX_FAILED_COUNT = BACKEND_CONFIG.get("log_in_max_failed_count", 5)
 LOGIN_LOCK_MINUTES = BACKEND_CONFIG.get("log_in_lock_minutes", 15)
