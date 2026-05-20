@@ -125,11 +125,6 @@ class AuthService:
             client_ip: str | None = None,
             user_agent: str | None = None,
     ) -> None:
-        """记录登录失败。
-
-        使用数据库原子更新递增 failed_count，避免并发登录失败时出现
-        read-modify-write 导致的计数丢失。
-        """
         now = timezone.now()
         locked_until = now + timedelta(minutes=cls.LOGIN_LOCK_MINUTES)
 
@@ -174,7 +169,6 @@ class AuthService:
                 updated_at=now,
             )
         except IntegrityError:
-            # 并发场景下其他请求可能已插入同一个 username，回退为原子更新。
             await IamLoginFailureLock.objects.using(IAM_DB_ALIAS).filter(
                 username=username,
             ).aupdate(**update_fields)
@@ -232,6 +226,17 @@ class AuthService:
 
         refresh_token_hash = JwtService.hash_token(refresh_token)
 
+        revoked_token_exists = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+            user_id=user_id,
+            refresh_jti=refresh_jti,
+            refresh_token=refresh_token_hash,
+            revoked_at__isnull=False,
+        ).aexists()
+
+        if revoked_token_exists:
+            await cls.revoke_all_user_tokens(user_id=user_id)
+            raise BusinessError("检测到 Refresh Token 重放攻击，当前账号已强制下线", 11013)
+
         token_record = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
             refresh_jti=refresh_jti,
@@ -256,14 +261,32 @@ class AuthService:
             user_type=user.user_type,
         )
 
-        token_record.access_jti = access_jti
+        new_refresh_token, new_refresh_token_hash, new_refresh_jti, new_refresh_expired_at = (
+            JwtService.create_refresh_token(user_id=user.id)
+        )
+
+        now = timezone.now()
+
+        token_record.revoked_at = now
         await token_record.asave(
             using=IAM_DB_ALIAS,
-            update_fields=["access_jti"],
+            update_fields=["revoked_at"],
+        )
+
+        await IamUserToken.objects.using(IAM_DB_ALIAS).acreate(
+            user_id=user.id,
+            refresh_token=new_refresh_token_hash,
+            access_jti=access_jti,
+            refresh_jti=new_refresh_jti,
+            client_ip=token_record.client_ip,
+            user_agent=token_record.user_agent,
+            expired_at=new_refresh_expired_at,
+            created_at=now,
         )
 
         return {
             "access_token": access_token,
+            "refresh_token": new_refresh_token,
             "token_type": "Bearer",
             "expires_in": JwtService.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         }
@@ -323,3 +346,10 @@ class AuthService:
         ).aupdate(revoked_at=timezone.now())
 
         return updated_count > 0
+
+    @classmethod
+    async def revoke_all_user_tokens(cls, user_id: int) -> None:
+        await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+            user_id=user_id,
+            revoked_at__isnull=True,
+        ).aupdate(revoked_at=timezone.now())
