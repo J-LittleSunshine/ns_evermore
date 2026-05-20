@@ -3,6 +3,6 @@
   <component name="Black">
     <option name="sdkName" value="3.10 WSL (NsServer): (/home/ns/.virtualenvs/ns_backend/bin/python)" />
   </component>
-  <component name="GHAISettings"><![CDATA[{}]]></component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="3.10 WSL (NsServer): (/home/ns/.virtualenvs/ns_backend/bin/python)" project-jdk-type="Python SDK" />
+  <component name="GHAISettings">{}</component>
+  <component name="ProjectRootManager" version="2" project-jdk-name="3.10 WSL (ZexdDev): (/home/zexd/.virtualenvs/ns_backend/bin/python)" project-jdk-type="Python SDK" />
 </project>

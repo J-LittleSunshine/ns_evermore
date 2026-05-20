@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from django.db.models import Q
 from django.utils import timezone
 
-from iam import IAM_DB_ALIAS
+from iam.constants import IAM_DB_ALIAS
 
 if TYPE_CHECKING:
     pass

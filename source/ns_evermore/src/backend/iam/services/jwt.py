@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+
 import base64
 import hashlib
 import hmac
 import json
 import uuid
-
-from typing import TYPE_CHECKING
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from typing import TYPE_CHECKING
 
-from ns_backend import settings
+from django.conf import settings
 
 if TYPE_CHECKING:
     pass
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 class JwtService:
     ALGORITHM = "HS256"
 
-    SECRET_KEY = settings.SECRET_KEY
+    SECRET_KEY = settings.JWT_SECRET_KEY
 
     ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
     REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
@@ -43,7 +43,7 @@ class JwtService:
         return cls._encode(payload), jti
 
     @classmethod
-    def create_refresh_token(cls, user_id: int) -> tuple[str, str, datetime]:
+    def create_refresh_token(cls, user_id: int) -> tuple[str, str, str, datetime]:
         now = cls._utc_now()
         jti = cls._new_jti()
         expired_at = now + timedelta(days=cls.REFRESH_TOKEN_EXPIRE_DAYS)
@@ -56,7 +56,10 @@ class JwtService:
             "exp": int(expired_at.timestamp()),
         }
 
-        return cls._encode(payload), jti, expired_at
+        raw_token = cls._encode(payload)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+        return raw_token, token_hash, jti, expired_at
 
     @classmethod
     def decode_access_token(cls, token: str) -> dict[str, Any] | None:
@@ -66,6 +69,12 @@ class JwtService:
             return None
 
         if payload.get("typ") != "access":
+            return None
+
+        if not payload.get("jti"):
+            return None
+
+        if not payload.get("uid"):
             return None
 
         return payload
@@ -81,6 +90,10 @@ class JwtService:
             return None
 
         return payload
+
+    @staticmethod
+    def hash_token(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     @classmethod
     def _encode(cls, payload: dict[str, Any]) -> str:
