@@ -1,10 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 from django.db import IntegrityError
 from django.utils import timezone
 
@@ -20,8 +16,31 @@ from ns_backend.exceptions import BusinessError
 
 
 class GrantService:
+    @staticmethod
+    def prepare_grant_data(data: dict, operator_id: int | None = None) -> dict:
+        now = timezone.now()
+        data = data.copy()
+        data["granted_by_id"] = operator_id
+        data["created_by"] = operator_id
+        data["updated_by"] = operator_id
+        data.setdefault("created_at", now)
+        data["updated_at"] = now
+        return data
+
+    @staticmethod
+    def prepare_relation_data(data: dict, operator_id: int | None = None) -> dict:
+        now = timezone.now()
+        data = data.copy()
+        data["created_by"] = operator_id
+        data["updated_by"] = operator_id
+        data.setdefault("created_at", now)
+        data["updated_at"] = now
+        return data
+
     @classmethod
-    async def bind_user_role(cls, data: dict) -> dict:
+    async def bind_user_role(cls, data: dict, operator_id: int | None = None) -> dict:
+        data = cls.prepare_relation_data(data, operator_id=operator_id)
+
         try:
             item = await IamUserRole.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
@@ -40,8 +59,8 @@ class GrantService:
             raise BusinessError("用户角色关系不存在", 13002)
 
     @classmethod
-    async def grant_role_permission(cls, data: dict) -> dict:
-        data.setdefault("created_at", timezone.now())
+    async def grant_role_permission(cls, data: dict, operator_id: int | None = None) -> dict:
+        data = cls.prepare_grant_data(data, operator_id=operator_id)
 
         try:
             item = await IamRolePermission.objects.using(IAM_DB_ALIAS).acreate(**data)
@@ -61,8 +80,8 @@ class GrantService:
             raise BusinessError("角色权限关系不存在", 13004)
 
     @classmethod
-    async def grant_user_permission(cls, data: dict) -> dict:
-        data.setdefault("created_at", timezone.now())
+    async def grant_user_permission(cls, data: dict, operator_id: int | None = None) -> dict:
+        data = cls.prepare_grant_data(data, operator_id=operator_id)
 
         try:
             item = await IamUserPermission.objects.using(IAM_DB_ALIAS).acreate(**data)
@@ -82,8 +101,8 @@ class GrantService:
             raise BusinessError("用户权限关系不存在", 13006)
 
     @classmethod
-    async def grant_department_permission(cls, data: dict) -> dict:
-        data.setdefault("created_at", timezone.now())
+    async def grant_department_permission(cls, data: dict, operator_id: int | None = None) -> dict:
+        data = cls.prepare_grant_data(data, operator_id=operator_id)
 
         try:
             item = await IamDepartmentPermission.objects.using(IAM_DB_ALIAS).acreate(**data)
@@ -94,9 +113,9 @@ class GrantService:
 
     @classmethod
     async def revoke_department_permission(
-            cls,
-            department_id: int,
-            permission_id: int,
+        cls,
+        department_id: int,
+        permission_id: int,
     ) -> None:
         deleted_count, _ = await IamDepartmentPermission.objects.using(IAM_DB_ALIAS).filter(
             department_id=department_id,
@@ -107,8 +126,8 @@ class GrantService:
             raise BusinessError("部门权限关系不存在", 13008)
 
     @classmethod
-    async def grant_subsidiary_permission(cls, data: dict) -> dict:
-        data.setdefault("created_at", timezone.now())
+    async def grant_subsidiary_permission(cls, data: dict, operator_id: int | None = None) -> dict:
+        data = cls.prepare_grant_data(data, operator_id=operator_id)
 
         try:
             item = await IamSubsidiaryPermission.objects.using(IAM_DB_ALIAS).acreate(**data)
@@ -119,9 +138,9 @@ class GrantService:
 
     @classmethod
     async def revoke_subsidiary_permission(
-            cls,
-            subsidiary_id: int,
-            permission_id: int,
+        cls,
+        subsidiary_id: int,
+        permission_id: int,
     ) -> None:
         deleted_count, _ = await IamSubsidiaryPermission.objects.using(IAM_DB_ALIAS).filter(
             subsidiary_id=subsidiary_id,

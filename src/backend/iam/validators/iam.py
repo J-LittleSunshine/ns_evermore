@@ -94,12 +94,12 @@ class UserRoleValidator(BaseValidator):
 
 class RolePermissionValidator(BaseValidator):
     required_fields = ("role_id", "permission_id")
-    allowed_fields = ("role_id", "permission_id", "granted_by_id", "expired_at")
+    allowed_fields = ("role_id", "permission_id", "expired_at")
 
 
 class UserPermissionValidator(BaseValidator):
     required_fields = ("user_id", "permission_id", "effect")
-    allowed_fields = ("user_id", "permission_id", "effect", "granted_by_id", "expired_at")
+    allowed_fields = ("user_id", "permission_id", "effect", "expired_at")
     enum_fields = {
         "effect": ("ALLOW", "DENY"),
     }
@@ -107,7 +107,7 @@ class UserPermissionValidator(BaseValidator):
 
 class DepartmentPermissionValidator(BaseValidator):
     required_fields = ("department_id", "permission_id", "effect")
-    allowed_fields = ("department_id", "permission_id", "effect", "granted_by_id", "expired_at")
+    allowed_fields = ("department_id", "permission_id", "effect", "expired_at")
     enum_fields = {
         "effect": ("ALLOW", "DENY"),
     }
@@ -115,7 +115,7 @@ class DepartmentPermissionValidator(BaseValidator):
 
 class SubsidiaryPermissionValidator(BaseValidator):
     required_fields = ("subsidiary_id", "permission_id", "effect")
-    allowed_fields = ("subsidiary_id", "permission_id", "effect", "granted_by_id", "expired_at")
+    allowed_fields = ("subsidiary_id", "permission_id", "effect", "expired_at")
     enum_fields = {
         "effect": ("ALLOW", "DENY"),
     }

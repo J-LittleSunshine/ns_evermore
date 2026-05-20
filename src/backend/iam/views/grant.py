@@ -34,7 +34,10 @@ class UserRoleViewSet(BaseIamViewSet):
 
     async def bind_user_role(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
-        result = await GrantService.bind_user_role(data)
+        result = await GrantService.bind_user_role(
+            data,
+            operator_id=self.get_operator_id(request),
+        )
         return self.success_response(result)
 
     async def unbind_user_role(self, request, *args, **kwargs):
@@ -72,7 +75,10 @@ class RolePermissionViewSet(BaseIamViewSet):
 
     async def grant_role_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
-        result = await GrantService.grant_role_permission(data)
+        result = await GrantService.grant_role_permission(
+            data,
+            operator_id=self.get_operator_id(request),
+        )
         return self.success_response(result)
 
     async def revoke_role_permission(self, request, *args, **kwargs):
@@ -112,7 +118,10 @@ class UserPermissionViewSet(BaseIamViewSet):
 
     async def grant_user_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
-        result = await GrantService.grant_user_permission(data)
+        result = await GrantService.grant_user_permission(
+            data,
+            operator_id=self.get_operator_id(request),
+        )
         return self.success_response(result)
 
     async def revoke_user_permission(self, request, *args, **kwargs):
@@ -152,7 +161,10 @@ class DepartmentPermissionViewSet(BaseIamViewSet):
 
     async def grant_department_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
-        result = await GrantService.grant_department_permission(data)
+        result = await GrantService.grant_department_permission(
+            data,
+            operator_id=self.get_operator_id(request),
+        )
         return self.success_response(result)
 
     async def revoke_department_permission(self, request, *args, **kwargs):
@@ -192,7 +204,10 @@ class SubsidiaryPermissionViewSet(BaseIamViewSet):
 
     async def grant_subsidiary_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
-        result = await GrantService.grant_subsidiary_permission(data)
+        result = await GrantService.grant_subsidiary_permission(
+            data,
+            operator_id=self.get_operator_id(request),
+        )
         return self.success_response(result)
 
     async def revoke_subsidiary_permission(self, request, *args, **kwargs):
