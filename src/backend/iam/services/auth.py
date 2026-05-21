@@ -9,7 +9,6 @@ from django.conf import settings
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
 
-from ns_backend.utils.jwt import JwtService
 from iam.repositories.login_failure import LoginFailureRepository
 from iam.repositories.session import SessionRepository
 from iam.repositories.token import TokenRepository
@@ -17,6 +16,7 @@ from iam.repositories.user import UserRepository
 from iam.services.session import SessionService
 from ns_backend.exceptions import BusinessError
 from ns_backend.logger import get_logger
+from ns_backend.utils.jwt import JwtService
 
 _logger = get_logger("ns_backend")
 
@@ -50,11 +50,11 @@ class LoginFailureService:
 
     @classmethod
     async def record_failed(
-        cls,
-        username: str,
-        user: IamUser | None,
-        client_ip: str | None = None,
-        user_agent: str | None = None,
+            cls,
+            username: str,
+            user: IamUser | None,
+            client_ip: str | None = None,
+            user_agent: str | None = None,
     ) -> None:
         await LoginFailureRepository.record_failed(
             username=username,
@@ -75,16 +75,16 @@ class LoginService:
 
     @classmethod
     async def execute(
-        cls,
-        username: str,
-        password: str,
-        client_ip: str | None = None,
-        user_agent: str | None = None,
-        device_name: str | None = None,
-        device_type: str | None = None,
-        fingerprint_raw: str | None = None,
-        os_name: str | None = None,
-        browser_name: str | None = None,
+            cls,
+            username: str,
+            password: str,
+            client_ip: str | None = None,
+            user_agent: str | None = None,
+            device_name: str | None = None,
+            device_type: str | None = None,
+            fingerprint_raw: str | None = None,
+            os_name: str | None = None,
+            browser_name: str | None = None,
     ) -> dict:
         if not isinstance(username, str):
             raise BusinessError("username 不能为空", 11001)
@@ -182,9 +182,9 @@ class LoginService:
 
     @staticmethod
     def build_fallback_fingerprint(
-        username: str,
-        client_ip: str | None = None,
-        user_agent: str | None = None,
+            username: str,
+            client_ip: str | None = None,
+            user_agent: str | None = None,
     ) -> str:
         return "|".join(
             [
@@ -392,6 +392,7 @@ class VerifyService:
 
         return token_record.user
 
+
 __all__ = [
     "LoginService",
     "LogoutService",
@@ -399,4 +400,3 @@ __all__ = [
     "RevokeService",
     "VerifyService",
 ]
-

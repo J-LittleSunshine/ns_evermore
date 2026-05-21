@@ -119,4 +119,3 @@ class AuthPrivateViewSet(IamRequestViewSet):
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
         })
-
