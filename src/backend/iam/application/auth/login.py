@@ -4,6 +4,7 @@ from __future__ import annotations
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
 
+from iam.domain.services.login_failure import LoginFailureDomainService
 from iam.repositories.token import TokenRepository
 from iam.repositories.user import UserRepository
 from iam.services.device import DeviceService
@@ -18,7 +19,6 @@ class LoginApplicationService:
     @classmethod
     async def execute(
         cls,
-        auth_service,
         username: str,
         password: str,
         client_ip: str | None = None,
@@ -31,12 +31,12 @@ class LoginApplicationService:
     ) -> dict:
         username = username.strip()
 
-        await auth_service.check_login_locked(username=username)
+        await LoginFailureDomainService.ensure_not_locked(username=username)
 
         user = await UserRepository.get_active_by_username(username)
 
         if not user:
-            await auth_service.record_login_failed(
+            await LoginFailureDomainService.record_failed(
                 username=username,
                 user=None,
                 client_ip=client_ip,
@@ -45,7 +45,7 @@ class LoginApplicationService:
             raise BusinessError("Username or password is incorrect.")
 
         if not check_password(password, user.password):
-            await auth_service.record_login_failed(
+            await LoginFailureDomainService.record_failed(
                 username=username,
                 user=user,
                 client_ip=client_ip,
@@ -53,9 +53,9 @@ class LoginApplicationService:
             )
             raise BusinessError("Username or password is incorrect.")
 
-        await auth_service.clear_login_failed(username=username)
+        await LoginFailureDomainService.clear(username=username)
 
-        fingerprint_raw = fingerprint_raw or auth_service.build_fallback_fingerprint(
+        fingerprint_raw = fingerprint_raw or cls.build_fallback_fingerprint(
             username=username,
             client_ip=client_ip,
             user_agent=user_agent,
@@ -111,3 +111,17 @@ class LoginApplicationService:
             "session_id": session.session_id,
             "device_id": device.device_id,
         }
+
+    @staticmethod
+    def build_fallback_fingerprint(
+        username: str,
+        client_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> str:
+        return "|".join(
+            [
+                username,
+                client_ip or "",
+                user_agent or "",
+            ]
+        )
