@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from common.mixins.audit import AuditDataMixin
 from ns_backend.exceptions import BusinessError
+from ns_backend.utils.audit import AuditDataMixin
 
 
 class AuthorizationDomainService(AuditDataMixin):
