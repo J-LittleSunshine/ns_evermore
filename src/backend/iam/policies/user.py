@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from iam.services.permission import PermissionService
+from ns_backend.policies import BasePolicy
 from ns_backend.exceptions import BusinessError
 
 
-class UserPolicy:
+class UserPolicy(BasePolicy):
     """IAM 用户操作权限策略。"""
 
     ADMIN_USER_PERMISSION = "iam:user:update_staff"
@@ -62,8 +63,3 @@ class UserPolicy:
             user=operator,
             permission_code=cls.ADMIN_USER_PERMISSION,
         )
-
-    @staticmethod
-    def is_truthy(value) -> bool:
-        """统一 truthy 判断。"""
-        return value in (True, 1, "1", "true", "True")

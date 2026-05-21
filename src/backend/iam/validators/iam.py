@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from iam.validators.base import BaseValidator
+from ns_backend.validation import BaseValidator
 
 if TYPE_CHECKING:
     pass
