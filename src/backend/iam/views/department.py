@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 class DepartmentViewSet(BaseIamViewSet):
     model_class = IamDepartment
     validator_class = DepartmentValidator
+    tenant_scope_field = "company_id"
+    tenant_create_field = "company_id"
+    enterprise_resource_required = True
     list_fields = detail_fields = (
         "id", "company_id", "subsidiary_id", "parent_id",
         "department_code", "department_name", "status",

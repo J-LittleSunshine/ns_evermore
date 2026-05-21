@@ -32,11 +32,16 @@ class CrudRepository:
         fields: tuple[str, ...],
         page: int | str | None,
         page_size: int | str | None,
+        tenant_filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """分页查询数据。"""
         cls.ensure_model_class(model_class)
         page, page_size = cls.normalize_page(page, page_size)
         queryset = cls.build_queryset(model_class)
+
+        if tenant_filter:
+            queryset = queryset.filter(**tenant_filter)
+
         offset = (page - 1) * page_size
         total = await queryset.acount()
 
@@ -60,14 +65,24 @@ class CrudRepository:
         return await model_class.objects.using(IAM_DB_ALIAS).filter(id=item_id).afirst()
 
     @classmethod
-    async def get_required_by_id(cls, model_class, item_id: int):
+    async def get_required_by_id(
+        cls,
+        model_class,
+        item_id: int,
+        tenant_filter: dict[str, Any] | None = None,
+    ):
         """按主键获取必需数据。"""
         cls.ensure_model_class(model_class)
 
         if not item_id:
             raise BusinessError("id 不能为空", 10001)
 
-        item = await cls.get_by_id(model_class=model_class, item_id=item_id)
+        queryset = model_class.objects.using(IAM_DB_ALIAS).filter(id=item_id)
+
+        if tenant_filter:
+            queryset = queryset.filter(**tenant_filter)
+
+        item = await queryset.afirst()
 
         if not item:
             raise BusinessError("数据不存在", 10002)
@@ -75,9 +90,19 @@ class CrudRepository:
         return item
 
     @classmethod
-    async def detail_item(cls, model_class, item_id: int, fields: tuple[str, ...]) -> dict[str, Any]:
+    async def detail_item(
+        cls,
+        model_class,
+        item_id: int,
+        fields: tuple[str, ...],
+        tenant_filter: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """查询通用数据详情。"""
-        item = await cls.get_required_by_id(model_class=model_class, item_id=item_id)
+        item = await cls.get_required_by_id(
+            model_class=model_class,
+            item_id=item_id,
+            tenant_filter=tenant_filter,
+        )
         return cls.serialize(item, fields)
 
     @staticmethod
@@ -94,12 +119,18 @@ class CrudRepository:
         model_class,
         data: dict[str, Any],
         operator_id: int | None = None,
+        tenant_create_values: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """创建通用数据并填充审计字段。"""
         cls.ensure_model_class(model_class)
+        final_data = data
+
+        if tenant_create_values:
+            final_data = {**data, **tenant_create_values}
+
         create_data = cls.fill_create_audit_fields(
             model_class=model_class,
-            data=data,
+            data=final_data,
             operator_id=operator_id,
         )
         item = await cls.create_item(model_class=model_class, data=create_data)
@@ -126,9 +157,14 @@ class CrudRepository:
         item_id: int,
         data: dict[str, Any],
         operator_id: int | None = None,
+        tenant_filter: dict[str, Any] | None = None,
     ) -> None:
         """更新通用数据并填充审计字段。"""
-        item = await cls.get_required_by_id(model_class=model_class, item_id=item_id)
+        item = await cls.get_required_by_id(
+            model_class=model_class,
+            item_id=item_id,
+            tenant_filter=tenant_filter,
+        )
         update_data = cls.fill_update_audit_fields(
             model_class=model_class,
             data=data,
@@ -142,9 +178,18 @@ class CrudRepository:
         await instance.adelete(using=IAM_DB_ALIAS)
 
     @classmethod
-    async def delete_item_by_id(cls, model_class, item_id: int) -> None:
+    async def delete_item_by_id(
+        cls,
+        model_class,
+        item_id: int,
+        tenant_filter: dict[str, Any] | None = None,
+    ) -> None:
         """按主键删除通用数据。"""
-        item = await cls.get_required_by_id(model_class=model_class, item_id=item_id)
+        item = await cls.get_required_by_id(
+            model_class=model_class,
+            item_id=item_id,
+            tenant_filter=tenant_filter,
+        )
         await cls.delete_item(item)
 
     @staticmethod

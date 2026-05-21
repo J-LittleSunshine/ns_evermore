@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 class SubsidiaryViewSet(BaseIamViewSet):
     model_class = IamSubsidiary
     validator_class = SubsidiaryValidator
+    tenant_scope_field = "company_id"
+    tenant_create_field = "company_id"
+    enterprise_resource_required = True
     list_fields = detail_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status")
     create_fields = ("company_id", "subsidiary_code", "subsidiary_name", "status")
     update_fields = ("company_id", "subsidiary_name", "status")
