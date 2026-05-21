@@ -28,19 +28,25 @@ class PermissionService:
         if not permission_code:
             return False
 
+        permission_ids = await PermissionRepository.get_active_permission_ids_with_ancestors(
+            permission_code,
+        )
+        if not permission_ids:
+            return False
+
         now = timezone.now()
 
         if user.user_type == cls.USER_TYPE_PERSONAL:
             return await cls.has_personal_permission(
                 user=user,
-                permission_code=permission_code,
+                permission_ids=permission_ids,
                 now=now,
             )
 
         if user.user_type == cls.USER_TYPE_ENTERPRISE:
             return await cls.has_enterprise_permission(
                 user=user,
-                permission_code=permission_code,
+                permission_ids=permission_ids,
                 now=now,
             )
 
@@ -50,20 +56,20 @@ class PermissionService:
     async def has_personal_permission(
             cls,
             user: IamUser,
-            permission_code: str,
+            permission_ids: list[int],
             now,
     ) -> bool:
-        if await PermissionRepository.has_user_deny(user.id, permission_code, now):
+        if await PermissionRepository.has_user_deny(user.id, permission_ids, now):
             return False
 
         has_user_allow = await PermissionRepository.has_user_allow(
             user.id,
-            permission_code,
+            permission_ids,
             now,
         )
         has_role_allow = await PermissionRepository.has_role_allow(
             user.id,
-            permission_code,
+            permission_ids,
             now,
             role_scope=cls.USER_TYPE_PERSONAL,
         )
@@ -74,12 +80,12 @@ class PermissionService:
     async def has_enterprise_permission(
             cls,
             user: IamUser,
-            permission_code: str,
+            permission_ids: list[int],
             now,
     ) -> bool:
         has_user_deny = await PermissionRepository.has_user_deny(
             user.id,
-            permission_code,
+            permission_ids,
             now,
         )
         has_department_deny = False
@@ -88,14 +94,14 @@ class PermissionService:
         if user.department_id:
             has_department_deny = await PermissionRepository.has_department_deny(
                 user.department_id,
-                permission_code,
+                permission_ids,
                 now,
             )
 
         if user.subsidiary_id:
             has_subsidiary_deny = await PermissionRepository.has_subsidiary_deny(
                 user.subsidiary_id,
-                permission_code,
+                permission_ids,
                 now,
             )
 
@@ -104,12 +110,12 @@ class PermissionService:
 
         has_user_allow = await PermissionRepository.has_user_allow(
             user.id,
-            permission_code,
+            permission_ids,
             now,
         )
         has_role_allow = await PermissionRepository.has_role_allow(
             user.id,
-            permission_code,
+            permission_ids,
             now,
             role_scope=cls.USER_TYPE_ENTERPRISE,
         )
@@ -119,14 +125,14 @@ class PermissionService:
         if user.department_id:
             has_department_allow = await PermissionRepository.has_department_allow(
                 user.department_id,
-                permission_code,
+                permission_ids,
                 now,
             )
 
         if user.subsidiary_id:
             has_subsidiary_allow = await PermissionRepository.has_subsidiary_allow(
                 user.subsidiary_id,
-                permission_code,
+                permission_ids,
                 now,
             )
 
