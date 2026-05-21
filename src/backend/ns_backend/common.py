@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 from adrf.viewsets import ViewSet
 from django.http import JsonResponse
 
-from iam.services.auth import AuthService
-from iam.services.permission import PermissionService
+from iam.application.auth.verify import VerifyApplicationService
+from iam.domain.services.permission import PermissionDomainService
 from ns_backend.exceptions import BusinessError
 from ns_backend.logger import get_logger
 
@@ -64,7 +64,7 @@ class BaseRequestViewSet(ViewSet):
         request.current_user = user
 
         for permission_code in self.required_permissions:
-            has_permission = await PermissionService.has_permission(
+            has_permission = await PermissionDomainService.has_permission(
                 user=user,
                 permission_code=permission_code,
             )
@@ -72,14 +72,24 @@ class BaseRequestViewSet(ViewSet):
             if not has_permission:
                 raise BusinessError(f"权限不足：{permission_code}", 11009)
 
-    @staticmethod
-    async def get_current_user(request):
-        token = AuthService.get_bearer_token_from_request(request)
+    @classmethod
+    async def get_current_user(cls, request):
+        token = cls.get_bearer_token_from_request(request)
 
         if not token:
             return None
 
-        return await AuthService.get_user_by_access_token(token)
+        return await VerifyApplicationService.get_user_by_access_token(token)
+
+    @staticmethod
+    def get_bearer_token_from_request(request) -> str | None:
+        authorization = request.headers.get("Authorization", "")
+
+        if not authorization.startswith("Bearer "):
+            return None
+
+        token = authorization.removeprefix("Bearer ").strip()
+        return token or None
 
     @staticmethod
     def success_response(data: Any = None, msg: str = "success", code: int = 0):
