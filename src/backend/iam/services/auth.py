@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
 
-from iam.models import IamUser
 from ns_backend.utils.jwt import JwtService
 from iam.repositories.login_failure import LoginFailureRepository
 from iam.repositories.session import SessionRepository
@@ -19,6 +19,9 @@ from ns_backend.exceptions import BusinessError
 from ns_backend.logger import get_logger
 
 _logger = get_logger("ns_backend")
+
+if TYPE_CHECKING:
+    from iam.models import IamUser
 
 
 class LoginFailureService:
@@ -196,17 +199,20 @@ class LogoutService:
     """登出服务。"""
 
     @classmethod
-    async def execute(cls, refresh_token: str) -> bool:
+    async def execute(cls, refresh_token: str, current_user_id: int | None = None) -> bool:
         payload = JwtService.decode_refresh_token(refresh_token)
 
         if not payload:
-            return False
+            raise BusinessError("Refresh Token 无效或已过期", 11005)
 
         refresh_jti = payload.get("jti")
         user_id = payload.get("uid")
 
         if not refresh_jti or not user_id:
-            return False
+            raise BusinessError("Refresh Token 无效或已过期", 11005)
+
+        if current_user_id is not None and user_id != current_user_id:
+            raise BusinessError("Refresh Token 与当前登录用户不匹配", 11012)
 
         refresh_token_hash = JwtService.hash_token(refresh_token)
 

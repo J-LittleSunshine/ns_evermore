@@ -7,9 +7,7 @@ from typing import TYPE_CHECKING
 from django.conf import settings
 
 from iam.services.auth import LoginService, LogoutService, RefreshService, RevokeService
-from ns_backend.utils.jwt import JwtService
 from iam.views.base import IamRequestViewSet
-from ns_backend.exceptions import BusinessError
 
 if TYPE_CHECKING:
     pass
@@ -88,21 +86,13 @@ class AuthPrivateViewSet(IamRequestViewSet):
         if not access_token:
             return self.failed_response("access_token 不能为空", 11004)
 
-        if refresh_token:
-            payload = JwtService.decode_refresh_token(refresh_token)
-
-            if not payload:
-                raise BusinessError("Refresh Token 无效或已过期", 11005)
-
-            refresh_user_id = payload.get("uid")
-
-            if refresh_user_id != current_user.id:
-                raise BusinessError("Refresh Token 与当前登录用户不匹配", 11012)
-
         success = await RevokeService.revoke_access_token(access_token)
 
         if refresh_token:
-            refresh_success = await LogoutService.execute(refresh_token)
+            refresh_success = await LogoutService.execute(
+                refresh_token=refresh_token,
+                current_user_id=current_user.id,
+            )
             success = success or refresh_success
 
         return self.success_response({
@@ -130,12 +120,3 @@ class AuthPrivateViewSet(IamRequestViewSet):
             "is_superuser": user.is_superuser,
         })
 
-    @staticmethod
-    def get_bearer_token_from_request(request) -> str | None:
-        authorization = request.headers.get("Authorization", "")
-
-        if not authorization.startswith("Bearer "):
-            return None
-
-        token = authorization.removeprefix("Bearer ").strip()
-        return token or None
