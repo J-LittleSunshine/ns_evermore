@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from iam.services.crud import RoleCrudService
+from iam.models import IamRole
 from iam.validators import RoleValidator
 from iam.views.base import BaseIamViewSet
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class RoleViewSet(BaseIamViewSet):
-    service_class = RoleCrudService
+    model_class = IamRole
     validator_class = RoleValidator
     list_fields = detail_fields = ("id", "role_code", "role_name", "role_scope", "status")
     create_fields = ("role_code", "role_name", "role_scope", "status")
