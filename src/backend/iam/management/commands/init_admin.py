@@ -8,8 +8,7 @@ from django.contrib.auth.hashers import make_password
 from django.core.management import BaseCommand
 from django.utils import timezone
 
-from iam.constants import IAM_DB_ALIAS
-from iam.models import IamUser
+from iam.repositories.admin import AdminRepository
 
 if TYPE_CHECKING:
     pass
@@ -25,24 +24,24 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         username = options["username"]
         raw_password = options["password"] or secrets.token_urlsafe(16)
-
-        exists = IamUser.objects.using(IAM_DB_ALIAS).filter(username=username).exists()
+        now = timezone.now()
+        exists = AdminRepository.exists_by_username(username)
 
         if exists:
             self.stdout.write(self.style.WARNING(f"Administrator user already exits: {username}"))
             return
-        now = timezone.now()
-        user = IamUser.objects.using(IAM_DB_ALIAS).create(
-            username=username,
-            password=make_password(raw_password),
-            display_name="System Administrator",
-            user_type="ENTERPRISE",
-            is_active=1,
-            is_staff=1,
-            is_superuser=1,
-            created_at=now,
-            updated_at=now,
-        )
+
+        user = AdminRepository.create_admin_user({
+            "username": username,
+            "password": make_password(raw_password),
+            "display_name": "System Administrator",
+            "user_type": "ENTERPRISE",
+            "is_active": 1,
+            "is_staff": 1,
+            "is_superuser": 1,
+            "created_at": now,
+            "updated_at": now,
+        })
 
         self.stdout.write(self.style.SUCCESS(f"System administrator create success. UserID: {user.id}"))
 
