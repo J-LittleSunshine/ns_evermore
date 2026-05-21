@@ -10,7 +10,7 @@ from django.db.models import Case, DateTimeField, F, Value, When
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
-from iam.models import IamLoginFailureLock, IamUser, IamUserToken
+from iam.models import IamLoginFailureLock, IamUser, IamUserSession, IamUserToken
 from iam.services.device import DeviceService
 from iam.services.jwt import JwtService
 from iam.services.session import SessionService
