@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from iam.services.crud import SubsidiaryCrudService
+from iam.models import IamSubsidiary
 from iam.validators import SubsidiaryValidator
 from iam.views.base import BaseIamViewSet
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class SubsidiaryViewSet(BaseIamViewSet):
-    service_class = SubsidiaryCrudService
+    model_class = IamSubsidiary
     validator_class = SubsidiaryValidator
     list_fields = detail_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status")
     create_fields = ("company_id", "subsidiary_code", "subsidiary_name", "status")
