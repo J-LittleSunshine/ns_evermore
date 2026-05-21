@@ -4,9 +4,9 @@ from __future__ import annotations
 from django.utils import timezone
 
 from iam.domain.services.session import SessionDomainService
+from iam.infrastructure.jwt import JwtService
 from iam.repositories.token import TokenRepository
 from iam.repositories.user import UserRepository
-from iam.services.jwt import JwtService
 from ns_backend.exceptions import BusinessError
 
 
