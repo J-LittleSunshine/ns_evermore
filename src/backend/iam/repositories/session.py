@@ -17,6 +17,12 @@ class SessionRepository:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).acreate(**kwargs)
 
     @staticmethod
+    async def get_by_id(session_pk: int) -> IamUserSession | None:
+        return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+            id=session_pk,
+        ).afirst()
+
+    @staticmethod
     async def get_by_session_id(session_id: str) -> IamUserSession | None:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
             session_id=session_id,
@@ -88,6 +94,14 @@ class SessionRepository:
     async def touch_session(session_id: str, update_data: dict[str, Any]) -> int:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
             session_id=session_id,
+            revoked_at__isnull=True,
+            expired_at__gt=timezone.now(),
+        ).aupdate(**update_data)
+
+    @staticmethod
+    async def touch_session_by_id(session_id: int, update_data: dict[str, Any]) -> int:
+        return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+            id=session_id,
             revoked_at__isnull=True,
             expired_at__gt=timezone.now(),
         ).aupdate(**update_data)
