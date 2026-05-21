@@ -33,9 +33,11 @@ class UserRoleViewSet(BaseIamViewSet):
 
     async def bind_user_role(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
+        operator_id = self.get_operator_id(request)
         result = await GrantService.bind_user_role(
-            data,
-            operator_id=self.get_operator_id(request),
+            data=data,
+            operator=request.current_user,
+            operator_id=operator_id,
         )
         return self.success_response(result)
 
@@ -46,6 +48,7 @@ class UserRoleViewSet(BaseIamViewSet):
         await GrantService.unbind_user_role(
             user_id=user_id,
             role_id=role_id,
+            operator=request.current_user,
         )
 
         return self.success_response()
@@ -71,9 +74,11 @@ class RolePermissionViewSet(BaseIamViewSet):
 
     async def grant_role_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
+        operator_id = self.get_operator_id(request)
         result = await GrantService.grant_role_permission(
-            data,
-            operator_id=self.get_operator_id(request),
+            data=data,
+            operator=request.current_user,
+            operator_id=operator_id,
         )
         return self.success_response(result)
 
@@ -84,6 +89,7 @@ class RolePermissionViewSet(BaseIamViewSet):
         await GrantService.revoke_role_permission(
             role_id=role_id,
             permission_id=permission_id,
+            operator=request.current_user,
         )
 
         return self.success_response()
@@ -111,9 +117,11 @@ class UserPermissionViewSet(BaseIamViewSet):
 
     async def grant_user_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
+        operator_id = self.get_operator_id(request)
         result = await GrantService.grant_user_permission(
-            data,
-            operator_id=self.get_operator_id(request),
+            data=data,
+            operator=request.current_user,
+            operator_id=operator_id,
         )
         return self.success_response(result)
 
@@ -124,6 +132,7 @@ class UserPermissionViewSet(BaseIamViewSet):
         await GrantService.revoke_user_permission(
             user_id=user_id,
             permission_id=permission_id,
+            operator=request.current_user,
         )
 
         return self.success_response()
@@ -151,9 +160,11 @@ class DepartmentPermissionViewSet(BaseIamViewSet):
 
     async def grant_department_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
+        operator_id = self.get_operator_id(request)
         result = await GrantService.grant_department_permission(
-            data,
-            operator_id=self.get_operator_id(request),
+            data=data,
+            operator=request.current_user,
+            operator_id=operator_id,
         )
         return self.success_response(result)
 
@@ -164,6 +175,7 @@ class DepartmentPermissionViewSet(BaseIamViewSet):
         await GrantService.revoke_department_permission(
             department_id=department_id,
             permission_id=permission_id,
+            operator=request.current_user,
         )
 
         return self.success_response()
@@ -191,9 +203,11 @@ class SubsidiaryPermissionViewSet(BaseIamViewSet):
 
     async def grant_subsidiary_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
+        operator_id = self.get_operator_id(request)
         result = await GrantService.grant_subsidiary_permission(
-            data,
-            operator_id=self.get_operator_id(request),
+            data=data,
+            operator=request.current_user,
+            operator_id=operator_id,
         )
         return self.success_response(result)
 
@@ -204,6 +218,7 @@ class SubsidiaryPermissionViewSet(BaseIamViewSet):
         await GrantService.revoke_subsidiary_permission(
             subsidiary_id=subsidiary_id,
             permission_id=permission_id,
+            operator=request.current_user,
         )
 
         return self.success_response()

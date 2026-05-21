@@ -34,8 +34,26 @@ class UserRepository:
         return await IamUser.objects.using(IAM_DB_ALIAS).filter(id=user_id).afirst()
 
     @staticmethod
-    def build_list_queryset(include_staff: bool = False, include_superuser: bool = False):
+    async def get_by_id_for_company(user_id: int, company_id: int) -> IamUser | None:
+        return await IamUser.objects.using(IAM_DB_ALIAS).filter(
+            id=user_id,
+            company_id=company_id,
+        ).afirst()
+
+    @staticmethod
+    async def get_by_id_for_self(user_id: int, operator_user_id: int) -> IamUser | None:
+        return await IamUser.objects.using(IAM_DB_ALIAS).filter(id=user_id).filter(id=operator_user_id).afirst()
+
+    @staticmethod
+    def build_list_queryset(
+        include_staff: bool = False,
+        include_superuser: bool = False,
+        tenant_filter: dict[str, Any] | None = None,
+    ):
         queryset = IamUser.objects.using(IAM_DB_ALIAS).all().order_by("-id")
+
+        if tenant_filter:
+            queryset = queryset.filter(**tenant_filter)
 
         if not include_staff:
             queryset = queryset.filter(is_staff=0, is_superuser=0)
@@ -51,10 +69,12 @@ class UserRepository:
         page_size: int,
         include_staff: bool = False,
         include_superuser: bool = False,
+        tenant_filter: dict[str, Any] | None = None,
     ) -> tuple[list[IamUser], int]:
         queryset = cls.build_list_queryset(
             include_staff=include_staff,
             include_superuser=include_superuser,
+            tenant_filter=tenant_filter,
         )
         offset = (page - 1) * page_size
         total = await queryset.acount()
@@ -91,6 +111,7 @@ class UserRepository:
         *,
         user_id: int,
         data: dict[str, Any],
+        company_id: int | None = None,
     ) -> None:
         """原子化更新用户并吊销其全部会话与令牌。"""
         await sync_to_async(
@@ -99,19 +120,25 @@ class UserRepository:
         )(
             user_id=user_id,
             data=data,
+            company_id=company_id,
         )
 
     @staticmethod
-    def _update_user_and_revoke_sessions_tokens_sync(*, user_id: int, data: dict[str, Any]) -> None:
+    def _update_user_and_revoke_sessions_tokens_sync(
+        *,
+        user_id: int,
+        data: dict[str, Any],
+        company_id: int | None = None,
+    ) -> None:
         now = timezone.now()
 
         with transaction.atomic(using=IAM_DB_ALIAS):
-            user = (
-                IamUser.objects.using(IAM_DB_ALIAS)
-                .select_for_update()
-                .filter(id=user_id)
-                .first()
-            )
+            user_queryset = IamUser.objects.using(IAM_DB_ALIAS).select_for_update().filter(id=user_id)
+
+            if company_id is not None:
+                user_queryset = user_queryset.filter(company_id=company_id)
+
+            user = user_queryset.first()
 
             if not user:
                 raise BusinessError("用户不存在", 10103)
@@ -142,24 +169,27 @@ class UserRepository:
         await user.adelete(using=IAM_DB_ALIAS)
 
     @classmethod
-    async def revoke_and_delete_user(cls, user_id: int) -> None:
+    async def revoke_and_delete_user(cls, user_id: int, company_id: int | None = None) -> None:
         """原子化吊销用户全部会话/令牌并删除用户。"""
         await sync_to_async(
             cls._revoke_and_delete_user_sync,
             thread_sensitive=True,
-        )(user_id=user_id)
+        )(
+            user_id=user_id,
+            company_id=company_id,
+        )
 
     @staticmethod
-    def _revoke_and_delete_user_sync(user_id: int) -> None:
+    def _revoke_and_delete_user_sync(user_id: int, company_id: int | None = None) -> None:
         now = timezone.now()
 
         with transaction.atomic(using=IAM_DB_ALIAS):
-            user = (
-                IamUser.objects.using(IAM_DB_ALIAS)
-                .select_for_update()
-                .filter(id=user_id)
-                .first()
-            )
+            user_queryset = IamUser.objects.using(IAM_DB_ALIAS).select_for_update().filter(id=user_id)
+
+            if company_id is not None:
+                user_queryset = user_queryset.filter(company_id=company_id)
+
+            user = user_queryset.first()
 
             if not user:
                 raise BusinessError("用户不存在", 10103)

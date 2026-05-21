@@ -8,6 +8,7 @@ from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 
 from iam.repositories.user import UserRepository
+from iam.services.tenant import TenantService
 from ns_backend.exceptions import BusinessError
 
 
@@ -18,17 +19,20 @@ class UserService:
 	async def list_users(
 		cls,
 		fields: tuple[str, ...],
+		operator,
 		page: int = 1,
 		page_size: int = 20,
 		include_staff: bool = False,
 		include_superuser: bool = False,
 	) -> dict[str, Any]:
 		page, page_size = cls.normalize_page(page, page_size)
+		tenant_filter = cls.get_user_tenant_filter(operator)
 		users, total = await UserRepository.list_users(
 			page=page,
 			page_size=page_size,
 			include_staff=include_staff,
 			include_superuser=include_superuser,
+			tenant_filter=tenant_filter,
 		)
 
 		return {
@@ -42,11 +46,25 @@ class UserService:
 		}
 
 	@classmethod
-	async def get_user(cls, user_id: int):
+	async def get_user(cls, user_id: int, operator):
 		if not user_id:
 			raise BusinessError("id 不能为空", 10001)
 
-		user = await UserRepository.get_by_id(user_id)
+		context = TenantService.from_user(operator)
+
+		if TenantService.is_platform_admin(context):
+			user = await UserRepository.get_by_id(user_id)
+		elif TenantService.is_enterprise_user(context):
+			TenantService.ensure_enterprise_context(context)
+			user = await UserRepository.get_by_id_for_company(
+				user_id=user_id,
+				company_id=context.company_id,
+			)
+		else:
+			user = await UserRepository.get_by_id_for_self(
+				user_id=user_id,
+				operator_user_id=context.user_id,
+			)
 
 		if not user:
 			raise BusinessError("用户不存在", 10103)
@@ -54,18 +72,35 @@ class UserService:
 		return user
 
 	@classmethod
-	async def detail_user(cls, user_id: int, fields: tuple[str, ...]) -> dict[str, Any]:
-		user = await cls.get_user(user_id)
+	async def detail_user(cls, user_id: int, fields: tuple[str, ...], operator) -> dict[str, Any]:
+		user = await cls.get_user(user_id=user_id, operator=operator)
 		return cls.serialize(user, fields)
 
 	@classmethod
 	async def create_user(
 		cls,
 		data: dict[str, Any],
+		operator,
 		operator_id: int | None = None,
 	) -> dict[str, Any]:
+		context = TenantService.from_user(operator)
+		create_payload = data.copy()
+
+		if not TenantService.is_platform_admin(context) and cls.is_truthy(create_payload.get("is_superuser")):
+			raise BusinessError("后台管理员不能操作超级管理员", 11010)
+
+		if TenantService.is_platform_admin(context):
+			pass
+		elif TenantService.is_enterprise_user(context):
+			TenantService.ensure_enterprise_context(context)
+			create_payload["company_id"] = context.company_id
+			create_payload["user_type"] = TenantService.USER_TYPE_ENTERPRISE
+			create_payload["is_superuser"] = 0
+		else:
+			raise BusinessError("个人用户不能创建用户", 14021)
+
 		create_data = cls.build_create_data(
-			data=data,
+			data=create_payload,
 			operator_id=operator_id,
 		)
 		user = await UserRepository.create_user(create_data)
@@ -76,9 +111,13 @@ class UserService:
 		cls,
 		user_id: int,
 		data: dict[str, Any],
+		operator,
 		operator_id: int | None = None,
 	) -> None:
-		user = await cls.get_user(user_id)
+		if "company_id" in data and not bool(getattr(operator, "is_superuser", False)):
+			raise BusinessError("不允许更新字段：company_id", 12005)
+
+		user = await cls.get_user(user_id=user_id, operator=operator)
 		update_data = cls.build_update_data(
 			data=data,
 			operator_id=operator_id,
@@ -91,28 +130,35 @@ class UserService:
 			and bool(user.is_active)
 		)
 
+		company_scope = cls.get_operator_company_scope(operator)
+
 		if should_revoke:
 			await UserRepository.update_user_and_revoke_sessions_tokens(
 				user_id=user.id,
 				data=update_data,
+				company_id=company_scope,
 			)
 			return
 
 		await UserRepository.update_user(user=user, data=update_data)
 
 	@classmethod
-	async def delete_user(cls, user_id: int) -> None:
-		await cls.get_user(user_id)
-		await UserRepository.revoke_and_delete_user(user_id=user_id)
+	async def delete_user(cls, user_id: int, operator) -> None:
+		user = await cls.get_user(user_id=user_id, operator=operator)
+		await UserRepository.revoke_and_delete_user(
+			user_id=user.id,
+			company_id=cls.get_operator_company_scope(operator),
+		)
 
 	@classmethod
 	async def reset_password(
 		cls,
 		user_id: int,
 		raw_password: str,
+		operator,
 		operator_id: int | None = None,
 	) -> None:
-		user = await cls.get_user(user_id)
+		user = await cls.get_user(user_id=user_id, operator=operator)
 		update_data = cls.build_reset_password_data(
 			raw_password=raw_password,
 			operator_id=operator_id,
@@ -120,7 +166,34 @@ class UserService:
 		await UserRepository.update_user_and_revoke_sessions_tokens(
 			user_id=user.id,
 			data=update_data,
+			company_id=cls.get_operator_company_scope(operator),
 		)
+
+	@classmethod
+	def get_user_tenant_filter(cls, operator) -> dict[str, Any] | None:
+		context = TenantService.from_user(operator)
+
+		if TenantService.is_platform_admin(context):
+			return None
+
+		if TenantService.is_enterprise_user(context):
+			TenantService.ensure_enterprise_context(context)
+			return {"company_id": context.company_id}
+
+		return {"id": context.user_id}
+
+	@classmethod
+	def get_operator_company_scope(cls, operator) -> int | None:
+		context = TenantService.from_user(operator)
+
+		if TenantService.is_platform_admin(context):
+			return None
+
+		if TenantService.is_enterprise_user(context):
+			TenantService.ensure_enterprise_context(context)
+			return context.company_id
+
+		return None
 
 	@staticmethod
 	def normalize_page(page: int | str | None, page_size: int | str | None) -> tuple[int, int]:
@@ -168,6 +241,13 @@ class UserService:
 			"updated_by": operator_id,
 			"updated_at": timezone.now(),
 		}
+
+	@staticmethod
+	def is_truthy(value: Any) -> bool:
+		if isinstance(value, str):
+			return value.strip().lower() in {"1", "true", "yes", "on"}
+
+		return bool(value)
 
 	@staticmethod
 	def serialize(instance, fields: tuple[str, ...]) -> dict[str, Any]:

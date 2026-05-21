@@ -33,9 +33,6 @@ class UserViewSet(BaseIamViewSet):
         "email",
         "phone",
         "display_name",
-        "company_id",
-        "subsidiary_id",
-        "department_id",
         "is_active",
         "is_staff",
         "is_superuser",
@@ -49,6 +46,7 @@ class UserViewSet(BaseIamViewSet):
 
         data = await UserService.list_users(
             fields=self.list_fields,
+            operator=request.current_user,
             page=page,
             page_size=page_size,
             include_staff=include_staff,
@@ -58,7 +56,10 @@ class UserViewSet(BaseIamViewSet):
         return self.success_response(data)
 
     async def detail_item(self, request, *args, **kwargs):
-        user = await UserService.get_user(request.data.get("id"))
+        user = await UserService.get_user(
+            user_id=request.data.get("id"),
+            operator=request.current_user,
+        )
 
         await UserPolicy.ensure_can_operate_user(
             operator=request.current_user,
@@ -80,6 +81,7 @@ class UserViewSet(BaseIamViewSet):
 
         result = await UserService.create_user(
             data=data,
+            operator=request.current_user,
             operator_id=operator_id,
         )
 
@@ -87,7 +89,10 @@ class UserViewSet(BaseIamViewSet):
 
     async def update_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
-        user = await UserService.get_user(item_id)
+        user = await UserService.get_user(
+            user_id=item_id,
+            operator=request.current_user,
+        )
         data = self.validate_update_data(request.data)
         operator_id = self.get_operator_id(request)
 
@@ -104,6 +109,7 @@ class UserViewSet(BaseIamViewSet):
         await UserService.update_user(
             user_id=item_id,
             data=data,
+            operator=request.current_user,
             operator_id=operator_id,
         )
 
@@ -111,14 +117,20 @@ class UserViewSet(BaseIamViewSet):
 
     async def delete_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
-        user = await UserService.get_user(item_id)
+        user = await UserService.get_user(
+            user_id=item_id,
+            operator=request.current_user,
+        )
 
         await UserPolicy.ensure_can_operate_user(
             operator=request.current_user,
             target_user=user,
         )
 
-        await UserService.delete_user(user_id=item_id)
+        await UserService.delete_user(
+            user_id=item_id,
+            operator=request.current_user,
+        )
 
         return self.success_response()
 
@@ -126,7 +138,10 @@ class UserViewSet(BaseIamViewSet):
         user_id = request.data.get("id")
         raw_password = request.data.get("password")
         operator_id = self.get_operator_id(request)
-        user = await UserService.get_user(user_id)
+        user = await UserService.get_user(
+            user_id=user_id,
+            operator=request.current_user,
+        )
 
         await UserPolicy.ensure_can_operate_user(
             operator=request.current_user,
@@ -136,6 +151,7 @@ class UserViewSet(BaseIamViewSet):
         await UserService.reset_password(
             user_id=user_id,
             raw_password=raw_password,
+            operator=request.current_user,
             operator_id=operator_id,
         )
 

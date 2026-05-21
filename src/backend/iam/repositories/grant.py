@@ -5,8 +5,12 @@ from django.db import IntegrityError
 
 from iam.constants import IAM_DB_ALIAS
 from iam.models import (
+    IamDepartment,
     IamDepartmentPermission,
+    IamRole,
     IamRolePermission,
+    IamSubsidiary,
+    IamUser,
     IamSubsidiaryPermission,
     IamUserPermission,
     IamUserRole,
@@ -91,3 +95,37 @@ class GrantRepository:
             permission_id=permission_id,
         ).adelete()
         return deleted_count
+
+    @staticmethod
+    async def get_user_company_id(user_id: int) -> int | None:
+        item = await IamUser.objects.using(IAM_DB_ALIAS).filter(id=user_id).values("company_id").afirst()
+        return None if not item else item.get("company_id")
+
+    @staticmethod
+    async def user_exists(user_id: int) -> bool:
+        return await IamUser.objects.using(IAM_DB_ALIAS).filter(id=user_id).aexists()
+
+    @staticmethod
+    async def get_role_company_id(role_id: int) -> int | None:
+        item = await IamRole.objects.using(IAM_DB_ALIAS).filter(id=role_id).values("company_id").afirst()
+        return None if not item else item.get("company_id")
+
+    @staticmethod
+    async def get_department_company_id(department_id: int) -> int | None:
+        item = await IamDepartment.objects.using(IAM_DB_ALIAS).filter(id=department_id).values("company_id").afirst()
+        return None if not item else item.get("company_id")
+
+    @staticmethod
+    async def get_subsidiary_company_id(subsidiary_id: int) -> int | None:
+        item = await IamSubsidiary.objects.using(IAM_DB_ALIAS).filter(id=subsidiary_id).values("company_id").afirst()
+        return None if not item else item.get("company_id")
+
+    @staticmethod
+    async def get_role_scope_and_company_id(role_id: int) -> tuple[str, int | None] | None:
+        item = await IamRole.objects.using(IAM_DB_ALIAS).filter(id=role_id).values("role_scope", "company_id").afirst()
+
+        if not item:
+            return None
+
+        return item["role_scope"], item.get("company_id")
+

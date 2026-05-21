@@ -56,7 +56,7 @@ class PermissionValidator(BaseValidator):
 
 class RoleValidator(BaseValidator):
     required_fields = ("role_code", "role_name", "role_scope")
-    allowed_fields = ("role_code", "role_name", "role_scope", "status")
+    allowed_fields = ("company_id", "role_code", "role_name", "role_scope", "status")
     enum_fields = {
         "role_scope": ("PERSONAL", "ENTERPRISE"),
         "status": (0, 1),

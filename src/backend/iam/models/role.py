@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from django.db import models
 
+from .company import IamCompany
 from .permission import IamPermission
 from .user import IamUser
 
@@ -17,9 +18,16 @@ class IamRole(models.Model):
     )
 
     id = models.BigAutoField(primary_key=True)
-    role_code = models.CharField(max_length=64, unique=True)
+    role_code = models.CharField(max_length=64)
     role_name = models.CharField(max_length=128)
     role_scope = models.CharField(max_length=32, choices=SCOPE_CHOICES)
+    company = models.ForeignKey(
+        IamCompany,
+        on_delete=models.DO_NOTHING,
+        db_column="company_id",
+        null=True,
+        blank=True,
+    )
     status = models.SmallIntegerField(default=1)
     created_by = models.BigIntegerField(null=True, blank=True)
     updated_by = models.BigIntegerField(null=True, blank=True)
@@ -29,6 +37,7 @@ class IamRole(models.Model):
     class Meta:
         managed = False
         db_table = "iam_role"
+        unique_together = (("company", "role_code"),)
         verbose_name = "角色"
         verbose_name_plural = "角色"
 

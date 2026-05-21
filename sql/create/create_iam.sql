@@ -176,16 +176,21 @@ CREATE TABLE iam_role
     role_code  VARCHAR(64)     NOT NULL COMMENT '角色编码',
     role_name  VARCHAR(128)    NOT NULL COMMENT '角色名称',
     role_scope VARCHAR(32)     NOT NULL COMMENT '角色范围',
+    company_id BIGINT UNSIGNED NULL COMMENT '所属公司ID',
     status     TINYINT         NOT NULL DEFAULT 1 COMMENT '状态',
     created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
     updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
     created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
 
-    UNIQUE KEY uk_role_code (role_code),
+    UNIQUE KEY uk_role_company_code (company_id, role_code),
     KEY idx_role_scope (role_scope),
+    KEY idx_role_company_id (company_id),
     KEY idx_role_created_by (created_by),
     KEY idx_role_updated_by (updated_by),
+
+    CONSTRAINT fk_role_comp
+        FOREIGN KEY (company_id) REFERENCES iam_company (id),
 
     CONSTRAINT chk_role_scope
         CHECK (role_scope IN ('PERSONAL', 'ENTERPRISE')),
