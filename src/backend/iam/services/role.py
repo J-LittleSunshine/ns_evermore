@@ -81,7 +81,7 @@ class RoleService(AuditDataMixin):
 
         if role_scope == IamRole.SCOPE_PERSONAL:
             if not TenantService.is_platform_admin(context):
-                raise BusinessError("个人用户不能访问企业组织资源", 14002)
+                raise BusinessError("只有平台管理员可以创建个人体系角色", 14014)
 
             if final_data.get("company_id") is not None:
                 raise BusinessError("个人体系角色不能绑定公司", 14011)

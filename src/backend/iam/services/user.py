@@ -7,6 +7,7 @@ from typing import Any
 from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 
+from iam.repositories.organization import OrganizationRepository
 from iam.repositories.user import UserRepository
 from iam.services.tenant import TenantService
 from ns_backend.exceptions import BusinessError
@@ -99,12 +100,41 @@ class UserService:
 		else:
 			raise BusinessError("个人用户不能创建用户", 14021)
 
+		company_id = create_payload.get("company_id")
+
+		if company_id:
+			await cls.ensure_org_refs_belong_to_company(
+				company_id=company_id,
+				subsidiary_id=create_payload.get("subsidiary_id"),
+				department_id=create_payload.get("department_id"),
+			)
+
 		create_data = cls.build_create_data(
 			data=create_payload,
 			operator_id=operator_id,
 		)
 		user = await UserRepository.create_user(create_data)
 		return {"id": user.id}
+
+	@classmethod
+	async def ensure_org_refs_belong_to_company(
+		cls,
+		*,
+		company_id: int,
+		subsidiary_id: int | None = None,
+		department_id: int | None = None,
+	) -> None:
+		if subsidiary_id:
+			subsidiary_company_id = await OrganizationRepository.get_subsidiary_company_id(subsidiary_id)
+
+			if subsidiary_company_id != company_id:
+				raise BusinessError("子公司不属于当前公司", 14041)
+
+		if department_id:
+			department_company_id = await OrganizationRepository.get_department_company_id(department_id)
+
+			if department_company_id != company_id:
+				raise BusinessError("部门不属于当前公司", 14042)
 
 	@classmethod
 	async def update_user(

@@ -8,6 +8,7 @@ from iam.services.auth import (
     RevokeService,
     VerifyService,
 )
+from iam.services.department import DepartmentService
 from iam.services.grant import GrantService
 from iam.services.permission import PermissionService
 from iam.services.role import RoleService
@@ -17,6 +18,7 @@ from iam.services.user import UserService
 
 __all__ = [
     "GrantService",
+    "DepartmentService",
     "LoginService",
     "LogoutService",
     "PermissionService",

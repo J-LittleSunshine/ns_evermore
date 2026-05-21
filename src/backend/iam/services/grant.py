@@ -30,9 +30,8 @@ class GrantService(AuditDataMixin):
     @classmethod
     async def grant_role_permission(cls, data: dict, operator, operator_id: int | None = None) -> dict:
         role_id = data.get("role_id")
-
-        if not role_id:
-            raise BusinessError("role_id 和 permission_id 不能为空", 13012)
+        permission_id = data.get("permission_id")
+        cls.ensure_required_pair(role_id, permission_id, "role_id 和 permission_id 不能为空", 13012)
 
         await cls.ensure_can_operate_role(role_id=role_id, operator=operator)
         create_data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
@@ -49,9 +48,8 @@ class GrantService(AuditDataMixin):
     @classmethod
     async def grant_user_permission(cls, data: dict, operator, operator_id: int | None = None) -> dict:
         user_id = data.get("user_id")
-
-        if not user_id:
-            raise BusinessError("user_id 和 permission_id 不能为空", 13013)
+        permission_id = data.get("permission_id")
+        cls.ensure_required_pair(user_id, permission_id, "user_id 和 permission_id 不能为空", 13013)
 
         await cls.ensure_can_operate_user(user_id=user_id, operator=operator)
         create_data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
@@ -68,9 +66,8 @@ class GrantService(AuditDataMixin):
     @classmethod
     async def grant_department_permission(cls, data: dict, operator, operator_id: int | None = None) -> dict:
         department_id = data.get("department_id")
-
-        if not department_id:
-            raise BusinessError("department_id 和 permission_id 不能为空", 13014)
+        permission_id = data.get("permission_id")
+        cls.ensure_required_pair(department_id, permission_id, "department_id 和 permission_id 不能为空", 13014)
 
         await cls.ensure_can_operate_department(department_id=department_id, operator=operator)
         create_data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
@@ -90,9 +87,8 @@ class GrantService(AuditDataMixin):
     @classmethod
     async def grant_subsidiary_permission(cls, data: dict, operator, operator_id: int | None = None) -> dict:
         subsidiary_id = data.get("subsidiary_id")
-
-        if not subsidiary_id:
-            raise BusinessError("subsidiary_id 和 permission_id 不能为空", 13015)
+        permission_id = data.get("permission_id")
+        cls.ensure_required_pair(subsidiary_id, permission_id, "subsidiary_id 和 permission_id 不能为空", 13015)
 
         await cls.ensure_can_operate_subsidiary(subsidiary_id=subsidiary_id, operator=operator)
         create_data = cls.fill_grant_audit_fields(data, operator_id=operator_id)

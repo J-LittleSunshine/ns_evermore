@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from iam.models import IamDepartment
+from iam.services.department import DepartmentService
 from iam.validators import DepartmentValidator
 from iam.views.base import BaseIamViewSet
 
@@ -28,3 +29,15 @@ class DepartmentViewSet(BaseIamViewSet):
     update_fields = (
         "department_name", "status",
     )
+
+    async def create_item(self, request, *args, **kwargs):
+        data = self.validate_create_data(request.data)
+        operator_id = self.get_operator_id(request)
+        result = await DepartmentService.create_department(
+            model_class=self.model_class,
+            data=data,
+            operator=request.current_user,
+            operator_id=operator_id,
+        )
+        return self.success_response(result)
+
