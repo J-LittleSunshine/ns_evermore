@@ -7,9 +7,9 @@ from django.utils import timezone
 from iam.domain.services.device import DeviceDomainService
 from iam.domain.services.login_failure import LoginFailureDomainService
 from iam.domain.services.session import SessionDomainService
+from iam.infrastructure.jwt import JwtService
 from iam.repositories.token import TokenRepository
 from iam.repositories.user import UserRepository
-from iam.services.jwt import JwtService
 from ns_backend.exceptions import BusinessError
 
 
