@@ -30,3 +30,11 @@ class CompanyViewSet(BaseIamViewSet):
 
         return await super().create_item(request, *args, **kwargs)
 
+    async def delete_item(self, request, *args, **kwargs):
+        current_user = getattr(request, "current_user", None)
+
+        if not bool(getattr(current_user, "is_superuser", False)):
+            raise BusinessError("只有平台管理员可以删除公司", 14004)
+
+        return await super().delete_item(request, *args, **kwargs)
+

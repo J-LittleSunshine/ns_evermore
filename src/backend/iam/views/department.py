@@ -26,6 +26,5 @@ class DepartmentViewSet(BaseIamViewSet):
         "department_code", "department_name", "status",
     )
     update_fields = (
-        "company_id", "subsidiary_id", "parent_id",
         "department_name", "status",
     )

@@ -19,4 +19,4 @@ class SubsidiaryViewSet(BaseIamViewSet):
     enterprise_resource_required = True
     list_fields = detail_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status")
     create_fields = ("company_id", "subsidiary_code", "subsidiary_name", "status")
-    update_fields = ("company_id", "subsidiary_name", "status")
+    update_fields = ("subsidiary_name", "status")
