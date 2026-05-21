@@ -65,6 +65,7 @@ class PermissionService:
             user.id,
             permission_code,
             now,
+            role_scope=cls.USER_TYPE_PERSONAL,
         )
 
         return has_user_allow or has_role_allow
@@ -110,6 +111,7 @@ class PermissionService:
             user.id,
             permission_code,
             now,
+            role_scope=cls.USER_TYPE_ENTERPRISE,
         )
         has_department_allow = False
         has_subsidiary_allow = False
