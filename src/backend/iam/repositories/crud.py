@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 from django.db import IntegrityError
+from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
 from ns_backend.exceptions import BusinessError
@@ -21,19 +23,29 @@ class CrudRepository:
     async def list_items(
         cls,
         model_class,
-        page: int,
-        page_size: int,
-    ) -> tuple[list[Any], int]:
+        fields: tuple[str, ...],
+        page: int | str | None,
+        page_size: int | str | None,
+    ) -> dict[str, Any]:
         """分页查询数据。"""
+        page, page_size = cls.normalize_page(page, page_size)
         queryset = cls.build_queryset(model_class)
         offset = (page - 1) * page_size
         total = await queryset.acount()
 
         rows = []
         async for item in queryset[offset: offset + page_size].aiterator():
-            rows.append(item)
+            rows.append(cls.serialize(item, fields))
 
-        return rows, total
+        return {
+            "items": rows,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": (total + page_size - 1) // page_size,
+            },
+        }
 
     @staticmethod
     async def get_by_id(model_class, item_id: int):
@@ -66,3 +78,80 @@ class CrudRepository:
     async def delete_item(instance) -> None:
         """删除数据。"""
         await instance.adelete(using=IAM_DB_ALIAS)
+
+    @staticmethod
+    def normalize_page(page: int | str | None, page_size: int | str | None) -> tuple[int, int]:
+        """规范化分页参数。"""
+        try:
+            normalized_page = max(int(page or 1), 1)
+            normalized_page_size = min(max(int(page_size or 20), 1), 100)
+        except (TypeError, ValueError):
+            raise BusinessError("分页参数非法", 12006)
+
+        return normalized_page, normalized_page_size
+
+    @classmethod
+    def fill_create_audit_fields(
+        cls,
+        model_class,
+        data: dict[str, Any],
+        operator_id: int | None = None,
+    ) -> dict[str, Any]:
+        """填充创建审计字段。"""
+        result = data.copy()
+        now = timezone.now()
+        field_names = cls.get_model_field_names(model_class)
+
+        if "created_by" in field_names:
+            result.setdefault("created_by", operator_id)
+
+        if "updated_by" in field_names:
+            result.setdefault("updated_by", operator_id)
+
+        if "created_at" in field_names:
+            result.setdefault("created_at", now)
+
+        if "updated_at" in field_names:
+            result.setdefault("updated_at", now)
+
+        return result
+
+    @classmethod
+    def fill_update_audit_fields(
+        cls,
+        model_class,
+        data: dict[str, Any],
+        operator_id: int | None = None,
+    ) -> dict[str, Any]:
+        """填充更新审计字段。"""
+        result = data.copy()
+        field_names = cls.get_model_field_names(model_class)
+
+        if "updated_by" in field_names:
+            result["updated_by"] = operator_id
+
+        if "updated_at" in field_names:
+            result["updated_at"] = timezone.now()
+
+        return result
+
+    @staticmethod
+    def serialize(instance, fields: tuple[str, ...]) -> dict[str, Any]:
+        """序列化模型字段。"""
+        result = {}
+
+        for field in fields:
+            value = getattr(instance, field)
+
+            if isinstance(value, (datetime, date)):
+                value = value.isoformat()
+
+            result[field] = value
+
+        return result
+
+    @staticmethod
+    def get_model_field_names(model_class) -> set[str]:
+        """获取 Django 模型字段名集合。"""
+        return {field.name for field in model_class._meta.fields}
+
