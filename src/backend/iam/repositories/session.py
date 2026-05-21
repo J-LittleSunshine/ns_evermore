@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from asgiref.sync import sync_to_async
+from django.db import transaction
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
@@ -49,6 +51,108 @@ class SessionRepository:
             session_id=session_id,
             revoked_at__isnull=True,
         ).aupdate(revoked_at=timezone.now())
+
+    @classmethod
+    async def revoke_session_and_tokens_by_id(cls, session_id: int) -> int:
+        """原子化撤销单个会话及其全部 Token。"""
+        return await sync_to_async(
+            cls._revoke_session_and_tokens_by_id_sync,
+            thread_sensitive=True,
+        )(session_id=session_id)
+
+    @staticmethod
+    def _revoke_session_and_tokens_by_id_sync(session_id: int) -> int:
+        now = timezone.now()
+
+        with transaction.atomic(using=IAM_DB_ALIAS):
+            locked_sessions = (
+                IamUserSession.objects.using(IAM_DB_ALIAS)
+                .select_for_update()
+                .filter(id=session_id)
+            )
+            session_ids = list(locked_sessions.values_list("id", flat=True))
+
+            if not session_ids:
+                return 0
+
+            updated_count = IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+                id__in=session_ids,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+
+            IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+                session_id__in=session_ids,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+
+            return updated_count
+
+    @classmethod
+    async def revoke_user_sessions_and_tokens(cls, user_id: int) -> int:
+        """原子化撤销用户全部会话及全部 Token。"""
+        return await sync_to_async(
+            cls._revoke_user_sessions_and_tokens_sync,
+            thread_sensitive=True,
+        )(user_id=user_id)
+
+    @staticmethod
+    def _revoke_user_sessions_and_tokens_sync(user_id: int) -> int:
+        now = timezone.now()
+
+        with transaction.atomic(using=IAM_DB_ALIAS):
+            locked_sessions = (
+                IamUserSession.objects.using(IAM_DB_ALIAS)
+                .select_for_update()
+                .filter(user_id=user_id)
+            )
+            session_ids = list(locked_sessions.values_list("id", flat=True))
+
+            updated_count = IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+                id__in=session_ids,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+
+            IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+                user_id=user_id,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+
+            return updated_count
+
+    @classmethod
+    async def revoke_device_sessions_and_tokens(cls, device_id: int) -> int:
+        """原子化撤销设备全部会话及其全部 Token。"""
+        return await sync_to_async(
+            cls._revoke_device_sessions_and_tokens_sync,
+            thread_sensitive=True,
+        )(device_id=device_id)
+
+    @staticmethod
+    def _revoke_device_sessions_and_tokens_sync(device_id: int) -> int:
+        now = timezone.now()
+
+        with transaction.atomic(using=IAM_DB_ALIAS):
+            locked_sessions = (
+                IamUserSession.objects.using(IAM_DB_ALIAS)
+                .select_for_update()
+                .filter(device_id=device_id)
+            )
+            session_ids = list(locked_sessions.values_list("id", flat=True))
+
+            if not session_ids:
+                return 0
+
+            updated_count = IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+                id__in=session_ids,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+
+            IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+                session_id__in=session_ids,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+
+            return updated_count
 
     @staticmethod
     async def list_active_ids_by_user_id(user_id: int) -> list[int]:
