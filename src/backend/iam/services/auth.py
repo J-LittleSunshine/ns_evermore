@@ -10,8 +10,11 @@ from django.db.models import Case, DateTimeField, F, Value, When
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
-from iam.models import IamUser, IamUserToken, IamLoginFailureLock
+from iam.models import IamLoginFailureLock, IamUser, IamUserToken
+from iam.services.device import DeviceService
 from iam.services.jwt import JwtService
+from iam.services.session import SessionService
+from iam.services.token_rotation import TokenRotationService
 from ns_backend.exceptions import BusinessError
 
 
@@ -21,11 +24,16 @@ class AuthService:
 
     @classmethod
     async def login(
-            cls,
-            username: str,
-            password: str,
-            client_ip: str | None = None,
-            user_agent: str | None = None,
+        cls,
+        username: str,
+        password: str,
+        client_ip: str | None = None,
+        user_agent: str | None = None,
+        device_name: str | None = None,
+        device_type: str | None = None,
+        fingerprint_raw: str | None = None,
+        os_name: str | None = None,
+        browser_name: str | None = None,
     ) -> dict:
         username = username.strip()
 
@@ -56,6 +64,29 @@ class AuthService:
 
         await cls.clear_login_failed(username=username)
 
+        fingerprint_raw = fingerprint_raw or cls.build_fallback_fingerprint(
+            username=username,
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+
+        device = await DeviceService.get_or_create_device(
+            user_id=user.id,
+            device_name=device_name or "Unknown Device",
+            device_type=device_type or "WEB",
+            fingerprint_raw=fingerprint_raw,
+            client_ip=client_ip,
+            os_name=os_name,
+            browser_name=browser_name,
+        )
+
+        session = await SessionService.create_session(
+            user_id=user.id,
+            device_id=device.id,
+            login_ip=client_ip,
+            user_agent=user_agent,
+        )
+
         access_token, access_jti = JwtService.create_access_token(
             user_id=user.id,
             user_type=user.user_type,
@@ -68,6 +99,7 @@ class AuthService:
 
         await IamUserToken.objects.using(IAM_DB_ALIAS).acreate(
             user_id=user.id,
+            session_id=session.id,
             refresh_token=refresh_token_hash,
             access_jti=access_jti,
             refresh_jti=refresh_jti,
@@ -89,6 +121,8 @@ class AuthService:
             "refresh_token": refresh_token,
             "token_type": "Bearer",
             "expires_in": JwtService.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "session_id": session.session_id,
+            "device_id": device.device_id,
         }
 
     @classmethod
@@ -119,11 +153,11 @@ class AuthService:
 
     @classmethod
     async def record_login_failed(
-            cls,
-            username: str,
-            user: IamUser | None,
-            client_ip: str | None = None,
-            user_agent: str | None = None,
+        cls,
+        username: str,
+        user: IamUser | None,
+        client_ip: str | None = None,
+        user_agent: str | None = None,
     ) -> None:
         now = timezone.now()
         locked_until = now + timedelta(minutes=cls.LOGIN_LOCK_MINUTES)
@@ -196,15 +230,25 @@ class AuthService:
         if not user_id or not access_jti:
             return None
 
-        token_exists = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+        token_record = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
             access_jti=access_jti,
             revoked_at__isnull=True,
             expired_at__gt=timezone.now(),
-        ).aexists()
+        ).afirst()
 
-        if not token_exists:
+        if not token_record:
             return None
+
+        if token_record.session_id:
+            session = await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+                id=token_record.session_id,
+                revoked_at__isnull=True,
+                expired_at__gt=timezone.now(),
+            ).afirst()
+
+            if not session:
+                return None
 
         return await IamUser.objects.using(IAM_DB_ALIAS).filter(
             id=user_id,
@@ -226,16 +270,19 @@ class AuthService:
 
         refresh_token_hash = JwtService.hash_token(refresh_token)
 
-        revoked_token_exists = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+        revoked_token = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
             refresh_jti=refresh_jti,
             refresh_token=refresh_token_hash,
             revoked_at__isnull=False,
-        ).aexists()
+        ).afirst()
 
-        if revoked_token_exists:
-            await cls.revoke_all_user_tokens(user_id=user_id)
-            raise BusinessError("检测到 Refresh Token 重放攻击，当前账号已强制下线", 11013)
+        if revoked_token:
+            if revoked_token.session_id:
+                await SessionService.revoke_session(revoked_token.session.session_id)
+            else:
+                await cls.revoke_all_user_tokens(user_id=user_id)
+            raise BusinessError("检测到 Refresh Token 重放攻击，当前会话已强制下线", 11013)
 
         token_record = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
@@ -256,6 +303,9 @@ class AuthService:
         if not user:
             raise BusinessError("用户不存在或已禁用", 11010)
 
+        if token_record.session_id:
+            await SessionService.ensure_session_available(token_record.session.session_id)
+
         access_token, access_jti = JwtService.create_access_token(
             user_id=user.id,
             user_type=user.user_type,
@@ -265,31 +315,39 @@ class AuthService:
             JwtService.create_refresh_token(user_id=user.id)
         )
 
-        now = timezone.now()
+        def create_new_token(old_token: IamUserToken) -> dict:
+            IamUserToken.objects.using(IAM_DB_ALIAS).create(
+                user_id=user.id,
+                session_id=old_token.session_id,
+                refresh_token=new_refresh_token_hash,
+                access_jti=access_jti,
+                refresh_jti=new_refresh_jti,
+                client_ip=old_token.client_ip,
+                user_agent=old_token.user_agent,
+                expired_at=new_refresh_expired_at,
+                created_at=timezone.now(),
+            )
+            return {
+                "access_token": access_token,
+                "refresh_token": new_refresh_token,
+                "token_type": "Bearer",
+                "expires_in": JwtService.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                "session_id": token_record.session.session_id if token_record.session_id else None,
+            }
 
-        token_record.revoked_at = now
-        await token_record.asave(
-            using=IAM_DB_ALIAS,
-            update_fields=["revoked_at"],
+        result = TokenRotationService.rotate_refresh_token(
+            refresh_token_hash=refresh_token_hash,
+            create_token_callback=create_new_token,
         )
 
-        await IamUserToken.objects.using(IAM_DB_ALIAS).acreate(
-            user_id=user.id,
-            refresh_token=new_refresh_token_hash,
-            access_jti=access_jti,
-            refresh_jti=new_refresh_jti,
-            client_ip=token_record.client_ip,
-            user_agent=token_record.user_agent,
-            expired_at=new_refresh_expired_at,
-            created_at=now,
-        )
+        if token_record.session_id:
+            await SessionService.touch_session_activity(
+                session_id=token_record.session.session_id,
+                client_ip=token_record.client_ip,
+                user_agent=token_record.user_agent,
+            )
 
-        return {
-            "access_token": access_token,
-            "refresh_token": new_refresh_token,
-            "token_type": "Bearer",
-            "expires_in": JwtService.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        }
+        return result
 
     @classmethod
     async def logout(cls, refresh_token: str) -> bool:
@@ -306,10 +364,21 @@ class AuthService:
 
         refresh_token_hash = JwtService.hash_token(refresh_token)
 
-        updated_count = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+        token_record = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
             refresh_jti=refresh_jti,
             refresh_token=refresh_token_hash,
+            revoked_at__isnull=True,
+        ).afirst()
+
+        if not token_record:
+            return False
+
+        if token_record.session_id:
+            return await SessionService.revoke_session(token_record.session.session_id)
+
+        updated_count = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+            id=token_record.id,
             revoked_at__isnull=True,
         ).aupdate(revoked_at=timezone.now())
 
@@ -338,18 +407,44 @@ class AuthService:
         if not user_id or not access_jti:
             return False
 
-        updated_count = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+        token_record = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
             access_jti=access_jti,
             revoked_at__isnull=True,
             expired_at__gt=timezone.now(),
+        ).afirst()
+
+        if not token_record:
+            return False
+
+        if token_record.session_id:
+            return await SessionService.revoke_session(token_record.session.session_id)
+
+        updated_count = await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+            id=token_record.id,
+            revoked_at__isnull=True,
         ).aupdate(revoked_at=timezone.now())
 
         return updated_count > 0
 
     @classmethod
     async def revoke_all_user_tokens(cls, user_id: int) -> None:
+        await SessionService.revoke_user_sessions(user_id=user_id)
         await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
             revoked_at__isnull=True,
         ).aupdate(revoked_at=timezone.now())
+
+    @staticmethod
+    def build_fallback_fingerprint(
+        username: str,
+        client_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> str:
+        return "|".join(
+            [
+                username,
+                client_ip or "",
+                user_agent or "",
+            ]
+        )
