@@ -15,6 +15,12 @@ class CrudRepository:
     """通用 CRUD 数据访问层。"""
 
     @staticmethod
+    def ensure_model_class(model_class) -> None:
+        """确保 View 已配置模型类。"""
+        if model_class is None:
+            raise BusinessError("model_class 未配置", 10006)
+
+    @staticmethod
     def build_queryset(model_class):
         """构建基础查询集。"""
         return model_class.objects.using(IAM_DB_ALIAS).all().order_by("-id")
@@ -28,6 +34,7 @@ class CrudRepository:
         page_size: int | str | None,
     ) -> dict[str, Any]:
         """分页查询数据。"""
+        cls.ensure_model_class(model_class)
         page, page_size = cls.normalize_page(page, page_size)
         queryset = cls.build_queryset(model_class)
         offset = (page - 1) * page_size
@@ -52,6 +59,27 @@ class CrudRepository:
         """按主键查询数据。"""
         return await model_class.objects.using(IAM_DB_ALIAS).filter(id=item_id).afirst()
 
+    @classmethod
+    async def get_required_by_id(cls, model_class, item_id: int):
+        """按主键获取必需数据。"""
+        cls.ensure_model_class(model_class)
+
+        if not item_id:
+            raise BusinessError("id 不能为空", 10001)
+
+        item = await cls.get_by_id(model_class=model_class, item_id=item_id)
+
+        if not item:
+            raise BusinessError("数据不存在", 10002)
+
+        return item
+
+    @classmethod
+    async def detail_item(cls, model_class, item_id: int, fields: tuple[str, ...]) -> dict[str, Any]:
+        """查询通用数据详情。"""
+        item = await cls.get_required_by_id(model_class=model_class, item_id=item_id)
+        return cls.serialize(item, fields)
+
     @staticmethod
     async def create_item(model_class, data: dict[str, Any]):
         """创建数据。"""
@@ -59,6 +87,23 @@ class CrudRepository:
             return await model_class.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
             raise BusinessError(f"数据创建失败：{exc}", 10003)
+
+    @classmethod
+    async def create_item_with_audit(
+        cls,
+        model_class,
+        data: dict[str, Any],
+        operator_id: int | None = None,
+    ) -> dict[str, Any]:
+        """创建通用数据并填充审计字段。"""
+        cls.ensure_model_class(model_class)
+        create_data = cls.fill_create_audit_fields(
+            model_class=model_class,
+            data=data,
+            operator_id=operator_id,
+        )
+        item = await cls.create_item(model_class=model_class, data=create_data)
+        return {"id": item.id}
 
     @staticmethod
     async def update_item(instance, data: dict[str, Any]) -> None:
@@ -74,10 +119,33 @@ class CrudRepository:
         except IntegrityError as exc:
             raise BusinessError(f"数据更新失败：{exc}", 10005)
 
+    @classmethod
+    async def update_item_with_audit(
+        cls,
+        model_class,
+        item_id: int,
+        data: dict[str, Any],
+        operator_id: int | None = None,
+    ) -> None:
+        """更新通用数据并填充审计字段。"""
+        item = await cls.get_required_by_id(model_class=model_class, item_id=item_id)
+        update_data = cls.fill_update_audit_fields(
+            model_class=model_class,
+            data=data,
+            operator_id=operator_id,
+        )
+        await cls.update_item(instance=item, data=update_data)
+
     @staticmethod
     async def delete_item(instance) -> None:
         """删除数据。"""
         await instance.adelete(using=IAM_DB_ALIAS)
+
+    @classmethod
+    async def delete_item_by_id(cls, model_class, item_id: int) -> None:
+        """按主键删除通用数据。"""
+        item = await cls.get_required_by_id(model_class=model_class, item_id=item_id)
+        await cls.delete_item(item)
 
     @staticmethod
     def normalize_page(page: int | str | None, page_size: int | str | None) -> tuple[int, int]:

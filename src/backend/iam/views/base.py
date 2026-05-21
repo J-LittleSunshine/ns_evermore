@@ -3,17 +3,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from iam.services.base import CrudService
+from iam.repositories.base import CrudRepository
 from iam.services.auth import VerifyService
 from iam.services.permission import PermissionService
-from ns_backend.common import BaseRequestViewSet
-from ns_backend.exceptions import ValidateError
+from ns_backend.auth import AuthenticatedRequestViewSet
+from ns_backend.exceptions import BusinessError, ValidateError
 
 if TYPE_CHECKING:
     pass
 
 
-class IamRequestViewSet(BaseRequestViewSet):
+class IamRequestViewSet(AuthenticatedRequestViewSet):
     verify_service = VerifyService
     permission_service = PermissionService
 
@@ -30,7 +30,9 @@ class BaseIamViewSet(IamRequestViewSet):
         page = request.data.get("page", 1)
         page_size = request.data.get("page_size", 20)
 
-        data = await CrudService.list_items(
+        self.ensure_model_class()
+
+        data = await CrudRepository.list_items(
             model_class=self.model_class,
             fields=self.list_fields,
             page=page,
@@ -42,7 +44,9 @@ class BaseIamViewSet(IamRequestViewSet):
     async def detail_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
 
-        data = await CrudService.detail_item(
+        self.ensure_model_class()
+
+        data = await CrudRepository.detail_item(
             model_class=self.model_class,
             item_id=item_id,
             fields=self.detail_fields,
@@ -54,7 +58,9 @@ class BaseIamViewSet(IamRequestViewSet):
         data = self.validate_create_data(request.data)
         operator_id = self.get_operator_id(request)
 
-        result = await CrudService.create_item(
+        self.ensure_model_class()
+
+        result = await CrudRepository.create_item_with_audit(
             model_class=self.model_class,
             data=data,
             operator_id=operator_id,
@@ -67,7 +73,9 @@ class BaseIamViewSet(IamRequestViewSet):
         data = self.validate_update_data(request.data)
         operator_id = self.get_operator_id(request)
 
-        await CrudService.update_item(
+        self.ensure_model_class()
+
+        await CrudRepository.update_item_with_audit(
             model_class=self.model_class,
             item_id=item_id,
             data=data,
@@ -79,7 +87,9 @@ class BaseIamViewSet(IamRequestViewSet):
     async def delete_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
 
-        await CrudService.delete_item(
+        self.ensure_model_class()
+
+        await CrudRepository.delete_item_by_id(
             model_class=self.model_class,
             item_id=item_id,
         )
@@ -113,3 +123,8 @@ class BaseIamViewSet(IamRequestViewSet):
     def get_operator_id(request) -> int | None:
         current_user = getattr(request, "current_user", None)
         return getattr(current_user, "id", None)
+
+    def ensure_model_class(self) -> None:
+        if self.model_class is None:
+            raise BusinessError("model_class 未配置", 10006)
+
