@@ -3,15 +3,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from iam.application.crud import CrudApplicationService
 from ns_backend.common import BaseRequestViewSet
-from ns_backend.exceptions import BusinessError, ValidateError
+from ns_backend.exceptions import ValidateError
 
 if TYPE_CHECKING:
     pass
 
 
 class BaseIamViewSet(BaseRequestViewSet):
-    service_class = None
+    model_class = None
     validator_class = None
 
     list_fields: tuple[str, ...] = ()
@@ -22,7 +23,8 @@ class BaseIamViewSet(BaseRequestViewSet):
         page = request.data.get("page", 1)
         page_size = request.data.get("page_size", 20)
 
-        data = await self.service_class.list_items(
+        data = await CrudApplicationService.list_items(
+            model_class=self.model_class,
             fields=self.list_fields,
             page=page,
             page_size=page_size,
@@ -33,10 +35,8 @@ class BaseIamViewSet(BaseRequestViewSet):
     async def detail_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
 
-        if not item_id:
-            raise BusinessError("id 不能为空", 10001)
-
-        data = await self.service_class.detail_item(
+        data = await CrudApplicationService.detail_item(
+            model_class=self.model_class,
             item_id=item_id,
             fields=self.detail_fields,
         )
@@ -47,7 +47,8 @@ class BaseIamViewSet(BaseRequestViewSet):
         data = self.validate_create_data(request.data)
         operator_id = self.get_operator_id(request)
 
-        result = await self.service_class.create_item(
+        result = await CrudApplicationService.create_item(
+            model_class=self.model_class,
             data=data,
             operator_id=operator_id,
         )
@@ -56,14 +57,11 @@ class BaseIamViewSet(BaseRequestViewSet):
 
     async def update_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
-
-        if not item_id:
-            raise BusinessError("id 不能为空", 10001)
-
         data = self.validate_update_data(request.data)
         operator_id = self.get_operator_id(request)
 
-        await self.service_class.update_item(
+        await CrudApplicationService.update_item(
+            model_class=self.model_class,
             item_id=item_id,
             data=data,
             operator_id=operator_id,
@@ -74,10 +72,10 @@ class BaseIamViewSet(BaseRequestViewSet):
     async def delete_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
 
-        if not item_id:
-            raise BusinessError("id 不能为空", 10001)
-
-        await self.service_class.delete_item(item_id=item_id)
+        await CrudApplicationService.delete_item(
+            model_class=self.model_class,
+            item_id=item_id,
+        )
 
         return self.success_response()
 

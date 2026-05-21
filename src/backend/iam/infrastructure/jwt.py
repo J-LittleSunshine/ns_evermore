@@ -5,18 +5,16 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from typing import TYPE_CHECKING
 
 from django.conf import settings
 from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import OctKey
 
-if TYPE_CHECKING:
-    pass
-
 
 class JwtService:
+    """JWT 基础设施服务。"""
+
     ALGORITHM = "HS256"
     TOKEN_TYPE = "JWT"
     ACCESS_TYPE = "access"

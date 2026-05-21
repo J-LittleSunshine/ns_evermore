@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from iam.services.crud import (
-    DepartmentPermissionCrudService,
-    RolePermissionCrudService,
-    SubsidiaryPermissionCrudService,
-    UserPermissionCrudService,
-    UserRoleCrudService,
+from iam.application.authorization import AuthorizationApplicationService
+from iam.models import (
+    IamDepartmentPermission,
+    IamRolePermission,
+    IamSubsidiaryPermission,
+    IamUserPermission,
+    IamUserRole,
 )
-from iam.services.grant import GrantService
 from iam.validators import (
     DepartmentPermissionValidator,
     RolePermissionValidator,
@@ -19,14 +19,13 @@ from iam.validators import (
     UserRoleValidator,
 )
 from iam.views.base import BaseIamViewSet
-from ns_backend.exceptions import BusinessError
 
 if TYPE_CHECKING:
     pass
 
 
 class UserRoleViewSet(BaseIamViewSet):
-    service_class = UserRoleCrudService
+    model_class = IamUserRole
     validator_class = UserRoleValidator
 
     list_fields = detail_fields = ("id", "user_id", "role_id")
@@ -34,7 +33,7 @@ class UserRoleViewSet(BaseIamViewSet):
 
     async def bind_user_role(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
-        result = await GrantService.bind_user_role(
+        result = await AuthorizationApplicationService.bind_user_role(
             data,
             operator_id=self.get_operator_id(request),
         )
@@ -44,10 +43,7 @@ class UserRoleViewSet(BaseIamViewSet):
         user_id = request.data.get("user_id")
         role_id = request.data.get("role_id")
 
-        if not user_id or not role_id:
-            raise BusinessError("user_id 和 role_id 不能为空", 13011)
-
-        await GrantService.unbind_user_role(
+        await AuthorizationApplicationService.unbind_user_role(
             user_id=user_id,
             role_id=role_id,
         )
@@ -56,7 +52,7 @@ class UserRoleViewSet(BaseIamViewSet):
 
 
 class RolePermissionViewSet(BaseIamViewSet):
-    service_class = RolePermissionCrudService
+    model_class = IamRolePermission
     validator_class = RolePermissionValidator
 
     list_fields = detail_fields = (
@@ -75,7 +71,7 @@ class RolePermissionViewSet(BaseIamViewSet):
 
     async def grant_role_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
-        result = await GrantService.grant_role_permission(
+        result = await AuthorizationApplicationService.grant_role_permission(
             data,
             operator_id=self.get_operator_id(request),
         )
@@ -85,10 +81,7 @@ class RolePermissionViewSet(BaseIamViewSet):
         role_id = request.data.get("role_id")
         permission_id = request.data.get("permission_id")
 
-        if not role_id or not permission_id:
-            raise BusinessError("role_id 和 permission_id 不能为空", 13012)
-
-        await GrantService.revoke_role_permission(
+        await AuthorizationApplicationService.revoke_role_permission(
             role_id=role_id,
             permission_id=permission_id,
         )
@@ -97,7 +90,7 @@ class RolePermissionViewSet(BaseIamViewSet):
 
 
 class UserPermissionViewSet(BaseIamViewSet):
-    service_class = UserPermissionCrudService
+    model_class = IamUserPermission
     validator_class = UserPermissionValidator
 
     list_fields = detail_fields = (
@@ -118,7 +111,7 @@ class UserPermissionViewSet(BaseIamViewSet):
 
     async def grant_user_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
-        result = await GrantService.grant_user_permission(
+        result = await AuthorizationApplicationService.grant_user_permission(
             data,
             operator_id=self.get_operator_id(request),
         )
@@ -128,10 +121,7 @@ class UserPermissionViewSet(BaseIamViewSet):
         user_id = request.data.get("user_id")
         permission_id = request.data.get("permission_id")
 
-        if not user_id or not permission_id:
-            raise BusinessError("user_id 和 permission_id 不能为空", 13013)
-
-        await GrantService.revoke_user_permission(
+        await AuthorizationApplicationService.revoke_user_permission(
             user_id=user_id,
             permission_id=permission_id,
         )
@@ -140,7 +130,7 @@ class UserPermissionViewSet(BaseIamViewSet):
 
 
 class DepartmentPermissionViewSet(BaseIamViewSet):
-    service_class = DepartmentPermissionCrudService
+    model_class = IamDepartmentPermission
     validator_class = DepartmentPermissionValidator
 
     list_fields = detail_fields = (
@@ -161,7 +151,7 @@ class DepartmentPermissionViewSet(BaseIamViewSet):
 
     async def grant_department_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
-        result = await GrantService.grant_department_permission(
+        result = await AuthorizationApplicationService.grant_department_permission(
             data,
             operator_id=self.get_operator_id(request),
         )
@@ -171,10 +161,7 @@ class DepartmentPermissionViewSet(BaseIamViewSet):
         department_id = request.data.get("department_id")
         permission_id = request.data.get("permission_id")
 
-        if not department_id or not permission_id:
-            raise BusinessError("department_id 和 permission_id 不能为空", 13014)
-
-        await GrantService.revoke_department_permission(
+        await AuthorizationApplicationService.revoke_department_permission(
             department_id=department_id,
             permission_id=permission_id,
         )
@@ -183,7 +170,7 @@ class DepartmentPermissionViewSet(BaseIamViewSet):
 
 
 class SubsidiaryPermissionViewSet(BaseIamViewSet):
-    service_class = SubsidiaryPermissionCrudService
+    model_class = IamSubsidiaryPermission
     validator_class = SubsidiaryPermissionValidator
 
     list_fields = detail_fields = (
@@ -204,7 +191,7 @@ class SubsidiaryPermissionViewSet(BaseIamViewSet):
 
     async def grant_subsidiary_permission(self, request, *args, **kwargs):
         data = self.validator_class.validate_create(request.data)
-        result = await GrantService.grant_subsidiary_permission(
+        result = await AuthorizationApplicationService.grant_subsidiary_permission(
             data,
             operator_id=self.get_operator_id(request),
         )
@@ -214,10 +201,7 @@ class SubsidiaryPermissionViewSet(BaseIamViewSet):
         subsidiary_id = request.data.get("subsidiary_id")
         permission_id = request.data.get("permission_id")
 
-        if not subsidiary_id or not permission_id:
-            raise BusinessError("subsidiary_id 和 permission_id 不能为空", 13015)
-
-        await GrantService.revoke_subsidiary_permission(
+        await AuthorizationApplicationService.revoke_subsidiary_permission(
             subsidiary_id=subsidiary_id,
             permission_id=permission_id,
         )

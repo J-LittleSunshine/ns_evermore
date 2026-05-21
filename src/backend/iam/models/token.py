@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from django.db import models
 
+from .device import IamUserSession
 from .user import IamUser
 
 
@@ -14,6 +15,15 @@ class IamUserToken(models.Model):
         db_column="user_id",
         related_name="tokens",
         verbose_name="用户",
+    )
+    session = models.ForeignKey(
+        IamUserSession,
+        on_delete=models.DO_NOTHING,
+        db_column="session_id",
+        related_name="tokens",
+        null=True,
+        blank=True,
+        verbose_name="会话",
     )
     refresh_token = models.CharField(max_length=512, verbose_name="Refresh Token Hash")
     access_jti = models.CharField(max_length=64, null=True, blank=True, verbose_name="Access Token JTI")

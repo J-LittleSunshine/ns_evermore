@@ -3,15 +3,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from iam.services.crud import DepartmentCrudService
+from iam.models import IamDepartment
 from iam.validators import DepartmentValidator
 from iam.views.base import BaseIamViewSet
 
 if TYPE_CHECKING:
     pass
 
+
 class DepartmentViewSet(BaseIamViewSet):
-    service_class = DepartmentCrudService
+    model_class = IamDepartment
     validator_class = DepartmentValidator
     list_fields = detail_fields = (
         "id", "company_id", "subsidiary_id", "parent_id",
