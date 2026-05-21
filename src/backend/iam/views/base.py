@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from iam.application.crud import CrudApplicationService
+from iam.services.base import CrudService
+from iam.services.auth import VerifyService
+from iam.services.permission import PermissionService
 from ns_backend.common import BaseRequestViewSet
 from ns_backend.exceptions import ValidateError
 
@@ -11,7 +13,12 @@ if TYPE_CHECKING:
     pass
 
 
-class BaseIamViewSet(BaseRequestViewSet):
+class IamRequestViewSet(BaseRequestViewSet):
+    verify_service = VerifyService
+    permission_service = PermissionService
+
+
+class BaseIamViewSet(IamRequestViewSet):
     model_class = None
     validator_class = None
 
@@ -23,7 +30,7 @@ class BaseIamViewSet(BaseRequestViewSet):
         page = request.data.get("page", 1)
         page_size = request.data.get("page_size", 20)
 
-        data = await CrudApplicationService.list_items(
+        data = await CrudService.list_items(
             model_class=self.model_class,
             fields=self.list_fields,
             page=page,
@@ -35,7 +42,7 @@ class BaseIamViewSet(BaseRequestViewSet):
     async def detail_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
 
-        data = await CrudApplicationService.detail_item(
+        data = await CrudService.detail_item(
             model_class=self.model_class,
             item_id=item_id,
             fields=self.detail_fields,
@@ -47,7 +54,7 @@ class BaseIamViewSet(BaseRequestViewSet):
         data = self.validate_create_data(request.data)
         operator_id = self.get_operator_id(request)
 
-        result = await CrudApplicationService.create_item(
+        result = await CrudService.create_item(
             model_class=self.model_class,
             data=data,
             operator_id=operator_id,
@@ -60,7 +67,7 @@ class BaseIamViewSet(BaseRequestViewSet):
         data = self.validate_update_data(request.data)
         operator_id = self.get_operator_id(request)
 
-        await CrudApplicationService.update_item(
+        await CrudService.update_item(
             model_class=self.model_class,
             item_id=item_id,
             data=data,
@@ -72,7 +79,7 @@ class BaseIamViewSet(BaseRequestViewSet):
     async def delete_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
 
-        await CrudApplicationService.delete_item(
+        await CrudService.delete_item(
             model_class=self.model_class,
             item_id=item_id,
         )

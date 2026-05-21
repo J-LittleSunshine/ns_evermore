@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from iam.domain.services.permission import PermissionDomainService
+from iam.services.permission import PermissionService
 from ns_backend.exceptions import BusinessError
 
 
@@ -44,7 +44,7 @@ class UserPolicy:
             if not cls.is_truthy(update_data.get(field)):
                 continue
 
-            has_permission = await PermissionDomainService.has_permission(
+            has_permission = await PermissionService.has_permission(
                 user=operator,
                 permission_code=permission_code,
             )
@@ -58,7 +58,7 @@ class UserPolicy:
         if operator.is_superuser:
             return True
 
-        return await PermissionDomainService.has_permission(
+        return await PermissionService.has_permission(
             user=operator,
             permission_code=cls.ADMIN_USER_PERMISSION,
         )

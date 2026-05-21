@@ -6,19 +6,16 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 
-from iam.application.auth.login import LoginApplicationService
-from iam.application.auth.logout import LogoutApplicationService
-from iam.application.auth.refresh import RefreshApplicationService
-from iam.application.auth.revoke import RevokeApplicationService
-from iam.infrastructure.jwt import JwtService
-from ns_backend.common import BaseRequestViewSet
+from iam.services.auth import LoginService, LogoutService, RefreshService, RevokeService
+from ns_backend.utils.jwt import JwtService
+from iam.views.base import IamRequestViewSet
 from ns_backend.exceptions import BusinessError
 
 if TYPE_CHECKING:
     pass
 
 
-class AuthPublicViewSet(BaseRequestViewSet):
+class AuthPublicViewSet(IamRequestViewSet):
     authentication_required = False
 
     async def login(self, request, *args, **kwargs):
@@ -31,7 +28,7 @@ class AuthPublicViewSet(BaseRequestViewSet):
         if not password:
             return self.failed_response("password 不能为空", 11002)
 
-        data = await LoginApplicationService.execute(
+        data = await LoginService.execute(
             username=username,
             password=password,
             client_ip=self.get_client_ip(request),
@@ -51,7 +48,7 @@ class AuthPublicViewSet(BaseRequestViewSet):
         if not refresh_token:
             return self.failed_response("refresh_token 不能为空", 11004)
 
-        data = await RefreshApplicationService.execute(refresh_token=refresh_token)
+        data = await RefreshService.execute(refresh_token=refresh_token)
 
         return self.success_response(data)
 
@@ -80,7 +77,7 @@ class AuthPublicViewSet(BaseRequestViewSet):
             return None
 
 
-class AuthPrivateViewSet(BaseRequestViewSet):
+class AuthPrivateViewSet(IamRequestViewSet):
     authentication_required = True
 
     async def logout(self, request, *args, **kwargs):
@@ -102,10 +99,10 @@ class AuthPrivateViewSet(BaseRequestViewSet):
             if refresh_user_id != current_user.id:
                 raise BusinessError("Refresh Token 与当前登录用户不匹配", 11012)
 
-        success = await RevokeApplicationService.revoke_access_token(access_token)
+        success = await RevokeService.revoke_access_token(access_token)
 
         if refresh_token:
-            refresh_success = await LogoutApplicationService.execute(refresh_token)
+            refresh_success = await LogoutService.execute(refresh_token)
             success = success or refresh_success
 
         return self.success_response({

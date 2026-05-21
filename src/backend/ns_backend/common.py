@@ -6,8 +6,6 @@ from typing import TYPE_CHECKING, Any
 from adrf.viewsets import ViewSet
 from django.http import JsonResponse
 
-from iam.application.auth.verify import VerifyApplicationService
-from iam.domain.services.permission import PermissionDomainService
 from ns_backend.exceptions import BusinessError
 from ns_backend.logger import get_logger
 
@@ -19,6 +17,8 @@ _logger = get_logger("ns_backend")
 class BaseRequestViewSet(ViewSet):
     authentication_required = True
     required_permissions: tuple[str, ...] = ()
+    verify_service = None
+    permission_service = None
 
     @classmethod
     def as_view(cls, actions: dict[str, str] | None = None, **initkwargs: Any):
@@ -64,7 +64,7 @@ class BaseRequestViewSet(ViewSet):
         request.current_user = user
 
         for permission_code in self.required_permissions:
-            has_permission = await PermissionDomainService.has_permission(
+            has_permission = await self.has_permission(
                 user=user,
                 permission_code=permission_code,
             )
@@ -79,7 +79,34 @@ class BaseRequestViewSet(ViewSet):
         if not token:
             return None
 
-        return await VerifyApplicationService.get_user_by_access_token(token)
+        verify_service = cls.get_verify_service()
+
+        if verify_service is None:
+            return None
+
+        return await verify_service.get_user_by_access_token(token)
+
+    @classmethod
+    def get_verify_service(cls):
+        """Get access-token verify service from concrete app layer."""
+        return cls.verify_service
+
+    @classmethod
+    def get_permission_service(cls):
+        """Get permission service from concrete app layer."""
+        return cls.permission_service
+
+    @classmethod
+    async def has_permission(cls, user, permission_code: str) -> bool:
+        permission_service = cls.get_permission_service()
+
+        if permission_service is None:
+            return False
+
+        return await permission_service.has_permission(
+            user=user,
+            permission_code=permission_code,
+        )
 
     @staticmethod
     def get_bearer_token_from_request(request) -> str | None:
