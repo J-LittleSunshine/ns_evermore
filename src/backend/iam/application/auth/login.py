@@ -29,7 +29,19 @@ class LoginApplicationService:
         os_name: str | None = None,
         browser_name: str | None = None,
     ) -> dict:
+        if not isinstance(username, str):
+            raise BusinessError("username 不能为空", 11001)
+
+        if not isinstance(password, str):
+            raise BusinessError("password 不能为空", 11002)
+
         username = username.strip()
+
+        if not username:
+            raise BusinessError("username 不能为空", 11001)
+
+        if not password:
+            raise BusinessError("password 不能为空", 11002)
 
         await LoginFailureDomainService.ensure_not_locked(username=username)
 
