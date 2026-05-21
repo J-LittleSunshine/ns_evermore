@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from django.utils import timezone
-
 from iam.repositories.session import SessionRepository
 from iam.repositories.token import TokenRepository
 from iam.repositories.user import UserRepository
