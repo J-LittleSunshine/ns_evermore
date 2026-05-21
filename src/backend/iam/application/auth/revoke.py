@@ -42,4 +42,3 @@ class RevokeApplicationService:
     async def revoke_user_tokens(cls, user_id: int) -> None:
         """吊销用户全部 session 和 token。"""
         await SessionDomainService.revoke_user_sessions(user_id=user_id)
-        await TokenRepository.revoke_user_tokens(user_id=user_id)
