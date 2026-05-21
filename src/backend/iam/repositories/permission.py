@@ -45,10 +45,17 @@ class PermissionRepository:
         ).aexists()
 
     @classmethod
-    async def has_role_allow(cls, user_id: int, permission_code: str, now) -> bool:
+    async def has_role_allow(
+        cls,
+        user_id: int,
+        permission_code: str,
+        now,
+        role_scope: str,
+    ) -> bool:
         role_ids = IamUserRole.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
             role__status=1,
+            role__role_scope=role_scope,
         ).values("role_id")
 
         return await IamRolePermission.objects.using(IAM_DB_ALIAS).filter(
