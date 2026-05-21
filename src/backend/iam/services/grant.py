@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from django.db import IntegrityError
-from django.utils import timezone
 
+from common.mixins.audit import AuditDataMixin
 from iam.constants import IAM_DB_ALIAS
 from iam.models import (
     IamDepartmentPermission,
@@ -15,31 +15,10 @@ from iam.models import (
 from ns_backend.exceptions import BusinessError
 
 
-class GrantService:
-    @staticmethod
-    def prepare_grant_data(data: dict, operator_id: int | None = None) -> dict:
-        now = timezone.now()
-        data = data.copy()
-        data["granted_by_id"] = operator_id
-        data["created_by"] = operator_id
-        data["updated_by"] = operator_id
-        data.setdefault("created_at", now)
-        data["updated_at"] = now
-        return data
-
-    @staticmethod
-    def prepare_relation_data(data: dict, operator_id: int | None = None) -> dict:
-        now = timezone.now()
-        data = data.copy()
-        data["created_by"] = operator_id
-        data["updated_by"] = operator_id
-        data.setdefault("created_at", now)
-        data["updated_at"] = now
-        return data
-
+class GrantService(AuditDataMixin):
     @classmethod
     async def bind_user_role(cls, data: dict, operator_id: int | None = None) -> dict:
-        data = cls.prepare_relation_data(data, operator_id=operator_id)
+        data = cls.fill_create_audit_fields(data, operator_id=operator_id)
 
         try:
             item = await IamUserRole.objects.using(IAM_DB_ALIAS).acreate(**data)
@@ -60,7 +39,7 @@ class GrantService:
 
     @classmethod
     async def grant_role_permission(cls, data: dict, operator_id: int | None = None) -> dict:
-        data = cls.prepare_grant_data(data, operator_id=operator_id)
+        data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
 
         try:
             item = await IamRolePermission.objects.using(IAM_DB_ALIAS).acreate(**data)
@@ -81,7 +60,7 @@ class GrantService:
 
     @classmethod
     async def grant_user_permission(cls, data: dict, operator_id: int | None = None) -> dict:
-        data = cls.prepare_grant_data(data, operator_id=operator_id)
+        data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
 
         try:
             item = await IamUserPermission.objects.using(IAM_DB_ALIAS).acreate(**data)
@@ -102,7 +81,7 @@ class GrantService:
 
     @classmethod
     async def grant_department_permission(cls, data: dict, operator_id: int | None = None) -> dict:
-        data = cls.prepare_grant_data(data, operator_id=operator_id)
+        data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
 
         try:
             item = await IamDepartmentPermission.objects.using(IAM_DB_ALIAS).acreate(**data)
@@ -127,7 +106,7 @@ class GrantService:
 
     @classmethod
     async def grant_subsidiary_permission(cls, data: dict, operator_id: int | None = None) -> dict:
-        data = cls.prepare_grant_data(data, operator_id=operator_id)
+        data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
 
         try:
             item = await IamSubsidiaryPermission.objects.using(IAM_DB_ALIAS).acreate(**data)
