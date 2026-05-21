@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from iam.policies.organization import OrganizationPolicy
+from iam.policies.tenant import TenantPolicy
 from iam.repositories.base import CrudRepository
-from iam.repositories.organization import OrganizationRepository
 from iam.services.tenant import TenantService
 from ns_backend.exceptions import BusinessError
 
@@ -27,28 +28,19 @@ class DepartmentService:
 
             if not company_id:
                 raise BusinessError("company_id 不能为空", 10001)
-        elif TenantService.is_enterprise_user(context):
-            TenantService.ensure_enterprise_context(context)
+        else:
+            TenantPolicy.ensure_enterprise_context(context)
             company_id = context.company_id
             create_data["company_id"] = company_id
-        else:
-            raise BusinessError("个人用户不能访问企业组织资源", 14002)
 
-        subsidiary_id = create_data.get("subsidiary_id")
-
-        if subsidiary_id:
-            subsidiary_company_id = await OrganizationRepository.get_subsidiary_company_id(subsidiary_id)
-
-            if subsidiary_company_id != company_id:
-                raise BusinessError("子公司不属于当前公司", 14041)
-
-        parent_id = create_data.get("parent_id")
-
-        if parent_id:
-            parent_company_id = await OrganizationRepository.get_department_company_id(parent_id)
-
-            if parent_company_id != company_id:
-                raise BusinessError("上级部门不属于当前公司", 14043)
+        await OrganizationPolicy.ensure_subsidiary_belongs_to_company(
+            subsidiary_id=create_data.get("subsidiary_id"),
+            company_id=company_id,
+        )
+        await OrganizationPolicy.ensure_parent_department_belongs_to_company(
+            parent_id=create_data.get("parent_id"),
+            company_id=company_id,
+        )
 
         return await CrudRepository.create_item_with_audit(
             model_class=model_class,

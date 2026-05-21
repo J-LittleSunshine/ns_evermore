@@ -4,9 +4,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from iam.models import IamCompany
+from iam.policies.organization import OrganizationPolicy
+from iam.services.tenant import TenantService
 from iam.validators import CompanyValidator
 from iam.views.base import BaseIamViewSet
-from ns_backend.exceptions import BusinessError
 
 if TYPE_CHECKING:
     pass
@@ -23,18 +24,14 @@ class CompanyViewSet(BaseIamViewSet):
     update_fields = ("company_name", "legal_name", "status")
 
     async def create_item(self, request, *args, **kwargs):
-        current_user = getattr(request, "current_user", None)
-
-        if not bool(getattr(current_user, "is_superuser", False)):
-            raise BusinessError("只有平台管理员可以创建公司", 14003)
+        context = TenantService.from_user(request.current_user)
+        OrganizationPolicy.ensure_can_create_company(context)
 
         return await super().create_item(request, *args, **kwargs)
 
     async def delete_item(self, request, *args, **kwargs):
-        current_user = getattr(request, "current_user", None)
-
-        if not bool(getattr(current_user, "is_superuser", False)):
-            raise BusinessError("只有平台管理员可以删除公司", 14004)
+        context = TenantService.from_user(request.current_user)
+        OrganizationPolicy.ensure_can_delete_company(context)
 
         return await super().delete_item(request, *args, **kwargs)
 

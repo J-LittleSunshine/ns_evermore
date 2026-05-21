@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from iam.models import IamRole
+from iam.policies.role import RolePolicy
+from iam.policies.tenant import TenantPolicy
 from iam.repositories.role import RoleRepository
 from iam.services.tenant import TenantService
 from ns_backend.exceptions import BusinessError
@@ -25,11 +26,11 @@ class RoleService(AuditDataMixin):
         page, page_size = cls.normalize_page(page, page_size)
         context = TenantService.from_user(operator)
 
-        if TenantService.is_platform_admin(context):
+        if TenantPolicy.is_platform_admin(context):
             tenant_filter = None
             include_personal = True
         else:
-            TenantService.ensure_enterprise_context(context)
+            TenantPolicy.ensure_enterprise_context(context)
             tenant_filter = {"company_id": context.company_id}
             include_personal = False
 
@@ -57,10 +58,10 @@ class RoleService(AuditDataMixin):
 
         context = TenantService.from_user(operator)
 
-        if TenantService.is_platform_admin(context):
+        if TenantPolicy.is_platform_admin(context):
             return await RoleRepository.get_required_by_id(int(role_id))
 
-        TenantService.ensure_enterprise_context(context)
+        TenantPolicy.ensure_enterprise_context(context)
 
         return await RoleRepository.get_required_by_id_for_company(
             role_id=int(role_id),
@@ -75,40 +76,10 @@ class RoleService(AuditDataMixin):
         operator_id: int | None,
     ) -> dict[str, Any]:
         context = TenantService.from_user(operator)
-        role_scope = data.get("role_scope")
-        role_code = data.get("role_code")
-        final_data = data.copy()
-
-        if role_scope == IamRole.SCOPE_PERSONAL:
-            if not TenantService.is_platform_admin(context):
-                raise BusinessError("只有平台管理员可以创建个人体系角色", 14014)
-
-            if final_data.get("company_id") is not None:
-                raise BusinessError("个人体系角色不能绑定公司", 14011)
-
-            if await RoleRepository.exists_personal_role_code(role_code=role_code):
-                raise BusinessError("角色编码已存在", 14012)
-
-            final_data["company_id"] = None
-        elif role_scope == IamRole.SCOPE_ENTERPRISE:
-            if TenantService.is_platform_admin(context):
-                company_id = final_data.get("company_id")
-
-                if not company_id:
-                    raise BusinessError("企业角色必须绑定公司", 14013)
-            else:
-                TenantService.ensure_enterprise_context(context)
-                company_id = context.company_id
-
-            if await RoleRepository.exists_enterprise_role_code(
-                company_id=company_id,
-                role_code=role_code,
-            ):
-                raise BusinessError("角色编码已存在", 14012)
-
-            final_data["company_id"] = company_id
-        else:
-            raise BusinessError("role_scope 取值非法", 12004)
+        final_data = await RolePolicy.build_create_payload(
+            context=context,
+            data=data,
+        )
 
         create_data = cls.fill_create_audit_fields(final_data, operator_id=operator_id)
         role = await RoleRepository.create_role(create_data)
@@ -122,11 +93,7 @@ class RoleService(AuditDataMixin):
         operator,
         operator_id: int | None,
     ) -> None:
-        if "company_id" in data:
-            raise BusinessError("不允许更新字段：company_id", 12005)
-
-        if "role_scope" in data:
-            raise BusinessError("不允许更新字段：role_scope", 12005)
+        RolePolicy.ensure_can_update_fields(data)
 
         role = await cls.get_role(role_id=role_id, operator=operator)
         update_data = cls.fill_update_audit_fields(data, operator_id=operator_id)

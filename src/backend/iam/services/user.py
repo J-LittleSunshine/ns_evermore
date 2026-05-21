@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
 
 from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 
-from iam.repositories.organization import OrganizationRepository
+from iam.policies.organization import OrganizationPolicy
+from iam.policies.tenant import TenantPolicy
+from iam.policies.user import UserPolicy
 from iam.repositories.user import UserRepository
 from iam.services.tenant import TenantService
 from ns_backend.exceptions import BusinessError
@@ -27,7 +28,7 @@ class UserService:
 		include_superuser: bool = False,
 	) -> dict[str, Any]:
 		page, page_size = cls.normalize_page(page, page_size)
-		tenant_filter = cls.get_user_tenant_filter(operator)
+		tenant_filter = UserPolicy.get_user_tenant_filter(operator)
 		users, total = await UserRepository.list_users(
 			page=page,
 			page_size=page_size,
@@ -53,10 +54,10 @@ class UserService:
 
 		context = TenantService.from_user(operator)
 
-		if TenantService.is_platform_admin(context):
+		if TenantPolicy.is_platform_admin(context):
 			user = await UserRepository.get_by_id(user_id)
-		elif TenantService.is_enterprise_user(context):
-			TenantService.ensure_enterprise_context(context)
+		elif TenantPolicy.is_enterprise_user(context):
+			TenantPolicy.ensure_enterprise_context(context)
 			user = await UserRepository.get_by_id_for_company(
 				user_id=user_id,
 				company_id=context.company_id,
@@ -84,29 +85,18 @@ class UserService:
 		operator,
 		operator_id: int | None = None,
 	) -> dict[str, Any]:
-		context = TenantService.from_user(operator)
-		create_payload = data.copy()
-
-		if not TenantService.is_platform_admin(context) and cls.is_truthy(create_payload.get("is_superuser")):
-			raise BusinessError("后台管理员不能操作超级管理员", 11010)
-
-		if TenantService.is_platform_admin(context):
-			pass
-		elif TenantService.is_enterprise_user(context):
-			TenantService.ensure_enterprise_context(context)
-			create_payload["company_id"] = context.company_id
-			create_payload["user_type"] = TenantService.USER_TYPE_ENTERPRISE
-			create_payload["is_superuser"] = 0
-		else:
-			raise BusinessError("个人用户不能创建用户", 14021)
+		create_payload = UserPolicy.build_create_payload(operator, data)
 
 		company_id = create_payload.get("company_id")
 
 		if company_id:
-			await cls.ensure_org_refs_belong_to_company(
-				company_id=company_id,
+			await OrganizationPolicy.ensure_subsidiary_belongs_to_company(
 				subsidiary_id=create_payload.get("subsidiary_id"),
+				company_id=company_id,
+			)
+			await OrganizationPolicy.ensure_department_belongs_to_company(
 				department_id=create_payload.get("department_id"),
+				company_id=company_id,
 			)
 
 		create_data = cls.build_create_data(
@@ -117,26 +107,6 @@ class UserService:
 		return {"id": user.id}
 
 	@classmethod
-	async def ensure_org_refs_belong_to_company(
-		cls,
-		*,
-		company_id: int,
-		subsidiary_id: int | None = None,
-		department_id: int | None = None,
-	) -> None:
-		if subsidiary_id:
-			subsidiary_company_id = await OrganizationRepository.get_subsidiary_company_id(subsidiary_id)
-
-			if subsidiary_company_id != company_id:
-				raise BusinessError("子公司不属于当前公司", 14041)
-
-		if department_id:
-			department_company_id = await OrganizationRepository.get_department_company_id(department_id)
-
-			if department_company_id != company_id:
-				raise BusinessError("部门不属于当前公司", 14042)
-
-	@classmethod
 	async def update_user(
 		cls,
 		user_id: int,
@@ -144,8 +114,7 @@ class UserService:
 		operator,
 		operator_id: int | None = None,
 	) -> None:
-		if "company_id" in data and not bool(getattr(operator, "is_superuser", False)):
-			raise BusinessError("不允许更新字段：company_id", 12005)
+		UserPolicy.ensure_can_update_user_fields(operator, data)
 
 		user = await cls.get_user(user_id=user_id, operator=operator)
 		update_data = cls.build_update_data(
@@ -160,7 +129,7 @@ class UserService:
 			and bool(user.is_active)
 		)
 
-		company_scope = cls.get_operator_company_scope(operator)
+		company_scope = UserPolicy.get_operator_company_scope(operator)
 
 		if should_revoke:
 			await UserRepository.update_user_and_revoke_sessions_tokens(
@@ -177,7 +146,7 @@ class UserService:
 		user = await cls.get_user(user_id=user_id, operator=operator)
 		await UserRepository.revoke_and_delete_user(
 			user_id=user.id,
-			company_id=cls.get_operator_company_scope(operator),
+			company_id=UserPolicy.get_operator_company_scope(operator),
 		)
 
 	@classmethod
@@ -196,34 +165,8 @@ class UserService:
 		await UserRepository.update_user_and_revoke_sessions_tokens(
 			user_id=user.id,
 			data=update_data,
-			company_id=cls.get_operator_company_scope(operator),
+			company_id=UserPolicy.get_operator_company_scope(operator),
 		)
-
-	@classmethod
-	def get_user_tenant_filter(cls, operator) -> dict[str, Any] | None:
-		context = TenantService.from_user(operator)
-
-		if TenantService.is_platform_admin(context):
-			return None
-
-		if TenantService.is_enterprise_user(context):
-			TenantService.ensure_enterprise_context(context)
-			return {"company_id": context.company_id}
-
-		return {"id": context.user_id}
-
-	@classmethod
-	def get_operator_company_scope(cls, operator) -> int | None:
-		context = TenantService.from_user(operator)
-
-		if TenantService.is_platform_admin(context):
-			return None
-
-		if TenantService.is_enterprise_user(context):
-			TenantService.ensure_enterprise_context(context)
-			return context.company_id
-
-		return None
 
 	@staticmethod
 	def normalize_page(page: int | str | None, page_size: int | str | None) -> tuple[int, int]:
@@ -272,12 +215,6 @@ class UserService:
 			"updated_at": timezone.now(),
 		}
 
-	@staticmethod
-	def is_truthy(value: Any) -> bool:
-		if isinstance(value, str):
-			return value.strip().lower() in {"1", "true", "yes", "on"}
-
-		return bool(value)
 
 	@staticmethod
 	def serialize(instance, fields: tuple[str, ...]) -> dict[str, Any]:
