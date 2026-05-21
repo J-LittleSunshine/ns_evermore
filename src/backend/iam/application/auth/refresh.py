@@ -39,7 +39,7 @@ class RefreshApplicationService:
 
         if token_record.revoked_at:
             if token_record.session_id:
-                await SessionDomainService.revoke_session(token_record.session.session_id)
+                await SessionDomainService.revoke_session_by_pk(token_record.session_id)
             else:
                 await TokenRepository.revoke_user_tokens(user_id=user_id)
             raise BusinessError("检测到 Refresh Token 重放攻击，当前会话已强制下线", 11013)
@@ -52,7 +52,7 @@ class RefreshApplicationService:
         session_public_id = None
 
         if token_record.session_id:
-            session = await SessionDomainService.ensure_available(token_record.session.session_id)
+            session = await SessionDomainService.ensure_available_by_pk(token_record.session_id)
             session_public_id = session.session_id
 
         access_token, access_jti = JwtService.create_access_token(
@@ -75,9 +75,9 @@ class RefreshApplicationService:
             },
         )
 
-        if session_public_id:
-            await SessionDomainService.touch_activity(
-                session_id=session_public_id,
+        if token_record.session_id:
+            await SessionDomainService.touch_activity_by_pk(
+                session_pk=token_record.session_id,
                 client_ip=token_record.client_ip,
                 user_agent=token_record.user_agent,
             )
