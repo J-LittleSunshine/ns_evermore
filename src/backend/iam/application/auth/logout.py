@@ -34,7 +34,7 @@ class LogoutApplicationService:
             return False
 
         if token_record.session_id:
-            return await SessionDomainService.revoke_session(token_record.session.session_id)
+            return await SessionDomainService.revoke_session_by_pk(token_record.session_id)
 
         updated_count = await TokenRepository.revoke_token(token_record.id)
 
