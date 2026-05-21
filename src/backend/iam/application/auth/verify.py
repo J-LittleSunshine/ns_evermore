@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from iam.infrastructure.jwt import JwtService
 from iam.repositories.session import SessionRepository
 from iam.repositories.token import TokenRepository
 from iam.repositories.user import UserRepository
-from iam.services.jwt import JwtService
 
 
 class VerifyApplicationService:
