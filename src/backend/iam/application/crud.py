@@ -22,6 +22,7 @@ class CrudApplicationService:
         page_size: int = 20,
     ) -> dict[str, Any]:
         """分页查询通用数据。"""
+        cls.ensure_model_class(model_class)
         page, page_size = cls.normalize_page(page, page_size)
         items, total = await CrudRepository.list_items(
             model_class=model_class,
@@ -42,6 +43,7 @@ class CrudApplicationService:
     @classmethod
     async def detail_item(cls, model_class, item_id: int, fields: tuple[str, ...]) -> dict[str, Any]:
         """查询通用数据详情。"""
+        cls.ensure_model_class(model_class)
         item = await cls.get_item(model_class=model_class, item_id=item_id)
         return cls.serialize(item, fields)
 
@@ -53,6 +55,7 @@ class CrudApplicationService:
         operator_id: int | None = None,
     ) -> dict[str, Any]:
         """创建通用数据。"""
+        cls.ensure_model_class(model_class)
         data = cls.fill_create_audit_fields(
             model_class=model_class,
             data=data,
@@ -70,6 +73,7 @@ class CrudApplicationService:
         operator_id: int | None = None,
     ) -> None:
         """更新通用数据。"""
+        cls.ensure_model_class(model_class)
         item = await cls.get_item(model_class=model_class, item_id=item_id)
         data = cls.fill_update_audit_fields(
             model_class=model_class,
@@ -81,6 +85,7 @@ class CrudApplicationService:
     @classmethod
     async def delete_item(cls, model_class, item_id: int) -> None:
         """删除通用数据。"""
+        cls.ensure_model_class(model_class)
         item = await cls.get_item(model_class=model_class, item_id=item_id)
         await CrudRepository.delete_item(item)
 
@@ -108,8 +113,9 @@ class CrudApplicationService:
 
         return normalized_page, normalized_page_size
 
-    @staticmethod
+    @classmethod
     def fill_create_audit_fields(
+        cls,
         model_class,
         data: dict[str, Any],
         operator_id: int | None = None,
@@ -117,34 +123,37 @@ class CrudApplicationService:
         """填充创建审计字段。"""
         result = data.copy()
         now = timezone.now()
+        field_names = cls.get_model_field_names(model_class)
 
-        if hasattr(model_class, "created_by"):
+        if "created_by" in field_names:
             result.setdefault("created_by", operator_id)
 
-        if hasattr(model_class, "updated_by"):
+        if "updated_by" in field_names:
             result.setdefault("updated_by", operator_id)
 
-        if hasattr(model_class, "created_at"):
+        if "created_at" in field_names:
             result.setdefault("created_at", now)
 
-        if hasattr(model_class, "updated_at"):
+        if "updated_at" in field_names:
             result.setdefault("updated_at", now)
 
         return result
 
-    @staticmethod
+    @classmethod
     def fill_update_audit_fields(
+        cls,
         model_class,
         data: dict[str, Any],
         operator_id: int | None = None,
     ) -> dict[str, Any]:
         """填充更新审计字段。"""
         result = data.copy()
+        field_names = cls.get_model_field_names(model_class)
 
-        if hasattr(model_class, "updated_by"):
+        if "updated_by" in field_names:
             result["updated_by"] = operator_id
 
-        if hasattr(model_class, "updated_at"):
+        if "updated_at" in field_names:
             result["updated_at"] = timezone.now()
 
         return result
@@ -163,3 +172,14 @@ class CrudApplicationService:
             result[field] = value
 
         return result
+
+    @staticmethod
+    def ensure_model_class(model_class) -> None:
+        """确保 View 已配置模型类。"""
+        if model_class is None:
+            raise BusinessError("model_class 未配置", 10006)
+
+    @staticmethod
+    def get_model_field_names(model_class) -> set[str]:
+        """获取 Django 模型字段名集合。"""
+        return {field.name for field in model_class._meta.fields}
