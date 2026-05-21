@@ -5,7 +5,6 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from django.db import transaction
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
@@ -77,16 +76,15 @@ class SessionService:
         session = await cls.get_session(session_id)
         now = timezone.now()
 
-        async with transaction.async_atomic(using=IAM_DB_ALIAS):
-            updated_count = await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
-                id=session.id,
-                revoked_at__isnull=True,
-            ).aupdate(revoked_at=now)
+        updated_count = await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+            id=session.id,
+            revoked_at__isnull=True,
+        ).aupdate(revoked_at=now)
 
-            await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
-                session_id=session.id,
-                revoked_at__isnull=True,
-            ).aupdate(revoked_at=now)
+        await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+            session_id=session.id,
+            revoked_at__isnull=True,
+        ).aupdate(revoked_at=now)
 
         return updated_count > 0
 
