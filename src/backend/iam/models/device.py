@@ -39,6 +39,7 @@ class IamUserDevice(models.Model):
     class Meta:
         managed = False
         db_table = "iam_user_device"
+        unique_together = (("user", "fingerprint_hash"),)
 
 
 class IamUserSession(models.Model):

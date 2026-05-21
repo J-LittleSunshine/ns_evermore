@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
 from iam.models import IamLoginFailureLock, IamUser
+from ns_backend.exceptions import BusinessError
 
 
 class LoginFailureRepository:
@@ -91,6 +92,34 @@ class LoginFailureRepository:
                 updated_at=now,
             )
         except IntegrityError:
-            await IamLoginFailureLock.objects.using(IAM_DB_ALIAS).filter(
+            retry_rows = await IamLoginFailureLock.objects.using(IAM_DB_ALIAS).filter(
                 username=username,
             ).aupdate(**update_fields)
+
+            if retry_rows:
+                return
+
+            # Rare race: row disappeared between unique-conflict and update; retry once.
+            try:
+                await IamLoginFailureLock.objects.using(IAM_DB_ALIAS).acreate(
+                    username=username,
+                    user_id=user.id if user else None,
+                    failed_count=1,
+                    locked_until=locked_until if max_failed_count <= 1 else None,
+                    last_failed_at=now,
+                    last_client_ip=client_ip,
+                    last_user_agent=user_agent,
+                    created_at=now,
+                    updated_at=now,
+                )
+            except IntegrityError:
+                # Another concurrent create happened again; last-write update is sufficient.
+                final_rows = await IamLoginFailureLock.objects.using(IAM_DB_ALIAS).filter(
+                    username=username,
+                ).aupdate(**update_fields)
+
+                if final_rows:
+                    return
+
+                raise BusinessError("登录失败计数更新失败，请稍后重试", 11014)
+

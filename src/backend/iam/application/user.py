@@ -76,13 +76,28 @@ class UserApplicationService:
             data=data,
             operator_id=operator_id,
         )
+
+        next_is_active = update_data.get("is_active")
+        should_revoke = (
+            next_is_active is not None
+            and str(next_is_active) == "0"
+            and bool(user.is_active)
+        )
+
+        if should_revoke:
+            await UserRepository.update_user_and_revoke_sessions_tokens(
+                user_id=user.id,
+                data=update_data,
+            )
+            return
+
         await UserRepository.update_user(user=user, data=update_data)
 
     @classmethod
     async def delete_user(cls, user_id: int) -> None:
         """删除用户。"""
-        user = await cls.get_user(user_id)
-        await UserRepository.delete_user(user)
+        await cls.get_user(user_id)
+        await UserRepository.revoke_and_delete_user(user_id=user_id)
 
     @classmethod
     async def reset_password(
@@ -97,7 +112,10 @@ class UserApplicationService:
             raw_password=raw_password,
             operator_id=operator_id,
         )
-        await UserRepository.update_user(user=user, data=update_data)
+        await UserRepository.update_user_and_revoke_sessions_tokens(
+            user_id=user.id,
+            data=update_data,
+        )
 
     @staticmethod
     def serialize(instance, fields: tuple[str, ...]) -> dict[str, Any]:

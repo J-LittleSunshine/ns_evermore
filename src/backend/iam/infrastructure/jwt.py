@@ -29,9 +29,14 @@ class JwtService:
     MIN_SECRET_LENGTH = settings.JWT_MIN_SECRET_LENGTH
 
     @classmethod
-    def create_access_token(cls, user_id: int, user_type: str) -> tuple[str, str]:
+    def create_access_token(
+        cls,
+        user_id: int,
+        user_type: str,
+        access_jti: str | None = None,
+    ) -> tuple[str, str]:
         now = cls._utc_now()
-        jti = cls._new_jti()
+        jti = access_jti or cls._new_jti()
 
         payload = {
             "uid": user_id,
@@ -48,6 +53,10 @@ class JwtService:
         }
 
         return cls._encode(payload), jti
+
+    @classmethod
+    def create_access_jti(cls) -> str:
+        return cls._new_jti()
 
     @classmethod
     def create_refresh_token(cls, user_id: int) -> tuple[str, str, str, datetime]:

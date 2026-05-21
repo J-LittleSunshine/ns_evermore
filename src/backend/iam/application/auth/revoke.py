@@ -39,6 +39,12 @@ class RevokeApplicationService:
         return updated_count > 0
 
     @classmethod
-    async def revoke_user_tokens(cls, user_id: int) -> None:
+    async def revoke_user_sessions_and_tokens(cls, user_id: int) -> None:
         """吊销用户全部 session 和 token。"""
         await SessionDomainService.revoke_user_sessions(user_id=user_id)
+
+    @classmethod
+    async def revoke_user_tokens(cls, user_id: int) -> None:
+        """兼容旧命名：等价于 revoke_user_sessions_and_tokens。"""
+        await cls.revoke_user_sessions_and_tokens(user_id=user_id)
+

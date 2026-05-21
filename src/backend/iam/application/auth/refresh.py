@@ -6,8 +6,10 @@ from django.utils import timezone
 from iam.domain.services.session import SessionDomainService
 from iam.infrastructure.jwt import JwtService
 from iam.repositories.token import TokenRepository
-from iam.repositories.user import UserRepository
 from ns_backend.exceptions import BusinessError
+from ns_backend.logger import get_logger
+
+_logger = get_logger("ns_backend")
 
 
 class RefreshApplicationService:
@@ -28,58 +30,70 @@ class RefreshApplicationService:
 
         refresh_token_hash = JwtService.hash_token(refresh_token)
 
-        token_record = await TokenRepository.get_refresh_token(
-            user_id=user_id,
-            refresh_jti=refresh_jti,
-            refresh_token_hash=refresh_token_hash,
+        access_jti = JwtService.create_access_jti()
+
+        new_refresh_token, new_refresh_token_hash, new_refresh_jti, new_refresh_expired_at = (
+            JwtService.create_refresh_token(user_id=user_id)
         )
 
-        if not token_record:
-            raise BusinessError("Refresh Token 已失效", 11005)
+        try:
+            rotate_status, rotated_token, session_pk, session_public_id, locked_user_type = await TokenRepository.rotate_refresh_token_with_guard(
+                user_id=user_id,
+                refresh_jti=refresh_jti,
+                refresh_token_hash=refresh_token_hash,
+                new_token_data={
+                    "refresh_token": new_refresh_token_hash,
+                    "access_jti": access_jti,
+                    "refresh_jti": new_refresh_jti,
+                    "expired_at": new_refresh_expired_at,
+                    "created_at": timezone.now(),
+                },
+            )
+        except BusinessError as exc:
+            if exc.code in (14000, 14001, 14003):
+                _logger.warning(
+                    "refresh rotation rejected user_id=%s refresh_jti=%s internal_code=%s",
+                    user_id,
+                    refresh_jti,
+                    exc.code,
+                )
+                raise BusinessError("Refresh Token 已失效", 11005)
+            raise
 
-        if token_record.revoked_at:
-            if token_record.session_id:
-                await SessionDomainService.revoke_session_by_pk(token_record.session_id)
+        if rotate_status == "replayed":
+            if session_pk:
+                await SessionDomainService.revoke_session_by_pk(session_pk)
             else:
                 await TokenRepository.revoke_user_tokens(user_id=user_id)
             raise BusinessError("检测到 Refresh Token 重放攻击，当前会话已强制下线", 11013)
 
-        user = await UserRepository.get_active_by_id(user_id)
-
-        if not user:
+        if rotate_status == "user_inactive":
+            if session_pk:
+                await SessionDomainService.revoke_session_by_pk(session_pk)
+            else:
+                await TokenRepository.revoke_user_tokens(user_id=user_id)
             raise BusinessError("用户不存在或已禁用", 11010)
 
-        session_public_id = None
+        if rotate_status == "session_unavailable":
+            raise BusinessError("Refresh Token 已失效", 11005)
 
-        if token_record.session_id:
-            session = await SessionDomainService.ensure_available_by_pk(token_record.session_id)
-            session_public_id = session.session_id
+        if rotate_status != "rotated":
+            raise BusinessError("Refresh Token 已失效", 11005)
 
-        access_token, access_jti = JwtService.create_access_token(
-            user_id=user.id,
-            user_type=user.user_type,
+        if not locked_user_type:
+            raise BusinessError("用户不存在或已禁用", 11010)
+
+        access_token, _ = JwtService.create_access_token(
+            user_id=user_id,
+            user_type=locked_user_type,
+            access_jti=access_jti,
         )
 
-        new_refresh_token, new_refresh_token_hash, new_refresh_jti, new_refresh_expired_at = (
-            JwtService.create_refresh_token(user_id=user.id)
-        )
-
-        await TokenRepository.rotate_refresh_token(
-            refresh_token_hash=refresh_token_hash,
-            new_token_data={
-                "refresh_token": new_refresh_token_hash,
-                "access_jti": access_jti,
-                "refresh_jti": new_refresh_jti,
-                "expired_at": new_refresh_expired_at,
-                "created_at": timezone.now(),
-            },
-        )
-
-        if token_record.session_id:
+        if session_pk:
             await SessionDomainService.touch_activity_by_pk(
-                session_pk=token_record.session_id,
-                client_ip=token_record.client_ip,
-                user_agent=token_record.user_agent,
+                session_pk=session_pk,
+                client_ip=rotated_token.client_ip if rotated_token else None,
+                user_agent=rotated_token.user_agent if rotated_token else None,
             )
 
         return {

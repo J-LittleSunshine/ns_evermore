@@ -25,7 +25,7 @@ class IamUserToken(models.Model):
         blank=True,
         verbose_name="会话",
     )
-    refresh_token = models.CharField(max_length=512, verbose_name="Refresh Token Hash")
+    refresh_token = models.CharField(max_length=512, unique=True, verbose_name="Refresh Token Hash")
     access_jti = models.CharField(max_length=64, null=True, blank=True, verbose_name="Access Token JTI")
     refresh_jti = models.CharField(max_length=64, unique=True, verbose_name="Refresh Token JTI")
     client_ip = models.CharField(max_length=64, null=True, blank=True, verbose_name="客户端IP")
@@ -37,6 +37,7 @@ class IamUserToken(models.Model):
     class Meta:
         managed = False
         db_table = "iam_user_token"
+        unique_together = (("user", "access_jti"),)
         verbose_name = "用户Token"
         verbose_name_plural = "用户Token"
 

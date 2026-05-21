@@ -4,11 +4,12 @@ from __future__ import annotations
 from typing import Any
 
 from asgiref.sync import sync_to_async
+from django.db.models import Q
 from django.db import transaction
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
-from iam.models import IamUserToken
+from iam.models import IamUser, IamUserSession, IamUserToken
 from ns_backend.exceptions import BusinessError
 
 
@@ -26,6 +27,23 @@ class TokenRepository:
             access_jti=access_jti,
             revoked_at__isnull=True,
             expired_at__gt=timezone.now(),
+        ).afirst()
+
+    @staticmethod
+    async def get_valid_access_token_with_session(user_id: int, access_jti: str) -> IamUserToken | None:
+        now = timezone.now()
+        return await IamUserToken.objects.using(IAM_DB_ALIAS).select_related("user").filter(
+            user_id=user_id,
+            access_jti=access_jti,
+            revoked_at__isnull=True,
+            expired_at__gt=now,
+            user__is_active=1,
+        ).filter(
+            Q(session_id__isnull=True)
+            | Q(
+                session__revoked_at__isnull=True,
+                session__expired_at__gt=now,
+            )
         ).afirst()
 
     @staticmethod
@@ -60,20 +78,44 @@ class TokenRepository:
         refresh_token_hash: str,
         new_token_data: dict[str, Any],
     ) -> IamUserToken:
-        """原子化吊销旧 refresh token 并创建新 token。"""
-        return await sync_to_async(
-            cls._rotate_refresh_token_sync,
-            thread_sensitive=True,
-        )(
-            refresh_token_hash=refresh_token_hash,
-            new_token_data=new_token_data,
-        )
+        """兼容保留：禁止调用无 guard 的旧刷新旋转路径。"""
+        raise BusinessError("rotate_refresh_token 已废弃，请改用 rotate_refresh_token_with_guard", 14010)
 
     @staticmethod
     def _rotate_refresh_token_sync(
         refresh_token_hash: str,
         new_token_data: dict[str, Any],
     ) -> IamUserToken:
+        raise BusinessError("_rotate_refresh_token_sync 已废弃", 14010)
+
+    @classmethod
+    async def rotate_refresh_token_with_guard(
+        cls,
+        *,
+        user_id: int,
+        refresh_jti: str,
+        refresh_token_hash: str,
+        new_token_data: dict[str, Any],
+    ) -> tuple[str, IamUserToken | None, int | None, str | None, str | None]:
+        """加锁旋转 refresh token，并在同一事务内检测重放。"""
+        return await sync_to_async(
+            cls._rotate_refresh_token_with_guard_sync,
+            thread_sensitive=True,
+        )(
+            user_id=user_id,
+            refresh_jti=refresh_jti,
+            refresh_token_hash=refresh_token_hash,
+            new_token_data=new_token_data,
+        )
+
+    @staticmethod
+    def _rotate_refresh_token_with_guard_sync(
+        *,
+        user_id: int,
+        refresh_jti: str,
+        refresh_token_hash: str,
+        new_token_data: dict[str, Any],
+    ) -> tuple[str, IamUserToken | None, int | None, str | None, str | None]:
         if not refresh_token_hash:
             raise BusinessError("refresh_token 不能为空", 14000)
 
@@ -81,18 +123,49 @@ class TokenRepository:
             old_token = (
                 IamUserToken.objects.using(IAM_DB_ALIAS)
                 .select_for_update()
-                .filter(refresh_token=refresh_token_hash)
+                .filter(
+                    user_id=user_id,
+                    refresh_jti=refresh_jti,
+                    refresh_token=refresh_token_hash,
+                )
                 .first()
             )
 
             if not old_token:
                 raise BusinessError("refresh_token 不存在", 14001)
 
-            if old_token.revoked_at:
-                raise BusinessError("refresh_token 已失效", 14002)
-
             if old_token.expired_at <= timezone.now():
                 raise BusinessError("refresh_token 已过期", 14003)
+
+            if old_token.revoked_at:
+                return "replayed", None, old_token.session_id, None, None
+
+            session_public_id = None
+            if old_token.session_id:
+                session = (
+                    IamUserSession.objects.using(IAM_DB_ALIAS)
+                    .select_for_update()
+                    .filter(id=old_token.session_id)
+                    .first()
+                )
+
+                if (not session) or session.revoked_at or session.expired_at <= timezone.now():
+                    old_token.revoked_at = timezone.now()
+                    old_token.save(update_fields=["revoked_at"])
+                    return "session_unavailable", None, old_token.session_id, None, None
+
+                session_public_id = session.session_id
+
+
+            user = (
+                IamUser.objects.using(IAM_DB_ALIAS)
+                .select_for_update()
+                .filter(id=old_token.user_id)
+                .first()
+            )
+
+            if not user or not user.is_active:
+                return "user_inactive", None, old_token.session_id, session_public_id, None
 
             old_token.revoked_at = timezone.now()
             old_token.save(update_fields=["revoked_at"])
@@ -104,4 +177,6 @@ class TokenRepository:
             data.setdefault("user_agent", old_token.user_agent)
             data.setdefault("created_at", timezone.now())
 
-            return IamUserToken.objects.using(IAM_DB_ALIAS).create(**data)
+            new_token = IamUserToken.objects.using(IAM_DB_ALIAS).create(**data)
+            return "rotated", new_token, old_token.session_id, session_public_id, user.user_type
+

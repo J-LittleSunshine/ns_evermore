@@ -371,13 +371,12 @@ CREATE TABLE iam_user_token
     created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
 
     UNIQUE KEY uk_ut_refresh_jti (refresh_jti),
+    UNIQUE KEY uk_ut_refresh_token (refresh_token),
+    UNIQUE KEY uk_ut_user_access_jti (user_id, access_jti),
     KEY idx_ut_user_id (user_id),
     KEY idx_ut_session_id (session_id),
     KEY idx_ut_access_jti (access_jti),
     KEY idx_ut_exp_at (expired_at),
-    CONSTRAINT fk_ut_session
-        FOREIGN KEY (session_id) REFERENCES iam_user_session (id),
-
     CONSTRAINT fk_ut_user
         FOREIGN KEY (user_id) REFERENCES iam_user (id)
 ) ENGINE = InnoDB
@@ -433,60 +432,73 @@ CREATE TABLE iam_operation_audit
   DEFAULT CHARSET = utf8mb4 COMMENT ='操作审计表';
 
 
-CREATE TABLE `iam_user_device`
+CREATE TABLE iam_user_device
 (
-    `id`               BIGINT       NOT NULL PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
-    `user_id`          BIGINT       NOT NULL COMMENT '用户ID',
-    `device_id`        VARCHAR(128) NOT NULL COMMENT '业务设备ID',
-    `device_name`      VARCHAR(128) NOT NULL COMMENT '设备名称',
-    `device_type`      VARCHAR(32)  NOT NULL COMMENT '设备类型',
-    `os_name`          VARCHAR(64)           DEFAULT NULL COMMENT '操作系统',
-    `browser_name`     VARCHAR(64)           DEFAULT NULL COMMENT '浏览器',
-    `fingerprint_hash` VARCHAR(128) NOT NULL COMMENT '设备指纹Hash',
-    `trusted`          TINYINT      NOT NULL DEFAULT 0 COMMENT '是否可信设备',
-    `status`           TINYINT      NOT NULL DEFAULT 1 COMMENT '状态',
-    `first_login_at`   DATETIME     NOT NULL COMMENT '首次登录时间',
-    `last_active_at`   DATETIME     NOT NULL COMMENT '最后活跃时间',
-    `last_client_ip`   VARCHAR(64)           DEFAULT NULL COMMENT '最后登录IP',
-    `created_at`       DATETIME     NOT NULL COMMENT '创建时间',
-    `updated_at`       DATETIME     NOT NULL COMMENT '更新时间',
+    id               BIGINT       NOT NULL PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+    user_id          BIGINT       NOT NULL COMMENT '用户ID',
+    device_id        VARCHAR(128) NOT NULL COMMENT '业务设备ID',
+    device_name      VARCHAR(128) NOT NULL COMMENT '设备名称',
+    device_type      VARCHAR(32)  NOT NULL COMMENT '设备类型',
+    os_name          VARCHAR(64)           DEFAULT NULL COMMENT '操作系统',
+    browser_name     VARCHAR(64)           DEFAULT NULL COMMENT '浏览器',
+    fingerprint_hash VARCHAR(128) NOT NULL COMMENT '设备指纹Hash',
+    trusted          TINYINT      NOT NULL DEFAULT 0 COMMENT '是否可信设备',
+    status           TINYINT      NOT NULL DEFAULT 1 COMMENT '状态',
+    first_login_at   DATETIME     NOT NULL COMMENT '首次登录时间',
+    last_active_at   DATETIME     NOT NULL COMMENT '最后活跃时间',
+    last_client_ip   VARCHAR(64)           DEFAULT NULL COMMENT '最后登录IP',
+    created_at       DATETIME     NOT NULL COMMENT '创建时间',
+    updated_at       DATETIME     NOT NULL COMMENT '更新时间',
 
-    UNIQUE KEY `uk_device_id` (`device_id`),
-    KEY `idx_user_id` (`user_id`),
-    KEY `idx_user_fingerprint` (`user_id`, `fingerprint_hash`),
-    KEY `idx_last_active_at` (`last_active_at`),
-    KEY `idx_status` (`status`)
+    UNIQUE KEY uk_device_id (device_id),
+    UNIQUE KEY uk_user_fingerprint (user_id, fingerprint_hash),
+    KEY idx_user_id (user_id),
+    KEY idx_user_fingerprint (user_id, fingerprint_hash),
+    KEY idx_last_active_at (last_active_at),
+    KEY idx_status (status),
+
+    CONSTRAINT fk_ud_user
+        FOREIGN KEY (user_id) REFERENCES iam_user (id)
 
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci COMMENT ='IAM 用户设备表';
 
 
-CREATE TABLE `iam_user_session`
+CREATE TABLE iam_user_session
 (
-    `id`             BIGINT      NOT NULL PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
-    `user_id`        BIGINT      NOT NULL COMMENT '用户ID',
-    `device_id`      BIGINT      NOT NULL COMMENT '设备主键ID',
-    `session_id`     VARCHAR(64) NOT NULL COMMENT 'Session ID',
-    `login_ip`       VARCHAR(64)          DEFAULT NULL COMMENT '登录IP',
-    `user_agent`     TEXT                 DEFAULT NULL COMMENT 'User-Agent',
-    `risk_level`     TINYINT     NOT NULL DEFAULT 0 COMMENT '风险等级',
-    `last_active_at` DATETIME    NOT NULL COMMENT '最后活跃时间',
-    `expired_at`     DATETIME    NOT NULL COMMENT '过期时间',
-    `revoked_at`     DATETIME             DEFAULT NULL COMMENT '吊销时间',
-    `created_at`     DATETIME    NOT NULL COMMENT '创建时间',
+    id             BIGINT      NOT NULL PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+    user_id        BIGINT      NOT NULL COMMENT '用户ID',
+    device_id      BIGINT      NOT NULL COMMENT '设备主键ID',
+    session_id     VARCHAR(64) NOT NULL COMMENT 'Session ID',
+    login_ip       VARCHAR(64)          DEFAULT NULL COMMENT '登录IP',
+    user_agent     TEXT                 DEFAULT NULL COMMENT 'User-Agent',
+    risk_level     TINYINT     NOT NULL DEFAULT 0 COMMENT '风险等级',
+    last_active_at DATETIME    NOT NULL COMMENT '最后活跃时间',
+    expired_at     DATETIME    NOT NULL COMMENT '过期时间',
+    revoked_at     DATETIME             DEFAULT NULL COMMENT '吊销时间',
+    created_at     DATETIME    NOT NULL COMMENT '创建时间',
 
-    UNIQUE KEY `uk_session_id` (`session_id`),
-    KEY `idx_user_id` (`user_id`),
-    KEY `idx_device_id` (`device_id`),
-    KEY `idx_expired_at` (`expired_at`),
-    KEY `idx_revoked_at` (`revoked_at`),
-    KEY `idx_user_active` (`user_id`, `revoked_at`, `expired_at`)
+    UNIQUE KEY uk_session_id (session_id),
+    KEY idx_user_id (user_id),
+    KEY idx_device_id (device_id),
+    KEY idx_expired_at (expired_at),
+    KEY idx_revoked_at (revoked_at),
+    KEY idx_user_active (user_id, revoked_at, expired_at),
+
+    CONSTRAINT fk_us_user
+        FOREIGN KEY (user_id) REFERENCES iam_user (id),
+    CONSTRAINT fk_us_device
+        FOREIGN KEY (device_id) REFERENCES iam_user_device (id)
 
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci
     COMMENT ='IAM 用户会话表';
+
+ALTER TABLE iam_user_token
+    ADD CONSTRAINT fk_ut_session
+        FOREIGN KEY (session_id) REFERENCES iam_user_session (id);
 
 
 INSERT INTO iam_permission

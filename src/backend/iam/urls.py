@@ -71,16 +71,12 @@ urlpatterns = [
     # grant user crud api
     path("grant/bind-user-role", UserRoleViewSet.as_view({"post": "bind_user_role"}, required_permissions=("iam:grant:user_role:bind",))),
     path("grant/unbind-user-role", UserRoleViewSet.as_view({"post": "unbind_user_role"}, required_permissions=("iam:grant:user_role:unbind",))),
-
     path("grant/grant-role-permission", RolePermissionViewSet.as_view({"post": "grant_role_permission"}, required_permissions=("iam:grant:role_permission:grant",))),
     path("grant/revoke-role-permission", RolePermissionViewSet.as_view({"post": "revoke_role_permission"}, required_permissions=("iam:grant:role_permission:revoke",))),
-
     path("grant/grant-user-permission", UserPermissionViewSet.as_view({"post": "grant_user_permission"}, required_permissions=("iam:grant:user_permission:grant",))),
     path("grant/revoke-user-permission", UserPermissionViewSet.as_view({"post": "revoke_user_permission"}, required_permissions=("iam:grant:user_permission:revoke",))),
-
     path("grant/grant-department-permission", DepartmentPermissionViewSet.as_view({"post": "grant_department_permission"}, required_permissions=("iam:grant:department_permission:grant",))),
     path("grant/revoke-department-permission", DepartmentPermissionViewSet.as_view({"post": "revoke_department_permission"}, required_permissions=("iam:grant:department_permission:revoke",))),
-
     path("grant/grant-subsidiary-permission", SubsidiaryPermissionViewSet.as_view({"post": "grant_subsidiary_permission"}, required_permissions=("iam:grant:subsidiary_permission:grant",))),
     path("grant/revoke-subsidiary-permission", SubsidiaryPermissionViewSet.as_view({"post": "revoke_subsidiary_permission"}, required_permissions=("iam:grant:subsidiary_permission:revoke",))),
 

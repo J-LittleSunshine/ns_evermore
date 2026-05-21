@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import ipaddress
 from typing import TYPE_CHECKING
+
+from django.conf import settings
 
 from iam.application.auth.login import LoginApplicationService
 from iam.application.auth.logout import LogoutApplicationService
@@ -54,12 +57,27 @@ class AuthPublicViewSet(BaseRequestViewSet):
 
     @staticmethod
     def get_client_ip(request):
-        x_forwarded_for = request.headers.get("X-Forwarded-For")
+        trust_xff = bool(getattr(settings, "TRUST_X_FORWARDED_FOR", False))
 
-        if x_forwarded_for:
-            return x_forwarded_for.split(",")[0].strip()
+        if trust_xff:
+            x_forwarded_for = request.headers.get("X-Forwarded-For")
+            if x_forwarded_for:
+                candidate = x_forwarded_for.split(",")[0].strip()
+                try:
+                    ipaddress.ip_address(candidate)
+                    return candidate
+                except ValueError:
+                    pass
 
-        return request.META.get("REMOTE_ADDR")
+        remote_addr = request.META.get("REMOTE_ADDR")
+        if not remote_addr:
+            return None
+
+        try:
+            ipaddress.ip_address(remote_addr)
+            return remote_addr
+        except ValueError:
+            return None
 
 
 class AuthPrivateViewSet(BaseRequestViewSet):
@@ -73,8 +91,6 @@ class AuthPrivateViewSet(BaseRequestViewSet):
         if not access_token:
             return self.failed_response("access_token 不能为空", 11004)
 
-        success = await RevokeApplicationService.revoke_access_token(access_token)
-
         if refresh_token:
             payload = JwtService.decode_refresh_token(refresh_token)
 
@@ -86,6 +102,9 @@ class AuthPrivateViewSet(BaseRequestViewSet):
             if refresh_user_id != current_user.id:
                 raise BusinessError("Refresh Token 与当前登录用户不匹配", 11012)
 
+        success = await RevokeApplicationService.revoke_access_token(access_token)
+
+        if refresh_token:
             refresh_success = await LogoutApplicationService.execute(refresh_token)
             success = success or refresh_success
 

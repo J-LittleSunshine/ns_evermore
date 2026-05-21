@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db import IntegrityError
+from asgiref.sync import sync_to_async
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
-from iam.models import IamUser
+from iam.models import IamUser, IamUserSession, IamUserToken
 from ns_backend.exceptions import BusinessError
 
 
@@ -84,9 +85,96 @@ class UserRepository:
         except IntegrityError as exc:
             raise BusinessError(f"用户更新失败：{exc}", 12002)
 
+    @classmethod
+    async def update_user_and_revoke_sessions_tokens(
+        cls,
+        *,
+        user_id: int,
+        data: dict[str, Any],
+    ) -> None:
+        """原子化更新用户并吊销其全部会话与令牌。"""
+        await sync_to_async(
+            cls._update_user_and_revoke_sessions_tokens_sync,
+            thread_sensitive=True,
+        )(
+            user_id=user_id,
+            data=data,
+        )
+
+    @staticmethod
+    def _update_user_and_revoke_sessions_tokens_sync(*, user_id: int, data: dict[str, Any]) -> None:
+        now = timezone.now()
+
+        with transaction.atomic(using=IAM_DB_ALIAS):
+            user = (
+                IamUser.objects.using(IAM_DB_ALIAS)
+                .select_for_update()
+                .filter(id=user_id)
+                .first()
+            )
+
+            if not user:
+                raise BusinessError("用户不存在", 10103)
+
+            for field, value in data.items():
+                setattr(user, field, value)
+
+            try:
+                user.save(
+                    using=IAM_DB_ALIAS,
+                    update_fields=list(data.keys()),
+                )
+            except IntegrityError as exc:
+                raise BusinessError(f"用户更新失败：{exc}", 12002)
+
+            IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+                user_id=user_id,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+
+            IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+                user_id=user_id,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+
     @staticmethod
     async def delete_user(user: IamUser) -> None:
         await user.adelete(using=IAM_DB_ALIAS)
+
+    @classmethod
+    async def revoke_and_delete_user(cls, user_id: int) -> None:
+        """原子化吊销用户全部会话/令牌并删除用户。"""
+        await sync_to_async(
+            cls._revoke_and_delete_user_sync,
+            thread_sensitive=True,
+        )(user_id=user_id)
+
+    @staticmethod
+    def _revoke_and_delete_user_sync(user_id: int) -> None:
+        now = timezone.now()
+
+        with transaction.atomic(using=IAM_DB_ALIAS):
+            user = (
+                IamUser.objects.using(IAM_DB_ALIAS)
+                .select_for_update()
+                .filter(id=user_id)
+                .first()
+            )
+
+            if not user:
+                raise BusinessError("用户不存在", 10103)
+
+            IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+                user_id=user_id,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+
+            IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+                user_id=user_id,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+
+            user.delete(using=IAM_DB_ALIAS)
 
     @staticmethod
     async def mark_login_success(user: IamUser) -> None:

@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import hashlib
+import uuid
 from typing import Any
 
 from asgiref.sync import sync_to_async
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
-from iam.models import IamUserSession, IamUserToken
+from iam.models import IamUser, IamUserDevice, IamUserSession, IamUserToken
+from ns_backend.exceptions import BusinessError
 
 
 class SessionRepository:
@@ -17,6 +20,216 @@ class SessionRepository:
     @staticmethod
     async def create_session(**kwargs) -> IamUserSession:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).acreate(**kwargs)
+
+    @classmethod
+    async def create_login_bundle(
+        cls,
+        *,
+        user_id: int,
+        device_id: int,
+        session_id: str,
+        login_ip: str | None,
+        user_agent: str | None,
+        risk_level: int,
+        last_active_at,
+        session_expired_at,
+        refresh_token_hash: str,
+        access_jti: str,
+        refresh_jti: str,
+        token_expired_at,
+    ) -> IamUserSession:
+        """兼容保留：禁止调用旧登录写路径。"""
+        raise BusinessError("create_login_bundle 已废弃，请改用 create_login_bundle_with_device", 15007)
+
+    @staticmethod
+    def _create_login_bundle_sync(
+        *,
+        user_id: int,
+        device_id: int,
+        session_id: str,
+        login_ip: str | None,
+        user_agent: str | None,
+        risk_level: int,
+        last_active_at,
+        session_expired_at,
+        refresh_token_hash: str,
+        access_jti: str,
+        refresh_jti: str,
+        token_expired_at,
+    ) -> IamUserSession:
+        raise BusinessError("_create_login_bundle_sync 已废弃", 15007)
+
+    @classmethod
+    async def create_login_bundle_with_device(
+        cls,
+        *,
+        user_id: int,
+        device_name: str,
+        device_type: str,
+        fingerprint_raw: str,
+        client_ip: str | None,
+        os_name: str | None,
+        browser_name: str | None,
+        session_id: str,
+        user_agent: str | None,
+        risk_level: int,
+        last_active_at,
+        session_expired_at,
+        refresh_token_hash: str,
+        access_jti: str,
+        refresh_jti: str,
+        token_expired_at,
+    ) -> tuple[IamUserSession, IamUserDevice]:
+        """原子化处理设备、会话、Token 与最近登录时间。"""
+        return await sync_to_async(
+            cls._create_login_bundle_with_device_sync,
+            thread_sensitive=True,
+        )(
+            user_id=user_id,
+            device_name=device_name,
+            device_type=device_type,
+            fingerprint_raw=fingerprint_raw,
+            client_ip=client_ip,
+            os_name=os_name,
+            browser_name=browser_name,
+            session_id=session_id,
+            user_agent=user_agent,
+            risk_level=risk_level,
+            last_active_at=last_active_at,
+            session_expired_at=session_expired_at,
+            refresh_token_hash=refresh_token_hash,
+            access_jti=access_jti,
+            refresh_jti=refresh_jti,
+            token_expired_at=token_expired_at,
+        )
+
+    @staticmethod
+    def _create_login_bundle_with_device_sync(
+        *,
+        user_id: int,
+        device_name: str,
+        device_type: str,
+        fingerprint_raw: str,
+        client_ip: str | None,
+        os_name: str | None,
+        browser_name: str | None,
+        session_id: str,
+        user_agent: str | None,
+        risk_level: int,
+        last_active_at,
+        session_expired_at,
+        refresh_token_hash: str,
+        access_jti: str,
+        refresh_jti: str,
+        token_expired_at,
+    ) -> tuple[IamUserSession, IamUserDevice]:
+        now = timezone.now()
+        fingerprint_hash = hashlib.sha256(fingerprint_raw.encode("utf-8")).hexdigest()
+
+        with transaction.atomic(using=IAM_DB_ALIAS):
+            user = (
+                IamUser.objects.using(IAM_DB_ALIAS)
+                .select_for_update()
+                .filter(id=user_id)
+                .first()
+            )
+
+            if not user or not user.is_active:
+                raise BusinessError("Username or password is incorrect.", 11003)
+
+            device = (
+                IamUserDevice.objects.using(IAM_DB_ALIAS)
+                .select_for_update()
+                .filter(
+                    user_id=user_id,
+                    fingerprint_hash=fingerprint_hash,
+                )
+                .first()
+            )
+
+            if device:
+                device.last_active_at = last_active_at
+                device.last_client_ip = client_ip
+                if device.status != 1:
+                    device.status = 1
+                device.updated_at = now
+                device.save(
+                    using=IAM_DB_ALIAS,
+                    update_fields=["last_active_at", "last_client_ip", "status", "updated_at"],
+                )
+            else:
+                try:
+                    device = IamUserDevice.objects.using(IAM_DB_ALIAS).create(
+                        user_id=user_id,
+                        device_id=uuid.uuid4().hex,
+                        device_name=device_name,
+                        device_type=device_type,
+                        os_name=os_name,
+                        browser_name=browser_name,
+                        fingerprint_hash=fingerprint_hash,
+                        trusted=0,
+                        status=1,
+                        first_login_at=now,
+                        last_active_at=last_active_at,
+                        last_client_ip=client_ip,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                except IntegrityError:
+                    # Another concurrent login created the same fingerprint row; lock and reuse it.
+                    device = (
+                        IamUserDevice.objects.using(IAM_DB_ALIAS)
+                        .select_for_update()
+                        .filter(
+                            user_id=user_id,
+                            fingerprint_hash=fingerprint_hash,
+                        )
+                        .first()
+                    )
+
+                    if not device:
+                        raise
+
+                    device.last_active_at = last_active_at
+                    device.last_client_ip = client_ip
+                    if device.status != 1:
+                        device.status = 1
+                    device.updated_at = now
+                    device.save(
+                        using=IAM_DB_ALIAS,
+                        update_fields=["last_active_at", "last_client_ip", "status", "updated_at"],
+                    )
+
+            session = IamUserSession.objects.using(IAM_DB_ALIAS).create(
+                user_id=user_id,
+                device_id=device.id,
+                session_id=session_id,
+                login_ip=client_ip,
+                user_agent=user_agent,
+                risk_level=risk_level,
+                last_active_at=last_active_at,
+                expired_at=session_expired_at,
+                created_at=now,
+            )
+
+            IamUserToken.objects.using(IAM_DB_ALIAS).create(
+                user_id=user_id,
+                session_id=session.id,
+                refresh_token=refresh_token_hash,
+                access_jti=access_jti,
+                refresh_jti=refresh_jti,
+                client_ip=client_ip,
+                user_agent=user_agent,
+                expired_at=token_expired_at,
+                created_at=now,
+            )
+
+            IamUser.objects.using(IAM_DB_ALIAS).filter(id=user_id).update(
+                last_login=now,
+                updated_at=now,
+            )
+
+            return session, device
 
     @staticmethod
     async def get_by_id(session_pk: int) -> IamUserSession | None:
