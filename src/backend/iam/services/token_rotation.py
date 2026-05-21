@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 from django.db import transaction
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
+from iam.models import IamUserToken
 from ns_backend.exceptions import BusinessError
 
 
@@ -14,68 +18,59 @@ class TokenRotationService:
     @classmethod
     def rotate_refresh_token(
         cls,
-        token_model,
-        token_value: str,
-        create_token_callback,
-        revoke_family_callback=None,
-    ) -> dict:
+        refresh_token_hash: str,
+        create_token_callback: Callable[[IamUserToken], dict[str, Any]],
+    ) -> dict[str, Any]:
         """
         执行 refresh token rotation。
 
-        要求：
-        - refresh token 只能使用一次
-        - 并发刷新时只能有一个请求成功
-        - 发现 replay attack 时可撤销整个 token family
+        当前实现基于现有 iam_user_token 表字段：
+        - refresh_token：refresh token hash
+        - refresh_jti：refresh token 唯一标识
+        - revoked_at：吊销时间
+        - expired_at：过期时间
 
-        参数：
-            token_model:
-                refresh token ORM model。
-
-            token_value:
-                当前 refresh token hash/value。
-
-            create_token_callback:
-                新 token 创建回调。
-
-            revoke_family_callback:
-                replay attack 时的 token family 撤销回调。
+        注意：
+        当前模型还没有 session_id / device_id / token_family_id / parent_token_id，
+        因此这里先保证单 token 级别的一次性使用和并发安全，不盲目增加表字段。
         """
+        if not refresh_token_hash:
+            raise BusinessError("refresh_token 不能为空", 14000)
 
         with transaction.atomic(using=IAM_DB_ALIAS):
             token_obj = (
-                token_model.objects
-                .using(IAM_DB_ALIAS)
+                IamUserToken.objects.using(IAM_DB_ALIAS)
                 .select_for_update()
-                .filter(token=token_value)
+                .filter(refresh_token=refresh_token_hash)
                 .first()
             )
 
             if not token_obj:
                 raise BusinessError("refresh_token 不存在", 14001)
 
-            if getattr(token_obj, "revoked_at", None):
-                if revoke_family_callback:
-                    revoke_family_callback(token_obj)
-
+            if token_obj.revoked_at:
                 raise BusinessError("refresh_token 已失效", 14002)
 
-            expired_at = getattr(token_obj, "expired_at", None)
-
-            if expired_at and expired_at <= timezone.now():
+            if token_obj.expired_at <= timezone.now():
                 raise BusinessError("refresh_token 已过期", 14003)
 
             token_obj.revoked_at = timezone.now()
-
-            if hasattr(token_obj, "revoked_reason"):
-                token_obj.revoked_reason = "ROTATED"
-
-            update_fields = ["revoked_at"]
-
-            if hasattr(token_obj, "revoked_reason"):
-                update_fields.append("revoked_reason")
-
-            token_obj.save(update_fields=update_fields)
+            token_obj.save(update_fields=["revoked_at"])
 
             new_token_payload = create_token_callback(token_obj)
 
         return new_token_payload
+
+    @classmethod
+    def revoke_user_tokens(cls, user_id: int) -> int:
+        """吊销用户全部未失效 refresh token。"""
+        if not user_id:
+            raise BusinessError("user_id 不能为空", 14004)
+
+        updated_count = (
+            IamUserToken.objects.using(IAM_DB_ALIAS)
+            .filter(user_id=user_id, revoked_at__isnull=True)
+            .update(revoked_at=timezone.now())
+        )
+
+        return updated_count
