@@ -360,6 +360,7 @@ CREATE TABLE iam_user_token
 (
     id            BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT 'ID',
     user_id       BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
+    session_id    BIGINT UNSIGNED NULL COMMENT '会话ID',
     refresh_token VARCHAR(512)    NOT NULL COMMENT '刷新Token',
     access_jti    VARCHAR(64)     NULL COMMENT 'Access Token唯一ID',
     refresh_jti   VARCHAR(64)     NOT NULL COMMENT 'Refresh Token唯一ID',
@@ -371,8 +372,11 @@ CREATE TABLE iam_user_token
 
     UNIQUE KEY uk_ut_refresh_jti (refresh_jti),
     KEY idx_ut_user_id (user_id),
+    KEY idx_ut_session_id (session_id),
     KEY idx_ut_access_jti (access_jti),
     KEY idx_ut_exp_at (expired_at),
+    CONSTRAINT fk_ut_session
+        FOREIGN KEY (session_id) REFERENCES iam_user_session (id),
 
     CONSTRAINT fk_ut_user
         FOREIGN KEY (user_id) REFERENCES iam_user (id)
