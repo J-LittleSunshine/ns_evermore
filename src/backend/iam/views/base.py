@@ -7,7 +7,7 @@ from iam.repositories.base import CrudRepository
 from iam.services.auth import VerifyService
 from iam.services.permission import PermissionService
 from ns_backend.auth import AuthenticatedRequestViewSet
-from ns_backend.exceptions import BusinessError, ValidateError
+from ns_backend.exceptions import ValidateError
 
 if TYPE_CHECKING:
     pass
@@ -30,8 +30,6 @@ class BaseIamViewSet(IamRequestViewSet):
         page = request.data.get("page", 1)
         page_size = request.data.get("page_size", 20)
 
-        self.ensure_model_class()
-
         data = await CrudRepository.list_items(
             model_class=self.model_class,
             fields=self.list_fields,
@@ -44,8 +42,6 @@ class BaseIamViewSet(IamRequestViewSet):
     async def detail_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
 
-        self.ensure_model_class()
-
         data = await CrudRepository.detail_item(
             model_class=self.model_class,
             item_id=item_id,
@@ -57,8 +53,6 @@ class BaseIamViewSet(IamRequestViewSet):
     async def create_item(self, request, *args, **kwargs):
         data = self.validate_create_data(request.data)
         operator_id = self.get_operator_id(request)
-
-        self.ensure_model_class()
 
         result = await CrudRepository.create_item_with_audit(
             model_class=self.model_class,
@@ -73,8 +67,6 @@ class BaseIamViewSet(IamRequestViewSet):
         data = self.validate_update_data(request.data)
         operator_id = self.get_operator_id(request)
 
-        self.ensure_model_class()
-
         await CrudRepository.update_item_with_audit(
             model_class=self.model_class,
             item_id=item_id,
@@ -86,8 +78,6 @@ class BaseIamViewSet(IamRequestViewSet):
 
     async def delete_item(self, request, *args, **kwargs):
         item_id = request.data.get("id")
-
-        self.ensure_model_class()
 
         await CrudRepository.delete_item_by_id(
             model_class=self.model_class,
@@ -124,7 +114,4 @@ class BaseIamViewSet(IamRequestViewSet):
         current_user = getattr(request, "current_user", None)
         return getattr(current_user, "id", None)
 
-    def ensure_model_class(self) -> None:
-        if self.model_class is None:
-            raise BusinessError("model_class 未配置", 10006)
 
