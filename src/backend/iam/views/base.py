@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from iam.policies.tenant import TenantPolicy
 from iam.repositories.base import CrudRepository
 from iam.services.auth import VerifyService
 from iam.services.permission import PermissionService
@@ -146,14 +147,14 @@ class BaseIamViewSet(IamRequestViewSet):
         if context is None:
             return None
 
-        if TenantService.is_platform_admin(context):
+        if TenantPolicy.is_platform_admin(context):
             return None
 
         if self.enterprise_resource_required:
-            TenantService.ensure_enterprise_context(context)
+            TenantPolicy.ensure_enterprise_context(context)
 
-        if TenantService.is_enterprise_user(context):
-            company_id = TenantService.get_company_id_or_none(context)
+        if TenantPolicy.is_enterprise_user(context):
+            company_id = context.company_id
 
             if company_id is None:
                 raise BusinessError("企业用户未绑定公司", 14001)
@@ -171,14 +172,14 @@ class BaseIamViewSet(IamRequestViewSet):
         if context is None:
             return None
 
-        if TenantService.is_platform_admin(context):
+        if TenantPolicy.is_platform_admin(context):
             return None
 
         if self.enterprise_resource_required:
-            TenantService.ensure_enterprise_context(context)
+            TenantPolicy.ensure_enterprise_context(context)
 
-        if TenantService.is_enterprise_user(context):
-            company_id = TenantService.get_company_id_or_none(context)
+        if TenantPolicy.is_enterprise_user(context):
+            company_id = context.company_id
 
             if company_id is None:
                 raise BusinessError("企业用户未绑定公司", 14001)

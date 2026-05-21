@@ -47,6 +47,7 @@ class TenantService:
 
     @classmethod
     def ensure_enterprise_context(cls, context: TenantContext) -> None:
+        """兼容保留：新业务代码应优先使用 TenantPolicy.ensure_enterprise_context。"""
         if cls.is_platform_admin(context):
             return
 
@@ -58,6 +59,7 @@ class TenantService:
 
     @classmethod
     def get_company_id_or_none(cls, context: TenantContext) -> int | None:
+        """兼容保留：新业务代码应优先使用 TenantPolicy.get_company_scope。"""
         if cls.is_platform_admin(context):
             return None
 

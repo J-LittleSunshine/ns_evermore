@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from django.contrib.auth.hashers import make_password
 from django.utils import timezone

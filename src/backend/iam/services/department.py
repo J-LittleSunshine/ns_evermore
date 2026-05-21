@@ -23,7 +23,7 @@ class DepartmentService:
         context = TenantService.from_user(operator)
         create_data = data.copy()
 
-        if TenantService.is_platform_admin(context):
+        if TenantPolicy.is_platform_admin(context):
             company_id = create_data.get("company_id")
 
             if not company_id:
