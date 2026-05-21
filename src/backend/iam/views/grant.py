@@ -4,12 +4,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from iam.application.authorization import AuthorizationApplicationService
-from iam.services.crud import (
-    DepartmentPermissionCrudService,
-    RolePermissionCrudService,
-    SubsidiaryPermissionCrudService,
-    UserPermissionCrudService,
-    UserRoleCrudService,
+from iam.models import (
+    IamDepartmentPermission,
+    IamRolePermission,
+    IamSubsidiaryPermission,
+    IamUserPermission,
+    IamUserRole,
 )
 from iam.validators import (
     DepartmentPermissionValidator,
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 class UserRoleViewSet(BaseIamViewSet):
-    service_class = UserRoleCrudService
+    model_class = IamUserRole
     validator_class = UserRoleValidator
 
     list_fields = detail_fields = ("id", "user_id", "role_id")
@@ -52,7 +52,7 @@ class UserRoleViewSet(BaseIamViewSet):
 
 
 class RolePermissionViewSet(BaseIamViewSet):
-    service_class = RolePermissionCrudService
+    model_class = IamRolePermission
     validator_class = RolePermissionValidator
 
     list_fields = detail_fields = (
@@ -90,7 +90,7 @@ class RolePermissionViewSet(BaseIamViewSet):
 
 
 class UserPermissionViewSet(BaseIamViewSet):
-    service_class = UserPermissionCrudService
+    model_class = IamUserPermission
     validator_class = UserPermissionValidator
 
     list_fields = detail_fields = (
@@ -130,7 +130,7 @@ class UserPermissionViewSet(BaseIamViewSet):
 
 
 class DepartmentPermissionViewSet(BaseIamViewSet):
-    service_class = DepartmentPermissionCrudService
+    model_class = IamDepartmentPermission
     validator_class = DepartmentPermissionValidator
 
     list_fields = detail_fields = (
@@ -170,7 +170,7 @@ class DepartmentPermissionViewSet(BaseIamViewSet):
 
 
 class SubsidiaryPermissionViewSet(BaseIamViewSet):
-    service_class = SubsidiaryPermissionCrudService
+    model_class = IamSubsidiaryPermission
     validator_class = SubsidiaryPermissionValidator
 
     list_fields = detail_fields = (
