@@ -4,12 +4,12 @@ from __future__ import annotations
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
 
+from iam.domain.services.device import DeviceDomainService
 from iam.domain.services.login_failure import LoginFailureDomainService
+from iam.domain.services.session import SessionDomainService
 from iam.repositories.token import TokenRepository
 from iam.repositories.user import UserRepository
-from iam.services.device import DeviceService
 from iam.services.jwt import JwtService
-from iam.services.session import SessionService
 from ns_backend.exceptions import BusinessError
 
 
@@ -61,7 +61,7 @@ class LoginApplicationService:
             user_agent=user_agent,
         )
 
-        device = await DeviceService.get_or_create_device(
+        device = await DeviceDomainService.get_or_create_device(
             user_id=user.id,
             device_name=device_name or "Unknown Device",
             device_type=device_type or "WEB",
@@ -71,7 +71,7 @@ class LoginApplicationService:
             browser_name=browser_name,
         )
 
-        session = await SessionService.create_session(
+        session = await SessionDomainService.create_session(
             user_id=user.id,
             device_id=device.id,
             login_ip=client_ip,
