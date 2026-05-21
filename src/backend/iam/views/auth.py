@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from iam.services.auth import AuthService
-from iam.services.jwt import JwtService
+from iam.application.auth.login import LoginApplicationService
+from iam.application.auth.logout import LogoutApplicationService
+from iam.application.auth.refresh import RefreshApplicationService
+from iam.application.auth.revoke import RevokeApplicationService
+from iam.infrastructure.jwt import JwtService
 from ns_backend.common import BaseRequestViewSet
 from ns_backend.exceptions import BusinessError
 
@@ -25,11 +28,16 @@ class AuthPublicViewSet(BaseRequestViewSet):
         if not password:
             return self.failed_response("password 不能为空", 11002)
 
-        data = await AuthService.login(
+        data = await LoginApplicationService.execute(
             username=username,
             password=password,
             client_ip=self.get_client_ip(request),
             user_agent=request.headers.get("User-Agent"),
+            device_name=request.data.get("device_name"),
+            device_type=request.data.get("device_type"),
+            fingerprint_raw=request.data.get("fingerprint"),
+            os_name=request.data.get("os_name"),
+            browser_name=request.data.get("browser_name"),
         )
 
         return self.success_response(data)
@@ -40,7 +48,7 @@ class AuthPublicViewSet(BaseRequestViewSet):
         if not refresh_token:
             return self.failed_response("refresh_token 不能为空", 11004)
 
-        data = await AuthService.refresh_access_token(refresh_token)
+        data = await RefreshApplicationService.execute(refresh_token=refresh_token)
 
         return self.success_response(data)
 
@@ -59,13 +67,13 @@ class AuthPrivateViewSet(BaseRequestViewSet):
 
     async def logout(self, request, *args, **kwargs):
         current_user = request.current_user
-        access_token = AuthService.get_bearer_token_from_request(request)
+        access_token = self.get_bearer_token_from_request(request)
         refresh_token = request.data.get("refresh_token")
 
         if not access_token:
             return self.failed_response("access_token 不能为空", 11004)
 
-        success = await AuthService.revoke_access_token(access_token)
+        success = await RevokeApplicationService.revoke_access_token(access_token)
 
         if refresh_token:
             payload = JwtService.decode_refresh_token(refresh_token)
@@ -78,7 +86,7 @@ class AuthPrivateViewSet(BaseRequestViewSet):
             if refresh_user_id != current_user.id:
                 raise BusinessError("Refresh Token 与当前登录用户不匹配", 11012)
 
-            refresh_success = await AuthService.logout(refresh_token)
+            refresh_success = await LogoutApplicationService.execute(refresh_token)
             success = success or refresh_success
 
         return self.success_response({
@@ -105,3 +113,13 @@ class AuthPrivateViewSet(BaseRequestViewSet):
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
         })
+
+    @staticmethod
+    def get_bearer_token_from_request(request) -> str | None:
+        authorization = request.headers.get("Authorization", "")
+
+        if not authorization.startswith("Bearer "):
+            return None
+
+        token = authorization.removeprefix("Bearer ").strip()
+        return token or None
