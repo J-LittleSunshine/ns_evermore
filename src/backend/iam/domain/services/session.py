@@ -79,37 +79,29 @@ class SessionDomainService:
 
     @classmethod
     async def revoke_session_by_pk(cls, session_pk: int) -> bool:
-        """按数据库主键撤销会话及其全部 Token。"""
+        """按数据库主键原子化撤销会话及其全部 Token。"""
         if not session_pk:
             raise BusinessError("session_id 不能为空", 15001)
 
-        updated_count = await SessionRepository.revoke_by_id(session_pk)
-
-        await SessionRepository.revoke_token_by_session_id(session_pk)
+        updated_count = await SessionRepository.revoke_session_and_tokens_by_id(session_pk)
 
         return updated_count > 0
 
     @classmethod
     async def revoke_user_sessions(cls, user_id: int) -> int:
-        """撤销用户全部会话。"""
-        session_ids = await SessionRepository.list_active_ids_by_user_id(user_id)
+        """原子化撤销用户全部会话及全部 Token。"""
+        if not user_id:
+            raise BusinessError("user_id 不能为空", 15005)
 
-        updated_count = await SessionRepository.revoke_by_ids(session_ids)
-
-        await SessionRepository.revoke_tokens_by_session_ids(session_ids)
-
-        return updated_count
+        return await SessionRepository.revoke_user_sessions_and_tokens(user_id)
 
     @classmethod
     async def revoke_device_sessions(cls, device_id: int) -> int:
-        """撤销设备全部会话。"""
-        session_ids = await SessionRepository.list_active_ids_by_device_id(device_id)
+        """原子化撤销设备全部会话及其全部 Token。"""
+        if not device_id:
+            raise BusinessError("device_id 不能为空", 15006)
 
-        updated_count = await SessionRepository.revoke_by_ids(session_ids)
-
-        await SessionRepository.revoke_tokens_by_session_ids(session_ids)
-
-        return updated_count
+        return await SessionRepository.revoke_device_sessions_and_tokens(device_id)
 
     @classmethod
     async def touch_activity(
