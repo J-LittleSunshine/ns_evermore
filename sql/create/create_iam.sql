@@ -458,6 +458,7 @@ CREATE TABLE iam_operation_audit
     request_data   JSON            NULL COMMENT '请求数据',
     before_data    JSON            NULL COMMENT '变更前数据',
     after_data     JSON            NULL COMMENT '变更后数据',
+    extra_data     JSON            NULL COMMENT '扩展审计数据',
     status         VARCHAR(16)     NOT NULL DEFAULT 'SUCCESS' COMMENT '审计状态',
     error_code     INT             NULL COMMENT '错误码',
     error_message  VARCHAR(512)    NULL COMMENT '错误信息',

@@ -35,6 +35,7 @@ class IamOperationAudit(models.Model):
     request_data = models.JSONField(null=True, blank=True)
     before_data = models.JSONField(null=True, blank=True)
     after_data = models.JSONField(null=True, blank=True)
+    extra_data = models.JSONField(null=True, blank=True)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_SUCCESS)
     error_code = models.IntegerField(null=True, blank=True)
     error_message = models.CharField(max_length=512, null=True, blank=True)

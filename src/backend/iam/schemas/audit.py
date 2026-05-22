@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -19,11 +19,11 @@ class AuditEvent:
     request_data: dict[str, Any] | None = None
     before_data: dict[str, Any] | None = None
     after_data: dict[str, Any] | None = None
+    extra_data: dict[str, Any] | None = None
     status: str = "SUCCESS"
     error_code: int | None = None
     error_message: str | None = None
     trace_id: str | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
 
 
 __all__ = ["AuditEvent"]
