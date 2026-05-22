@@ -7,7 +7,7 @@ from adrf.viewsets import ViewSet
 from django.http import JsonResponse
 
 from ns_backend.exceptions import BusinessError
-from ns_backend.logging import safe_emit_log_event
+from ns_backend.logging import emit_log_event
 from ns_common.logging import NsLogEvent
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ class BaseRequestViewSet(ViewSet):
                     trace_id = request.headers.get("X-Trace-Id")
                 request_id = request.headers.get("X-Request-Id")
 
-            safe_emit_log_event(
+            emit_log_event(
                 event=NsLogEvent.DJANGO_REQUEST_EXCEPTION,
                 message="unhandled request exception",
                 level="ERROR",

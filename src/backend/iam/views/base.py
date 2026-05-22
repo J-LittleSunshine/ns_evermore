@@ -16,7 +16,7 @@ from iam.services.tenant import TenantService
 from ns_backend.auth import AuthenticatedRequestViewSet
 from ns_backend.exceptions import BusinessError
 from ns_backend.exceptions import ValidateError
-from ns_backend.logging import safe_emit_log_event
+from ns_backend.logging import emit_log_event
 from ns_common.logging import NsLogEvent
 
 if TYPE_CHECKING:
@@ -197,7 +197,7 @@ class IamRequestViewSet(AuthenticatedRequestViewSet):
             current_user = getattr(request, "current_user", None)
             user_id = getattr(current_user, "id", None)
 
-            safe_emit_log_event(
+            emit_log_event(
                 event=NsLogEvent.IAM_AUDIT_RECORD_FAILED,
                 message="audit record failed",
                 level="ERROR",

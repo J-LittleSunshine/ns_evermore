@@ -26,7 +26,7 @@ def short_identifier(value: str | None, edge: int = 8) -> str | None:
     return f"{normalized[:edge]}...{normalized[-edge:]}"
 
 
-def safe_emit_log_event(
+def emit_log_event(
     *,
     event: str,
     message: str,
@@ -86,15 +86,11 @@ def safe_emit_log_event(
             "context": event_data.context,
         }
 
-        if exc_info:
-            logger.exception("%s", payload)
-            return
-
         log_method = getattr(logger, event_level.lower(), logger.error)
-        log_method("%s", payload)
+        log_method("%s", payload, exc_info=exc_info)
     except Exception:  # noqa
         pass
 
 
-__all__ = ["safe_emit_log_event", "short_identifier"]
+__all__ = ["emit_log_event", "short_identifier"]
 

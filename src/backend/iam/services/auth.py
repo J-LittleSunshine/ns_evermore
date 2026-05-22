@@ -16,7 +16,7 @@ from iam.repositories.token import TokenRepository
 from iam.repositories.user import UserRepository
 from iam.services.session import SessionService
 from ns_backend.exceptions import BusinessError
-from ns_backend.logging import safe_emit_log_event, short_identifier
+from ns_backend.logging import emit_log_event, short_identifier
 from ns_backend.utils.jwt import JwtService
 from ns_common.logging import NsLogEvent
 
@@ -161,7 +161,7 @@ class LoginService:
         try:
             await LoginFailureService.clear(username=username)
         except Exception as exc:  # noqa
-            safe_emit_log_event(
+            emit_log_event(
                 event=NsLogEvent.SYSTEM_EXCEPTION,
                 message="login failure clear failed",
                 level="WARNING",
@@ -281,7 +281,7 @@ class RefreshService:
             )
         except BusinessError as exc:
             if exc.code in NsErrorCode.TOKEN_ROTATION_REJECT_CODES:
-                safe_emit_log_event(
+                emit_log_event(
                     event=NsLogEvent.IAM_REFRESH_REJECTED,
                     message="refresh token rotation rejected",
                     level="WARNING",
@@ -297,7 +297,7 @@ class RefreshService:
             raise
 
         if rotate_status == "replayed":
-            safe_emit_log_event(
+            emit_log_event(
                 event=NsLogEvent.IAM_REFRESH_REPLAY_DETECTED,
                 message="refresh token replay detected",
                 level="WARNING",
