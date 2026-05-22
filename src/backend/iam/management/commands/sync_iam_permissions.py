@@ -8,7 +8,7 @@ from iam.services.permission_sync import PermissionSyncService
 
 
 class Command(BaseCommand):
-    help = "sync_iam_permissions: Sync registered permission providers into iam_permission."
+    help = "Sync IAM builtin and configured permission providers into iam_permission."
 
     def add_arguments(self, parser):
         parser.add_argument(

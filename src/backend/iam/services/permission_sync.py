@@ -7,6 +7,7 @@ from iam.registry.builtin import (
     register_builtin_permissions,
     register_builtin_permission_providers,
 )
+from iam.registry.loader import register_configured_permission_providers
 from iam.registry.module import PermissionModuleRegistry
 from iam.registry.permission import PermissionRegistry
 from iam.repositories.permission_sync import PermissionSyncRepository
@@ -30,6 +31,7 @@ class PermissionSyncService:
     async def sync_registered_permissions(cls, operator_id: int | None = None) -> dict:
         PermissionModuleRegistry.clear()
         register_builtin_permission_providers()
+        register_configured_permission_providers()
         specs = PermissionModuleRegistry.list_specs()
         return await cls.sync_specs(specs, operator_id=operator_id)
 
@@ -44,10 +46,14 @@ class PermissionSyncService:
             code_value = spec.code.strip() if isinstance(spec.code, str) else ""
             if not code_value:
                 raise BusinessError("Permission code is required", 17005)
+            if isinstance(spec.code, str) and spec.code != code_value:
+                raise BusinessError(f"Invalid permission code: {spec.code}", 17014)
 
             name_value = spec.name.strip() if isinstance(spec.name, str) else ""
             if not name_value:
                 raise BusinessError("Permission name is required", 17006)
+            if isinstance(spec.name, str) and spec.name != name_value:
+                raise BusinessError(f"Invalid permission name: {spec.name}", 17019)
 
             if spec.permission_type not in cls.ALLOWED_PERMISSION_TYPES:
                 raise BusinessError(f"Invalid permission type: {spec.permission_type}", 17007)
@@ -65,6 +71,8 @@ class PermissionSyncService:
             parent_code_value = spec.parent_code.strip() if isinstance(spec.parent_code, str) else ""
             if not parent_code_value:
                 raise BusinessError(f"Invalid permission parent_code: {spec.parent_code}", 17009)
+            if isinstance(spec.parent_code, str) and spec.parent_code != parent_code_value:
+                raise BusinessError(f"Invalid permission parent_code: {spec.parent_code}", 17018)
 
             if parent_code_value == code_value:
                 raise BusinessError(f"Permission cannot be parent of itself: {spec.code}", 17009)

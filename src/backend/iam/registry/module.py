@@ -15,11 +15,14 @@ class PermissionModuleRegistry:
         if not normalized_label:
             raise BusinessError("Permission provider app_label is required", 17010)
 
-        if any(existing.app_label == app_label for existing in cls._providers):
-            raise BusinessError(f"Duplicate permission provider: {app_label}", 17011)
+        if normalized_label != app_label:
+            raise BusinessError(f"Invalid permission provider app_label: {app_label}", 17017)
+
+        if any(str(existing.app_label).strip() == normalized_label for existing in cls._providers):
+            raise BusinessError(f"Duplicate permission provider: {normalized_label}", 17011)
 
         if not callable(getattr(provider, "list_permissions", None)):
-            raise BusinessError(f"Invalid permission provider: {app_label}", 17012)
+            raise BusinessError(f"Invalid permission provider: {normalized_label}", 17012)
 
         cls._providers.append(provider)
 
@@ -39,7 +42,7 @@ class PermissionModuleRegistry:
     def list_specs(cls) -> list[PermissionSpec]:
         specs: list[PermissionSpec] = []
         for provider in cls._providers:
-            app_label = provider.app_label
+            app_label = str(provider.app_label).strip()
             provider_specs = provider.list_permissions()
             if not isinstance(provider_specs, (list, tuple)):
                 raise BusinessError(
