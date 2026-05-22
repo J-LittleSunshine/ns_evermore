@@ -8,6 +8,7 @@ from django.conf import settings
 
 from iam.services.auth_context import AuthContextService
 from iam.services.auth import LoginService, LogoutService, RefreshService, RevokeService
+from iam.validators.auth import AuthRequestValidator
 from iam.views.base import IamRequestViewSet
 
 if TYPE_CHECKING:
@@ -19,34 +20,24 @@ class AuthPublicViewSet(IamRequestViewSet):
     authentication_required = False
 
     async def login(self, request, *args, **kwargs):
-        username = request.data.get("username")
-        password = request.data.get("password")
-
-        if not username:
-            return self.failed_response("username cannot be empty", 11001)
-
-        if not password:
-            return self.failed_response("password cannot be empty", 11002)
+        validated_data = AuthRequestValidator.validate_login_data(request.data)
 
         data = await LoginService.execute(
-            username=username,
-            password=password,
+            username=validated_data["username"],
+            password=validated_data["password"],
             client_ip=self.get_client_ip(request),
             user_agent=request.headers.get("User-Agent"),
-            device_name=request.data.get("device_name"),
-            device_type=request.data.get("device_type"),
-            fingerprint_raw=request.data.get("fingerprint"),
-            os_name=request.data.get("os_name"),
-            browser_name=request.data.get("browser_name"),
+            device_name=validated_data["device_name"],
+            device_type=validated_data["device_type"],
+            fingerprint_raw=validated_data["fingerprint"],
+            os_name=validated_data["os_name"],
+            browser_name=validated_data["browser_name"],
         )
 
         return self.success_response(data)
 
     async def refresh_token(self, request, *args, **kwargs):
-        refresh_token = request.data.get("refresh_token")
-
-        if not refresh_token:
-            return self.failed_response("refresh_token cannot be empty", 11004)
+        refresh_token = AuthRequestValidator.validate_refresh_token_data(request.data)
 
         data = await RefreshService.execute(refresh_token=refresh_token)
 
@@ -89,17 +80,19 @@ class AuthPrivateViewSet(IamRequestViewSet):
         if not access_token:
             return self.failed_response("access_token cannot be empty", 11004)
 
-        success = await RevokeService.revoke_access_token(access_token)
+        access_revoked = await RevokeService.revoke_access_token(access_token)
+        refresh_revoked = False
 
         if refresh_token:
-            refresh_success = await LogoutService.execute(
+            refresh_revoked = await LogoutService.execute(
                 refresh_token=refresh_token,
                 current_user_id=current_user.id,
             )
-            success = success or refresh_success
 
         return self.success_response({
-            "success": success,
+            "success": access_revoked or refresh_revoked,
+            "access_revoked": access_revoked,
+            "refresh_revoked": refresh_revoked,
         })
 
     async def current_user(self, request, *args, **kwargs):
@@ -160,21 +153,7 @@ class AuthPrivateViewSet(IamRequestViewSet):
         if not user:
             return self.failed_response("User is not logged in or session has expired", 11007)
 
-        permission_codes = request.data.get("permission_codes")
-        if permission_codes is None:
-            return self.failed_response("permission_codes cannot be empty", 12001)
-
-        if not isinstance(permission_codes, list):
-            return self.failed_response("permission_codes must be a list", 12002)
-
-        clean_codes: list[str] = []
-        for code in permission_codes:
-            if not isinstance(code, str) or not code.strip():
-                return self.failed_response("permission_code cannot be empty", 12001)
-            clean_codes.append(code.strip())
-
-        if len(clean_codes) > 100:
-            return self.failed_response("permission_codes exceeds limit", 12004)
+        clean_codes = AuthRequestValidator.validate_data_scope_codes(request.data)
 
         items = await AuthContextService.list_data_scopes(
             user=user,

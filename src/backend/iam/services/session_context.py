@@ -25,6 +25,7 @@ class SessionContextService:
             access_token=access_token,
         )
         rows = await SessionRepository.list_user_sessions(user.id)
+        valid_token_session_ids = await SessionRepository.list_valid_token_session_ids(user.id)
         now = timezone.now()
 
         return [
@@ -32,6 +33,7 @@ class SessionContextService:
                 item=item,
                 current_session_pk=current_session_pk,
                 now=now,
+                valid_token_session_ids=valid_token_session_ids,
             )
             for item in rows
         ]
@@ -110,17 +112,20 @@ class SessionContextService:
         item: dict,
         current_session_pk: int | None,
         now,
+        valid_token_session_ids: set[int],
     ) -> dict:
+        internal_id = item.get("id")
         expired_at = item.get("expired_at")
         revoked_at = item.get("revoked_at")
-        is_active = bool(
+        session_available = bool(
             revoked_at is None
             and expired_at is not None
             and expired_at > now
         )
+        has_valid_token = internal_id in valid_token_session_ids
+        is_active = session_available and has_valid_token
 
         return {
-            "id": item.get("id"),
             "session_id": item.get("session_id"),
             "login_ip": item.get("login_ip"),
             "user_agent": item.get("user_agent"),
@@ -129,7 +134,9 @@ class SessionContextService:
             "expired_at": SessionContextService.format_datetime(expired_at),
             "revoked_at": SessionContextService.format_datetime(revoked_at),
             "created_at": SessionContextService.format_datetime(item.get("created_at")),
-            "is_current": item.get("id") == current_session_pk,
+            "is_current": internal_id == current_session_pk,
+            "session_available": session_available,
+            "has_valid_token": has_valid_token,
             "is_active": is_active,
             "device": item.get("device"),
         }

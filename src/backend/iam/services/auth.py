@@ -161,15 +161,11 @@ class LoginService:
         try:
             await LoginFailureService.clear(username=username)
         except Exception as exc:  # noqa
-            try:
-                await LoginFailureService.clear(username=username)
-            except Exception as retry_exc:  # noqa
-                _logger.warning(
-                    "failed to clear login failure record username=%s err=%s retry_err=%s",
-                    username,
-                    exc,
-                    retry_exc,
-                )
+            _logger.warning(
+                "failed to clear login failure record username=%s err=%s",
+                username,
+                exc,
+            )
 
         return {
             "access_token": access_token,
@@ -200,16 +196,22 @@ class LogoutService:
 
     @classmethod
     async def execute(cls, refresh_token: str, current_user_id: int | None = None) -> bool:
-        payload = JwtService.decode_refresh_token(refresh_token)
+        if not isinstance(refresh_token, str) or not refresh_token:
+            return False
+
+        try:
+            payload = JwtService.decode_refresh_token(refresh_token)
+        except Exception:  # noqa
+            return False
 
         if not payload:
-            raise BusinessError("Refresh token is invalid or expired", 11005)
+            return False
 
         refresh_jti = payload.get("jti")
         user_id = payload.get("uid")
 
         if not refresh_jti or not user_id:
-            raise BusinessError("Refresh token is invalid or expired", 11005)
+            return False
 
         if current_user_id is not None and user_id != current_user_id:
             raise BusinessError("Refresh token does not match the current user", 11012)

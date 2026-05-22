@@ -284,6 +284,17 @@ class SessionRepository:
         return items
 
     @staticmethod
+    async def list_valid_token_session_ids(user_id: int) -> set[int]:
+        now = timezone.now()
+        queryset = IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+            user_id=user_id,
+            revoked_at__isnull=True,
+            expired_at__gt=now,
+            session_id__isnull=False,
+        ).values_list("session_id", flat=True)
+        return {session_id async for session_id in queryset}
+
+    @staticmethod
     async def get_user_session_by_public_id(
         *,
         user_id: int,
@@ -481,7 +492,8 @@ class SessionRepository:
         ).aupdate(risk_level=risk_level)
 
     @staticmethod
-    async def list_by_user_id(user_id: int):
-        return IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+    async def list_by_user_id(user_id: int) -> list[IamUserSession]:
+        queryset = IamUserSession.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
         ).order_by("-last_active_at")
+        return [item async for item in queryset]
