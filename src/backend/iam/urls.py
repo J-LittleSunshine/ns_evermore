@@ -17,6 +17,7 @@ from iam.views import (
     PermissionViewSet,
     RolePermissionViewSet,
     RoleViewSet,
+    SessionViewSet,
     SubsidiaryPermissionViewSet,
     SubsidiaryViewSet,
     UserPermissionViewSet,
@@ -89,4 +90,8 @@ urlpatterns = [
     path("auth/permissions/", AuthPrivateViewSet.as_view({"post": "permissions"})),
     path("auth/menus/", AuthPrivateViewSet.as_view({"post": "menus"})),
     path("auth/data-scopes/", AuthPrivateViewSet.as_view({"post": "data_scopes"})),
+
+    # session api
+    path("session/list/", SessionViewSet.as_view({"post": "list_item"})),
+    path("session/revoke/", SessionViewSet.as_view({"post": "revoke"})),
 ]

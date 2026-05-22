@@ -14,6 +14,7 @@ from .grant import (
 )
 from .permission import PermissionViewSet
 from .role import RoleViewSet
+from .session import SessionViewSet
 from .subsidiary import SubsidiaryViewSet
 from .user import UserViewSet
 
@@ -26,6 +27,7 @@ __all__ = [
     "DepartmentViewSet",
     "PermissionViewSet",
     "RoleViewSet",
+    "SessionViewSet",
     "UserViewSet",
     "UserRoleViewSet",
     "RolePermissionViewSet",

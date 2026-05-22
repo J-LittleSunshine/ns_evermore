@@ -60,6 +60,9 @@ IAM_BUILTIN_PERMISSIONS: tuple[PermissionSpec, ...] = (
     PermissionSpec(code="iam:auth:permissions", name="Get auth permissions", permission_type="ACTION", parent_code="iam:auth"),
     PermissionSpec(code="iam:auth:menus", name="Get auth menus", permission_type="ACTION", parent_code="iam:auth"),
     PermissionSpec(code="iam:auth:data_scopes", name="Get auth data scopes", permission_type="ACTION", parent_code="iam:auth"),
+    PermissionSpec(code="iam:session", name="IAM Session", permission_type="MENU"),
+    PermissionSpec(code="iam:session:list", name="List current user sessions", permission_type="ACTION", parent_code="iam:session"),
+    PermissionSpec(code="iam:session:revoke", name="Revoke current user session", permission_type="ACTION", parent_code="iam:session"),
 )
 
 

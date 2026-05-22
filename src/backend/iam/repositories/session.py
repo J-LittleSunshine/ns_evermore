@@ -244,6 +244,57 @@ class SessionRepository:
         ).afirst()
 
     @staticmethod
+    async def list_user_sessions(user_id: int) -> list[dict]:
+        queryset = IamUserSession.objects.using(IAM_DB_ALIAS).select_related("device").filter(
+            user_id=user_id,
+        ).order_by("-last_active_at")
+
+        items: list[dict] = []
+        async for session in queryset:
+            device = getattr(session, "device", None)
+            device_data = None
+            if device is not None:
+                device_data = {
+                    "id": device.id,
+                    "device_id": device.device_id,
+                    "device_name": device.device_name,
+                    "device_type": device.device_type,
+                    "os_name": device.os_name,
+                    "browser_name": device.browser_name,
+                    "trusted": device.trusted,
+                    "status": device.status,
+                    "last_client_ip": device.last_client_ip,
+                }
+
+            items.append(
+                {
+                    "id": session.id,
+                    "session_id": session.session_id,
+                    "login_ip": session.login_ip,
+                    "user_agent": session.user_agent,
+                    "risk_level": session.risk_level,
+                    "last_active_at": session.last_active_at,
+                    "expired_at": session.expired_at,
+                    "revoked_at": session.revoked_at,
+                    "created_at": session.created_at,
+                    "device": device_data,
+                },
+            )
+
+        return items
+
+    @staticmethod
+    async def get_user_session_by_public_id(
+        *,
+        user_id: int,
+        session_id: str,
+    ) -> IamUserSession | None:
+        return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
+            user_id=user_id,
+            session_id=session_id,
+        ).afirst()
+
+    @staticmethod
     async def get_available_by_id(session_id: int) -> IamUserSession | None:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
             id=session_id,
