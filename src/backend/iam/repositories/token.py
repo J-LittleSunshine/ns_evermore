@@ -9,7 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
-from iam.error_codes import IamErrorCode
+from ns_common.error_codes import NsErrorCode
 from iam.models import IamUser, IamUserSession, IamUserToken
 from ns_backend.exceptions import BusinessError
 
@@ -82,7 +82,7 @@ class TokenRepository:
         """兼容保留：禁止调用无 guard 的旧刷新旋转路径。"""
         raise BusinessError(
             "rotate_refresh_token is deprecated, use rotate_refresh_token_with_guard instead",
-            IamErrorCode.TOKEN_ROTATION_DEPRECATED,
+            NsErrorCode.TOKEN_ROTATION_DEPRECATED,
         )
 
     @staticmethod
@@ -90,7 +90,7 @@ class TokenRepository:
         refresh_token_hash: str,
         new_token_data: dict[str, Any],
     ) -> IamUserToken:
-        raise BusinessError("_rotate_refresh_token_sync is deprecated", IamErrorCode.TOKEN_ROTATION_DEPRECATED)
+        raise BusinessError("_rotate_refresh_token_sync is deprecated", NsErrorCode.TOKEN_ROTATION_DEPRECATED)
 
     @classmethod
     async def rotate_refresh_token_with_guard(
@@ -121,7 +121,7 @@ class TokenRepository:
         new_token_data: dict[str, Any],
     ) -> tuple[str, IamUserToken | None, int | None, str | None, str | None]:
         if not refresh_token_hash:
-            raise BusinessError("refresh_token cannot be empty", IamErrorCode.TOKEN_ROTATION_INVALID)
+            raise BusinessError("refresh_token cannot be empty", NsErrorCode.TOKEN_ROTATION_INVALID)
 
         with transaction.atomic(using=IAM_DB_ALIAS):
             old_token = (
@@ -136,10 +136,10 @@ class TokenRepository:
             )
 
             if not old_token:
-                raise BusinessError("refresh_token does not exist", IamErrorCode.TOKEN_ROTATION_REVOKED)
+                raise BusinessError("refresh_token does not exist", NsErrorCode.TOKEN_ROTATION_REVOKED)
 
             if old_token.expired_at <= timezone.now():
-                raise BusinessError("refresh_token has expired", IamErrorCode.TOKEN_ROTATION_REPLAYED)
+                raise BusinessError("refresh_token has expired", NsErrorCode.TOKEN_ROTATION_REPLAYED)
 
             if old_token.revoked_at:
                 return "replayed", None, old_token.session_id, None, None

@@ -8,7 +8,7 @@ from django.db import IntegrityError
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
-from iam.error_codes import IamErrorCode
+from ns_common.error_codes import NsErrorCode
 from ns_backend.exceptions import BusinessError
 
 
@@ -19,7 +19,7 @@ class CrudRepository:
     def ensure_model_class(model_class) -> None:
         """确保 View 已配置模型类。"""
         if model_class is None:
-            raise BusinessError("model_class is not configured", IamErrorCode.MODEL_CLASS_NOT_CONFIGURED)
+            raise BusinessError("model_class is not configured", NsErrorCode.MODEL_CLASS_NOT_CONFIGURED)
 
     @staticmethod
     def build_queryset(model_class):
@@ -76,7 +76,7 @@ class CrudRepository:
         cls.ensure_model_class(model_class)
 
         if not item_id:
-            raise BusinessError("id cannot be empty", IamErrorCode.ID_EMPTY)
+            raise BusinessError("id cannot be empty", NsErrorCode.ID_EMPTY)
 
         queryset = model_class.objects.using(IAM_DB_ALIAS).filter(id=item_id)
 
@@ -86,7 +86,7 @@ class CrudRepository:
         item = await queryset.afirst()
 
         if not item:
-            raise BusinessError("Data not found", IamErrorCode.DATA_NOT_FOUND)
+            raise BusinessError("Data not found", NsErrorCode.DATA_NOT_FOUND)
 
         return item
 
@@ -112,7 +112,7 @@ class CrudRepository:
         try:
             return await model_class.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"Data creation failed: {exc}", IamErrorCode.DATA_CREATION_FAILED)
+            raise BusinessError(f"Data creation failed: {exc}", NsErrorCode.DATA_CREATION_FAILED)
 
     @classmethod
     async def create_item_with_audit(
@@ -149,7 +149,7 @@ class CrudRepository:
                 update_fields=list(data.keys()),
             )
         except IntegrityError as exc:
-            raise BusinessError(f"Data update failed: {exc}", IamErrorCode.DATA_UPDATE_FAILED)
+            raise BusinessError(f"Data update failed: {exc}", NsErrorCode.DATA_UPDATE_FAILED)
 
     @classmethod
     async def update_item_with_audit(
@@ -200,7 +200,7 @@ class CrudRepository:
             normalized_page = max(int(page or 1), 1)
             normalized_page_size = min(max(int(page_size or 20), 1), 100)
         except (TypeError, ValueError):
-            raise BusinessError("Invalid pagination parameters", IamErrorCode.INVALID_PAGINATION_PARAMETERS)
+            raise BusinessError("Invalid pagination parameters", NsErrorCode.INVALID_PAGINATION_PARAMETERS)
 
         return normalized_page, normalized_page_size
 

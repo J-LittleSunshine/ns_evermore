@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from iam.error_codes import IamErrorCode
+from ns_common.error_codes import NsErrorCode
 from iam.schemas import AuditEvent
 from ns_backend.exceptions import BusinessError
 from ns_backend.policies import BasePolicy
@@ -174,10 +174,10 @@ class AuditPolicy(BasePolicy):
     @classmethod
     def normalize_event(cls, event: AuditEvent) -> AuditEvent:
         if not event.operation_type:
-            raise BusinessError("operation_type is required", IamErrorCode.AUDIT_OPERATION_TYPE_REQUIRED)
+            raise BusinessError("operation_type is required", NsErrorCode.AUDIT_OPERATION_TYPE_REQUIRED)
 
         if not event.resource_type:
-            raise BusinessError("resource_type is required", IamErrorCode.AUDIT_RESOURCE_TYPE_REQUIRED)
+            raise BusinessError("resource_type is required", NsErrorCode.AUDIT_RESOURCE_TYPE_REQUIRED)
 
         return replace(
             event,

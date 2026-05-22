@@ -4,7 +4,7 @@ from __future__ import annotations
 from django.db import IntegrityError
 
 from iam.constants import IAM_DB_ALIAS
-from iam.error_codes import IamErrorCode
+from ns_common.error_codes import NsErrorCode
 from iam.models import IamPermission
 from ns_backend.exceptions import BusinessError
 
@@ -36,7 +36,7 @@ class PermissionSyncRepository:
         try:
             return await IamPermission.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"Failed to create permission: {exc}", IamErrorCode.PERMISSION_CREATE_FAILED)
+            raise BusinessError(f"Failed to create permission: {exc}", NsErrorCode.PERMISSION_CREATE_FAILED)
 
     @staticmethod
     async def update_permission(permission: IamPermission, data: dict) -> None:
@@ -68,7 +68,7 @@ class PermissionSyncRepository:
                 update_fields=update_fields,
             )
         except IntegrityError as exc:
-            raise BusinessError(f"Failed to update permission: {exc}", IamErrorCode.PERMISSION_UPDATE_FAILED)
+            raise BusinessError(f"Failed to update permission: {exc}", NsErrorCode.PERMISSION_UPDATE_FAILED)
 
     @staticmethod
     async def get_permission_by_code(code: str) -> IamPermission | None:

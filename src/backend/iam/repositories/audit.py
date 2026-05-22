@@ -4,7 +4,7 @@ from __future__ import annotations
 from django.db import IntegrityError
 
 from iam.constants import IAM_DB_ALIAS
-from iam.error_codes import IamErrorCode
+from ns_common.error_codes import NsErrorCode
 from iam.models import IamOperationAudit
 from ns_backend.exceptions import BusinessError
 
@@ -15,7 +15,7 @@ class AuditRepository:
         try:
             return await IamOperationAudit.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"Failed to create audit event: {exc}", IamErrorCode.AUDIT_CREATE_FAILED)
+            raise BusinessError(f"Failed to create audit event: {exc}", NsErrorCode.AUDIT_CREATE_FAILED)
 
 
 __all__ = ["AuditRepository"]

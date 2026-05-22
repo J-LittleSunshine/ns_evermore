@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from iam.error_codes import IamErrorCode
+from ns_common.error_codes import NsErrorCode
 from iam.policies.organization import OrganizationPolicy
 from iam.policies.tenant import TenantPolicy
 from iam.repositories.crud import CrudRepository
@@ -28,7 +28,7 @@ class DepartmentService:
             company_id = create_data.get("company_id")
 
             if not company_id:
-                raise BusinessError("company_id cannot be empty", IamErrorCode.ID_EMPTY)
+                raise BusinessError("company_id cannot be empty", NsErrorCode.ID_EMPTY)
         else:
             TenantPolicy.ensure_enterprise_context(context)
             company_id = context.company_id

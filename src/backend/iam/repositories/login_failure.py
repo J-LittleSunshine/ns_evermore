@@ -8,7 +8,7 @@ from django.db.models import Case, DateTimeField, F, Value, When
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
-from iam.error_codes import IamErrorCode
+from ns_common.error_codes import NsErrorCode
 from iam.models import IamLoginFailureLock, IamUser
 from ns_backend.exceptions import BusinessError
 
@@ -124,6 +124,6 @@ class LoginFailureRepository:
 
                 raise BusinessError(
                     "Failed to update login failure counter, please try again later",
-                    IamErrorCode.LOGIN_FAILURE_UPDATE_FAILED,
+                    NsErrorCode.LOGIN_FAILURE_UPDATE_FAILED,
                 )
 

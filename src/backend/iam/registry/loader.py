@@ -12,7 +12,7 @@ Settings example:
 from django.conf import settings
 from django.utils.module_loading import import_string
 
-from iam.error_codes import IamErrorCode
+from ns_common.error_codes import NsErrorCode
 from iam.registry.module import PermissionModuleRegistry
 from ns_backend.exceptions import BusinessError
 
@@ -21,11 +21,11 @@ def register_configured_permission_providers() -> None:
     provider_paths = getattr(settings, "IAM_PERMISSION_PROVIDERS", ()) or ()
 
     if not isinstance(provider_paths, (list, tuple)):
-        raise BusinessError("IAM_PERMISSION_PROVIDERS must be a list or tuple", IamErrorCode.PERMISSION_PROVIDERS_CONFIG_INVALID)
+        raise BusinessError("IAM_PERMISSION_PROVIDERS must be a list or tuple", NsErrorCode.PERMISSION_PROVIDERS_CONFIG_INVALID)
 
     for provider_path in provider_paths:
         if not isinstance(provider_path, str) or not provider_path.strip():
-            raise BusinessError(f"Invalid permission provider path: {provider_path}", IamErrorCode.PROVIDER_PATH_INVALID)
+            raise BusinessError(f"Invalid permission provider path: {provider_path}", NsErrorCode.PROVIDER_PATH_INVALID)
 
         provider_object = import_string(provider_path.strip())
 

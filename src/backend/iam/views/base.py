@@ -5,7 +5,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from django.http import JsonResponse
-from iam.error_codes import IamErrorCode
+from ns_common.error_codes import NsErrorCode
 from iam.services.audit import AuditService
 from iam.schemas import TenantContext
 from iam.policies.tenant import TenantPolicy
@@ -16,12 +16,11 @@ from iam.services.tenant import TenantService
 from ns_backend.auth import AuthenticatedRequestViewSet
 from ns_backend.exceptions import BusinessError
 from ns_backend.exceptions import ValidateError
-from ns_backend.logger import get_logger
+from ns_backend.logging_events import log_event
+from ns_common.logging.constants import NsLogEvent
 
 if TYPE_CHECKING:
     pass
-
-_logger = get_logger("iam.audit")
 
 
 class IamRequestViewSet(AuthenticatedRequestViewSet):
@@ -185,8 +184,31 @@ class IamRequestViewSet(AuthenticatedRequestViewSet):
                 error_message=None if code == 0 else msg,
             )
             await AuditService.record_event(event)
-        except Exception:
-            _logger.exception("failed to record operation audit")
+        except Exception as exc:
+            trace_id = None
+            request_trace_id = getattr(request, "trace_id", None)
+            if isinstance(request_trace_id, str):
+                trace_id = request_trace_id
+            elif hasattr(request, "headers"):
+                trace_id = request.headers.get("X-Trace-Id")
+
+            current_user = getattr(request, "current_user", None)
+            user_id = getattr(current_user, "id", None)
+
+            log_event(
+                event=NsLogEvent.AUDIT_RECORD_FAILED,
+                message="failed to record operation audit",
+                trace_id=trace_id,
+                user_id=user_id if isinstance(user_id, int) else None,
+                context={
+                    "view": self.__class__.__name__,
+                    "method": getattr(request, "method", None),
+                    "path": getattr(request, "path", None),
+                    "error": str(exc),
+                },
+                level="error",
+                log_name="iam.audit",
+            )
 
 
 class BaseIamViewSet(IamRequestViewSet):
@@ -282,7 +304,7 @@ class BaseIamViewSet(IamRequestViewSet):
                 continue
 
             if field not in self.update_fields:
-                raise ValidateError(f"Updating field is not allowed: {field}", IamErrorCode.UPDATE_FIELD_NOT_ALLOWED)
+                raise ValidateError(f"Updating field is not allowed: {field}", NsErrorCode.UPDATE_FIELD_NOT_ALLOWED)
 
         if self.validator_class:
             return self.validator_class.validate_update(data)
@@ -326,13 +348,13 @@ class BaseIamViewSet(IamRequestViewSet):
             company_id = context.company_id
 
             if company_id is None:
-                raise BusinessError("Enterprise user is not bound to a company", IamErrorCode.ENTERPRISE_USER_COMPANY_NOT_BOUND)
+                raise BusinessError("Enterprise user is not bound to a company", NsErrorCode.ENTERPRISE_USER_COMPANY_NOT_BOUND)
 
             return {self.tenant_scope_field: company_id}
 
         raise BusinessError(
             "Personal users cannot access enterprise organization resources",
-            IamErrorCode.ENTERPRISE_ORG_FORBIDDEN_PERSONAL,
+            NsErrorCode.ENTERPRISE_ORG_FORBIDDEN_PERSONAL,
         )
 
     def get_tenant_create_values(self, request) -> dict[str, Any] | None:
@@ -354,13 +376,13 @@ class BaseIamViewSet(IamRequestViewSet):
             company_id = context.company_id
 
             if company_id is None:
-                raise BusinessError("Enterprise user is not bound to a company", IamErrorCode.ENTERPRISE_USER_COMPANY_NOT_BOUND)
+                raise BusinessError("Enterprise user is not bound to a company", NsErrorCode.ENTERPRISE_USER_COMPANY_NOT_BOUND)
 
             return {self.tenant_create_field: company_id}
 
         raise BusinessError(
             "Personal users cannot access enterprise organization resources",
-            IamErrorCode.ENTERPRISE_ORG_FORBIDDEN_PERSONAL,
+            NsErrorCode.ENTERPRISE_ORG_FORBIDDEN_PERSONAL,
         )
 
 

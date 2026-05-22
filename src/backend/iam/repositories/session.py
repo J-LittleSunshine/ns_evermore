@@ -10,7 +10,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
-from iam.error_codes import IamErrorCode
+from ns_common.error_codes import NsErrorCode
 from iam.models import IamUser, IamUserDevice, IamUserSession, IamUserToken
 from ns_backend.exceptions import BusinessError
 
@@ -42,7 +42,7 @@ class SessionRepository:
         """兼容保留：禁止调用旧登录写路径。"""
         raise BusinessError(
             "create_login_bundle is deprecated, use create_login_bundle_with_device instead",
-            IamErrorCode.LOGIN_BUNDLE_DEPRECATED,
+            NsErrorCode.LOGIN_BUNDLE_DEPRECATED,
         )
 
     @staticmethod
@@ -61,7 +61,7 @@ class SessionRepository:
         refresh_jti: str,
         token_expired_at,
     ) -> IamUserSession:
-        raise BusinessError("_create_login_bundle_sync is deprecated", IamErrorCode.LOGIN_BUNDLE_DEPRECATED)
+        raise BusinessError("_create_login_bundle_sync is deprecated", NsErrorCode.LOGIN_BUNDLE_DEPRECATED)
 
     @classmethod
     async def create_login_bundle_with_device(
@@ -139,7 +139,7 @@ class SessionRepository:
             )
 
             if not user or not user.is_active:
-                raise BusinessError("Username or password is incorrect.", IamErrorCode.USERNAME_OR_PASSWORD_INCORRECT)
+                raise BusinessError("Username or password is incorrect.", NsErrorCode.USERNAME_OR_PASSWORD_INCORRECT)
 
             device = (
                 IamUserDevice.objects.using(IAM_DB_ALIAS)
