@@ -3,10 +3,20 @@ from __future__ import annotations
 
 
 class NsLogEvent:
-    LOGIN_FAILURE_CLEAR_FAILED = "login_failure_clear_failed"
-    REFRESH_ROTATION_REJECTED = "refresh_rotation_rejected"
-    REFRESH_REPLAY_DETECTED = "refresh_replay_detected"
-    AUDIT_RECORD_FAILED = "audit_record_failed"
+    SYSTEM_EXCEPTION = "system.exception"
+    DJANGO_REQUEST_EXCEPTION = "django.request.exception"
+
+    IAM_LOGIN_SUCCESS = "iam.login.success"
+    IAM_LOGIN_FAILED = "iam.login.failed"
+    IAM_REFRESH_REJECTED = "iam.refresh.rejected"
+    IAM_REFRESH_REPLAY_DETECTED = "iam.refresh.replay_detected"
+    IAM_AUDIT_RECORD_FAILED = "iam.audit.record_failed"
+
+    WEBSOCKET_CONNECT = "websocket.connect"
+    WEBSOCKET_DISCONNECT = "websocket.disconnect"
+    WEBSOCKET_ERROR = "websocket.error"
+    DATABASE_LOG_SINK_WRITE = "database.log_sink.write"
+    DATABASE_LOG_SINK_FAILED = "database.log_sink.failed"
 
 
 SENSITIVE_LOG_KEYS = {

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,11 +10,22 @@ from typing import Any
 class NsLogEventData:
     event: str
     message: str
+    component: str | None = None
+    log_name: str | None = None
     trace_id: str | None = None
-    user_id: int | None = None
+    request_id: str | None = None
+    connection_id: str | None = None
+    user_id: int | str | None = None
+    session_id: str | None = None
     error_code: int | None = None
+    level: str = "INFO"
+    pid: int | None = None
     context: dict[str, Any] = field(default_factory=dict)
 
 
-__all__ = ["NsLogEventData"]
+def get_current_pid() -> int:
+    return os.getpid()
+
+
+__all__ = ["NsLogEventData", "get_current_pid"]
 
