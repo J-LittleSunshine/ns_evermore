@@ -282,7 +282,7 @@ class BaseIamViewSet(IamRequestViewSet):
                 continue
 
             if field not in self.update_fields:
-                raise ValidateError(f"Updating field is not allowed: {field}", 12005)
+                raise ValidateError(f"Updating field is not allowed: {field}", IamErrorCode.UPDATE_FIELD_NOT_ALLOWED)
 
         if self.validator_class:
             return self.validator_class.validate_update(data)
