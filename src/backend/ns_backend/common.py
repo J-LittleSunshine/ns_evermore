@@ -7,11 +7,9 @@ from adrf.viewsets import ViewSet
 from django.http import JsonResponse
 
 from ns_backend.exceptions import BusinessError
-from ns_common.logging import get_logger
 
 if TYPE_CHECKING:
     pass
-_logger = get_logger(component="ns_backend")
 
 
 class BaseRequestViewSet(ViewSet):
@@ -35,8 +33,7 @@ class BaseRequestViewSet(ViewSet):
                 data=exc.data,
             )
 
-        except Exception as exc:
-            _logger.exception(exc)
+        except Exception:  # noqa
             return self.failed_response(
                 msg="System error",
                 code=50000,

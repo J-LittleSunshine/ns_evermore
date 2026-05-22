@@ -131,7 +131,7 @@ class NsLogger(logging.Logger):
 
         handler.setFormatter(formatter)
 
-        backup_dir = component_dir / "backup" / file_name
+        backup_dir = component_dir / "backup" / Path(file_name).stem
         backup_dir.mkdir(parents=True, exist_ok=True)
 
         def namer(default_name: str) -> str:

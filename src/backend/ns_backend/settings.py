@@ -4,8 +4,6 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Dict, Any, List
 
-from ns_common.logging import get_logger
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 ETC_DIR = BASE_DIR.parent.parent / "etc"
@@ -14,13 +12,6 @@ ETC_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR = BASE_DIR.parent.parent / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-LOG_DIR = BASE_DIR.parent.parent / "log"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-LOG_BACKUP_DIR = LOG_DIR / "backup"
-LOG_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-
-logger = get_logger(component="ns_backend", log_root=LOG_DIR)
 
 BACKEND_CONFIG_FILE_PATH = ETC_DIR / "backend_config.json"
 if not BACKEND_CONFIG_FILE_PATH.exists():
