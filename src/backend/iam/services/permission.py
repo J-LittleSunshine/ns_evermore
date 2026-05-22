@@ -72,6 +72,7 @@ class PermissionService:
             permission_ids,
             now,
             role_scope=cls.USER_TYPE_PERSONAL,
+            company_id=None,
         )
 
         return has_user_allow or has_role_allow
@@ -83,6 +84,9 @@ class PermissionService:
             permission_ids: list[int],
             now,
     ) -> bool:
+        if not user.company_id:
+            return False
+
         has_user_deny = await PermissionRepository.has_user_deny(
             user.id,
             permission_ids,
@@ -118,6 +122,7 @@ class PermissionService:
             permission_ids,
             now,
             role_scope=cls.USER_TYPE_ENTERPRISE,
+            company_id=user.company_id,
         )
         has_department_allow = False
         has_subsidiary_allow = False

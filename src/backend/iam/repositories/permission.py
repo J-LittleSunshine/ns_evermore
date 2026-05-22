@@ -90,11 +90,22 @@ class PermissionRepository:
         permission_ids: list[int],
         now,
         role_scope: str,
+        company_id: int | None = None,
     ) -> bool:
+        role_filter = {
+            "user_id": user_id,
+            "role__status": 1,
+            "role__role_scope": role_scope,
+        }
+
+        if role_scope == "PERSONAL":
+            role_filter["role__company_id__isnull"] = True
+
+        if role_scope == "ENTERPRISE" and company_id is not None:
+            role_filter["role__company_id"] = company_id
+
         role_ids = IamUserRole.objects.using(IAM_DB_ALIAS).filter(
-            user_id=user_id,
-            role__status=1,
-            role__role_scope=role_scope,
+            **role_filter,
         ).values("role_id")
 
         return await IamRolePermission.objects.using(IAM_DB_ALIAS).filter(
