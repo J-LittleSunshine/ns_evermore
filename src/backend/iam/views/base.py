@@ -16,6 +16,8 @@ from iam.services.tenant import TenantService
 from ns_backend.auth import AuthenticatedRequestViewSet
 from ns_backend.exceptions import BusinessError
 from ns_backend.exceptions import ValidateError
+from ns_backend.logging import safe_emit_log_event
+from ns_common.logging import NsLogEvent
 
 if TYPE_CHECKING:
     pass
@@ -164,9 +166,11 @@ class IamRequestViewSet(AuthenticatedRequestViewSet):
         }
 
     async def record_operation_audit(self, request, response) -> None:
+        response_code: int | None = None
         try:
             response_payload = self.parse_response_payload(response)
             code, msg = self.get_response_code_and_msg(response_payload)
+            response_code = code
             status = "SUCCESS" if code == 0 else "FAILED"
 
             event = AuditService.build_event_from_request(
@@ -182,7 +186,34 @@ class IamRequestViewSet(AuthenticatedRequestViewSet):
                 error_message=None if code == 0 else msg,
             )
             await AuditService.record_event(event)
-        except Exception:  # noqa
+        except Exception as exc:  # noqa
+            trace_id = getattr(request, "trace_id", None)
+            request_id = None
+            if hasattr(request, "headers"):
+                if not isinstance(trace_id, str):
+                    trace_id = request.headers.get("X-Trace-Id")
+                request_id = request.headers.get("X-Request-Id")
+
+            current_user = getattr(request, "current_user", None)
+            user_id = getattr(current_user, "id", None)
+
+            safe_emit_log_event(
+                event=NsLogEvent.IAM_AUDIT_RECORD_FAILED,
+                message="audit record failed",
+                level="ERROR",
+                log_name="iam.audit",
+                trace_id=trace_id if isinstance(trace_id, str) else None,
+                request_id=request_id,
+                user_id=user_id if isinstance(user_id, int) else None,
+                context={
+                    "view": self.__class__.__name__,
+                    "method": getattr(request, "method", None),
+                    "path": getattr(request, "path", None),
+                    "response_code": response_code,
+                    "exception_type": exc.__class__.__name__,
+                },
+                exc_info=True,
+            )
             pass
 
 

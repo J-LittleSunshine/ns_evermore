@@ -7,6 +7,8 @@ from adrf.viewsets import ViewSet
 from django.http import JsonResponse
 
 from ns_backend.exceptions import BusinessError
+from ns_backend.logging import safe_emit_log_event
+from ns_common.logging import NsLogEvent
 
 if TYPE_CHECKING:
     pass
@@ -33,7 +35,28 @@ class BaseRequestViewSet(ViewSet):
                 data=exc.data,
             )
 
-        except Exception:  # noqa
+        except Exception as exc:  # noqa
+            trace_id = getattr(request, "trace_id", None)
+            request_id = None
+            if hasattr(request, "headers"):
+                if not isinstance(trace_id, str):
+                    trace_id = request.headers.get("X-Trace-Id")
+                request_id = request.headers.get("X-Request-Id")
+
+            safe_emit_log_event(
+                event=NsLogEvent.DJANGO_REQUEST_EXCEPTION,
+                message="unhandled request exception",
+                level="ERROR",
+                trace_id=trace_id if isinstance(trace_id, str) else None,
+                request_id=request_id,
+                context={
+                    "view": self.__class__.__name__,
+                    "method": getattr(request, "method", None),
+                    "path": getattr(request, "path", None),
+                    "exception_type": exc.__class__.__name__,
+                },
+                exc_info=True,
+            )
             return self.failed_response(
                 msg="System error",
                 code=50000,
