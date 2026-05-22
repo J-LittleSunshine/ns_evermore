@@ -7,11 +7,11 @@ from adrf.viewsets import ViewSet
 from django.http import JsonResponse
 
 from ns_backend.exceptions import BusinessError
-from ns_backend.logger import get_logger
+from ns_common.logging import get_logger
 
 if TYPE_CHECKING:
     pass
-_logger = get_logger("ns_backend")
+_logger = get_logger(component="ns_backend")
 
 
 class BaseRequestViewSet(ViewSet):

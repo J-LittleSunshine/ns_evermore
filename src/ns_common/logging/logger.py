@@ -8,10 +8,6 @@ import shutil
 import time
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
-
-if TYPE_CHECKING:
-    pass
 
 
 class _LevelFilter(logging.Filter):
@@ -23,36 +19,75 @@ class _LevelFilter(logging.Filter):
         return record.levelno == self._level
 
 
-class _Logger(logging.Logger):
+def _resolve_log_root(log_root: Path | str | None) -> Path:
+    if log_root is not None:
+        return Path(log_root).expanduser().resolve()
+
+    env_root = os.getenv("NS_LOG_ROOT")
+    if env_root:
+        return Path(env_root).expanduser().resolve()
+
+    return (Path.cwd() / "log").resolve()
+
+
+def _validate_component(component: str) -> str:
+    value = str(component or "").strip()
+    if not value:
+        raise ValueError("component cannot be empty")
+
+    if value in {".", ".."} or ".." in value:
+        raise ValueError("component cannot contain '..'")
+
+    if "/" in value or "\\" in value:
+        raise ValueError("component must be a single directory name")
+
+    return value
+
+
+class NsLogger(logging.Logger):
     _FMT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-    def __init__(self, log_name: str, log_path: Path, backup_folder: Optional[Path] = None, level: int = logging.DEBUG, rotation: int = 1, backup_count: int = 30, utc: bool = False):
-        super().__init__(log_name, logging.DEBUG)
+    def __init__(
+        self,
+        *,
+        logger_name: str,
+        component_dir: Path,
+        log_name: str,
+        level: int = logging.DEBUG,
+        rotation: int = 1,
+        backup_count: int = 30,
+        utc: bool = False,
+    ):
+        super().__init__(logger_name, logging.DEBUG)
         self.propagate = False
-        self._log_path = log_path
-        self._backup_folder = backup_folder if backup_folder is not None else log_path / "backup"
 
-        self._log_path.mkdir(exist_ok=True, parents=True)
-        self._backup_folder.mkdir(exist_ok=True, parents=True)
-
-        self.handlers.clear()
+        component_dir.mkdir(parents=True, exist_ok=True)
 
         formatter = logging.Formatter(self._FMT)
 
-        self._add_console_handler(level=level, formatter=formatter, )
+        self._add_console_handler(level=level, formatter=formatter)
 
         self._add_file_handler(
+            component_dir=component_dir,
+            file_name=f"{log_name}.log",
             level=logging.DEBUG,
             formatter=formatter,
             rotation=rotation,
             backup_count=backup_count,
             utc=utc,
-            level_name=log_name,
             exact_level=False,
         )
 
-        for log_level in (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL):
+        for log_level in (
+            logging.DEBUG,
+            logging.INFO,
+            logging.WARNING,
+            logging.ERROR,
+            logging.CRITICAL,
+        ):
             self._add_file_handler(
+                component_dir=component_dir,
+                file_name=f"{logging.getLevelName(log_level).lower()}.log",
                 level=log_level,
                 formatter=formatter,
                 rotation=rotation,
@@ -67,9 +102,19 @@ class _Logger(logging.Logger):
         console.setFormatter(formatter)
         self.addHandler(console)
 
-    def _add_file_handler(self, level: int, formatter: logging.Formatter, rotation: int, backup_count: int, utc: bool, level_name: Optional[str] = None, exact_level: bool = True) -> None:
-        level_name = level_name or logging.getLevelName(level).lower()
-        live_file = self._log_path / f"{level_name}.log"
+    def _add_file_handler(
+        self,
+        *,
+        component_dir: Path,
+        file_name: str,
+        level: int,
+        formatter: logging.Formatter,
+        rotation: int,
+        backup_count: int,
+        utc: bool,
+        exact_level: bool,
+    ) -> None:
+        live_file = component_dir / file_name
 
         handler = TimedRotatingFileHandler(
             filename=live_file,
@@ -81,25 +126,22 @@ class _Logger(logging.Logger):
         )
 
         handler.setLevel(level)
-
         if exact_level:
             handler.addFilter(_LevelFilter(level))
 
         handler.setFormatter(formatter)
 
-        backup_dir = self._backup_folder / level_name
+        backup_dir = component_dir / "backup" / file_name
         backup_dir.mkdir(parents=True, exist_ok=True)
 
         def namer(default_name: str) -> str:
-            filename = Path(default_name).name
-            return str(backup_dir / filename)
+            return str(backup_dir / Path(default_name).name)
 
         def rotator(src: str, dst: str) -> None:
             self._safe_rotate(src=src, dst=dst)
 
         handler.namer = namer
         handler.rotator = rotator
-
         self.addHandler(handler)
 
     @staticmethod
@@ -123,13 +165,10 @@ class _Logger(logging.Logger):
                         shutil.move(src, dst)
                     else:
                         raise
-
                 return
-
             except PermissionError:
                 time.sleep(backoff)
                 backoff *= 1.5
-
             except FileNotFoundError:
                 return
 
@@ -141,43 +180,46 @@ class _Logger(logging.Logger):
             pass
 
 
-_LOGGER_CACHE: dict[str, _Logger] = {}
+_LOGGER_CACHE: dict[tuple[str, str, str], NsLogger] = {}
 
 
 def get_logger(
-        log_name: str = "backend",
-        log_path: Optional[Path] = None,
-        backup_folder: Optional[Path] = None,
-        level: int = logging.DEBUG,
-        rotation: int = 1,
-        backup_count: int = 30,
-        utc: bool = False,
-) -> _Logger:
-    if log_name in _LOGGER_CACHE:
-        return _LOGGER_CACHE[log_name]
+    *,
+    component: str,
+    log_name: str | None = None,
+    log_root: Path | str | None = None,
+    level: int = logging.DEBUG,
+    rotation: int = 1,
+    backup_count: int = 30,
+    utc: bool = False,
+) -> NsLogger:
+    component_name = _validate_component(component)
+    resolved_root = _resolve_log_root(log_root)
+    resolved_log_name = str(log_name).strip() if log_name is not None else component_name
+    if not resolved_log_name:
+        resolved_log_name = component_name
 
-    if log_path is None:
-        from django.conf import settings
+    cache_key = (str(resolved_root), component_name, resolved_log_name)
+    cached = _LOGGER_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
-        _log_path = settings.LOG_DIR / log_name
-    else:
-        _log_path = log_path
+    logger_name = f"{component_name}.{resolved_log_name}"
+    component_dir = resolved_root / component_name
 
-    if backup_folder is None:
-        from django.conf import settings
-        _backup_folder = settings.LOG_BACKUP_DIR
-    else:
-        _backup_folder = backup_folder
-
-    _logger = _Logger(
-        log_name=log_name,
-        log_path=_log_path,
-        backup_folder=_backup_folder,
+    logger = NsLogger(
+        logger_name=logger_name,
+        component_dir=component_dir,
+        log_name=resolved_log_name,
         level=level,
         rotation=rotation,
         backup_count=backup_count,
         utc=utc,
     )
 
-    _LOGGER_CACHE[log_name] = _logger
-    return _logger
+    _LOGGER_CACHE[cache_key] = logger
+    return logger
+
+
+__all__ = ["NsLogger", "get_logger"]
+
