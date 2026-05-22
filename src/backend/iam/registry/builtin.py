@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from iam.registry.module import PermissionModuleRegistry
 from iam.registry.permission import PermissionRegistry
 from iam.schemas import PermissionSpec
 
@@ -62,5 +63,21 @@ def register_builtin_permissions() -> None:
     PermissionRegistry.register_many(IAM_BUILTIN_PERMISSIONS)
 
 
-__all__ = ["IAM_BUILTIN_PERMISSIONS", "register_builtin_permissions"]
+class IamPermissionProvider:
+    app_label = "iam"
+
+    def list_permissions(self) -> tuple[PermissionSpec, ...]:
+        return IAM_BUILTIN_PERMISSIONS
+
+
+def register_builtin_permission_providers() -> None:
+    PermissionModuleRegistry.register_provider(IamPermissionProvider())
+
+
+__all__ = [
+    "IAM_BUILTIN_PERMISSIONS",
+    "IamPermissionProvider",
+    "register_builtin_permissions",
+    "register_builtin_permission_providers",
+]
 
