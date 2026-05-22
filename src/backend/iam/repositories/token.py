@@ -56,7 +56,7 @@ class TokenRepository:
         return await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
             refresh_jti=refresh_jti,
-            refresh_token=refresh_token_hash,
+            refresh_token_hash=refresh_token_hash,
         ).afirst()
 
     @staticmethod
@@ -130,7 +130,7 @@ class TokenRepository:
                 .filter(
                     user_id=user_id,
                     refresh_jti=refresh_jti,
-                    refresh_token=refresh_token_hash,
+                    refresh_token_hash=refresh_token_hash,
                 )
                 .first()
             )

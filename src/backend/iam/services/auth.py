@@ -272,7 +272,7 @@ class RefreshService:
                 refresh_jti=refresh_jti,
                 refresh_token_hash=refresh_token_hash,
                 new_token_data={
-                    "refresh_token": new_refresh_token_hash,
+                    "refresh_token_hash": new_refresh_token_hash,
                     "access_jti": access_jti,
                     "refresh_jti": new_refresh_jti,
                     "expired_at": new_refresh_expired_at,

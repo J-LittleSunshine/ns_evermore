@@ -528,7 +528,7 @@ CREATE TABLE iam_user_token
     id            BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT 'ID',
     user_id       BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
     session_id    BIGINT UNSIGNED NULL COMMENT '会话ID',
-    refresh_token VARCHAR(512)    NOT NULL COMMENT '刷新Token',
+    refresh_token_hash CHAR(64)   NOT NULL COMMENT '刷新Token SHA-256 Hash',
     access_jti    VARCHAR(64)     NULL COMMENT 'Access Token唯一ID',
     refresh_jti   VARCHAR(64)     NOT NULL COMMENT 'Refresh Token唯一ID',
     client_ip     VARCHAR(64)     NULL COMMENT '客户端IP',
@@ -538,7 +538,7 @@ CREATE TABLE iam_user_token
     created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
 
     UNIQUE KEY uk_ut_refresh_jti (refresh_jti),
-    UNIQUE KEY uk_ut_refresh_token (refresh_token),
+    UNIQUE KEY uk_ut_refresh_token_hash (refresh_token_hash),
     UNIQUE KEY uk_ut_user_access_jti (user_id, access_jti),
     KEY idx_ut_user_id (user_id),
     KEY idx_ut_session_id (session_id),

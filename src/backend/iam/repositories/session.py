@@ -219,7 +219,7 @@ class SessionRepository:
             IamUserToken.objects.using(IAM_DB_ALIAS).create(
                 user_id=user_id,
                 session_id=session.id,
-                refresh_token=refresh_token_hash,
+                refresh_token_hash=refresh_token_hash,
                 access_jti=access_jti,
                 refresh_jti=refresh_jti,
                 client_ip=client_ip,

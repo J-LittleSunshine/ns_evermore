@@ -25,7 +25,12 @@ class IamUserToken(models.Model):
         blank=True,
         verbose_name="Session",
     )
-    refresh_token = models.CharField(max_length=512, unique=True, verbose_name="Refresh Token Hash")
+    refresh_token_hash = models.CharField(
+        max_length=64,
+        unique=True,
+        db_column="refresh_token_hash",
+        verbose_name="Refresh Token Hash",
+    )
     access_jti = models.CharField(max_length=64, null=True, blank=True, verbose_name="Access Token JTI")
     refresh_jti = models.CharField(max_length=64, unique=True, verbose_name="Refresh Token JTI")
     client_ip = models.CharField(max_length=64, null=True, blank=True, verbose_name="Client IP")
