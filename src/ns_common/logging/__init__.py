@@ -7,7 +7,7 @@ from ns_common.logging.dispatcher import NsLogDispatcher
 from ns_common.logging.event import NsLogEventData, get_current_pid
 from ns_common.logging.logger import NsLogger, get_logger
 from ns_common.logging.sanitizer import sanitize_log_context
-from ns_common.logging.sinks import NsLogSink, NullLogSink, StdLoggerSink
+from ns_common.logging.sinks import NsLogSink, NullLogSink, StdLoggerSink, DatabaseLogSinkProtocol
 
 __all__ = [
 	"get_logger",
@@ -21,5 +21,6 @@ __all__ = [
 	"NullLogSink",
 	"StdLoggerSink",
 	"NsLogDispatcher",
+	"DatabaseLogSinkProtocol"
 ]
 
