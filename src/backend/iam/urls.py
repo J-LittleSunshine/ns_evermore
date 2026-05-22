@@ -85,4 +85,7 @@ urlpatterns = [
     path("auth/refresh-token/", AuthPublicViewSet.as_view({"post": "refresh_token"})),
     path("auth/logout/", AuthPrivateViewSet.as_view({"post": "logout"})),
     path("auth/current-user/", AuthPrivateViewSet.as_view({"post": "current_user"})),
+    path("auth/profile/", AuthPrivateViewSet.as_view({"post": "profile"})),
+    path("auth/permissions/", AuthPrivateViewSet.as_view({"post": "permissions"})),
+    path("auth/menus/", AuthPrivateViewSet.as_view({"post": "menus"})),
 ]

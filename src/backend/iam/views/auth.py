@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 
+from iam.services.auth_context import AuthContextService
 from iam.services.auth import LoginService, LogoutService, RefreshService, RevokeService
 from iam.views.base import IamRequestViewSet
 
@@ -121,3 +122,35 @@ class AuthPrivateViewSet(IamRequestViewSet):
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
         })
+
+    async def profile(self, request, *args, **kwargs):
+        user = request.current_user
+
+        if not user:
+            return self.failed_response("User is not logged in or session has expired", 11007)
+
+        data = AuthContextService.build_profile(user)
+        return self.success_response(data)
+
+    async def permissions(self, request, *args, **kwargs):
+        user = request.current_user
+
+        if not user:
+            return self.failed_response("User is not logged in or session has expired", 11007)
+
+        permission_codes = await AuthContextService.list_permission_codes(user)
+        return self.success_response({
+            "permissions": permission_codes,
+        })
+
+    async def menus(self, request, *args, **kwargs):
+        user = request.current_user
+
+        if not user:
+            return self.failed_response("User is not logged in or session has expired", 11007)
+
+        menus = await AuthContextService.list_menu_tree(user)
+        return self.success_response({
+            "menus": menus,
+        })
+

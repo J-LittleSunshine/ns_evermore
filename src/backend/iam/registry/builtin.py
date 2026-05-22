@@ -56,6 +56,9 @@ IAM_BUILTIN_PERMISSIONS: tuple[PermissionSpec, ...] = (
     PermissionSpec(code="iam:grant:subsidiary_permission:revoke", name="Revoke subsidiary permission", permission_type="ACTION", parent_code="iam:grant"),
     PermissionSpec(code="iam:auth", name="IAM Auth", permission_type="MENU"),
     PermissionSpec(code="iam:auth:current_user", name="Get current user", permission_type="ACTION", parent_code="iam:auth"),
+    PermissionSpec(code="iam:auth:profile", name="Get auth profile", permission_type="ACTION", parent_code="iam:auth"),
+    PermissionSpec(code="iam:auth:permissions", name="Get auth permissions", permission_type="ACTION", parent_code="iam:auth"),
+    PermissionSpec(code="iam:auth:menus", name="Get auth menus", permission_type="ACTION", parent_code="iam:auth"),
 )
 
 
