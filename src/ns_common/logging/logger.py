@@ -44,6 +44,34 @@ def _validate_component(component: str) -> str:
     return value
 
 
+def _validate_log_name(log_name: str | None, component: str) -> str:
+    value = str(log_name).strip() if log_name is not None else component
+    if not value:
+        raise ValueError("log_name cannot be empty")
+
+    if value in {".", ".."} or ".." in value:
+        raise ValueError("log_name cannot contain '..'")
+
+    if "/" in value or "\\" in value:
+        raise ValueError("log_name must be a single file name")
+
+    return value
+
+
+def _validate_pid_folder_prefix(pid_folder_prefix: str) -> str:
+    value = str(pid_folder_prefix or "").strip()
+    if not value:
+        raise ValueError("pid_folder_prefix cannot be empty")
+
+    if value in {".", ".."} or ".." in value:
+        raise ValueError("pid_folder_prefix cannot contain '..'")
+
+    if "/" in value or "\\" in value:
+        raise ValueError("pid_folder_prefix must be a single directory name prefix")
+
+    return value
+
+
 class NsLogger(logging.Logger):
     _FMT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
@@ -180,7 +208,7 @@ class NsLogger(logging.Logger):
             pass
 
 
-_LOGGER_CACHE: dict[tuple[str, str, str], NsLogger] = {}
+_LOGGER_CACHE: dict[tuple[str, str, str, bool, int | None, str], NsLogger] = {}
 
 
 def get_logger(
@@ -192,20 +220,31 @@ def get_logger(
     rotation: int = 1,
     backup_count: int = 30,
     utc: bool = False,
+    multi_process: bool = False,
+    pid_folder_prefix: str = "pid",
 ) -> NsLogger:
     component_name = _validate_component(component)
     resolved_root = _resolve_log_root(log_root)
-    resolved_log_name = str(log_name).strip() if log_name is not None else component_name
-    if not resolved_log_name:
-        resolved_log_name = component_name
+    resolved_log_name = _validate_log_name(log_name=log_name, component=component_name)
+    resolved_pid_folder_prefix = _validate_pid_folder_prefix(pid_folder_prefix)
+    pid_value = os.getpid() if multi_process else None
 
-    cache_key = (str(resolved_root), component_name, resolved_log_name)
+    cache_key = (
+        str(resolved_root),
+        component_name,
+        resolved_log_name,
+        multi_process,
+        pid_value,
+        resolved_pid_folder_prefix,
+    )
     cached = _LOGGER_CACHE.get(cache_key)
     if cached is not None:
         return cached
 
     logger_name = f"{component_name}.{resolved_log_name}"
     component_dir = resolved_root / component_name
+    if multi_process:
+        component_dir = component_dir / f"{resolved_pid_folder_prefix}{pid_value}"
 
     logger = NsLogger(
         logger_name=logger_name,
