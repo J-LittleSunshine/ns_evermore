@@ -18,19 +18,19 @@ class UserPolicy(BasePolicy):
     async def ensure_can_operate_user(cls, operator, target_user) -> None:
         """校验操作者是否允许操作目标用户。"""
         if target_user.is_superuser and not operator.is_superuser:
-            raise BusinessError("后台管理员不能操作超级管理员", 11010)
+            raise BusinessError("Staff administrators cannot operate on superusers", 11010)
 
         if target_user.is_staff or target_user.is_superuser:
             has_permission = await cls.has_admin_user_permission(operator)
 
             if not has_permission:
-                raise BusinessError(f"权限不足：{cls.ADMIN_USER_PERMISSION}", 11009)
+                raise BusinessError(f"Permission denied: {cls.ADMIN_USER_PERMISSION}", 11009)
 
     @classmethod
     async def ensure_can_update_critical_fields(cls, operator, update_data: dict) -> None:
         """校验关键字段更新权限。"""
         if cls.is_truthy(update_data.get("is_superuser")) and not operator.is_superuser:
-            raise BusinessError("后台管理员不能操作超级管理员", 11010)
+            raise BusinessError("Staff administrators cannot operate on superusers", 11010)
 
         if operator.is_superuser:
             return
@@ -53,7 +53,7 @@ class UserPolicy(BasePolicy):
             )
 
             if not has_permission:
-                raise BusinessError(f"权限不足：{permission_code}", 11009)
+                raise BusinessError(f"Permission denied: {permission_code}", 11009)
 
     @classmethod
     async def has_admin_user_permission(cls, operator) -> bool:
@@ -90,7 +90,7 @@ class UserPolicy(BasePolicy):
         create_payload = data.copy()
 
         if not TenantPolicy.is_platform_admin(context) and cls.is_truthy(create_payload.get("is_superuser")):
-            raise BusinessError("后台管理员不能操作超级管理员", 11010)
+            raise BusinessError("Staff administrators cannot operate on superusers", 11010)
 
         if TenantPolicy.is_platform_admin(context):
             return create_payload
@@ -102,12 +102,12 @@ class UserPolicy(BasePolicy):
             create_payload["is_superuser"] = 0
             return create_payload
 
-        raise BusinessError("个人用户不能创建用户", 14021)
+        raise BusinessError("Personal users cannot create users", 14021)
 
     @classmethod
     def ensure_can_update_user_fields(cls, operator, data: dict) -> None:
         context = TenantService.from_user(operator)
 
         if "company_id" in data and not TenantPolicy.is_platform_admin(context):
-            raise BusinessError("不允许更新字段：company_id", 12005)
+            raise BusinessError("Updating field is not allowed: company_id", 12005)
 

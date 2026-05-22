@@ -27,7 +27,7 @@ class DepartmentService:
             company_id = create_data.get("company_id")
 
             if not company_id:
-                raise BusinessError("company_id 不能为空", 10001)
+                raise BusinessError("company_id cannot be empty", 10001)
         else:
             TenantPolicy.ensure_enterprise_context(context)
             company_id = context.company_id

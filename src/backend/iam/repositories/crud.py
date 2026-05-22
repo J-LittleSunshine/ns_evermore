@@ -18,7 +18,7 @@ class CrudRepository:
     def ensure_model_class(model_class) -> None:
         """确保 View 已配置模型类。"""
         if model_class is None:
-            raise BusinessError("model_class 未配置", 10006)
+            raise BusinessError("model_class is not configured", 10006)
 
     @staticmethod
     def build_queryset(model_class):
@@ -75,7 +75,7 @@ class CrudRepository:
         cls.ensure_model_class(model_class)
 
         if not item_id:
-            raise BusinessError("id 不能为空", 10001)
+            raise BusinessError("id cannot be empty", 10001)
 
         queryset = model_class.objects.using(IAM_DB_ALIAS).filter(id=item_id)
 
@@ -85,7 +85,7 @@ class CrudRepository:
         item = await queryset.afirst()
 
         if not item:
-            raise BusinessError("数据不存在", 10002)
+            raise BusinessError("Data not found", 10002)
 
         return item
 
@@ -111,7 +111,7 @@ class CrudRepository:
         try:
             return await model_class.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"数据创建失败：{exc}", 10003)
+            raise BusinessError(f"Data creation failed: {exc}", 10003)
 
     @classmethod
     async def create_item_with_audit(
@@ -148,7 +148,7 @@ class CrudRepository:
                 update_fields=list(data.keys()),
             )
         except IntegrityError as exc:
-            raise BusinessError(f"数据更新失败：{exc}", 10005)
+            raise BusinessError(f"Data update failed: {exc}", 10005)
 
     @classmethod
     async def update_item_with_audit(
@@ -199,7 +199,7 @@ class CrudRepository:
             normalized_page = max(int(page or 1), 1)
             normalized_page_size = min(max(int(page_size or 20), 1), 100)
         except (TypeError, ValueError):
-            raise BusinessError("分页参数非法", 12006)
+            raise BusinessError("Invalid pagination parameters", 12006)
 
         return normalized_page, normalized_page_size
 

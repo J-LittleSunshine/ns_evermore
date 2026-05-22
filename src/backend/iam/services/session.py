@@ -53,13 +53,13 @@ class SessionService:
 	@staticmethod
 	def ensure_session_state_available(session):
 		if not session:
-			raise BusinessError("会话不存在", 15002)
+			raise BusinessError("Session does not exist", 15002)
 
 		if session.revoked_at:
-			raise BusinessError("会话已失效", 15003)
+			raise BusinessError("Session has been revoked", 15003)
 
 		if session.expired_at <= timezone.now():
-			raise BusinessError("会话已过期", 15004)
+			raise BusinessError("Session has expired", 15004)
 
 		return session
 
@@ -68,14 +68,14 @@ class SessionService:
 		session = await SessionRepository.get_by_session_id(session_id)
 
 		if not session:
-			raise BusinessError("会话不存在", 15002)
+			raise BusinessError("Session does not exist", 15002)
 
 		return await cls.revoke_session_by_pk(session.id)
 
 	@classmethod
 	async def revoke_session_by_pk(cls, session_pk: int) -> bool:
 		if not session_pk:
-			raise BusinessError("session_id 不能为空", 15001)
+			raise BusinessError("session_id cannot be empty", 15001)
 
 		updated_count = await SessionRepository.revoke_session_and_tokens_by_id(session_pk)
 
@@ -84,14 +84,14 @@ class SessionService:
 	@classmethod
 	async def revoke_user_sessions(cls, user_id: int) -> int:
 		if not user_id:
-			raise BusinessError("user_id 不能为空", 15005)
+			raise BusinessError("user_id cannot be empty", 15005)
 
 		return await SessionRepository.revoke_user_sessions_and_tokens(user_id)
 
 	@classmethod
 	async def revoke_device_sessions(cls, device_id: int) -> int:
 		if not device_id:
-			raise BusinessError("device_id 不能为空", 15006)
+			raise BusinessError("device_id cannot be empty", 15006)
 
 		return await SessionRepository.revoke_device_sessions_and_tokens(device_id)
 

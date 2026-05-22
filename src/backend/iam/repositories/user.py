@@ -90,7 +90,7 @@ class UserRepository:
         try:
             return await IamUser.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"用户创建失败：{exc}", 12001)
+            raise BusinessError(f"User creation failed: {exc}", 12001)
 
     @staticmethod
     async def update_user(user: IamUser, data: dict[str, Any]) -> None:
@@ -103,7 +103,7 @@ class UserRepository:
                 update_fields=list(data.keys()),
             )
         except IntegrityError as exc:
-            raise BusinessError(f"用户更新失败：{exc}", 12002)
+            raise BusinessError(f"User update failed: {exc}", 12002)
 
     @classmethod
     async def update_user_and_revoke_sessions_tokens(
@@ -141,7 +141,7 @@ class UserRepository:
             user = user_queryset.first()
 
             if not user:
-                raise BusinessError("用户不存在", 10103)
+                raise BusinessError("User does not exist", 10103)
 
             for field, value in data.items():
                 setattr(user, field, value)
@@ -152,7 +152,7 @@ class UserRepository:
                     update_fields=list(data.keys()),
                 )
             except IntegrityError as exc:
-                raise BusinessError(f"用户更新失败：{exc}", 12002)
+                raise BusinessError(f"User update failed: {exc}", 12002)
 
             IamUserSession.objects.using(IAM_DB_ALIAS).filter(
                 user_id=user_id,
@@ -192,7 +192,7 @@ class UserRepository:
             user = user_queryset.first()
 
             if not user:
-                raise BusinessError("用户不存在", 10103)
+                raise BusinessError("User does not exist", 10103)
 
             IamUserSession.objects.using(IAM_DB_ALIAS).filter(
                 user_id=user_id,

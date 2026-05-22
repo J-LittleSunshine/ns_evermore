@@ -54,7 +54,7 @@ class RoleService(AuditDataMixin):
     @classmethod
     async def get_role(cls, role_id: int | str | None, operator):
         if not role_id:
-            raise BusinessError("id 不能为空", 10001)
+            raise BusinessError("id cannot be empty", 10001)
 
         context = TenantService.from_user(operator)
 
@@ -110,7 +110,7 @@ class RoleService(AuditDataMixin):
             normalized_page = max(int(page or 1), 1)
             normalized_page_size = min(max(int(page_size or 20), 1), 100)
         except (TypeError, ValueError):
-            raise BusinessError("分页参数非法", 12006)
+            raise BusinessError("Invalid pagination parameters", 12006)
 
         return normalized_page, normalized_page_size
 

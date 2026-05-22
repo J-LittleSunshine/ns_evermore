@@ -79,14 +79,14 @@ class TokenRepository:
         new_token_data: dict[str, Any],
     ) -> IamUserToken:
         """兼容保留：禁止调用无 guard 的旧刷新旋转路径。"""
-        raise BusinessError("rotate_refresh_token 已废弃，请改用 rotate_refresh_token_with_guard", 14010)
+        raise BusinessError("rotate_refresh_token is deprecated, use rotate_refresh_token_with_guard instead", 14010)
 
     @staticmethod
     def _rotate_refresh_token_sync(
         refresh_token_hash: str,
         new_token_data: dict[str, Any],
     ) -> IamUserToken:
-        raise BusinessError("_rotate_refresh_token_sync 已废弃", 14010)
+        raise BusinessError("_rotate_refresh_token_sync is deprecated", 14010)
 
     @classmethod
     async def rotate_refresh_token_with_guard(
@@ -117,7 +117,7 @@ class TokenRepository:
         new_token_data: dict[str, Any],
     ) -> tuple[str, IamUserToken | None, int | None, str | None, str | None]:
         if not refresh_token_hash:
-            raise BusinessError("refresh_token 不能为空", 14000)
+            raise BusinessError("refresh_token cannot be empty", 14000)
 
         with transaction.atomic(using=IAM_DB_ALIAS):
             old_token = (
@@ -132,10 +132,10 @@ class TokenRepository:
             )
 
             if not old_token:
-                raise BusinessError("refresh_token 不存在", 14001)
+                raise BusinessError("refresh_token does not exist", 14001)
 
             if old_token.expired_at <= timezone.now():
-                raise BusinessError("refresh_token 已过期", 14003)
+                raise BusinessError("refresh_token has expired", 14003)
 
             if old_token.revoked_at:
                 return "replayed", None, old_token.session_id, None, None

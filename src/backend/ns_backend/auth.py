@@ -20,10 +20,10 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
         user = await self.get_current_user(request)
 
         if not user:
-            raise BusinessError("用户未登录或登录状态已失效", 11007)
+            raise BusinessError("User is not logged in or session has expired", 11007)
 
         if not user.is_active:
-            raise BusinessError("用户已被禁用", 11008)
+            raise BusinessError("User is disabled", 11008)
 
         request.current_user = user
 
@@ -34,7 +34,7 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
             )
 
             if not has_permission:
-                raise BusinessError(f"权限不足：{permission_code}", 11009)
+                raise BusinessError(f"Permission denied: {permission_code}", 11009)
 
     @classmethod
     async def get_current_user(cls, request):

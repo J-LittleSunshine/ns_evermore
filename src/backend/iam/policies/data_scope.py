@@ -114,25 +114,25 @@ class DataScopePolicy(BasePolicy):
         permission_type = await GrantRepository.get_permission_type(permission_id)
 
         if permission_type is None:
-            raise BusinessError("权限不存在", 10002)
+            raise BusinessError("Permission does not exist", 10002)
 
         if permission_type != cls.PERMISSION_TYPE_DATA:
             if data_scope:
-                raise BusinessError("非数据权限不能设置数据范围", 15001)
+                raise BusinessError("Data scope cannot be set for non-data permissions", 15001)
             return
 
         if role_permission:
             if not data_scope:
-                raise BusinessError("数据权限必须设置数据范围", 15002)
+                raise BusinessError("Data permissions must set data scope", 15002)
             return
 
         if effect == cls.EFFECT_DENY:
             if data_scope:
-                raise BusinessError("拒绝权限不能设置数据范围", 15003)
+                raise BusinessError("DENY permissions cannot set data scope", 15003)
             return
 
         if effect == cls.EFFECT_ALLOW and not data_scope:
-            raise BusinessError("数据权限必须设置数据范围", 15002)
+            raise BusinessError("Data permissions must set data scope", 15002)
 
 
 __all__ = ["DataScopePolicy"]

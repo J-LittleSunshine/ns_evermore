@@ -115,7 +115,7 @@ class BaseIamViewSet(IamRequestViewSet):
                 continue
 
             if field not in self.update_fields:
-                raise ValidateError(f"不允许更新字段：{field}", 12005)
+                raise ValidateError(f"Updating field is not allowed: {field}", 12005)
 
         if self.validator_class:
             return self.validator_class.validate_update(data)
@@ -159,11 +159,11 @@ class BaseIamViewSet(IamRequestViewSet):
             company_id = context.company_id
 
             if company_id is None:
-                raise BusinessError("企业用户未绑定公司", 14001)
+                raise BusinessError("Enterprise user is not bound to a company", 14001)
 
             return {self.tenant_scope_field: company_id}
 
-        raise BusinessError("个人用户不能访问企业组织资源", 14002)
+        raise BusinessError("Personal users cannot access enterprise organization resources", 14002)
 
     def get_tenant_create_values(self, request) -> dict[str, Any] | None:
         if self.tenant_create_field is None:
@@ -184,10 +184,10 @@ class BaseIamViewSet(IamRequestViewSet):
             company_id = context.company_id
 
             if company_id is None:
-                raise BusinessError("企业用户未绑定公司", 14001)
+                raise BusinessError("Enterprise user is not bound to a company", 14001)
 
             return {self.tenant_create_field: company_id}
 
-        raise BusinessError("个人用户不能访问企业组织资源", 14002)
+        raise BusinessError("Personal users cannot access enterprise organization resources", 14002)
 
 

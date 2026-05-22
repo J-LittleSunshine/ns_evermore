@@ -121,5 +121,5 @@ class LoginFailureRepository:
                 if final_rows:
                     return
 
-                raise BusinessError("登录失败计数更新失败，请稍后重试", 11014)
+                raise BusinessError("Failed to update login failure counter, please try again later", 11014)
 

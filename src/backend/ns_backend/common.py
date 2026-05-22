@@ -19,7 +19,7 @@ class BaseRequestViewSet(ViewSet):
     def as_view(cls, actions: dict[str, str] | None = None, **initkwargs: Any):
         if not actions:
             raise NotImplementedError(
-                f"{cls.__name__} 必须显式声明 as_view(actions)"
+                f"{cls.__name__} must explicitly declare as_view(actions)"
             )
 
         return super().as_view(actions=actions, **initkwargs)
@@ -38,7 +38,7 @@ class BaseRequestViewSet(ViewSet):
         except Exception as exc:
             _logger.exception(exc)
             return self.failed_response(
-                msg="系统异常",
+                msg="System error",
                 code=50000,
             )
 

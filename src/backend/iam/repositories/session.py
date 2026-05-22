@@ -39,7 +39,7 @@ class SessionRepository:
         token_expired_at,
     ) -> IamUserSession:
         """兼容保留：禁止调用旧登录写路径。"""
-        raise BusinessError("create_login_bundle 已废弃，请改用 create_login_bundle_with_device", 15007)
+        raise BusinessError("create_login_bundle is deprecated, use create_login_bundle_with_device instead", 15007)
 
     @staticmethod
     def _create_login_bundle_sync(
@@ -57,7 +57,7 @@ class SessionRepository:
         refresh_jti: str,
         token_expired_at,
     ) -> IamUserSession:
-        raise BusinessError("_create_login_bundle_sync 已废弃", 15007)
+        raise BusinessError("_create_login_bundle_sync is deprecated", 15007)
 
     @classmethod
     async def create_login_bundle_with_device(

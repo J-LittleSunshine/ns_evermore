@@ -24,7 +24,7 @@ class BaseValidator:
         cls._check_enum(data)
         picked_data = cls._pick_allowed(data)
         if not picked_data:
-            raise ValidateError("没有需要更新的字段", 12001)
+            raise ValidateError("No fields to update", 12001)
         return picked_data
 
     @classmethod
@@ -32,7 +32,7 @@ class BaseValidator:
         for field in cls.required_fields:
             value = data.get(field)
             if value is None or value == "":
-                raise ValidateError(f"{field} 不能为空", 12002)
+                raise ValidateError(f"{field} cannot be empty", 12002)
 
     @classmethod
     def _check_allowed(cls, data: dict[str, Any]) -> None:
@@ -42,7 +42,7 @@ class BaseValidator:
             if field in ("id",):
                 continue
             if field not in cls.allowed_fields:
-                raise ValidateError(f"不允许的字段：{field}", 12003)
+                raise ValidateError(f"Disallowed field: {field}", 12003)
 
     @classmethod
     def _check_enum(cls, data: dict[str, Any]) -> None:
@@ -51,7 +51,7 @@ class BaseValidator:
                 continue
             if data[field] not in values:
                 raise ValidateError(
-                    f"{field} 取值非法，允许值：{', '.join(map(str, values))}",
+                    f"{field} has invalid value, allowed values: {', '.join(map(str, values))}",
                     12004,
                 )
 

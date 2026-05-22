@@ -51,7 +51,7 @@ class UserService:
 	@classmethod
 	async def get_user(cls, user_id: int, operator):
 		if not user_id:
-			raise BusinessError("id 不能为空", 10001)
+			raise BusinessError("id cannot be empty", 10001)
 
 		context = TenantService.from_user(operator)
 
@@ -70,7 +70,7 @@ class UserService:
 			)
 
 		if not user:
-			raise BusinessError("用户不存在", 10103)
+			raise BusinessError("User does not exist", 10103)
 
 		return user
 
@@ -175,7 +175,7 @@ class UserService:
 			normalized_page = max(int(page or 1), 1)
 			normalized_page_size = min(max(int(page_size or 20), 1), 100)
 		except (TypeError, ValueError):
-			raise BusinessError("分页参数非法", 12006)
+			raise BusinessError("Invalid pagination parameters", 12006)
 
 		return normalized_page, normalized_page_size
 
@@ -185,7 +185,7 @@ class UserService:
 		raw_password = create_data.pop("password", None)
 
 		if not raw_password:
-			raise BusinessError("password 不能为空", 10101)
+			raise BusinessError("password cannot be empty", 10101)
 
 		now = timezone.now()
 		create_data["password"] = make_password(raw_password)
@@ -208,7 +208,7 @@ class UserService:
 		operator_id: int | None = None,
 	) -> dict[str, Any]:
 		if not raw_password:
-			raise BusinessError("password 不能为空", 10101)
+			raise BusinessError("password cannot be empty", 10101)
 
 		return {
 			"password": make_password(raw_password),

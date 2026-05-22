@@ -21,10 +21,10 @@ class AuthPublicViewSet(IamRequestViewSet):
         password = request.data.get("password")
 
         if not username:
-            return self.failed_response("username 不能为空", 11001)
+            return self.failed_response("username cannot be empty", 11001)
 
         if not password:
-            return self.failed_response("password 不能为空", 11002)
+            return self.failed_response("password cannot be empty", 11002)
 
         data = await LoginService.execute(
             username=username,
@@ -44,7 +44,7 @@ class AuthPublicViewSet(IamRequestViewSet):
         refresh_token = request.data.get("refresh_token")
 
         if not refresh_token:
-            return self.failed_response("refresh_token 不能为空", 11004)
+            return self.failed_response("refresh_token cannot be empty", 11004)
 
         data = await RefreshService.execute(refresh_token=refresh_token)
 
@@ -84,7 +84,7 @@ class AuthPrivateViewSet(IamRequestViewSet):
         refresh_token = request.data.get("refresh_token")
 
         if not access_token:
-            return self.failed_response("access_token 不能为空", 11004)
+            return self.failed_response("access_token cannot be empty", 11004)
 
         success = await RevokeService.revoke_access_token(access_token)
 
@@ -103,7 +103,7 @@ class AuthPrivateViewSet(IamRequestViewSet):
         user = request.current_user
 
         if not user:
-            return self.failed_response("用户未登录或登录状态已失效", 11007)
+            return self.failed_response("User is not logged in or session has expired", 11007)
 
         return self.success_response({
             "id": user.id,

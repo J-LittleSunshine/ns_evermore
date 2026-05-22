@@ -52,7 +52,7 @@ class RoleRepository:
         role = await cls.get_by_id(role_id)
 
         if not role:
-            raise BusinessError("数据不存在", 10002)
+            raise BusinessError("Data not found", 10002)
 
         return role
 
@@ -64,7 +64,7 @@ class RoleRepository:
         ).afirst()
 
         if not role:
-            raise BusinessError("数据不存在", 10002)
+            raise BusinessError("Data not found", 10002)
 
         return role
 
@@ -97,7 +97,7 @@ class RoleRepository:
         try:
             return await IamRole.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"数据创建失败：{exc}", 10003)
+            raise BusinessError(f"Data creation failed: {exc}", 10003)
 
     @staticmethod
     async def update_role(role: IamRole, data: dict[str, Any]) -> None:
@@ -110,7 +110,7 @@ class RoleRepository:
                 update_fields=list(data.keys()),
             )
         except IntegrityError as exc:
-            raise BusinessError(f"数据更新失败：{exc}", 10005)
+            raise BusinessError(f"Data update failed: {exc}", 10005)
 
     @staticmethod
     async def delete_role(role: IamRole) -> None:

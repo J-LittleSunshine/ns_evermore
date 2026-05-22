@@ -29,10 +29,10 @@ class TenantPolicy(BasePolicy):
             return
 
         if cls.is_personal_user(context):
-            cls.deny("个人用户不能访问企业组织资源", 14002)
+            cls.deny("Personal users cannot access enterprise organization resources", 14002)
 
         if cls.is_enterprise_user(context) and not context.company_id:
-            cls.deny("企业用户未绑定公司", 14001)
+            cls.deny("Enterprise user is not bound to a company", 14001)
 
     @classmethod
     def ensure_platform_admin(

@@ -11,11 +11,11 @@ class OrganizationPolicy(BasePolicy):
 
     @classmethod
     def ensure_can_create_company(cls, context) -> None:
-        TenantPolicy.ensure_platform_admin(context, "只有平台管理员可以创建公司", 14003)
+        TenantPolicy.ensure_platform_admin(context, "Only platform administrators can create companies", 14003)
 
     @classmethod
     def ensure_can_delete_company(cls, context) -> None:
-        TenantPolicy.ensure_platform_admin(context, "只有平台管理员可以删除公司", 14004)
+        TenantPolicy.ensure_platform_admin(context, "Only platform administrators can delete companies", 14004)
 
     @classmethod
     async def ensure_subsidiary_belongs_to_company(
@@ -29,7 +29,7 @@ class OrganizationPolicy(BasePolicy):
         subsidiary_company_id = await OrganizationRepository.get_subsidiary_company_id(subsidiary_id)
 
         if subsidiary_company_id != company_id:
-            cls.deny("子公司不属于当前公司", 14041)
+            cls.deny("Subsidiary does not belong to the current company", 14041)
 
     @classmethod
     async def ensure_department_belongs_to_company(
@@ -43,7 +43,7 @@ class OrganizationPolicy(BasePolicy):
         department_company_id = await OrganizationRepository.get_department_company_id(department_id)
 
         if department_company_id != company_id:
-            cls.deny("部门不属于当前公司", 14042)
+            cls.deny("Department does not belong to the current company", 14042)
 
     @classmethod
     async def ensure_parent_department_belongs_to_company(
@@ -57,7 +57,7 @@ class OrganizationPolicy(BasePolicy):
         parent_company_id = await OrganizationRepository.get_department_company_id(parent_id)
 
         if parent_company_id != company_id:
-            cls.deny("上级部门不属于当前公司", 14043)
+            cls.deny("Parent department does not belong to the current company", 14043)
 
 
 __all__ = ["OrganizationPolicy"]

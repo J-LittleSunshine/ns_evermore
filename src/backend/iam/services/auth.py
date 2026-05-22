@@ -41,7 +41,7 @@ class LoginFailureService:
 
         if record.locked_until > now:
             raise BusinessError(
-                msg="账号因连续登录失败已被锁定，请稍后再试",
+                msg="Account is locked due to consecutive login failures, please try again later",
                 code=11011,
                 data={"locked_until": record.locked_until.isoformat()},
             )
@@ -87,18 +87,18 @@ class LoginService:
             browser_name: str | None = None,
     ) -> dict:
         if not isinstance(username, str):
-            raise BusinessError("username 不能为空", 11001)
+            raise BusinessError("username cannot be empty", 11001)
 
         if not isinstance(password, str):
-            raise BusinessError("password 不能为空", 11002)
+            raise BusinessError("password cannot be empty", 11002)
 
         username = username.strip()
 
         if not username:
-            raise BusinessError("username 不能为空", 11001)
+            raise BusinessError("username cannot be empty", 11001)
 
         if not password:
-            raise BusinessError("password 不能为空", 11002)
+            raise BusinessError("password cannot be empty", 11002)
 
         await LoginFailureService.ensure_not_locked(username=username)
 
@@ -203,16 +203,16 @@ class LogoutService:
         payload = JwtService.decode_refresh_token(refresh_token)
 
         if not payload:
-            raise BusinessError("Refresh Token 无效或已过期", 11005)
+            raise BusinessError("Refresh token is invalid or expired", 11005)
 
         refresh_jti = payload.get("jti")
         user_id = payload.get("uid")
 
         if not refresh_jti or not user_id:
-            raise BusinessError("Refresh Token 无效或已过期", 11005)
+            raise BusinessError("Refresh token is invalid or expired", 11005)
 
         if current_user_id is not None and user_id != current_user_id:
-            raise BusinessError("Refresh Token 与当前登录用户不匹配", 11012)
+            raise BusinessError("Refresh token does not match the current user", 11012)
 
         refresh_token_hash = JwtService.hash_token(refresh_token)
 
@@ -241,13 +241,13 @@ class RefreshService:
         payload = JwtService.decode_refresh_token(refresh_token)
 
         if not payload:
-            raise BusinessError("Refresh Token 无效或已过期", 11005)
+            raise BusinessError("Refresh token is invalid or expired", 11005)
 
         refresh_jti = payload.get("jti")
         user_id = payload.get("uid")
 
         if not refresh_jti or not user_id:
-            raise BusinessError("Refresh Token 无效", 11005)
+            raise BusinessError("Refresh token is invalid", 11005)
 
         refresh_token_hash = JwtService.hash_token(refresh_token)
 
@@ -278,7 +278,7 @@ class RefreshService:
                     refresh_jti,
                     exc.code,
                 )
-                raise BusinessError("Refresh Token 已失效", 11005)
+                raise BusinessError("Refresh token has been revoked", 11005)
             raise
 
         if rotate_status == "replayed":
@@ -286,23 +286,23 @@ class RefreshService:
                 await SessionService.revoke_session_by_pk(session_pk)
             else:
                 await TokenRepository.revoke_user_tokens(user_id=user_id)
-            raise BusinessError("检测到 Refresh Token 重放攻击，当前会话已强制下线", 11013)
+            raise BusinessError("Refresh token replay detected, current session has been forcibly logged out", 11013)
 
         if rotate_status == "user_inactive":
             if session_pk:
                 await SessionService.revoke_session_by_pk(session_pk)
             else:
                 await TokenRepository.revoke_user_tokens(user_id=user_id)
-            raise BusinessError("用户不存在或已禁用", 11010)
+            raise BusinessError("User does not exist or is disabled", 11010)
 
         if rotate_status == "session_unavailable":
-            raise BusinessError("Refresh Token 已失效", 11005)
+            raise BusinessError("Refresh token has been revoked", 11005)
 
         if rotate_status != "rotated":
-            raise BusinessError("Refresh Token 已失效", 11005)
+            raise BusinessError("Refresh token has been revoked", 11005)
 
         if not locked_user_type:
-            raise BusinessError("用户不存在或已禁用", 11010)
+            raise BusinessError("User does not exist or is disabled", 11010)
 
         access_token, _ = JwtService.create_access_token(
             user_id=user_id,
