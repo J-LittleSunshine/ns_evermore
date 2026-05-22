@@ -5,6 +5,8 @@ from django.utils import timezone
 
 from iam.policies.tenant import TenantPolicy
 from iam.repositories.auth_context import AuthContextRepository
+from iam.schemas import DataScopeResult
+from iam.services.data_scope import DataScopeService
 from iam.services.tenant import TenantService
 
 
@@ -65,6 +67,48 @@ class AuthContextService:
             active_permissions=active_permissions,
         )
         return cls.build_menu_tree(active_permissions, effective_ids)
+
+    @classmethod
+    async def list_data_scopes(
+        cls,
+        user,
+        permission_codes: list[str],
+    ) -> list[dict]:
+        if not user or not user.is_active:
+            return []
+
+        items: list[dict] = []
+        for permission_code in permission_codes:
+            result = await DataScopeService.resolve_scope(
+                user=user,
+                permission_code=permission_code,
+            )
+            items.append(
+                cls.serialize_data_scope_result(
+                    permission_code=permission_code,
+                    result=result,
+                ),
+            )
+
+        return items
+
+    @staticmethod
+    def serialize_data_scope_result(
+        *,
+        permission_code: str,
+        result: DataScopeResult,
+    ) -> dict:
+        return {
+            "permission_code": permission_code,
+            "allowed": result.allowed,
+            "scope": result.scope,
+            "company_id": result.company_id,
+            "subsidiary_id": result.subsidiary_id,
+            "department_id": result.department_id,
+            "department_ids": list(result.department_ids),
+            "user_id": result.user_id,
+            "is_platform_scope": result.is_platform_scope,
+        }
 
     @classmethod
     async def resolve_effective_permission_ids(

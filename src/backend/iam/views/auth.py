@@ -154,3 +154,33 @@ class AuthPrivateViewSet(IamRequestViewSet):
             "menus": menus,
         })
 
+    async def data_scopes(self, request, *args, **kwargs):
+        user = request.current_user
+
+        if not user:
+            return self.failed_response("User is not logged in or session has expired", 11007)
+
+        permission_codes = request.data.get("permission_codes")
+        if permission_codes is None:
+            return self.failed_response("permission_codes cannot be empty", 12001)
+
+        if not isinstance(permission_codes, list):
+            return self.failed_response("permission_codes must be a list", 12002)
+
+        clean_codes: list[str] = []
+        for code in permission_codes:
+            if not isinstance(code, str) or not code.strip():
+                return self.failed_response("permission_code cannot be empty", 12001)
+            clean_codes.append(code.strip())
+
+        if len(clean_codes) > 100:
+            return self.failed_response("permission_codes exceeds limit", 12004)
+
+        items = await AuthContextService.list_data_scopes(
+            user=user,
+            permission_codes=clean_codes,
+        )
+        return self.success_response({
+            "items": items,
+        })
+
