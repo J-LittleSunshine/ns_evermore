@@ -16,5 +16,25 @@ class DataScopeResult:
     is_platform_scope: bool = False
 
 
-__all__ = ["DataScopeResult"]
+@dataclass(frozen=True)
+class DataScopeFieldMap:
+    self_field: str | None = None
+    company_field: str | None = "company_id"
+    subsidiary_field: str | None = "subsidiary_id"
+    department_field: str | None = "department_id"
+
+
+@dataclass(frozen=True)
+class DataScopeFilterPlan:
+    allowed: bool
+    filters: dict[str, object] = field(default_factory=dict)
+    is_platform_scope: bool = False
+    reason: str | None = None
+
+
+__all__ = [
+    "DataScopeResult",
+    "DataScopeFieldMap",
+    "DataScopeFilterPlan",
+]
 

@@ -11,7 +11,7 @@ from iam.constants import (
     DATA_SCOPE_SUBSIDIARY,
 )
 from iam.repositories.grant import GrantRepository
-from iam.schemas import DataScopeResult
+from iam.schemas import DataScopeFieldMap, DataScopeFilterPlan, DataScopeResult
 from ns_backend.exceptions import BusinessError
 from ns_backend.policies import BasePolicy
 
@@ -101,6 +101,91 @@ class DataScopePolicy(BasePolicy):
             return DataScopeResult(**base_kwargs, department_ids=[])
 
         return cls.denied_result()
+
+    @classmethod
+    def build_filter_plan(
+        cls,
+        *,
+        scope: DataScopeResult,
+        field_map: DataScopeFieldMap,
+    ) -> DataScopeFilterPlan:
+        if not scope.allowed:
+            return DataScopeFilterPlan(
+                allowed=False,
+                reason="DATA_SCOPE_DENIED",
+            )
+
+        if scope.is_platform_scope:
+            return DataScopeFilterPlan(
+                allowed=True,
+                filters={},
+                is_platform_scope=True,
+            )
+
+        if scope.scope == DATA_SCOPE_SELF:
+            if not field_map.self_field:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_SELF_FIELD")
+            if scope.user_id is None:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_USER_ID")
+            return DataScopeFilterPlan(
+                allowed=True,
+                filters={field_map.self_field: scope.user_id},
+            )
+
+        if scope.scope == DATA_SCOPE_DEPARTMENT:
+            if not field_map.department_field:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_DEPARTMENT_FIELD")
+            if scope.department_id is None:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_DEPARTMENT_ID")
+            return DataScopeFilterPlan(
+                allowed=True,
+                filters={field_map.department_field: scope.department_id},
+            )
+
+        if scope.scope == DATA_SCOPE_DEPARTMENT_TREE:
+            if not field_map.department_field:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_DEPARTMENT_FIELD")
+            if not scope.department_ids:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_DEPARTMENT_IDS")
+            return DataScopeFilterPlan(
+                allowed=True,
+                filters={f"{field_map.department_field}__in": scope.department_ids},
+            )
+
+        if scope.scope == DATA_SCOPE_SUBSIDIARY:
+            if not field_map.subsidiary_field:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_SUBSIDIARY_FIELD")
+            if scope.subsidiary_id is None:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_SUBSIDIARY_ID")
+            return DataScopeFilterPlan(
+                allowed=True,
+                filters={field_map.subsidiary_field: scope.subsidiary_id},
+            )
+
+        if scope.scope == DATA_SCOPE_COMPANY:
+            if not field_map.company_field:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_COMPANY_FIELD")
+            if scope.company_id is None:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_COMPANY_ID")
+            return DataScopeFilterPlan(
+                allowed=True,
+                filters={field_map.company_field: scope.company_id},
+            )
+
+        if scope.scope == DATA_SCOPE_ALL:
+            if not field_map.company_field:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_COMPANY_FIELD")
+            if scope.company_id is None:
+                return DataScopeFilterPlan(allowed=False, reason="MISSING_COMPANY_ID")
+            return DataScopeFilterPlan(
+                allowed=True,
+                filters={field_map.company_field: scope.company_id},
+            )
+
+        return DataScopeFilterPlan(
+            allowed=False,
+            reason="UNKNOWN_DATA_SCOPE",
+        )
 
     @classmethod
     async def ensure_grant_data_scope(

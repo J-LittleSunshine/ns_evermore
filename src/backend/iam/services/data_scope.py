@@ -9,7 +9,7 @@ from iam.constants import DATA_SCOPE_DEPARTMENT_TREE
 from iam.policies.data_scope import DataScopePolicy
 from iam.repositories.data_scope import DataScopeRepository
 from iam.repositories.permission import PermissionRepository
-from iam.schemas import DataScopeResult
+from iam.schemas import DataScopeFieldMap, DataScopeFilterPlan, DataScopeResult
 
 if TYPE_CHECKING:
     from iam.models import IamUser
@@ -18,6 +18,24 @@ if TYPE_CHECKING:
 class DataScopeService:
     USER_TYPE_PERSONAL = "PERSONAL"
     USER_TYPE_ENTERPRISE = "ENTERPRISE"
+
+    @classmethod
+    async def resolve_filter_plan(
+        cls,
+        *,
+        user,
+        permission_code: str,
+        field_map: DataScopeFieldMap,
+    ) -> DataScopeFilterPlan:
+        scope = await cls.resolve_scope(
+            user=user,
+            permission_code=permission_code,
+        )
+
+        return DataScopePolicy.build_filter_plan(
+            scope=scope,
+            field_map=field_map,
+        )
 
     @classmethod
     async def resolve_scope(cls, user: IamUser, permission_code: str) -> DataScopeResult:
