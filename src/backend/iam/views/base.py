@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
+from django.http import JsonResponse
+from iam.services.audit import AuditService
 from iam.schemas import TenantContext
 from iam.policies.tenant import TenantPolicy
 from iam.repositories.crud import CrudRepository
@@ -12,14 +15,177 @@ from iam.services.tenant import TenantService
 from ns_backend.auth import AuthenticatedRequestViewSet
 from ns_backend.exceptions import BusinessError
 from ns_backend.exceptions import ValidateError
+from ns_backend.logger import get_logger
 
 if TYPE_CHECKING:
     pass
+
+_logger = get_logger("iam.audit")
 
 
 class IamRequestViewSet(AuthenticatedRequestViewSet):
     verify_service = VerifyService
     permission_service = PermissionService
+
+    audit_enabled = True
+    audit_resource_type: str | None = None
+    audit_include_response_data = False
+    audit_resource_id_fields = (
+        "id",
+        "user_id",
+        "role_id",
+        "permission_id",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+    )
+
+    async def dispatch(self, request, *args, **kwargs):
+        response = await super().dispatch(request, *args, **kwargs)  # noqa
+
+        if self.audit_enabled:
+            await self.record_operation_audit(request=request, response=response)
+
+        return response
+
+    def get_audit_action_name(self, request) -> str:
+        action = getattr(self, "action", None)
+        if action:
+            return str(action)
+
+        resolver_match = getattr(request, "resolver_match", None)
+        url_name = getattr(resolver_match, "url_name", None)
+        if url_name:
+            return str(url_name)
+
+        path = getattr(request, "path", None)
+        if path:
+            normalized_path = str(path).strip("/")
+            if normalized_path:
+                return normalized_path.replace("/", ":")
+
+        return str(getattr(request, "method", "unknown")).lower()
+
+    def get_audit_resource_type(self) -> str:
+        if self.audit_resource_type:
+            return self.audit_resource_type
+
+        model_class = getattr(self, "model_class", None)
+        if model_class is not None:
+            return model_class._meta.db_table
+
+        return self.__class__.__name__
+
+    def get_audit_operation_type(self, request) -> str:
+        resource_type = self.get_audit_resource_type()
+        action = self.get_audit_action_name(request)
+        return f"{resource_type}:{action}"
+
+    @staticmethod
+    def parse_response_payload(response) -> dict:
+        if not isinstance(response, JsonResponse):
+            return {}
+
+        try:
+            content = getattr(response, "content", b"")
+            if not content:
+                return {}
+            parsed = json.loads(content.decode("utf-8"))
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def get_response_code_and_msg(response_payload: dict) -> tuple[int, str | None]:
+        raw_code = response_payload.get("code", 0)
+        msg = response_payload.get("msg")
+
+        try:
+            code = int(raw_code)
+        except (TypeError, ValueError):
+            code = 50000
+
+        return code, None if msg is None else str(msg)
+
+    def get_audit_resource_id(self, request, response_payload: dict) -> int | None:
+        response_data = response_payload.get("data")
+        if isinstance(response_data, dict):
+            value = response_data.get("id")
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+
+        request_data = self.get_audit_request_data(request)
+        if not isinstance(request_data, dict):
+            return None
+
+        for field in self.audit_resource_id_fields:
+            value = request_data.get(field)
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+
+        return None
+
+    @staticmethod
+    def get_audit_request_data(request) -> dict | None:
+        try:
+            data = request.data
+        except Exception:
+            return None
+
+        if isinstance(data, dict):
+            return dict(data)
+
+        return {"raw": data}
+
+    def get_audit_after_data(self, response_payload: dict) -> dict:
+        code, msg = self.get_response_code_and_msg(response_payload)
+        after_data: dict[str, Any] = {
+            "code": code,
+            "msg": msg,
+        }
+
+        if self.audit_include_response_data:
+            after_data["data"] = response_payload.get("data")
+
+        return after_data
+
+    def get_audit_extra_data(self, request, response_payload: dict) -> dict:
+        action = self.get_audit_action_name(request)
+        code, msg = self.get_response_code_and_msg(response_payload)
+
+        return {
+            "view": self.__class__.__name__,
+            "action": action,
+            "required_permissions": list(getattr(self, "required_permissions", ()) or ()),
+            "response_code": code,
+            "response_msg": msg,
+        }
+
+    async def record_operation_audit(self, request, response) -> None:
+        try:
+            response_payload = self.parse_response_payload(response)
+            code, msg = self.get_response_code_and_msg(response_payload)
+            status = "SUCCESS" if code == 0 else "FAILED"
+
+            event = AuditService.build_event_from_request(
+                request=request,
+                operation_type=self.get_audit_operation_type(request),
+                resource_type=self.get_audit_resource_type(),
+                resource_id=self.get_audit_resource_id(request, response_payload),
+                request_data=self.get_audit_request_data(request),
+                after_data=self.get_audit_after_data(response_payload),
+                extra_data=self.get_audit_extra_data(request, response_payload),
+                status=status,
+                error_code=None if code == 0 else code,
+                error_message=None if code == 0 else msg,
+            )
+            await AuditService.record_event(event)
+        except Exception:
+            _logger.exception("failed to record operation audit")
 
 
 class BaseIamViewSet(IamRequestViewSet):

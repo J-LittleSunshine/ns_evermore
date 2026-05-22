@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 
 class AuthPublicViewSet(IamRequestViewSet):
+    audit_resource_type = "iam_auth"
     authentication_required = False
 
     async def login(self, request, *args, **kwargs):
@@ -76,6 +77,7 @@ class AuthPublicViewSet(IamRequestViewSet):
 
 
 class AuthPrivateViewSet(IamRequestViewSet):
+    audit_resource_type = "iam_auth"
     authentication_required = True
 
     async def logout(self, request, *args, **kwargs):

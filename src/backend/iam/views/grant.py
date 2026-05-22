@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 
 class UserRoleViewSet(BaseIamViewSet):
+    audit_resource_type = "iam_user_role"
     model_class = IamUserRole
     validator_class = UserRoleValidator
 
@@ -55,6 +56,7 @@ class UserRoleViewSet(BaseIamViewSet):
 
 
 class RolePermissionViewSet(BaseIamViewSet):
+    audit_resource_type = "iam_role_permission"
     model_class = IamRolePermission
     validator_class = RolePermissionValidator
 
@@ -96,6 +98,7 @@ class RolePermissionViewSet(BaseIamViewSet):
 
 
 class UserPermissionViewSet(BaseIamViewSet):
+    audit_resource_type = "iam_user_permission"
     model_class = IamUserPermission
     validator_class = UserPermissionValidator
 
@@ -139,6 +142,7 @@ class UserPermissionViewSet(BaseIamViewSet):
 
 
 class DepartmentPermissionViewSet(BaseIamViewSet):
+    audit_resource_type = "iam_department_permission"
     model_class = IamDepartmentPermission
     validator_class = DepartmentPermissionValidator
 
@@ -182,6 +186,7 @@ class DepartmentPermissionViewSet(BaseIamViewSet):
 
 
 class SubsidiaryPermissionViewSet(BaseIamViewSet):
+    audit_resource_type = "iam_subsidiary_permission"
     model_class = IamSubsidiaryPermission
     validator_class = SubsidiaryPermissionValidator
 
