@@ -12,8 +12,8 @@ class IamUser(models.Model):
     USER_TYPE_ENTERPRISE = "ENTERPRISE"
 
     USER_TYPE_CHOICES = (
-        (USER_TYPE_PERSONAL, "个人用户"),
-        (USER_TYPE_ENTERPRISE, "企业用户"),
+        (USER_TYPE_PERSONAL, "Personal user"),
+        (USER_TYPE_ENTERPRISE, "Enterprise user"),
     )
 
     id = models.BigAutoField(primary_key=True)
@@ -58,8 +58,8 @@ class IamUser(models.Model):
     class Meta:
         managed = False
         db_table = "iam_user"
-        verbose_name = "用户"
-        verbose_name_plural = "用户"
+        verbose_name = "User"
+        verbose_name_plural = "Users"
 
     def __str__(self):
         return self.display_name or self.username

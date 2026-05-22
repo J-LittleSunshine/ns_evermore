@@ -45,5 +45,5 @@ class IamOperationAudit(models.Model):
     class Meta:
         managed = False
         db_table = "iam_operation_audit"
-        verbose_name = "操作审计"
-        verbose_name_plural = "操作审计"
+        verbose_name = "Operation audit"
+        verbose_name_plural = "Operation audits"

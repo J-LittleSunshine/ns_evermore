@@ -15,8 +15,8 @@ class IamRole(models.Model):
     SCOPE_ENTERPRISE = "ENTERPRISE"
 
     SCOPE_CHOICES = (
-        (SCOPE_PERSONAL, "个人体系"),
-        (SCOPE_ENTERPRISE, "企业体系"),
+        (SCOPE_PERSONAL, "Personal scope"),
+        (SCOPE_ENTERPRISE, "Enterprise scope"),
     )
 
     id = models.BigAutoField(primary_key=True)
@@ -40,8 +40,8 @@ class IamRole(models.Model):
         managed = False
         db_table = "iam_role"
         unique_together = (("company", "role_code"),)
-        verbose_name = "角色"
-        verbose_name_plural = "角色"
+        verbose_name = "Role"
+        verbose_name_plural = "Roles"
 
     def __str__(self):
         return self.role_name

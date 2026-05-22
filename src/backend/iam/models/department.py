@@ -20,8 +20,8 @@ class IamSubsidiary(models.Model):
     class Meta:
         managed = False
         db_table = "iam_subsidiary"
-        verbose_name = "子公司"
-        verbose_name_plural = "子公司"
+        verbose_name = "Subsidiary"
+        verbose_name_plural = "Subsidiaries"
 
 
 class IamDepartment(models.Model):
@@ -52,5 +52,5 @@ class IamDepartment(models.Model):
     class Meta:
         managed = False
         db_table = "iam_department"
-        verbose_name = "部门"
-        verbose_name_plural = "部门"
+        verbose_name = "Department"
+        verbose_name_plural = "Departments"

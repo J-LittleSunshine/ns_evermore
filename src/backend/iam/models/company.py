@@ -18,5 +18,5 @@ class IamCompany(models.Model):
     class Meta:
         managed = False
         db_table = "iam_company"
-        verbose_name = "公司"
-        verbose_name_plural = "公司"
+        verbose_name = "Company"
+        verbose_name_plural = "Companies"

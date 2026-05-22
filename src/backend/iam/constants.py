@@ -22,12 +22,12 @@ DATA_SCOPE_VALUES = (
 )
 
 DATA_SCOPE_CHOICES = (
-	(DATA_SCOPE_SELF, "仅本人"),
-	(DATA_SCOPE_DEPARTMENT, "本部门"),
-	(DATA_SCOPE_DEPARTMENT_TREE, "本部门及下级部门"),
-	(DATA_SCOPE_SUBSIDIARY, "本子公司"),
-	(DATA_SCOPE_COMPANY, "本公司"),
-	(DATA_SCOPE_ALL, "全部"),
+	(DATA_SCOPE_SELF, "Self"),
+	(DATA_SCOPE_DEPARTMENT, "Department"),
+	(DATA_SCOPE_DEPARTMENT_TREE, "Department and child departments"),
+	(DATA_SCOPE_SUBSIDIARY, "Subsidiary"),
+	(DATA_SCOPE_COMPANY, "Company"),
+	(DATA_SCOPE_ALL, "All"),
 )
 
 DATA_SCOPE_LEVELS = {

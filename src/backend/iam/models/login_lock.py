@@ -27,8 +27,8 @@ class IamLoginFailureLock(models.Model):
     class Meta:
         managed = False
         db_table = "iam_login_failure_lock"
-        verbose_name = "登录失败锁定"
-        verbose_name_plural = "登录失败锁定"
+        verbose_name = "Login failure lock"
+        verbose_name_plural = "Login failure locks"
 
     def __str__(self):
         return self.username

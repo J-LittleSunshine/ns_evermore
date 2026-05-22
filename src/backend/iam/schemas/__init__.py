@@ -7,6 +7,7 @@ from iam.schemas.data_scope import (
 	DataScopeFilterPlan,
 	DataScopeResult,
 )
+from iam.schemas.permission import PermissionSpec
 from iam.schemas.tenant import TenantContext
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
 	"DataScopeFieldMap",
 	"DataScopeFilterPlan",
 	"AuditEvent",
+	"PermissionSpec",
 ]
 

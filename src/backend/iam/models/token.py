@@ -14,7 +14,7 @@ class IamUserToken(models.Model):
         on_delete=models.DO_NOTHING,
         db_column="user_id",
         related_name="tokens",
-        verbose_name="用户",
+        verbose_name="User",
     )
     session = models.ForeignKey(
         IamUserSession,
@@ -23,23 +23,23 @@ class IamUserToken(models.Model):
         related_name="tokens",
         null=True,
         blank=True,
-        verbose_name="会话",
+        verbose_name="Session",
     )
     refresh_token = models.CharField(max_length=512, unique=True, verbose_name="Refresh Token Hash")
     access_jti = models.CharField(max_length=64, null=True, blank=True, verbose_name="Access Token JTI")
     refresh_jti = models.CharField(max_length=64, unique=True, verbose_name="Refresh Token JTI")
-    client_ip = models.CharField(max_length=64, null=True, blank=True, verbose_name="客户端IP")
+    client_ip = models.CharField(max_length=64, null=True, blank=True, verbose_name="Client IP")
     user_agent = models.CharField(max_length=512, null=True, blank=True, verbose_name="User-Agent")
-    expired_at = models.DateTimeField(verbose_name="过期时间")
-    revoked_at = models.DateTimeField(null=True, blank=True, verbose_name="吊销时间")
-    created_at = models.DateTimeField(verbose_name="创建时间")
+    expired_at = models.DateTimeField(verbose_name="Expiration time")
+    revoked_at = models.DateTimeField(null=True, blank=True, verbose_name="Revocation time")
+    created_at = models.DateTimeField(verbose_name="Creation time")
 
     class Meta:
         managed = False
         db_table = "iam_user_token"
         unique_together = (("user", "access_jti"),)
-        verbose_name = "用户Token"
-        verbose_name_plural = "用户Token"
+        verbose_name = "User token"
+        verbose_name_plural = "User tokens"
 
     def __str__(self):
         return f"{self.user_id}:{self.refresh_jti}"

@@ -10,9 +10,9 @@ class IamPermission(models.Model):
     TYPE_DATA = "DATA"
 
     TYPE_CHOICES = (
-        (TYPE_MENU, "菜单权限"),
-        (TYPE_ACTION, "操作权限"),
-        (TYPE_DATA, "数据权限"),
+        (TYPE_MENU, "Menu permission"),
+        (TYPE_ACTION, "Action permission"),
+        (TYPE_DATA, "Data permission"),
     )
 
     id = models.BigAutoField(primary_key=True)
@@ -35,8 +35,8 @@ class IamPermission(models.Model):
     class Meta:
         managed = False
         db_table = "iam_permission"
-        verbose_name = "权限"
-        verbose_name_plural = "权限"
+        verbose_name = "Permission"
+        verbose_name_plural = "Permissions"
 
     def __str__(self):
         return self.permission_name

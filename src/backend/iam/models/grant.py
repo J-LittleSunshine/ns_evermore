@@ -15,8 +15,8 @@ class IamUserPermission(models.Model):
     EFFECT_DENY = "DENY"
 
     EFFECT_CHOICES = (
-        (EFFECT_ALLOW, "允许"),
-        (EFFECT_DENY, "拒绝"),
+        (EFFECT_ALLOW, "Allow"),
+        (EFFECT_DENY, "Deny"),
     )
 
     id = models.BigAutoField(primary_key=True)
@@ -25,27 +25,27 @@ class IamUserPermission(models.Model):
         on_delete=models.DO_NOTHING,
         db_column="user_id",
         related_name="direct_permissions",
-        verbose_name="用户",
+        verbose_name="User",
     )
     permission = models.ForeignKey(
         IamPermission,
         on_delete=models.DO_NOTHING,
         db_column="permission_id",
         related_name="user_grants",
-        verbose_name="权限",
+        verbose_name="Permission",
     )
     effect = models.CharField(
         max_length=16,
         choices=EFFECT_CHOICES,
         default=EFFECT_ALLOW,
-        verbose_name="权限效果",
+        verbose_name="Permission effect",
     )
     data_scope = models.CharField(
         max_length=32,
         choices=DATA_SCOPE_CHOICES,
         null=True,
         blank=True,
-        verbose_name="数据权限范围",
+        verbose_name="Data scope",
     )
     granted_by = models.ForeignKey(
         IamUser,
@@ -54,20 +54,20 @@ class IamUserPermission(models.Model):
         null=True,
         blank=True,
         related_name="granted_user_permissions",
-        verbose_name="授权人",
+        verbose_name="Granted by",
     )
-    expired_at = models.DateTimeField(null=True, blank=True, verbose_name="过期时间")
+    expired_at = models.DateTimeField(null=True, blank=True, verbose_name="Expiration time")
     created_by = models.BigIntegerField(null=True, blank=True)
     updated_by = models.BigIntegerField(null=True, blank=True)
-    created_at = models.DateTimeField(verbose_name="创建时间")
-    updated_at = models.DateTimeField(verbose_name="更新时间")
+    created_at = models.DateTimeField(verbose_name="Creation time")
+    updated_at = models.DateTimeField(verbose_name="Update time")
 
     class Meta:
         managed = False
         db_table = "iam_user_permission"
         unique_together = (("user", "permission"),)
-        verbose_name = "用户直接权限"
-        verbose_name_plural = "用户直接权限"
+        verbose_name = "User direct permission"
+        verbose_name_plural = "User direct permissions"
 
     def __str__(self):
         return f"{self.user_id}:{self.permission_id}:{self.effect}"
@@ -78,8 +78,8 @@ class IamDepartmentPermission(models.Model):
     EFFECT_DENY = "DENY"
 
     EFFECT_CHOICES = (
-        (EFFECT_ALLOW, "允许"),
-        (EFFECT_DENY, "拒绝"),
+        (EFFECT_ALLOW, "Allow"),
+        (EFFECT_DENY, "Deny"),
     )
 
     id = models.BigAutoField(primary_key=True)
@@ -88,27 +88,27 @@ class IamDepartmentPermission(models.Model):
         on_delete=models.DO_NOTHING,
         db_column="department_id",
         related_name="permission_grants",
-        verbose_name="部门",
+        verbose_name="Department",
     )
     permission = models.ForeignKey(
         IamPermission,
         on_delete=models.DO_NOTHING,
         db_column="permission_id",
         related_name="department_grants",
-        verbose_name="权限",
+        verbose_name="Permission",
     )
     effect = models.CharField(
         max_length=16,
         choices=EFFECT_CHOICES,
         default=EFFECT_ALLOW,
-        verbose_name="权限效果",
+        verbose_name="Permission effect",
     )
     data_scope = models.CharField(
         max_length=32,
         choices=DATA_SCOPE_CHOICES,
         null=True,
         blank=True,
-        verbose_name="数据权限范围",
+        verbose_name="Data scope",
     )
     granted_by = models.ForeignKey(
         IamUser,
@@ -117,20 +117,20 @@ class IamDepartmentPermission(models.Model):
         null=True,
         blank=True,
         related_name="granted_department_permissions",
-        verbose_name="授权人",
+        verbose_name="Granted by",
     )
-    expired_at = models.DateTimeField(null=True, blank=True, verbose_name="过期时间")
+    expired_at = models.DateTimeField(null=True, blank=True, verbose_name="Expiration time")
     created_by = models.BigIntegerField(null=True, blank=True)
     updated_by = models.BigIntegerField(null=True, blank=True)
-    created_at = models.DateTimeField(verbose_name="创建时间")
-    updated_at = models.DateTimeField(verbose_name="更新时间")
+    created_at = models.DateTimeField(verbose_name="Creation time")
+    updated_at = models.DateTimeField(verbose_name="Update time")
 
     class Meta:
         managed = False
         db_table = "iam_department_permission"
         unique_together = (("department", "permission"),)
-        verbose_name = "部门权限"
-        verbose_name_plural = "部门权限"
+        verbose_name = "Department permission"
+        verbose_name_plural = "Department permissions"
 
     def __str__(self):
         return f"{self.department_id}:{self.permission_id}:{self.effect}"
@@ -141,8 +141,8 @@ class IamSubsidiaryPermission(models.Model):
     EFFECT_DENY = "DENY"
 
     EFFECT_CHOICES = (
-        (EFFECT_ALLOW, "允许"),
-        (EFFECT_DENY, "拒绝"),
+        (EFFECT_ALLOW, "Allow"),
+        (EFFECT_DENY, "Deny"),
     )
 
     id = models.BigAutoField(primary_key=True)
@@ -151,27 +151,27 @@ class IamSubsidiaryPermission(models.Model):
         on_delete=models.DO_NOTHING,
         db_column="subsidiary_id",
         related_name="permission_grants",
-        verbose_name="子公司",
+        verbose_name="Subsidiary",
     )
     permission = models.ForeignKey(
         IamPermission,
         on_delete=models.DO_NOTHING,
         db_column="permission_id",
         related_name="subsidiary_grants",
-        verbose_name="权限",
+        verbose_name="Permission",
     )
     effect = models.CharField(
         max_length=16,
         choices=EFFECT_CHOICES,
         default=EFFECT_ALLOW,
-        verbose_name="权限效果",
+        verbose_name="Permission effect",
     )
     data_scope = models.CharField(
         max_length=32,
         choices=DATA_SCOPE_CHOICES,
         null=True,
         blank=True,
-        verbose_name="数据权限范围",
+        verbose_name="Data scope",
     )
     granted_by = models.ForeignKey(
         IamUser,
@@ -180,20 +180,20 @@ class IamSubsidiaryPermission(models.Model):
         null=True,
         blank=True,
         related_name="granted_subsidiary_permissions",
-        verbose_name="授权人",
+        verbose_name="Granted by",
     )
-    expired_at = models.DateTimeField(null=True, blank=True, verbose_name="过期时间")
+    expired_at = models.DateTimeField(null=True, blank=True, verbose_name="Expiration time")
     created_by = models.BigIntegerField(null=True, blank=True)
     updated_by = models.BigIntegerField(null=True, blank=True)
-    created_at = models.DateTimeField(verbose_name="创建时间")
-    updated_at = models.DateTimeField(verbose_name="更新时间")
+    created_at = models.DateTimeField(verbose_name="Creation time")
+    updated_at = models.DateTimeField(verbose_name="Update time")
 
     class Meta:
         managed = False
         db_table = "iam_subsidiary_permission"
         unique_together = (("subsidiary", "permission"),)
-        verbose_name = "子公司权限"
-        verbose_name_plural = "子公司权限"
+        verbose_name = "Subsidiary permission"
+        verbose_name_plural = "Subsidiary permissions"
 
     def __str__(self):
         return f"{self.subsidiary_id}:{self.permission_id}:{self.effect}"
