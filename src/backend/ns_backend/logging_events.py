@@ -18,6 +18,7 @@ def log_event(
     context: dict[str, Any] | None = None,
     level: str = "warning",
     log_name: str = "ns_backend",
+    exc_info: bool = False,
 ) -> None:
     logger = get_logger(log_name)
     data = NsLogEventData(
@@ -39,7 +40,7 @@ def log_event(
     }
 
     log_method = getattr(logger, level, logger.warning)
-    log_method("%s", payload)
+    log_method("%s", payload, exc_info=exc_info)
 
 
 __all__ = ["log_event"]

@@ -208,6 +208,7 @@ class IamRequestViewSet(AuthenticatedRequestViewSet):
                 },
                 level="error",
                 log_name="iam.audit",
+                exc_info=True,
             )
 
 
