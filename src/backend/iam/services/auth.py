@@ -16,9 +16,7 @@ from iam.repositories.token import TokenRepository
 from iam.repositories.user import UserRepository
 from iam.services.session import SessionService
 from ns_backend.exceptions import BusinessError
-from ns_backend.logging_events import log_event
 from ns_backend.utils.jwt import JwtService
-from ns_common.logging.constants import NsLogEvent
 
 if TYPE_CHECKING:
     from iam.models import IamUser
@@ -160,15 +158,8 @@ class LoginService:
 
         try:
             await LoginFailureService.clear(username=username)
-        except Exception as exc:  # noqa
-            log_event(
-                event=NsLogEvent.LOGIN_FAILURE_CLEAR_FAILED,
-                message="login failure clear failed",
-                user_id=user.id,
-                context={"error": str(exc)},
-                level="warning",
-                log_name="ns_backend",
-            )
+        except Exception:  # noqa
+            pass
 
         return {
             "access_token": access_token,
@@ -277,31 +268,10 @@ class RefreshService:
             )
         except BusinessError as exc:
             if exc.code in NsErrorCode.TOKEN_ROTATION_REJECT_CODES:
-                log_event(
-                    event=NsLogEvent.REFRESH_ROTATION_REJECTED,
-                    message="refresh rotation rejected",
-                    user_id=user_id,
-                    error_code=exc.code,
-                    context={"refresh_jti": refresh_jti},
-                    level="warning",
-                    log_name="ns_backend",
-                )
                 raise BusinessError("Refresh token has been revoked", NsErrorCode.REFRESH_TOKEN_INVALID_OR_EXPIRED)
             raise
 
         if rotate_status == "replayed":
-            log_event(
-                event=NsLogEvent.REFRESH_REPLAY_DETECTED,
-                message="refresh replay detected",
-                user_id=user_id,
-                error_code=NsErrorCode.REFRESH_TOKEN_REPLAY_DETECTED,
-                context={
-                    "session_pk": session_pk,
-                    "refresh_jti": refresh_jti,
-                },
-                level="warning",
-                log_name="ns_backend",
-            )
             if session_pk:
                 await SessionService.revoke_session_by_pk(session_pk)
             else:

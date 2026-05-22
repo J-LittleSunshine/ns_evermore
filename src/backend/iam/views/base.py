@@ -16,8 +16,6 @@ from iam.services.tenant import TenantService
 from ns_backend.auth import AuthenticatedRequestViewSet
 from ns_backend.exceptions import BusinessError
 from ns_backend.exceptions import ValidateError
-from ns_backend.logging_events import log_event
-from ns_common.logging.constants import NsLogEvent
 
 if TYPE_CHECKING:
     pass
@@ -184,32 +182,8 @@ class IamRequestViewSet(AuthenticatedRequestViewSet):
                 error_message=None if code == 0 else msg,
             )
             await AuditService.record_event(event)
-        except Exception as exc:
-            trace_id = None
-            request_trace_id = getattr(request, "trace_id", None)
-            if isinstance(request_trace_id, str):
-                trace_id = request_trace_id
-            elif hasattr(request, "headers"):
-                trace_id = request.headers.get("X-Trace-Id")
-
-            current_user = getattr(request, "current_user", None)
-            user_id = getattr(current_user, "id", None)
-
-            log_event(
-                event=NsLogEvent.AUDIT_RECORD_FAILED,
-                message="failed to record operation audit",
-                trace_id=trace_id,
-                user_id=user_id if isinstance(user_id, int) else None,
-                context={
-                    "view": self.__class__.__name__,
-                    "method": getattr(request, "method", None),
-                    "path": getattr(request, "path", None),
-                    "error": str(exc),
-                },
-                level="error",
-                log_name="iam.audit",
-                exc_info=True,
-            )
+        except Exception:  # noqa
+            pass
 
 
 class BaseIamViewSet(IamRequestViewSet):
