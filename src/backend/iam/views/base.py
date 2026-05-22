@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from iam.contexts import TenantContext
+from iam.constants import TenantContext
 from iam.policies.tenant import TenantPolicy
-from iam.repositories.base import CrudRepository
+from iam.repositories.crud import CrudRepository
 from iam.services.auth import VerifyService
 from iam.services.permission import PermissionService
 from iam.services.tenant import TenantService
@@ -131,7 +131,8 @@ class BaseIamViewSet(IamRequestViewSet):
         current_user = getattr(request, "current_user", None)
         return getattr(current_user, "id", None)
 
-    def get_tenant_context(self, request) -> TenantContext | None:
+    @staticmethod
+    def get_tenant_context(request) -> TenantContext | None:
         current_user = getattr(request, "current_user", None)
 
         if not current_user:

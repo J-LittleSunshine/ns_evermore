@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from iam.policies.organization import OrganizationPolicy
 from iam.policies.tenant import TenantPolicy
-from iam.repositories.base import CrudRepository
+from iam.repositories.crud import CrudRepository
 from iam.services.tenant import TenantService
 from ns_backend.exceptions import BusinessError
 
