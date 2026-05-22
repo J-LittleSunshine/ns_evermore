@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from iam.schemas.audit import AuditEvent
 from iam.schemas.data_scope import (
 	DataScopeFieldMap,
 	DataScopeFilterPlan,
@@ -13,5 +14,6 @@ __all__ = [
 	"DataScopeResult",
 	"DataScopeFieldMap",
 	"DataScopeFilterPlan",
+	"AuditEvent",
 ]
 

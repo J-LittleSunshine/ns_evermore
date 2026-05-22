@@ -447,24 +447,39 @@ CREATE TABLE iam_operation_audit
 (
     id             BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '审计ID',
     operator_id    BIGINT UNSIGNED NULL COMMENT '操作人ID',
+    company_id     BIGINT UNSIGNED NULL COMMENT '操作人所属公司ID',
     operation_type VARCHAR(64)     NOT NULL COMMENT '操作类型',
     resource_type  VARCHAR(64)     NOT NULL COMMENT '资源类型',
     resource_id    BIGINT UNSIGNED NULL COMMENT '资源ID',
+    request_method VARCHAR(16)     NULL COMMENT '请求方法',
     request_path   VARCHAR(255)    NULL COMMENT '请求路径',
     client_ip      VARCHAR(64)     NULL COMMENT '客户端IP',
     user_agent     VARCHAR(512)    NULL COMMENT 'User-Agent',
     request_data   JSON            NULL COMMENT '请求数据',
     before_data    JSON            NULL COMMENT '变更前数据',
     after_data     JSON            NULL COMMENT '变更后数据',
+    status         VARCHAR(16)     NOT NULL DEFAULT 'SUCCESS' COMMENT '审计状态',
+    error_code     INT             NULL COMMENT '错误码',
+    error_message  VARCHAR(512)    NULL COMMENT '错误信息',
+    trace_id       VARCHAR(64)     NULL COMMENT '链路追踪ID',
     created_at     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
 
     KEY idx_audit_operator_id (operator_id),
+    KEY idx_audit_company_id (company_id),
     KEY idx_audit_resource (resource_type, resource_id),
     KEY idx_audit_operation_type (operation_type),
+    KEY idx_audit_status (status),
+    KEY idx_audit_trace_id (trace_id),
     KEY idx_audit_created_at (created_at),
 
     CONSTRAINT fk_audit_operator
-        FOREIGN KEY (operator_id) REFERENCES iam_user (id)
+        FOREIGN KEY (operator_id) REFERENCES iam_user (id),
+
+    CONSTRAINT fk_audit_company
+        FOREIGN KEY (company_id) REFERENCES iam_company (id),
+
+    CONSTRAINT chk_audit_status
+        CHECK (status IN ('SUCCESS', 'FAILED'))
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='操作审计表';
 
