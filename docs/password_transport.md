@@ -21,6 +21,7 @@ The optional mode is `rsa_oaep`.
 This mode is only a transport wrapper. The frontend sends a base64 RSA-OAEP-SHA256 ciphertext. The backend decrypts the payload into the raw password and still uses Django `make_password` / `check_password` for storage and verification.
 
 Do not store or compare RSA ciphertext as a password-equivalent secret.
+Do not write password payloads, ciphertext, or decrypted plaintext into logs or audit request payloads.
 
 ```json
 {

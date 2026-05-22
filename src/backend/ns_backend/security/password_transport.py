@@ -47,32 +47,59 @@ class PasswordTransportService:
         return raw_password
 
     @classmethod
+    def validate_payload_basic(cls, password_payload: str) -> None:
+        """Validate password payload shape/length without decrypting."""
+        cls._validate_payload(password_payload)
+
+    @classmethod
     def get_mode(cls) -> str:
         return str(getattr(settings, "PASSWORD_TRANSPORT_MODE", cls.MODE_PLAIN) or cls.MODE_PLAIN).strip().lower()
 
-    @staticmethod
-    def _validate_payload(password_payload: str) -> None:
+    @classmethod
+    def _validate_payload(cls, password_payload: str) -> None:
         if not isinstance(password_payload, str) or not password_payload:
             raise BusinessError("password cannot be empty", NsErrorCode.PASSWORD_EMPTY)
 
-        max_length = int(getattr(settings, "PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH", 4096))
+        max_length = cls._get_positive_int_setting("PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH", 4096)
         if len(password_payload) > max_length:
             raise BusinessError(
                 "password payload is invalid",
                 NsErrorCode.PASSWORD_TRANSPORT_INVALID,
             )
 
-    @staticmethod
-    def _validate_raw_password(raw_password: str) -> None:
+    @classmethod
+    def _validate_raw_password(cls, raw_password: str) -> None:
         if not isinstance(raw_password, str) or not raw_password:
             raise BusinessError("password cannot be empty", NsErrorCode.PASSWORD_EMPTY)
 
-        max_length = int(getattr(settings, "PASSWORD_PLAINTEXT_MAX_LENGTH", 256))
+        max_length = cls._get_positive_int_setting("PASSWORD_PLAINTEXT_MAX_LENGTH", 256)
         if len(raw_password) > max_length:
             raise BusinessError(
                 "password is invalid",
                 NsErrorCode.PASSWORD_TRANSPORT_INVALID,
             )
+
+    @staticmethod
+    def _get_positive_int_setting(setting_name: str, default: int) -> int:
+        value = getattr(settings, setting_name, default)
+
+        if isinstance(value, bool):
+            return default
+
+        if isinstance(value, int):
+            return value if value > 0 else default
+
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return default
+            try:
+                parsed = int(text)
+            except (TypeError, ValueError):
+                return default
+            return parsed if parsed > 0 else default
+
+        return default
 
     @classmethod
     def decrypt_rsa_oaep(cls, password_payload: str) -> str:

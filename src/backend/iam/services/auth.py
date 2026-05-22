@@ -98,9 +98,11 @@ class LoginService:
         if not username:
             raise BusinessError("username cannot be empty", NsErrorCode.USERNAME_EMPTY)
 
-        raw_password = PasswordTransportService.resolve(password)
+        PasswordTransportService.validate_payload_basic(password)
 
         await LoginFailureService.ensure_not_locked(username=username)
+
+        raw_password = PasswordTransportService.resolve(password)
 
         user = await UserRepository.get_active_by_username(username)
 

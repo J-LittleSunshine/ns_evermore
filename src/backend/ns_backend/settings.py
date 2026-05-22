@@ -24,6 +24,26 @@ except JSONDecodeError:
 
 BACKEND_CONFIG = CONFIG.get("backend", {})
 
+
+def _coerce_positive_int(value, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+
+    if isinstance(value, int):
+        return value if value > 0 else default
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        try:
+            parsed = int(text)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed > 0 else default
+
+    return default
+
 SECRET_KEY = BACKEND_CONFIG.get("secret_key", "") or os.getenv("NS_SECRET_KEY") or ""
 if not SECRET_KEY:
     raise RuntimeError("secret_key is not set")
@@ -49,16 +69,27 @@ if PASSWORD_TRANSPORT_MODE not in PASSWORD_TRANSPORT_ALLOWED_MODES:
         f"password_transport_mode must be one of: {', '.join(PASSWORD_TRANSPORT_ALLOWED_MODES)}"
     )
 
-PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH = int(
-    BACKEND_CONFIG.get("password_transport_max_payload_length", 4096)
-    or os.getenv("NS_PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH")
-    or 4096
+_password_transport_max_payload_length = _coerce_positive_int(
+    BACKEND_CONFIG.get("password_transport_max_payload_length"),
+    0,
 )
-PASSWORD_PLAINTEXT_MAX_LENGTH = int(
-    BACKEND_CONFIG.get("password_plaintext_max_length", 256)
-    or os.getenv("NS_PASSWORD_PLAINTEXT_MAX_LENGTH")
-    or 256
+if _password_transport_max_payload_length <= 0:
+    _password_transport_max_payload_length = _coerce_positive_int(
+        os.getenv("NS_PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH"),
+        4096,
+    )
+PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH = _password_transport_max_payload_length
+
+_password_plaintext_max_length = _coerce_positive_int(
+    BACKEND_CONFIG.get("password_plaintext_max_length"),
+    0,
 )
+if _password_plaintext_max_length <= 0:
+    _password_plaintext_max_length = _coerce_positive_int(
+        os.getenv("NS_PASSWORD_PLAINTEXT_MAX_LENGTH"),
+        256,
+    )
+PASSWORD_PLAINTEXT_MAX_LENGTH = _password_plaintext_max_length
 PASSWORD_RSA_PRIVATE_KEY = (
     BACKEND_CONFIG.get("password_rsa_private_key", "")
     or os.getenv("NS_PASSWORD_RSA_PRIVATE_KEY")
