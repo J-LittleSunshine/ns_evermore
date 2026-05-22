@@ -27,6 +27,25 @@ class PermissionRepository:
         return Q(expired_at__isnull=True) | Q(expired_at__gt=now)
 
     @classmethod
+    async def _has_direct_permission_effect(
+        cls,
+        model_class,
+        *,
+        subject_field: str,
+        subject_id: int,
+        permission_ids: list[int],
+        effect: str,
+        now,
+    ) -> bool:
+        return await model_class.objects.using(IAM_DB_ALIAS).filter(
+            cls.valid_time_filter(now),
+            **{subject_field: subject_id},
+            permission_id__in=permission_ids,
+            permission__status=1,
+            effect=effect,
+        ).aexists()
+
+    @classmethod
     async def get_active_permission_ids_with_ancestors(
         cls,
         permission_code: str,
@@ -65,23 +84,25 @@ class PermissionRepository:
 
     @classmethod
     async def has_user_allow(cls, user_id: int, permission_ids: list[int], now) -> bool:
-        return await IamUserPermission.objects.using(IAM_DB_ALIAS).filter(
-            cls.valid_time_filter(now),
-            user_id=user_id,
-            permission_id__in=permission_ids,
-            permission__status=1,
+        return await cls._has_direct_permission_effect(
+            IamUserPermission,
+            subject_field="user_id",
+            subject_id=user_id,
+            permission_ids=permission_ids,
             effect=cls.EFFECT_ALLOW,
-        ).aexists()
+            now=now,
+        )
 
     @classmethod
     async def has_user_deny(cls, user_id: int, permission_ids: list[int], now) -> bool:
-        return await IamUserPermission.objects.using(IAM_DB_ALIAS).filter(
-            cls.valid_time_filter(now),
-            user_id=user_id,
-            permission_id__in=permission_ids,
-            permission__status=1,
+        return await cls._has_direct_permission_effect(
+            IamUserPermission,
+            subject_field="user_id",
+            subject_id=user_id,
+            permission_ids=permission_ids,
             effect=cls.EFFECT_DENY,
-        ).aexists()
+            now=now,
+        )
 
     @classmethod
     async def has_role_allow(
@@ -122,13 +143,14 @@ class PermissionRepository:
         permission_ids: list[int],
         now,
     ) -> bool:
-        return await IamDepartmentPermission.objects.using(IAM_DB_ALIAS).filter(
-            cls.valid_time_filter(now),
-            department_id=department_id,
-            permission_id__in=permission_ids,
-            permission__status=1,
+        return await cls._has_direct_permission_effect(
+            IamDepartmentPermission,
+            subject_field="department_id",
+            subject_id=department_id,
+            permission_ids=permission_ids,
             effect=cls.EFFECT_ALLOW,
-        ).aexists()
+            now=now,
+        )
 
     @classmethod
     async def has_department_deny(
@@ -137,13 +159,14 @@ class PermissionRepository:
         permission_ids: list[int],
         now,
     ) -> bool:
-        return await IamDepartmentPermission.objects.using(IAM_DB_ALIAS).filter(
-            cls.valid_time_filter(now),
-            department_id=department_id,
-            permission_id__in=permission_ids,
-            permission__status=1,
+        return await cls._has_direct_permission_effect(
+            IamDepartmentPermission,
+            subject_field="department_id",
+            subject_id=department_id,
+            permission_ids=permission_ids,
             effect=cls.EFFECT_DENY,
-        ).aexists()
+            now=now,
+        )
 
     @classmethod
     async def has_subsidiary_allow(
@@ -152,13 +175,14 @@ class PermissionRepository:
         permission_ids: list[int],
         now,
     ) -> bool:
-        return await IamSubsidiaryPermission.objects.using(IAM_DB_ALIAS).filter(
-            cls.valid_time_filter(now),
-            subsidiary_id=subsidiary_id,
-            permission_id__in=permission_ids,
-            permission__status=1,
+        return await cls._has_direct_permission_effect(
+            IamSubsidiaryPermission,
+            subject_field="subsidiary_id",
+            subject_id=subsidiary_id,
+            permission_ids=permission_ids,
             effect=cls.EFFECT_ALLOW,
-        ).aexists()
+            now=now,
+        )
 
     @classmethod
     async def has_subsidiary_deny(
@@ -167,10 +191,11 @@ class PermissionRepository:
         permission_ids: list[int],
         now,
     ) -> bool:
-        return await IamSubsidiaryPermission.objects.using(IAM_DB_ALIAS).filter(
-            cls.valid_time_filter(now),
-            subsidiary_id=subsidiary_id,
-            permission_id__in=permission_ids,
-            permission__status=1,
+        return await cls._has_direct_permission_effect(
+            IamSubsidiaryPermission,
+            subject_field="subsidiary_id",
+            subject_id=subsidiary_id,
+            permission_ids=permission_ids,
             effect=cls.EFFECT_DENY,
-        ).aexists()
+            now=now,
+        )

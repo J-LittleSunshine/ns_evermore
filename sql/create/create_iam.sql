@@ -487,8 +487,8 @@ CREATE TABLE iam_operation_audit
 
 CREATE TABLE iam_user_device
 (
-    id               BIGINT       NOT NULL PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
-    user_id          BIGINT       NOT NULL COMMENT '用户ID',
+    id               BIGINT UNSIGNED       NOT NULL PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+    user_id          BIGINT UNSIGNED       NOT NULL COMMENT '用户ID',
     device_id        VARCHAR(128) NOT NULL COMMENT '业务设备ID',
     device_name      VARCHAR(128) NOT NULL COMMENT '设备名称',
     device_type      VARCHAR(32)  NOT NULL COMMENT '设备类型',
@@ -520,9 +520,9 @@ CREATE TABLE iam_user_device
 
 CREATE TABLE iam_user_session
 (
-    id             BIGINT      NOT NULL PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
-    user_id        BIGINT      NOT NULL COMMENT '用户ID',
-    device_id      BIGINT      NOT NULL COMMENT '设备主键ID',
+    id             BIGINT UNSIGNED      NOT NULL PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+    user_id        BIGINT UNSIGNED      NOT NULL COMMENT '用户ID',
+    device_id      BIGINT UNSIGNED      NOT NULL COMMENT '设备主键ID',
     session_id     VARCHAR(64) NOT NULL COMMENT 'Session ID',
     login_ip       VARCHAR(64)          DEFAULT NULL COMMENT '登录IP',
     user_agent     TEXT                 DEFAULT NULL COMMENT 'User-Agent',

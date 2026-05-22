@@ -54,7 +54,7 @@ class SessionContextService:
         public_session_id = session_id.strip()
         session = await SessionRepository.get_user_session_by_public_id(
             user_id=user.id,
-            session_id=public_session_id,
+            public_session_id=public_session_id,
         )
         if not session:
             raise BusinessError("Session does not exist", 15002)
@@ -66,7 +66,7 @@ class SessionContextService:
                 "session_id": session.session_id,
             }
 
-        updated_count = await SessionRepository.revoke_session_and_tokens_by_id(session.id)
+        updated_count = await SessionRepository.revoke_session_and_tokens_by_pk(session.id)
         revoked = updated_count > 0
         return {
             "success": revoked,

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -15,18 +16,42 @@ from ns_backend.policies import BasePolicy
 class AuditPolicy(BasePolicy):
     STATUS_SUCCESS = "SUCCESS"
     STATUS_FAILED = "FAILED"
+    MAX_AUDIT_STRING_LENGTH = 2048
+    MAX_AUDIT_JSON_LENGTH = 32768
 
     SENSITIVE_KEYS = {
         "password",
         "old_password",
         "new_password",
         "confirm_password",
+        "oldpassword",
+        "newpassword",
+        "confirmpassword",
         "refresh_token",
         "access_token",
+        "refreshtoken",
+        "accesstoken",
         "token",
+        "authtoken",
+        "auth_token",
+        "sessiontoken",
+        "session_token",
         "authorization",
+        "bearer",
+        "jwt",
+        "jwt_token",
         "secret",
         "client_secret",
+        "clientsecret",
+        "api_key",
+        "apikey",
+        "secret_key",
+        "secretkey",
+        "private_key",
+        "privatekey",
+        "csrf",
+        "csrf_token",
+        "csrftoken",
     }
 
     @classmethod
@@ -78,6 +103,62 @@ class AuditPolicy(BasePolicy):
         return cls.to_json_safe(data)
 
     @classmethod
+    def get_json_length(cls, value) -> int:
+        try:
+            return len(json.dumps(value, ensure_ascii=False, default=str))
+        except Exception:
+            return len(str(value))
+
+    @classmethod
+    def limit_audit_value(cls, value):
+        safe_value = cls.to_json_safe(value)
+        if isinstance(safe_value, str) and len(safe_value) > cls.MAX_AUDIT_STRING_LENGTH:
+            return {
+                "__truncated__": True,
+                "type": "string",
+                "length": len(safe_value),
+                "value": safe_value[: cls.MAX_AUDIT_STRING_LENGTH],
+            }
+        return safe_value
+
+    @classmethod
+    def limit_audit_payload(cls, value):
+        if value is None:
+            return None
+
+        if isinstance(value, dict):
+            limited_obj = {
+                str(key): cls.limit_audit_payload(item)
+                for key, item in value.items()
+            }
+            json_length = cls.get_json_length(limited_obj)
+            if json_length > cls.MAX_AUDIT_JSON_LENGTH:
+                return {
+                    "__truncated__": True,
+                    "type": "object",
+                    "length": json_length,
+                }
+            return limited_obj
+
+        if isinstance(value, (list, tuple, set)):
+            limited_arr = [cls.limit_audit_payload(item) for item in value]
+            json_length = cls.get_json_length(limited_arr)
+            if json_length > cls.MAX_AUDIT_JSON_LENGTH:
+                return {
+                    "__truncated__": True,
+                    "type": "array",
+                    "length": json_length,
+                }
+            return limited_arr
+
+        return cls.limit_audit_value(value)
+
+    @classmethod
+    def normalize_payload(cls, value):
+        masked = cls.mask_sensitive_data(value)
+        return cls.limit_audit_payload(masked)
+
+    @classmethod
     def normalize_status(cls, status: str | None) -> str:
         if status == cls.STATUS_FAILED:
             return cls.STATUS_FAILED
@@ -105,10 +186,10 @@ class AuditPolicy(BasePolicy):
             request_path=cls.truncate(event.request_path, 255),
             client_ip=cls.truncate(event.client_ip, 64),
             user_agent=cls.truncate(event.user_agent, 512),
-            request_data=cls.mask_sensitive_data(event.request_data),
-            before_data=cls.mask_sensitive_data(event.before_data),
-            after_data=cls.mask_sensitive_data(event.after_data),
-            extra_data=cls.mask_sensitive_data(event.extra_data),
+            request_data=cls.normalize_payload(event.request_data),
+            before_data=cls.normalize_payload(event.before_data),
+            after_data=cls.normalize_payload(event.after_data),
+            extra_data=cls.normalize_payload(event.extra_data),
             status=cls.normalize_status(event.status),
             error_message=cls.truncate(event.error_message, 512),
             trace_id=cls.truncate(event.trace_id, 64),

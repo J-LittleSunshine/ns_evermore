@@ -232,15 +232,15 @@ class SessionRepository:
             return session, device
 
     @staticmethod
-    async def get_by_id(session_pk: int) -> IamUserSession | None:
+    async def get_by_pk(session_pk: int) -> IamUserSession | None:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
             id=session_pk,
         ).afirst()
 
     @staticmethod
-    async def get_by_session_id(session_id: str) -> IamUserSession | None:
+    async def get_by_public_session_id(public_session_id: str) -> IamUserSession | None:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
-            session_id=session_id,
+            session_id=public_session_id,
         ).afirst()
 
     @staticmethod
@@ -298,52 +298,64 @@ class SessionRepository:
     async def get_user_session_by_public_id(
         *,
         user_id: int,
-        session_id: str,
+        public_session_id: str,
     ) -> IamUserSession | None:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
             user_id=user_id,
-            session_id=session_id,
+            session_id=public_session_id,
         ).afirst()
 
     @staticmethod
-    async def get_available_by_id(session_id: int) -> IamUserSession | None:
+    async def get_available_by_pk(session_pk: int) -> IamUserSession | None:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
-            id=session_id,
+            id=session_pk,
             revoked_at__isnull=True,
             expired_at__gt=timezone.now(),
         ).afirst()
 
     @staticmethod
-    async def revoke_by_id(session_id: int) -> int:
+    async def revoke_by_pk(session_pk: int) -> int:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
-            id=session_id,
+            id=session_pk,
             revoked_at__isnull=True,
         ).aupdate(revoked_at=timezone.now())
 
     @staticmethod
-    async def revoke_token_by_session_id(session_id: int) -> int:
+    async def revoke_token_by_session_pk(session_pk: int) -> int:
         return await IamUserToken.objects.using(IAM_DB_ALIAS).filter(
-            session_id=session_id,
+            session_id=session_pk,
             revoked_at__isnull=True,
         ).aupdate(revoked_at=timezone.now())
 
     @classmethod
-    async def revoke_session_and_tokens_by_id(cls, session_id: int) -> int:
+    async def revoke_session_and_tokens_by_pk(cls, session_pk: int) -> int:
         """原子化撤销单个会话及其全部 Token。"""
         return await sync_to_async(
-            cls._revoke_session_and_tokens_by_id_sync,
+            cls._revoke_sessions_and_tokens_by_filter_sync,
             thread_sensitive=True,
-        )(session_id=session_id)
+        )(
+            session_filter={"id": session_pk},
+            revoke_all_user_tokens=False,
+        )
+
+    @classmethod
+    async def revoke_session_and_tokens_by_id(cls, session_pk: int) -> int:
+        # Backward-compatible alias. Prefer revoke_session_and_tokens_by_pk.
+        return await cls.revoke_session_and_tokens_by_pk(session_pk)
 
     @staticmethod
-    def _revoke_session_and_tokens_by_id_sync(session_id: int) -> int:
+    def _revoke_sessions_and_tokens_by_filter_sync(
+        *,
+        session_filter: dict[str, Any],
+        revoke_all_user_tokens: bool = False,
+    ) -> int:
         now = timezone.now()
 
         with transaction.atomic(using=IAM_DB_ALIAS):
             locked_sessions = (
                 IamUserSession.objects.using(IAM_DB_ALIAS)
                 .select_for_update()
-                .filter(id=session_id)
+                .filter(**session_filter)
             )
             session_ids = list(locked_sessions.values_list("id", flat=True))
 
@@ -355,10 +367,16 @@ class SessionRepository:
                 revoked_at__isnull=True,
             ).update(revoked_at=now)
 
-            IamUserToken.objects.using(IAM_DB_ALIAS).filter(
-                session_id__in=session_ids,
-                revoked_at__isnull=True,
-            ).update(revoked_at=now)
+            if revoke_all_user_tokens and "user_id" in session_filter:
+                IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+                    user_id=session_filter["user_id"],
+                    revoked_at__isnull=True,
+                ).update(revoked_at=now)
+            else:
+                IamUserToken.objects.using(IAM_DB_ALIAS).filter(
+                    session_id__in=session_ids,
+                    revoked_at__isnull=True,
+                ).update(revoked_at=now)
 
             return updated_count
 
@@ -366,68 +384,23 @@ class SessionRepository:
     async def revoke_user_sessions_and_tokens(cls, user_id: int) -> int:
         """原子化撤销用户全部会话及全部 Token。"""
         return await sync_to_async(
-            cls._revoke_user_sessions_and_tokens_sync,
+            cls._revoke_sessions_and_tokens_by_filter_sync,
             thread_sensitive=True,
-        )(user_id=user_id)
-
-    @staticmethod
-    def _revoke_user_sessions_and_tokens_sync(user_id: int) -> int:
-        now = timezone.now()
-
-        with transaction.atomic(using=IAM_DB_ALIAS):
-            locked_sessions = (
-                IamUserSession.objects.using(IAM_DB_ALIAS)
-                .select_for_update()
-                .filter(user_id=user_id)
-            )
-            session_ids = list(locked_sessions.values_list("id", flat=True))
-
-            updated_count = IamUserSession.objects.using(IAM_DB_ALIAS).filter(
-                id__in=session_ids,
-                revoked_at__isnull=True,
-            ).update(revoked_at=now)
-
-            IamUserToken.objects.using(IAM_DB_ALIAS).filter(
-                user_id=user_id,
-                revoked_at__isnull=True,
-            ).update(revoked_at=now)
-
-            return updated_count
+        )(
+            session_filter={"user_id": user_id},
+            revoke_all_user_tokens=True,
+        )
 
     @classmethod
     async def revoke_device_sessions_and_tokens(cls, device_id: int) -> int:
         """原子化撤销设备全部会话及其全部 Token。"""
         return await sync_to_async(
-            cls._revoke_device_sessions_and_tokens_sync,
+            cls._revoke_sessions_and_tokens_by_filter_sync,
             thread_sensitive=True,
-        )(device_id=device_id)
-
-    @staticmethod
-    def _revoke_device_sessions_and_tokens_sync(device_id: int) -> int:
-        now = timezone.now()
-
-        with transaction.atomic(using=IAM_DB_ALIAS):
-            locked_sessions = (
-                IamUserSession.objects.using(IAM_DB_ALIAS)
-                .select_for_update()
-                .filter(device_id=device_id)
-            )
-            session_ids = list(locked_sessions.values_list("id", flat=True))
-
-            if not session_ids:
-                return 0
-
-            updated_count = IamUserSession.objects.using(IAM_DB_ALIAS).filter(
-                id__in=session_ids,
-                revoked_at__isnull=True,
-            ).update(revoked_at=now)
-
-            IamUserToken.objects.using(IAM_DB_ALIAS).filter(
-                session_id__in=session_ids,
-                revoked_at__isnull=True,
-            ).update(revoked_at=now)
-
-            return updated_count
+        )(
+            session_filter={"device_id": device_id},
+            revoke_all_user_tokens=False,
+        )
 
     @staticmethod
     async def list_active_ids_by_user_id(user_id: int) -> list[int]:
@@ -470,26 +443,61 @@ class SessionRepository:
         ).aupdate(revoked_at=timezone.now())
 
     @staticmethod
-    async def touch_session(session_id: str, update_data: dict[str, Any]) -> int:
+    async def touch_session_by_public_id(public_session_id: str, update_data: dict[str, Any]) -> int:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
-            session_id=session_id,
+            session_id=public_session_id,
             revoked_at__isnull=True,
             expired_at__gt=timezone.now(),
         ).aupdate(**update_data)
 
     @staticmethod
-    async def touch_session_by_id(session_id: int, update_data: dict[str, Any]) -> int:
+    async def touch_session_by_pk(session_pk: int, update_data: dict[str, Any]) -> int:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
-            id=session_id,
+            id=session_pk,
             revoked_at__isnull=True,
             expired_at__gt=timezone.now(),
         ).aupdate(**update_data)
 
     @staticmethod
-    async def update_risk_level(session_id: int, risk_level: int) -> int:
+    async def update_risk_level(session_pk: int, risk_level: int) -> int:
         return await IamUserSession.objects.using(IAM_DB_ALIAS).filter(
-            id=session_id,
+            id=session_pk,
         ).aupdate(risk_level=risk_level)
+
+    @classmethod
+    async def get_by_id(cls, session_pk: int) -> IamUserSession | None:
+        # Backward-compatible alias. Prefer get_by_pk.
+        return await cls.get_by_pk(session_pk)
+
+    @classmethod
+    async def get_by_session_id(cls, public_session_id: str) -> IamUserSession | None:
+        # Backward-compatible alias. Prefer get_by_public_session_id.
+        return await cls.get_by_public_session_id(public_session_id)
+
+    @classmethod
+    async def get_available_by_id(cls, session_pk: int) -> IamUserSession | None:
+        # Backward-compatible alias. Prefer get_available_by_pk.
+        return await cls.get_available_by_pk(session_pk)
+
+    @classmethod
+    async def revoke_by_id(cls, session_pk: int) -> int:
+        # Backward-compatible alias. Prefer revoke_by_pk.
+        return await cls.revoke_by_pk(session_pk)
+
+    @classmethod
+    async def revoke_token_by_session_id(cls, session_pk: int) -> int:
+        # Backward-compatible alias. Prefer revoke_token_by_session_pk.
+        return await cls.revoke_token_by_session_pk(session_pk)
+
+    @classmethod
+    async def touch_session(cls, public_session_id: str, update_data: dict[str, Any]) -> int:
+        # Backward-compatible alias. Prefer touch_session_by_public_id.
+        return await cls.touch_session_by_public_id(public_session_id, update_data)
+
+    @classmethod
+    async def touch_session_by_id(cls, session_pk: int, update_data: dict[str, Any]) -> int:
+        # Backward-compatible alias. Prefer touch_session_by_pk.
+        return await cls.touch_session_by_pk(session_pk, update_data)
 
     @staticmethod
     async def list_by_user_id(user_id: int) -> list[IamUserSession]:

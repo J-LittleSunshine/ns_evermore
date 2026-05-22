@@ -42,12 +42,12 @@ class SessionService:
 
 	@classmethod
 	async def ensure_available(cls, session_id: str):
-		session = await SessionRepository.get_by_session_id(session_id)
+		session = await SessionRepository.get_by_public_session_id(session_id)
 		return cls.ensure_session_state_available(session)
 
 	@classmethod
 	async def ensure_available_by_pk(cls, session_pk: int):
-		session = await SessionRepository.get_by_id(session_pk)
+		session = await SessionRepository.get_by_pk(session_pk)
 		return cls.ensure_session_state_available(session)
 
 	@staticmethod
@@ -65,7 +65,7 @@ class SessionService:
 
 	@classmethod
 	async def revoke_session(cls, session_id: str) -> bool:
-		session = await SessionRepository.get_by_session_id(session_id)
+		session = await SessionRepository.get_by_public_session_id(session_id)
 
 		if not session:
 			raise BusinessError("Session does not exist", 15002)
@@ -77,7 +77,7 @@ class SessionService:
 		if not session_pk:
 			raise BusinessError("session_id cannot be empty", 15001)
 
-		updated_count = await SessionRepository.revoke_session_and_tokens_by_id(session_pk)
+		updated_count = await SessionRepository.revoke_session_and_tokens_by_pk(session_pk)
 
 		return updated_count > 0
 
@@ -107,7 +107,7 @@ class SessionService:
 			user_agent=user_agent,
 		)
 
-		await SessionRepository.touch_session(session_id, update_data)
+		await SessionRepository.touch_session_by_public_id(session_id, update_data)
 
 	@classmethod
 	async def touch_activity_by_pk(
@@ -121,7 +121,7 @@ class SessionService:
 			user_agent=user_agent,
 		)
 
-		await SessionRepository.touch_session_by_id(session_pk, update_data)
+		await SessionRepository.touch_session_by_pk(session_pk, update_data)
 
 	@staticmethod
 	def build_touch_update_data(
