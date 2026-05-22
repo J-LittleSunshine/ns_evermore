@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from iam.contexts import TenantContext
 from iam.policies.tenant import TenantPolicy
 from iam.repositories.base import CrudRepository
 from iam.services.auth import VerifyService
 from iam.services.permission import PermissionService
-from iam.services.tenant import TenantContext, TenantService
+from iam.services.tenant import TenantService
 from ns_backend.auth import AuthenticatedRequestViewSet
 from ns_backend.exceptions import BusinessError
 from ns_backend.exceptions import ValidateError
