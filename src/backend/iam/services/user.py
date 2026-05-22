@@ -14,6 +14,7 @@ from iam.policies.user import UserPolicy
 from iam.repositories.user import UserRepository
 from iam.services.tenant import TenantService
 from ns_backend.exceptions import BusinessError
+from ns_backend.security import PasswordTransportService
 
 
 class UserService:
@@ -183,11 +184,12 @@ class UserService:
 	@staticmethod
 	def build_create_data(data: dict[str, Any], operator_id: int | None = None) -> dict[str, Any]:
 		create_data = data.copy()
-		raw_password = create_data.pop("password", None)
+		password_payload = create_data.pop("password", None)
 
-		if not raw_password:
+		if not password_payload:
 			raise BusinessError("password cannot be empty", NsErrorCode.PASSWORD_EMPTY_LEGACY)
 
+		raw_password = PasswordTransportService.resolve(password_payload)
 		now = timezone.now()
 		create_data["password"] = make_password(raw_password)
 		create_data.setdefault("created_by", operator_id)
@@ -212,7 +214,7 @@ class UserService:
 			raise BusinessError("password cannot be empty", NsErrorCode.PASSWORD_EMPTY_LEGACY)
 
 		return {
-			"password": make_password(raw_password),
+			"password": make_password(PasswordTransportService.resolve(raw_password)),
 			"updated_by": operator_id,
 			"updated_at": timezone.now(),
 		}

@@ -38,6 +38,49 @@ JWT_ISSUER = BACKEND_CONFIG.get("jwt_issuer", "ns_evermore")
 JWT_LEEWAY_SECONDS = BACKEND_CONFIG.get("jwt_leeway_seconds", 30)
 JWT_MIN_SECRET_LENGTH = BACKEND_CONFIG.get("jwt_min_secret_length", 32)
 
+PASSWORD_TRANSPORT_MODE = (
+    BACKEND_CONFIG.get("password_transport_mode", "")
+    or os.getenv("NS_PASSWORD_TRANSPORT_MODE")
+    or "plain"
+).strip().lower()
+PASSWORD_TRANSPORT_ALLOWED_MODES = ("plain", "rsa_oaep")
+if PASSWORD_TRANSPORT_MODE not in PASSWORD_TRANSPORT_ALLOWED_MODES:
+    raise RuntimeError(
+        f"password_transport_mode must be one of: {', '.join(PASSWORD_TRANSPORT_ALLOWED_MODES)}"
+    )
+
+PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH = int(
+    BACKEND_CONFIG.get("password_transport_max_payload_length", 4096)
+    or os.getenv("NS_PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH")
+    or 4096
+)
+PASSWORD_PLAINTEXT_MAX_LENGTH = int(
+    BACKEND_CONFIG.get("password_plaintext_max_length", 256)
+    or os.getenv("NS_PASSWORD_PLAINTEXT_MAX_LENGTH")
+    or 256
+)
+PASSWORD_RSA_PRIVATE_KEY = (
+    BACKEND_CONFIG.get("password_rsa_private_key", "")
+    or os.getenv("NS_PASSWORD_RSA_PRIVATE_KEY")
+    or ""
+)
+PASSWORD_RSA_PRIVATE_KEY_FILE = (
+    BACKEND_CONFIG.get("password_rsa_private_key_file", "")
+    or os.getenv("NS_PASSWORD_RSA_PRIVATE_KEY_FILE")
+    or ""
+)
+PASSWORD_RSA_PRIVATE_KEY_PASSPHRASE = (
+    BACKEND_CONFIG.get("password_rsa_private_key_passphrase", "")
+    or os.getenv("NS_PASSWORD_RSA_PRIVATE_KEY_PASSPHRASE")
+    or ""
+)
+if PASSWORD_TRANSPORT_MODE == "rsa_oaep" and not (
+    PASSWORD_RSA_PRIVATE_KEY or PASSWORD_RSA_PRIVATE_KEY_FILE
+):
+    raise RuntimeError(
+        "password_rsa_private_key or password_rsa_private_key_file is required when password_transport_mode is rsa_oaep"
+    )
+
 LOGIN_MAX_FAILED_COUNT = BACKEND_CONFIG.get("log_in_max_failed_count", 5)
 LOGIN_LOCK_MINUTES = BACKEND_CONFIG.get("log_in_lock_minutes", 15)
 
