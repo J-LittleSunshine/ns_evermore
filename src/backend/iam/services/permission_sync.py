@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from django.utils import timezone
 
+from iam.error_codes import IamErrorCode
 from iam.registry.builtin import (
     register_builtin_permissions,
     register_builtin_permission_providers,
@@ -45,24 +46,24 @@ class PermissionSyncService:
         for spec in specs:
             code_value = spec.code.strip() if isinstance(spec.code, str) else ""
             if not code_value:
-                raise BusinessError("Permission code is required", 17005)
+                raise BusinessError("Permission code is required", IamErrorCode.PERMISSION_CODE_REQUIRED)
             if isinstance(spec.code, str) and spec.code != code_value:
-                raise BusinessError(f"Invalid permission code: {spec.code}", 17014)
+                raise BusinessError(f"Invalid permission code: {spec.code}", IamErrorCode.PERMISSION_CODE_FORMAT_INVALID)
 
             name_value = spec.name.strip() if isinstance(spec.name, str) else ""
             if not name_value:
-                raise BusinessError("Permission name is required", 17006)
+                raise BusinessError("Permission name is required", IamErrorCode.PERMISSION_NAME_REQUIRED)
             if isinstance(spec.name, str) and spec.name != name_value:
-                raise BusinessError(f"Invalid permission name: {spec.name}", 17019)
+                raise BusinessError(f"Invalid permission name: {spec.name}", IamErrorCode.PERMISSION_NAME_INVALID)
 
             if spec.permission_type not in cls.ALLOWED_PERMISSION_TYPES:
-                raise BusinessError(f"Invalid permission type: {spec.permission_type}", 17007)
+                raise BusinessError(f"Invalid permission type: {spec.permission_type}", IamErrorCode.PERMISSION_TYPE_INVALID)
 
             if spec.status not in cls.ALLOWED_STATUS_VALUES:
-                raise BusinessError(f"Invalid permission status: {spec.status}", 17008)
+                raise BusinessError(f"Invalid permission status: {spec.status}", IamErrorCode.PERMISSION_STATUS_INVALID)
 
             if code_value in seen_codes:
-                raise BusinessError(f"Duplicate permission code: {spec.code}", 17001)
+                raise BusinessError(f"Duplicate permission code: {spec.code}", IamErrorCode.PERMISSION_CODE_DUPLICATED)
             seen_codes.add(code_value)
 
             if spec.parent_code is None:
@@ -70,12 +71,12 @@ class PermissionSyncService:
 
             parent_code_value = spec.parent_code.strip() if isinstance(spec.parent_code, str) else ""
             if not parent_code_value:
-                raise BusinessError(f"Invalid permission parent_code: {spec.parent_code}", 17009)
+                raise BusinessError(f"Invalid permission parent_code: {spec.parent_code}", IamErrorCode.PERMISSION_PARENT_CODE_INVALID)
             if isinstance(spec.parent_code, str) and spec.parent_code != parent_code_value:
-                raise BusinessError(f"Invalid permission parent_code: {spec.parent_code}", 17018)
+                raise BusinessError(f"Invalid permission parent_code: {spec.parent_code}", IamErrorCode.PERMISSION_PARENT_CODE_FORMAT_INVALID)
 
             if parent_code_value == code_value:
-                raise BusinessError(f"Permission cannot be parent of itself: {spec.code}", 17009)
+                raise BusinessError(f"Permission cannot be parent of itself: {spec.code}", IamErrorCode.PERMISSION_PARENT_CODE_INVALID)
 
     @classmethod
     async def sync_specs(
@@ -186,7 +187,7 @@ class PermissionSyncService:
                 break
 
         if pending_specs:
-            raise BusinessError("Permission parent dependency cannot be resolved", 17004)
+            raise BusinessError("Permission parent dependency cannot be resolved", IamErrorCode.PERMISSION_PARENT_DEPENDENCY_UNRESOLVED)
 
         return {
             "total": total,

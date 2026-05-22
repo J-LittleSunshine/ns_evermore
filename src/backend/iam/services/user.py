@@ -7,6 +7,7 @@ from typing import Any
 from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 
+from iam.error_codes import IamErrorCode
 from iam.policies.organization import OrganizationPolicy
 from iam.policies.tenant import TenantPolicy
 from iam.policies.user import UserPolicy
@@ -51,7 +52,7 @@ class UserService:
 	@classmethod
 	async def get_user(cls, user_id: int, operator):
 		if not user_id:
-			raise BusinessError("id cannot be empty", 10001)
+			raise BusinessError("id cannot be empty", IamErrorCode.ID_EMPTY)
 
 		context = TenantService.from_user(operator)
 
@@ -70,7 +71,7 @@ class UserService:
 			)
 
 		if not user:
-			raise BusinessError("User does not exist", 10103)
+			raise BusinessError("User does not exist", IamErrorCode.USER_NOT_FOUND_LEGACY)
 
 		return user
 
@@ -175,7 +176,7 @@ class UserService:
 			normalized_page = max(int(page or 1), 1)
 			normalized_page_size = min(max(int(page_size or 20), 1), 100)
 		except (TypeError, ValueError):
-			raise BusinessError("Invalid pagination parameters", 12006)
+			raise BusinessError("Invalid pagination parameters", IamErrorCode.INVALID_PAGINATION_PARAMETERS)
 
 		return normalized_page, normalized_page_size
 
@@ -185,7 +186,7 @@ class UserService:
 		raw_password = create_data.pop("password", None)
 
 		if not raw_password:
-			raise BusinessError("password cannot be empty", 10101)
+			raise BusinessError("password cannot be empty", IamErrorCode.PASSWORD_EMPTY_LEGACY)
 
 		now = timezone.now()
 		create_data["password"] = make_password(raw_password)
@@ -208,7 +209,7 @@ class UserService:
 		operator_id: int | None = None,
 	) -> dict[str, Any]:
 		if not raw_password:
-			raise BusinessError("password cannot be empty", 10101)
+			raise BusinessError("password cannot be empty", IamErrorCode.PASSWORD_EMPTY_LEGACY)
 
 		return {
 			"password": make_password(raw_password),

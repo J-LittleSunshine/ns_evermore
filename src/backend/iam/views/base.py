@@ -5,6 +5,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from django.http import JsonResponse
+from iam.error_codes import IamErrorCode
 from iam.services.audit import AuditService
 from iam.schemas import TenantContext
 from iam.policies.tenant import TenantPolicy
@@ -325,11 +326,14 @@ class BaseIamViewSet(IamRequestViewSet):
             company_id = context.company_id
 
             if company_id is None:
-                raise BusinessError("Enterprise user is not bound to a company", 14001)
+                raise BusinessError("Enterprise user is not bound to a company", IamErrorCode.ENTERPRISE_USER_COMPANY_NOT_BOUND)
 
             return {self.tenant_scope_field: company_id}
 
-        raise BusinessError("Personal users cannot access enterprise organization resources", 14002)
+        raise BusinessError(
+            "Personal users cannot access enterprise organization resources",
+            IamErrorCode.ENTERPRISE_ORG_FORBIDDEN_PERSONAL,
+        )
 
     def get_tenant_create_values(self, request) -> dict[str, Any] | None:
         if self.tenant_create_field is None:
@@ -350,10 +354,13 @@ class BaseIamViewSet(IamRequestViewSet):
             company_id = context.company_id
 
             if company_id is None:
-                raise BusinessError("Enterprise user is not bound to a company", 14001)
+                raise BusinessError("Enterprise user is not bound to a company", IamErrorCode.ENTERPRISE_USER_COMPANY_NOT_BOUND)
 
             return {self.tenant_create_field: company_id}
 
-        raise BusinessError("Personal users cannot access enterprise organization resources", 14002)
+        raise BusinessError(
+            "Personal users cannot access enterprise organization resources",
+            IamErrorCode.ENTERPRISE_ORG_FORBIDDEN_PERSONAL,
+        )
 
 

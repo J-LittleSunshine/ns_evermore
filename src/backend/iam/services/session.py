@@ -7,6 +7,7 @@ from typing import Any
 
 from django.utils import timezone
 
+from iam.error_codes import IamErrorCode
 from iam.repositories.session import SessionRepository
 from ns_backend.exceptions import BusinessError
 
@@ -53,13 +54,13 @@ class SessionService:
 	@staticmethod
 	def ensure_session_state_available(session):
 		if not session:
-			raise BusinessError("Session does not exist", 15002)
+			raise BusinessError("Session does not exist", IamErrorCode.SESSION_NOT_FOUND)
 
 		if session.revoked_at:
-			raise BusinessError("Session has been revoked", 15003)
+			raise BusinessError("Session has been revoked", IamErrorCode.SESSION_REVOKED)
 
 		if session.expired_at <= timezone.now():
-			raise BusinessError("Session has expired", 15004)
+			raise BusinessError("Session has expired", IamErrorCode.SESSION_EXPIRED)
 
 		return session
 
@@ -68,14 +69,14 @@ class SessionService:
 		session = await SessionRepository.get_by_public_session_id(session_id)
 
 		if not session:
-			raise BusinessError("Session does not exist", 15002)
+			raise BusinessError("Session does not exist", IamErrorCode.SESSION_NOT_FOUND)
 
 		return await cls.revoke_session_by_pk(session.id)
 
 	@classmethod
 	async def revoke_session_by_pk(cls, session_pk: int) -> bool:
 		if not session_pk:
-			raise BusinessError("session_id cannot be empty", 15001)
+			raise BusinessError("session_id cannot be empty", IamErrorCode.SESSION_ID_EMPTY)
 
 		updated_count = await SessionRepository.revoke_session_and_tokens_by_pk(session_pk)
 
@@ -84,14 +85,14 @@ class SessionService:
 	@classmethod
 	async def revoke_user_sessions(cls, user_id: int) -> int:
 		if not user_id:
-			raise BusinessError("user_id cannot be empty", 15005)
+			raise BusinessError("user_id cannot be empty", IamErrorCode.USER_ID_EMPTY)
 
 		return await SessionRepository.revoke_user_sessions_and_tokens(user_id)
 
 	@classmethod
 	async def revoke_device_sessions(cls, device_id: int) -> int:
 		if not device_id:
-			raise BusinessError("device_id cannot be empty", 15006)
+			raise BusinessError("device_id cannot be empty", IamErrorCode.DEVICE_ID_EMPTY)
 
 		return await SessionRepository.revoke_device_sessions_and_tokens(device_id)
 

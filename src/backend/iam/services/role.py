@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+from iam.error_codes import IamErrorCode
 from iam.policies.role import RolePolicy
 from iam.policies.tenant import TenantPolicy
 from iam.repositories.role import RoleRepository
@@ -54,7 +55,7 @@ class RoleService(AuditDataMixin):
     @classmethod
     async def get_role(cls, role_id: int | str | None, operator):
         if not role_id:
-            raise BusinessError("id cannot be empty", 10001)
+            raise BusinessError("id cannot be empty", IamErrorCode.ID_EMPTY)
 
         context = TenantService.from_user(operator)
 
@@ -110,7 +111,7 @@ class RoleService(AuditDataMixin):
             normalized_page = max(int(page or 1), 1)
             normalized_page_size = min(max(int(page_size or 20), 1), 100)
         except (TypeError, ValueError):
-            raise BusinessError("Invalid pagination parameters", 12006)
+            raise BusinessError("Invalid pagination parameters", IamErrorCode.INVALID_PAGINATION_PARAMETERS)
 
         return normalized_page, normalized_page_size
 

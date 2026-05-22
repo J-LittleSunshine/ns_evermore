@@ -4,6 +4,7 @@ from __future__ import annotations
 from django.db import IntegrityError
 
 from iam.constants import IAM_DB_ALIAS
+from iam.error_codes import IamErrorCode
 from iam.models import (
     IamDepartment,
     IamDepartmentPermission,
@@ -27,7 +28,7 @@ class GrantRepository:
         try:
             return await IamUserRole.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"Failed to bind user role: {exc}", 13001)
+            raise BusinessError(f"Failed to bind user role: {exc}", IamErrorCode.BIND_USER_ROLE_FAILED)
 
     @staticmethod
     async def delete_user_role(user_id: int, role_id: int) -> int:
@@ -42,7 +43,7 @@ class GrantRepository:
         try:
             return await IamRolePermission.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"Failed to grant role permission: {exc}", 13003)
+            raise BusinessError(f"Failed to grant role permission: {exc}", IamErrorCode.GRANT_ROLE_PERMISSION_FAILED)
 
     @staticmethod
     async def delete_role_permission(role_id: int, permission_id: int) -> int:
@@ -57,7 +58,7 @@ class GrantRepository:
         try:
             return await IamUserPermission.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"Failed to grant user permission: {exc}", 13005)
+            raise BusinessError(f"Failed to grant user permission: {exc}", IamErrorCode.GRANT_USER_PERMISSION_FAILED)
 
     @staticmethod
     async def delete_user_permission(user_id: int, permission_id: int) -> int:
@@ -72,7 +73,7 @@ class GrantRepository:
         try:
             return await IamDepartmentPermission.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"Failed to grant department permission: {exc}", 13007)
+            raise BusinessError(f"Failed to grant department permission: {exc}", IamErrorCode.GRANT_DEPARTMENT_PERMISSION_FAILED)
 
     @staticmethod
     async def delete_department_permission(department_id: int, permission_id: int) -> int:
@@ -87,7 +88,7 @@ class GrantRepository:
         try:
             return await IamSubsidiaryPermission.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"Failed to grant subsidiary permission: {exc}", 13009)
+            raise BusinessError(f"Failed to grant subsidiary permission: {exc}", IamErrorCode.GRANT_SUBSIDIARY_PERMISSION_FAILED)
 
     @staticmethod
     async def delete_subsidiary_permission(subsidiary_id: int, permission_id: int) -> int:

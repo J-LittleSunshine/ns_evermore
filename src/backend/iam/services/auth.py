@@ -9,16 +9,17 @@ from django.conf import settings
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
 
+from iam.error_codes import IamErrorCode
 from iam.repositories.login_failure import LoginFailureRepository
 from iam.repositories.session import SessionRepository
 from iam.repositories.token import TokenRepository
 from iam.repositories.user import UserRepository
 from iam.services.session import SessionService
 from ns_backend.exceptions import BusinessError
-from ns_backend.logger import get_logger
+from ns_backend.logging_utils import get_module_logger
 from ns_backend.utils.jwt import JwtService
 
-_logger = get_logger("ns_backend")
+_logger = get_module_logger("ns_backend")
 
 if TYPE_CHECKING:
     from iam.models import IamUser
@@ -42,7 +43,7 @@ class LoginFailureService:
         if record.locked_until > now:
             raise BusinessError(
                 msg="Account is locked due to consecutive login failures, please try again later",
-                code=11011,
+                code=IamErrorCode.ACCOUNT_LOCKED,
                 data={"locked_until": record.locked_until.isoformat()},
             )
 
@@ -87,18 +88,18 @@ class LoginService:
             browser_name: str | None = None,
     ) -> dict:
         if not isinstance(username, str):
-            raise BusinessError("username cannot be empty", 11001)
+            raise BusinessError("username cannot be empty", IamErrorCode.USERNAME_EMPTY)
 
         if not isinstance(password, str):
-            raise BusinessError("password cannot be empty", 11002)
+            raise BusinessError("password cannot be empty", IamErrorCode.PASSWORD_EMPTY)
 
         username = username.strip()
 
         if not username:
-            raise BusinessError("username cannot be empty", 11001)
+            raise BusinessError("username cannot be empty", IamErrorCode.USERNAME_EMPTY)
 
         if not password:
-            raise BusinessError("password cannot be empty", 11002)
+            raise BusinessError("password cannot be empty", IamErrorCode.PASSWORD_EMPTY)
 
         await LoginFailureService.ensure_not_locked(username=username)
 
@@ -111,7 +112,7 @@ class LoginService:
                 client_ip=client_ip,
                 user_agent=user_agent,
             )
-            raise BusinessError("Username or password is incorrect.", 11003)
+            raise BusinessError("Username or password is incorrect.", IamErrorCode.USERNAME_OR_PASSWORD_INCORRECT)
 
         if not check_password(password, user.password):
             await LoginFailureService.record_failed(
@@ -120,7 +121,7 @@ class LoginService:
                 client_ip=client_ip,
                 user_agent=user_agent,
             )
-            raise BusinessError("Username or password is incorrect.", 11003)
+            raise BusinessError("Username or password is incorrect.", IamErrorCode.USERNAME_OR_PASSWORD_INCORRECT)
 
         fingerprint_raw = fingerprint_raw or cls.build_fallback_fingerprint(
             username=username,
@@ -162,8 +163,9 @@ class LoginService:
             await LoginFailureService.clear(username=username)
         except Exception as exc:  # noqa
             _logger.warning(
-                "failed to clear login failure record username=%s err=%s",
-                username,
+                "login failure clear failed event=%s user_id=%s err=%s",
+                "login_failure_clear_failed",
+                user.id,
                 exc,
             )
 
@@ -214,7 +216,7 @@ class LogoutService:
             return False
 
         if current_user_id is not None and user_id != current_user_id:
-            raise BusinessError("Refresh token does not match the current user", 11012)
+            raise BusinessError("Refresh token does not match the current user", IamErrorCode.REFRESH_TOKEN_USER_MISMATCH)
 
         refresh_token_hash = JwtService.hash_token(refresh_token)
 
@@ -243,13 +245,13 @@ class RefreshService:
         payload = JwtService.decode_refresh_token(refresh_token)
 
         if not payload:
-            raise BusinessError("Refresh token is invalid or expired", 11005)
+            raise BusinessError("Refresh token is invalid or expired", IamErrorCode.REFRESH_TOKEN_INVALID_OR_EXPIRED)
 
         refresh_jti = payload.get("jti")
         user_id = payload.get("uid")
 
         if not refresh_jti or not user_id:
-            raise BusinessError("Refresh token is invalid", 11005)
+            raise BusinessError("Refresh token is invalid", IamErrorCode.REFRESH_TOKEN_INVALID_OR_EXPIRED)
 
         refresh_token_hash = JwtService.hash_token(refresh_token)
 
@@ -273,38 +275,50 @@ class RefreshService:
                 },
             )
         except BusinessError as exc:
-            if exc.code in (14000, 14001, 14003):
+            if exc.code in IamErrorCode.TOKEN_ROTATION_REJECT_CODES:
                 _logger.warning(
-                    "refresh rotation rejected user_id=%s refresh_jti=%s internal_code=%s",
+                    "refresh rotation rejected event=%s user_id=%s refresh_jti=%s error_code=%s",
+                    "refresh_rotation_rejected",
                     user_id,
                     refresh_jti,
                     exc.code,
                 )
-                raise BusinessError("Refresh token has been revoked", 11005)
+                raise BusinessError("Refresh token has been revoked", IamErrorCode.REFRESH_TOKEN_INVALID_OR_EXPIRED)
             raise
 
         if rotate_status == "replayed":
+            _logger.warning(
+                "refresh replay detected event=%s user_id=%s session_pk=%s refresh_jti=%s error_code=%s",
+                "refresh_replay_detected",
+                user_id,
+                session_pk,
+                refresh_jti,
+                IamErrorCode.REFRESH_TOKEN_REPLAY_DETECTED,
+            )
             if session_pk:
                 await SessionService.revoke_session_by_pk(session_pk)
             else:
                 await TokenRepository.revoke_user_tokens(user_id=user_id)
-            raise BusinessError("Refresh token replay detected, current session has been forcibly logged out", 11013)
+            raise BusinessError(
+                "Refresh token replay detected, current session has been forcibly logged out",
+                IamErrorCode.REFRESH_TOKEN_REPLAY_DETECTED,
+            )
 
         if rotate_status == "user_inactive":
             if session_pk:
                 await SessionService.revoke_session_by_pk(session_pk)
             else:
                 await TokenRepository.revoke_user_tokens(user_id=user_id)
-            raise BusinessError("User does not exist or is disabled", 11010)
+            raise BusinessError("User does not exist or is disabled", IamErrorCode.USER_DISABLED_OR_NOT_FOUND)
 
         if rotate_status == "session_unavailable":
-            raise BusinessError("Refresh token has been revoked", 11005)
+            raise BusinessError("Refresh token has been revoked", IamErrorCode.REFRESH_TOKEN_INVALID_OR_EXPIRED)
 
         if rotate_status != "rotated":
-            raise BusinessError("Refresh token has been revoked", 11005)
+            raise BusinessError("Refresh token has been revoked", IamErrorCode.REFRESH_TOKEN_INVALID_OR_EXPIRED)
 
         if not locked_user_type:
-            raise BusinessError("User does not exist or is disabled", 11010)
+            raise BusinessError("User does not exist or is disabled", IamErrorCode.USER_DISABLED_OR_NOT_FOUND)
 
         access_token, _ = JwtService.create_access_token(
             user_id=user_id,

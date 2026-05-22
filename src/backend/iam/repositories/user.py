@@ -8,6 +8,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from iam.constants import IAM_DB_ALIAS
+from iam.error_codes import IamErrorCode
 from iam.models import IamUser, IamUserSession, IamUserToken
 from ns_backend.exceptions import BusinessError
 
@@ -90,7 +91,7 @@ class UserRepository:
         try:
             return await IamUser.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"User creation failed: {exc}", 12001)
+            raise BusinessError(f"User creation failed: {exc}", IamErrorCode.USER_CREATION_FAILED)
 
     @staticmethod
     async def update_user(user: IamUser, data: dict[str, Any]) -> None:
@@ -103,7 +104,7 @@ class UserRepository:
                 update_fields=list(data.keys()),
             )
         except IntegrityError as exc:
-            raise BusinessError(f"User update failed: {exc}", 12002)
+            raise BusinessError(f"User update failed: {exc}", IamErrorCode.USER_UPDATE_FAILED)
 
     @classmethod
     async def update_user_and_revoke_sessions_tokens(
@@ -141,7 +142,7 @@ class UserRepository:
             user = user_queryset.first()
 
             if not user:
-                raise BusinessError("User does not exist", 10103)
+                raise BusinessError("User does not exist", IamErrorCode.USER_NOT_FOUND_LEGACY)
 
             for field, value in data.items():
                 setattr(user, field, value)
@@ -152,7 +153,7 @@ class UserRepository:
                     update_fields=list(data.keys()),
                 )
             except IntegrityError as exc:
-                raise BusinessError(f"User update failed: {exc}", 12002)
+                raise BusinessError(f"User update failed: {exc}", IamErrorCode.USER_UPDATE_FAILED)
 
             IamUserSession.objects.using(IAM_DB_ALIAS).filter(
                 user_id=user_id,
@@ -192,7 +193,7 @@ class UserRepository:
             user = user_queryset.first()
 
             if not user:
-                raise BusinessError("User does not exist", 10103)
+                raise BusinessError("User does not exist", IamErrorCode.USER_NOT_FOUND_LEGACY)
 
             IamUserSession.objects.using(IAM_DB_ALIAS).filter(
                 user_id=user_id,

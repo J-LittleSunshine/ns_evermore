@@ -6,6 +6,7 @@ from typing import Any
 from django.db import IntegrityError
 
 from iam.constants import IAM_DB_ALIAS
+from iam.error_codes import IamErrorCode
 from iam.models import IamRole
 from ns_backend.exceptions import BusinessError
 
@@ -52,7 +53,7 @@ class RoleRepository:
         role = await cls.get_by_id(role_id)
 
         if not role:
-            raise BusinessError("Data not found", 10002)
+            raise BusinessError("Data not found", IamErrorCode.DATA_NOT_FOUND)
 
         return role
 
@@ -64,7 +65,7 @@ class RoleRepository:
         ).afirst()
 
         if not role:
-            raise BusinessError("Data not found", 10002)
+            raise BusinessError("Data not found", IamErrorCode.DATA_NOT_FOUND)
 
         return role
 
@@ -97,7 +98,7 @@ class RoleRepository:
         try:
             return await IamRole.objects.using(IAM_DB_ALIAS).acreate(**data)
         except IntegrityError as exc:
-            raise BusinessError(f"Data creation failed: {exc}", 10003)
+            raise BusinessError(f"Data creation failed: {exc}", IamErrorCode.DATA_CREATION_FAILED)
 
     @staticmethod
     async def update_role(role: IamRole, data: dict[str, Any]) -> None:
@@ -110,7 +111,7 @@ class RoleRepository:
                 update_fields=list(data.keys()),
             )
         except IntegrityError as exc:
-            raise BusinessError(f"Data update failed: {exc}", 10005)
+            raise BusinessError(f"Data update failed: {exc}", IamErrorCode.DATA_UPDATE_FAILED)
 
     @staticmethod
     async def delete_role(role: IamRole) -> None:

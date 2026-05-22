@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from iam.error_codes import IamErrorCode
 from iam.schemas import PermissionSpec
 from ns_backend.exceptions import BusinessError
 
@@ -12,16 +13,16 @@ class PermissionRegistry:
     @classmethod
     def register(cls, spec: PermissionSpec) -> None:
         if not spec.code:
-            raise BusinessError("Permission code is required", 17005)
+            raise BusinessError("Permission code is required", IamErrorCode.PERMISSION_CODE_REQUIRED)
 
         if not spec.name:
-            raise BusinessError("Permission name is required", 17006)
+            raise BusinessError("Permission name is required", IamErrorCode.PERMISSION_NAME_REQUIRED)
 
         if spec.permission_type not in cls._allowed_types:
-            raise BusinessError(f"Invalid permission type: {spec.permission_type}", 17007)
+            raise BusinessError(f"Invalid permission type: {spec.permission_type}", IamErrorCode.PERMISSION_TYPE_INVALID)
 
         if any(item.code == spec.code for item in cls._items):
-            raise BusinessError(f"Duplicate permission code: {spec.code}", 17001)
+            raise BusinessError(f"Duplicate permission code: {spec.code}", IamErrorCode.PERMISSION_CODE_DUPLICATED)
 
         cls._items.append(spec)
 

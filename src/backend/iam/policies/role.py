@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from iam.error_codes import IamErrorCode
 from iam.models import IamRole
 from iam.policies.tenant import TenantPolicy
 from iam.repositories.role import RoleRepository
@@ -24,13 +25,13 @@ class RolePolicy(BasePolicy):
 
         if role_scope == IamRole.SCOPE_PERSONAL:
             if not TenantPolicy.is_platform_admin(context):
-                raise BusinessError("Only platform administrators can create PERSONAL roles", 14014)
+                raise BusinessError("Only platform administrators can create PERSONAL roles", IamErrorCode.ROLE_PERSONAL_PLATFORM_ADMIN_ONLY)
 
             if final_data.get("company_id") is not None:
-                raise BusinessError("PERSONAL roles cannot be bound to a company", 14011)
+                raise BusinessError("PERSONAL roles cannot be bound to a company", IamErrorCode.ROLE_PERSONAL_COMPANY_FORBIDDEN)
 
             if await RoleRepository.exists_personal_role_code(role_code=role_code):
-                raise BusinessError("Role code already exists", 14012)
+                raise BusinessError("Role code already exists", IamErrorCode.ROLE_CODE_ALREADY_EXISTS)
 
             final_data["company_id"] = None
             return final_data
@@ -40,7 +41,7 @@ class RolePolicy(BasePolicy):
                 company_id = final_data.get("company_id")
 
                 if not company_id:
-                    raise BusinessError("ENTERPRISE roles must be bound to a company", 14013)
+                    raise BusinessError("ENTERPRISE roles must be bound to a company", IamErrorCode.ROLE_ENTERPRISE_COMPANY_REQUIRED)
             else:
                 TenantPolicy.ensure_enterprise_context(context)
                 company_id = context.company_id
@@ -49,20 +50,20 @@ class RolePolicy(BasePolicy):
                 company_id=company_id,
                 role_code=role_code,
             ):
-                raise BusinessError("Role code already exists", 14012)
+                raise BusinessError("Role code already exists", IamErrorCode.ROLE_CODE_ALREADY_EXISTS)
 
             final_data["company_id"] = company_id
             return final_data
 
-        raise BusinessError("Invalid role_scope value", 12004)
+        raise BusinessError("Invalid role_scope value", IamErrorCode.INVALID_VALUE)
 
     @classmethod
     def ensure_can_update_fields(cls, data: dict) -> None:
         if "company_id" in data:
-            cls.deny("Updating field is not allowed: company_id", 12005)
+            cls.deny("Updating field is not allowed: company_id", IamErrorCode.UPDATE_FIELD_NOT_ALLOWED)
 
         if "role_scope" in data:
-            cls.deny("Updating field is not allowed: role_scope", 12005)
+            cls.deny("Updating field is not allowed: role_scope", IamErrorCode.UPDATE_FIELD_NOT_ALLOWED)
 
     @classmethod
     def ensure_can_manage_role_company(
@@ -76,7 +77,7 @@ class RolePolicy(BasePolicy):
         TenantPolicy.ensure_enterprise_context(context)
 
         if role_company_id != context.company_id:
-            cls.deny("Data not found", 10002)
+            cls.deny("Data not found", IamErrorCode.DATA_NOT_FOUND)
 
 
 __all__ = ["RolePolicy"]

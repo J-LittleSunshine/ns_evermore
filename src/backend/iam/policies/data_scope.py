@@ -10,6 +10,7 @@ from iam.constants import (
     DATA_SCOPE_SELF,
     DATA_SCOPE_SUBSIDIARY,
 )
+from iam.error_codes import IamErrorCode
 from iam.repositories.grant import GrantRepository
 from iam.schemas import DataScopeFieldMap, DataScopeFilterPlan, DataScopeResult
 from ns_backend.exceptions import BusinessError
@@ -199,25 +200,25 @@ class DataScopePolicy(BasePolicy):
         permission_type = await GrantRepository.get_permission_type(permission_id)
 
         if permission_type is None:
-            raise BusinessError("Permission does not exist", 10002)
+            raise BusinessError("Permission does not exist", IamErrorCode.DATA_NOT_FOUND)
 
         if permission_type != cls.PERMISSION_TYPE_DATA:
             if data_scope:
-                raise BusinessError("Data scope cannot be set for non-data permissions", 15001)
+                raise BusinessError("Data scope cannot be set for non-data permissions", IamErrorCode.DATA_SCOPE_NOT_ALLOWED_FOR_NON_DATA)
             return
 
         if role_permission:
             if not data_scope:
-                raise BusinessError("Data permissions must set data scope", 15002)
+                raise BusinessError("Data permissions must set data scope", IamErrorCode.DATA_SCOPE_REQUIRED)
             return
 
         if effect == cls.EFFECT_DENY:
             if data_scope:
-                raise BusinessError("DENY permissions cannot set data scope", 15003)
+                raise BusinessError("DENY permissions cannot set data scope", IamErrorCode.DATA_SCOPE_FORBIDDEN_FOR_DENY)
             return
 
         if effect == cls.EFFECT_ALLOW and not data_scope:
-            raise BusinessError("Data permissions must set data scope", 15002)
+            raise BusinessError("Data permissions must set data scope", IamErrorCode.DATA_SCOPE_REQUIRED)
 
 
 __all__ = ["DataScopePolicy"]

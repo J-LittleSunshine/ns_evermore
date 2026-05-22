@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from iam.error_codes import IamErrorCode
 from ns_backend.exceptions import BusinessError
 
 
@@ -11,10 +12,10 @@ class AuthRequestValidator:
         password = data.get("password")
 
         if not isinstance(username, str) or not username.strip():
-            raise BusinessError("username cannot be empty", 11001)
+            raise BusinessError("username cannot be empty", IamErrorCode.USERNAME_EMPTY)
 
         if not isinstance(password, str) or not password:
-            raise BusinessError("password cannot be empty", 11002)
+            raise BusinessError("password cannot be empty", IamErrorCode.PASSWORD_EMPTY)
 
         return {
             "username": username.strip(),
@@ -31,7 +32,7 @@ class AuthRequestValidator:
         refresh_token = data.get("refresh_token")
 
         if not isinstance(refresh_token, str) or not refresh_token:
-            raise BusinessError("refresh_token cannot be empty", 11004)
+            raise BusinessError("refresh_token cannot be empty", IamErrorCode.REFRESH_TOKEN_EMPTY)
 
         return refresh_token
 
@@ -40,19 +41,19 @@ class AuthRequestValidator:
         permission_codes = data.get("permission_codes")
 
         if permission_codes is None:
-            raise BusinessError("permission_codes cannot be empty", 12001)
+            raise BusinessError("permission_codes cannot be empty", IamErrorCode.PERMISSION_CODES_EMPTY)
 
         if not isinstance(permission_codes, list):
-            raise BusinessError("permission_codes must be a list", 12002)
+            raise BusinessError("permission_codes must be a list", IamErrorCode.PERMISSION_CODES_TYPE_INVALID)
 
         clean_codes: list[str] = []
         for code in permission_codes:
             if not isinstance(code, str) or not code.strip():
-                raise BusinessError("permission_code cannot be empty", 12001)
+                raise BusinessError("permission_code cannot be empty", IamErrorCode.PERMISSION_CODE_EMPTY)
             clean_codes.append(code.strip())
 
         if len(clean_codes) > 100:
-            raise BusinessError("permission_codes exceeds limit", 12004)
+            raise BusinessError("permission_codes exceeds limit", IamErrorCode.PERMISSION_CODES_EXCEEDS_LIMIT)
 
         return clean_codes
 

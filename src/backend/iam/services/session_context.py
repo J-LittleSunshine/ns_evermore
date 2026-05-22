@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from django.utils import timezone
 
+from iam.error_codes import IamErrorCode
 from iam.repositories.session import SessionRepository
 from iam.repositories.token import TokenRepository
 from ns_backend.exceptions import BusinessError
@@ -46,10 +47,13 @@ class SessionContextService:
         session_id: str,
     ) -> dict:
         if not user or not user.is_active:
-            raise BusinessError("User is not logged in or session has expired", 11007)
+            raise BusinessError(
+                "User is not logged in or session has expired",
+                IamErrorCode.USER_NOT_LOGGED_IN_OR_SESSION_EXPIRED,
+            )
 
         if not isinstance(session_id, str) or not session_id.strip():
-            raise BusinessError("session_id cannot be empty", 15001)
+            raise BusinessError("session_id cannot be empty", IamErrorCode.SESSION_ID_EMPTY)
 
         public_session_id = session_id.strip()
         session = await SessionRepository.get_user_session_by_public_id(
@@ -57,7 +61,7 @@ class SessionContextService:
             public_session_id=public_session_id,
         )
         if not session:
-            raise BusinessError("Session does not exist", 15002)
+            raise BusinessError("Session does not exist", IamErrorCode.SESSION_NOT_FOUND)
 
         if session.revoked_at:
             return {
