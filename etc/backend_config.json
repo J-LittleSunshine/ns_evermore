@@ -15,8 +15,8 @@
         "NAME": "ns_iam",
         "USER": "ns",
         "PASSWORD": "Ns981127*",
-        "HOST": "nsserver",
-        "PORT": "60002",
+        "HOST": "127.0.0.1",
+        "PORT": "3306",
         "OPTIONS": {
           "charset": "utf8mb4"
         }
