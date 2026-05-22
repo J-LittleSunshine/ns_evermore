@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from ns_common.logging.constants import NsLogEvent
 from ns_common.logging.context import build_log_context
+from ns_common.logging.database import DatabaseLogSink
 from ns_common.logging.dispatcher import NsLogDispatcher
 from ns_common.logging.event import NsLogEventData, get_current_pid
 from ns_common.logging.logger import NsLogger, get_logger
@@ -22,6 +23,7 @@ __all__ = [
 	"NullLogSink",
 	"StdLoggerSink",
 	"NsLogDispatcher",
+	"DatabaseLogSink",
 	"DatabaseLogSinkProtocol",
 	"NsWebSocketLogHook",
 ]
