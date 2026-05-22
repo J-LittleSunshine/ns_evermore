@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Protocol
 
 from ns_common.logging.event import NsLogEventData
@@ -29,13 +30,17 @@ class NullLogSink:
 
 
 class StdLoggerSink:
+    _ALLOWED_LEVELS = {"debug", "info", "warning", "error", "critical"}
+
     def __init__(self, logger: logging.Logger):
         self._logger = logger
 
     @staticmethod
     def _resolve_level(level: str) -> str:
         normalized = str(level or "").strip().lower()
-        return normalized or "info"
+        if normalized in StdLoggerSink._ALLOWED_LEVELS:
+            return normalized
+        return "info"
 
     @staticmethod
     def _build_payload(event: NsLogEventData) -> dict[str, object]:
@@ -51,7 +56,7 @@ class StdLoggerSink:
             "session_id": event.session_id,
             "error_code": event.error_code,
             "level": event.level,
-            "pid": event.pid,
+            "pid": event.pid or os.getpid(),
             "context": sanitize_log_context(event.context or {}),
         }
         return {key: value for key, value in payload.items() if value is not None}
