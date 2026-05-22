@@ -13,6 +13,9 @@ class NsLogEvent:
     IAM_AUDIT_RECORD_FAILED = "iam.audit.record_failed"
 
     WEBSOCKET_CONNECT = "websocket.connect"
+    WEBSOCKET_ACCEPT = "websocket.accept"
+    WEBSOCKET_RECEIVE = "websocket.receive"
+    WEBSOCKET_SEND = "websocket.send"
     WEBSOCKET_DISCONNECT = "websocket.disconnect"
     WEBSOCKET_ERROR = "websocket.error"
     DATABASE_LOG_SINK_WRITE = "database.log_sink.write"
