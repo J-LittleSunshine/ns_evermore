@@ -11,6 +11,7 @@ from iam.services.tenant import TenantService
 class AuthContextService:
     USER_TYPE_PERSONAL = "PERSONAL"
     USER_TYPE_ENTERPRISE = "ENTERPRISE"
+    MAX_ANCESTOR_DEPTH = 20
 
     @classmethod
     def build_profile(cls, user) -> dict:
@@ -44,7 +45,10 @@ class AuthContextService:
     @classmethod
     async def list_permission_codes(cls, user) -> list[str]:
         active_permissions = await AuthContextRepository.list_active_permissions()
-        effective_ids = await cls.resolve_effective_permission_ids(user)
+        effective_ids = await cls.resolve_effective_permission_ids(
+            user,
+            active_permissions=active_permissions,
+        )
 
         codes = [
             permission["permission_code"]
@@ -56,15 +60,24 @@ class AuthContextService:
     @classmethod
     async def list_menu_tree(cls, user) -> list[dict]:
         active_permissions = await AuthContextRepository.list_active_permissions()
-        effective_ids = await cls.resolve_effective_permission_ids(user)
+        effective_ids = await cls.resolve_effective_permission_ids(
+            user,
+            active_permissions=active_permissions,
+        )
         return cls.build_menu_tree(active_permissions, effective_ids)
 
     @classmethod
-    async def resolve_effective_permission_ids(cls, user) -> set[int]:
+    async def resolve_effective_permission_ids(
+        cls,
+        user,
+        active_permissions: list[dict] | None = None,
+    ) -> set[int]:
         if not user or not user.is_active:
             return set()
 
-        active_permissions = await AuthContextRepository.list_active_permissions()
+        if active_permissions is None:
+            active_permissions = await AuthContextRepository.list_active_permissions()
+
         active_ids = {permission["id"] for permission in active_permissions}
 
         if user.is_superuser:
@@ -83,7 +96,11 @@ class AuthContextService:
                     company_id=None,
                 ),
             )
-            return (allow_ids - deny_ids) & active_ids
+            return cls.expand_effective_permission_ids(
+                active_permissions=active_permissions,
+                allow_ids=allow_ids,
+                deny_ids=deny_ids,
+            )
 
         if user.user_type == cls.USER_TYPE_ENTERPRISE:
             if not user.company_id:
@@ -128,9 +145,81 @@ class AuthContextService:
                     ),
                 )
 
-            return (allow_ids - deny_ids) & active_ids
+            return cls.expand_effective_permission_ids(
+                active_permissions=active_permissions,
+                allow_ids=allow_ids,
+                deny_ids=deny_ids,
+            )
 
         return set()
+
+    @classmethod
+    def expand_effective_permission_ids(
+        cls,
+        *,
+        active_permissions: list[dict],
+        allow_ids: set[int],
+        deny_ids: set[int],
+    ) -> set[int]:
+        """Expand direct grants to inherited effective permissions.
+
+        The rule mirrors PermissionService.has_permission(): for each active
+        permission, check itself and its active ancestors. Any DENY in the chain
+        blocks the permission; otherwise any ALLOW in the chain grants it.
+        """
+        permission_map = {
+            permission["id"]: permission
+            for permission in active_permissions
+        }
+        active_ids = set(permission_map.keys())
+        normalized_allow_ids = allow_ids & active_ids
+        normalized_deny_ids = deny_ids & active_ids
+
+        effective_ids: set[int] = set()
+
+        for permission_id in active_ids:
+            chain_ids = cls.get_permission_chain_ids(
+                permission_id=permission_id,
+                permission_map=permission_map,
+            )
+
+            if any(chain_id in normalized_deny_ids for chain_id in chain_ids):
+                continue
+
+            if any(chain_id in normalized_allow_ids for chain_id in chain_ids):
+                effective_ids.add(permission_id)
+
+        return effective_ids
+
+    @classmethod
+    def get_permission_chain_ids(
+        cls,
+        *,
+        permission_id: int,
+        permission_map: dict[int, dict],
+    ) -> list[int]:
+        chain_ids: list[int] = []
+        visited_ids: set[int] = set()
+        current_id = permission_id
+
+        for _ in range(cls.MAX_ANCESTOR_DEPTH):
+            if current_id in visited_ids:
+                break
+
+            permission = permission_map.get(current_id)
+            if not permission:
+                break
+
+            visited_ids.add(current_id)
+            chain_ids.append(current_id)
+
+            parent_id = permission.get("parent_id")
+            if not parent_id:
+                break
+
+            current_id = parent_id
+
+        return chain_ids
 
     @staticmethod
     def build_menu_tree(permissions: list[dict], allowed_ids: set[int]) -> list[dict]:
@@ -216,4 +305,3 @@ class AuthContextService:
 
 
 __all__ = ["AuthContextService"]
-
