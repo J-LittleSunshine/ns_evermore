@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from django.db import models
 
+from iam.constants import DATA_SCOPE_CHOICES
+
 from .department import IamDepartment, IamSubsidiary
 from .permission import IamPermission
 from .user import IamUser
@@ -37,6 +39,13 @@ class IamUserPermission(models.Model):
         choices=EFFECT_CHOICES,
         default=EFFECT_ALLOW,
         verbose_name="权限效果",
+    )
+    data_scope = models.CharField(
+        max_length=32,
+        choices=DATA_SCOPE_CHOICES,
+        null=True,
+        blank=True,
+        verbose_name="数据权限范围",
     )
     granted_by = models.ForeignKey(
         IamUser,
@@ -94,6 +103,13 @@ class IamDepartmentPermission(models.Model):
         default=EFFECT_ALLOW,
         verbose_name="权限效果",
     )
+    data_scope = models.CharField(
+        max_length=32,
+        choices=DATA_SCOPE_CHOICES,
+        null=True,
+        blank=True,
+        verbose_name="数据权限范围",
+    )
     granted_by = models.ForeignKey(
         IamUser,
         on_delete=models.DO_NOTHING,
@@ -149,6 +165,13 @@ class IamSubsidiaryPermission(models.Model):
         choices=EFFECT_CHOICES,
         default=EFFECT_ALLOW,
         verbose_name="权限效果",
+    )
+    data_scope = models.CharField(
+        max_length=32,
+        choices=DATA_SCOPE_CHOICES,
+        null=True,
+        blank=True,
+        verbose_name="数据权限范围",
     )
     granted_by = models.ForeignKey(
         IamUser,

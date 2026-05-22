@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from django.db import models
 
+from iam.constants import DATA_SCOPE_CHOICES
+
 from .company import IamCompany
 from .permission import IamPermission
 from .user import IamUser
@@ -49,6 +51,12 @@ class IamRolePermission(models.Model):
     id = models.BigAutoField(primary_key=True)
     role = models.ForeignKey(IamRole, on_delete=models.DO_NOTHING, db_column="role_id")
     permission = models.ForeignKey(IamPermission, on_delete=models.DO_NOTHING, db_column="permission_id")
+    data_scope = models.CharField(
+        max_length=32,
+        choices=DATA_SCOPE_CHOICES,
+        null=True,
+        blank=True,
+    )
     granted_by = models.ForeignKey(
         IamUser,
         on_delete=models.DO_NOTHING,

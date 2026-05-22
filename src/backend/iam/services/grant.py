@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from iam.policies.data_scope import DataScopePolicy
 from iam.policies.grant import GrantPolicy
 from iam.repositories.grant import GrantRepository
 from ns_backend.exceptions import BusinessError
@@ -31,9 +32,15 @@ class GrantService(AuditDataMixin):
     async def grant_role_permission(cls, data: dict, operator, operator_id: int | None = None) -> dict:
         role_id = data.get("role_id")
         permission_id = data.get("permission_id")
+        data_scope = data.get("data_scope")
         cls.ensure_required_pair(role_id, permission_id, "role_id 和 permission_id 不能为空", 13012)
 
         await GrantPolicy.ensure_can_operate_role(role_id=role_id, operator=operator)
+        await DataScopePolicy.ensure_grant_data_scope(
+            permission_id=permission_id,
+            data_scope=data_scope,
+            role_permission=True,
+        )
         create_data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
         item = await GrantRepository.create_role_permission(create_data)
         return {"id": item.id}
@@ -49,9 +56,16 @@ class GrantService(AuditDataMixin):
     async def grant_user_permission(cls, data: dict, operator, operator_id: int | None = None) -> dict:
         user_id = data.get("user_id")
         permission_id = data.get("permission_id")
+        effect = data.get("effect")
+        data_scope = data.get("data_scope")
         cls.ensure_required_pair(user_id, permission_id, "user_id 和 permission_id 不能为空", 13013)
 
         await GrantPolicy.ensure_can_operate_user(user_id=user_id, operator=operator)
+        await DataScopePolicy.ensure_grant_data_scope(
+            permission_id=permission_id,
+            data_scope=data_scope,
+            effect=effect,
+        )
         create_data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
         item = await GrantRepository.create_user_permission(create_data)
         return {"id": item.id}
@@ -67,9 +81,16 @@ class GrantService(AuditDataMixin):
     async def grant_department_permission(cls, data: dict, operator, operator_id: int | None = None) -> dict:
         department_id = data.get("department_id")
         permission_id = data.get("permission_id")
+        effect = data.get("effect")
+        data_scope = data.get("data_scope")
         cls.ensure_required_pair(department_id, permission_id, "department_id 和 permission_id 不能为空", 13014)
 
         await GrantPolicy.ensure_can_operate_department(department_id=department_id, operator=operator)
+        await DataScopePolicy.ensure_grant_data_scope(
+            permission_id=permission_id,
+            data_scope=data_scope,
+            effect=effect,
+        )
         create_data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
         item = await GrantRepository.create_department_permission(create_data)
         return {"id": item.id}
@@ -88,9 +109,16 @@ class GrantService(AuditDataMixin):
     async def grant_subsidiary_permission(cls, data: dict, operator, operator_id: int | None = None) -> dict:
         subsidiary_id = data.get("subsidiary_id")
         permission_id = data.get("permission_id")
+        effect = data.get("effect")
+        data_scope = data.get("data_scope")
         cls.ensure_required_pair(subsidiary_id, permission_id, "subsidiary_id 和 permission_id 不能为空", 13015)
 
         await GrantPolicy.ensure_can_operate_subsidiary(subsidiary_id=subsidiary_id, operator=operator)
+        await DataScopePolicy.ensure_grant_data_scope(
+            permission_id=permission_id,
+            data_scope=data_scope,
+            effect=effect,
+        )
         create_data = cls.fill_grant_audit_fields(data, operator_id=operator_id)
         item = await GrantRepository.create_subsidiary_permission(create_data)
         return {"id": item.id}

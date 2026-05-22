@@ -7,6 +7,7 @@ from iam.constants import IAM_DB_ALIAS
 from iam.models import (
     IamDepartment,
     IamDepartmentPermission,
+    IamPermission,
     IamRole,
     IamRolePermission,
     IamSubsidiary,
@@ -128,4 +129,15 @@ class GrantRepository:
             return None
 
         return item["role_scope"], item.get("company_id")
+
+    @staticmethod
+    async def get_permission_type(permission_id: int) -> str | None:
+        row = await IamPermission.objects.using(IAM_DB_ALIAS).filter(
+            id=permission_id,
+        ).values("permission_type").afirst()
+
+        if not row:
+            return None
+
+        return row.get("permission_type")
 

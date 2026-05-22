@@ -206,6 +206,7 @@ CREATE TABLE iam_role_permission
     id            BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT 'ID',
     role_id       BIGINT UNSIGNED NOT NULL COMMENT '角色ID',
     permission_id BIGINT UNSIGNED NOT NULL COMMENT '权限ID',
+    data_scope    VARCHAR(32)     NULL COMMENT '数据权限范围',
     granted_by    BIGINT UNSIGNED NULL COMMENT '授权人ID',
     expired_at    DATETIME        NULL COMMENT '过期时间',
     created_by    BIGINT UNSIGNED NULL COMMENT '创建人ID',
@@ -215,6 +216,7 @@ CREATE TABLE iam_role_permission
 
     UNIQUE KEY uk_rp_role_perm (role_id, permission_id),
     KEY idx_rp_perm_id (permission_id),
+    KEY idx_rp_data_scope (data_scope),
     KEY idx_rp_grant_id (granted_by),
     KEY idx_rp_exp_at (expired_at),
     KEY idx_rp_created_by (created_by),
@@ -225,6 +227,12 @@ CREATE TABLE iam_role_permission
 
     CONSTRAINT fk_rp_perm
         FOREIGN KEY (permission_id) REFERENCES iam_permission (id),
+
+    CONSTRAINT chk_rp_data_scope
+        CHECK (
+            data_scope IS NULL
+            OR data_scope IN ('SELF', 'DEPARTMENT', 'DEPARTMENT_TREE', 'SUBSIDIARY', 'COMPANY', 'ALL')
+        ),
 
     CONSTRAINT fk_rp_grant
         FOREIGN KEY (granted_by) REFERENCES iam_user (id)
@@ -262,6 +270,7 @@ CREATE TABLE iam_user_permission
     user_id       BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
     permission_id BIGINT UNSIGNED NOT NULL COMMENT '权限ID',
     effect        VARCHAR(16)     NOT NULL DEFAULT 'ALLOW' COMMENT '权限效果',
+    data_scope    VARCHAR(32)     NULL COMMENT '数据权限范围',
     granted_by    BIGINT UNSIGNED NULL COMMENT '授权人ID',
     expired_at    DATETIME        NULL COMMENT '过期时间',
     created_by    BIGINT UNSIGNED NULL COMMENT '创建人ID',
@@ -271,6 +280,7 @@ CREATE TABLE iam_user_permission
 
     UNIQUE KEY uk_up_user_perm (user_id, permission_id),
     KEY idx_up_perm_id (permission_id),
+    KEY idx_up_data_scope (data_scope),
     KEY idx_up_grant_id (granted_by),
     KEY idx_up_exp_at (expired_at),
     KEY idx_up_created_by (created_by),
@@ -285,6 +295,12 @@ CREATE TABLE iam_user_permission
     CONSTRAINT fk_up_grant
         FOREIGN KEY (granted_by) REFERENCES iam_user (id),
 
+    CONSTRAINT chk_up_data_scope
+        CHECK (
+            data_scope IS NULL
+            OR data_scope IN ('SELF', 'DEPARTMENT', 'DEPARTMENT_TREE', 'SUBSIDIARY', 'COMPANY', 'ALL')
+        ),
+
     CONSTRAINT chk_up_effect
         CHECK (effect IN ('ALLOW', 'DENY'))
 ) ENGINE = InnoDB
@@ -297,6 +313,7 @@ CREATE TABLE iam_department_permission
     department_id BIGINT UNSIGNED NOT NULL COMMENT '部门ID',
     permission_id BIGINT UNSIGNED NOT NULL COMMENT '权限ID',
     effect        VARCHAR(16)     NOT NULL DEFAULT 'ALLOW' COMMENT '权限效果',
+    data_scope    VARCHAR(32)     NULL COMMENT '数据权限范围',
     granted_by    BIGINT UNSIGNED NULL COMMENT '授权人ID',
     expired_at    DATETIME        NULL COMMENT '过期时间',
     created_by    BIGINT UNSIGNED NULL COMMENT '创建人ID',
@@ -306,6 +323,7 @@ CREATE TABLE iam_department_permission
 
     UNIQUE KEY uk_dp_dept_perm (department_id, permission_id),
     KEY idx_dp_perm_id (permission_id),
+    KEY idx_dp_data_scope (data_scope),
     KEY idx_dp_grant_id (granted_by),
     KEY idx_dp_exp_at (expired_at),
     KEY idx_dp_created_by (created_by),
@@ -320,6 +338,12 @@ CREATE TABLE iam_department_permission
     CONSTRAINT fk_dp_grant
         FOREIGN KEY (granted_by) REFERENCES iam_user (id),
 
+    CONSTRAINT chk_dp_data_scope
+        CHECK (
+            data_scope IS NULL
+            OR data_scope IN ('SELF', 'DEPARTMENT', 'DEPARTMENT_TREE', 'SUBSIDIARY', 'COMPANY', 'ALL')
+        ),
+
     CONSTRAINT chk_dp_effect
         CHECK (effect IN ('ALLOW', 'DENY'))
 ) ENGINE = InnoDB
@@ -332,6 +356,7 @@ CREATE TABLE iam_subsidiary_permission
     subsidiary_id BIGINT UNSIGNED NOT NULL COMMENT '子公司ID',
     permission_id BIGINT UNSIGNED NOT NULL COMMENT '权限ID',
     effect        VARCHAR(16)     NOT NULL DEFAULT 'ALLOW' COMMENT '权限效果',
+    data_scope    VARCHAR(32)     NULL COMMENT '数据权限范围',
     granted_by    BIGINT UNSIGNED NULL COMMENT '授权人ID',
     expired_at    DATETIME        NULL COMMENT '过期时间',
     created_by    BIGINT UNSIGNED NULL COMMENT '创建人ID',
@@ -341,6 +366,7 @@ CREATE TABLE iam_subsidiary_permission
 
     UNIQUE KEY uk_sp_sub_perm (subsidiary_id, permission_id),
     KEY idx_sp_perm_id (permission_id),
+    KEY idx_sp_data_scope (data_scope),
     KEY idx_sp_grant_id (granted_by),
     KEY idx_sp_exp_at (expired_at),
     KEY idx_sp_created_by (created_by),
@@ -354,6 +380,12 @@ CREATE TABLE iam_subsidiary_permission
 
     CONSTRAINT fk_sp_grant
         FOREIGN KEY (granted_by) REFERENCES iam_user (id),
+
+    CONSTRAINT chk_sp_data_scope
+        CHECK (
+            data_scope IS NULL
+            OR data_scope IN ('SELF', 'DEPARTMENT', 'DEPARTMENT_TREE', 'SUBSIDIARY', 'COMPANY', 'ALL')
+        ),
 
     CONSTRAINT chk_sp_effect
         CHECK (effect IN ('ALLOW', 'DENY'))

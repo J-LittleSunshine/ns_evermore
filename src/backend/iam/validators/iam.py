@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from iam.constants import DATA_SCOPE_VALUES
 from ns_backend.validation import BaseValidator
 
 if TYPE_CHECKING:
@@ -94,28 +95,34 @@ class UserRoleValidator(BaseValidator):
 
 class RolePermissionValidator(BaseValidator):
     required_fields = ("role_id", "permission_id")
-    allowed_fields = ("role_id", "permission_id", "expired_at")
+    allowed_fields = ("role_id", "permission_id", "data_scope", "expired_at")
+    enum_fields = {
+        "data_scope": DATA_SCOPE_VALUES,
+    }
 
 
 class UserPermissionValidator(BaseValidator):
     required_fields = ("user_id", "permission_id", "effect")
-    allowed_fields = ("user_id", "permission_id", "effect", "expired_at")
+    allowed_fields = ("user_id", "permission_id", "effect", "data_scope", "expired_at")
     enum_fields = {
         "effect": ("ALLOW", "DENY"),
+        "data_scope": DATA_SCOPE_VALUES,
     }
 
 
 class DepartmentPermissionValidator(BaseValidator):
     required_fields = ("department_id", "permission_id", "effect")
-    allowed_fields = ("department_id", "permission_id", "effect", "expired_at")
+    allowed_fields = ("department_id", "permission_id", "effect", "data_scope", "expired_at")
     enum_fields = {
         "effect": ("ALLOW", "DENY"),
+        "data_scope": DATA_SCOPE_VALUES,
     }
 
 
 class SubsidiaryPermissionValidator(BaseValidator):
     required_fields = ("subsidiary_id", "permission_id", "effect")
-    allowed_fields = ("subsidiary_id", "permission_id", "effect", "expired_at")
+    allowed_fields = ("subsidiary_id", "permission_id", "effect", "data_scope", "expired_at")
     enum_fields = {
         "effect": ("ALLOW", "DENY"),
+        "data_scope": DATA_SCOPE_VALUES,
     }
