@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from iam.constants import TenantContext
+from iam.schemas import TenantContext
 from ns_backend.policies import BasePolicy
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from iam.constants import TenantContext
+from iam.schemas import TenantContext
 from iam.policies.tenant import TenantPolicy
 from iam.repositories.crud import CrudRepository
 from iam.services.auth import VerifyService
