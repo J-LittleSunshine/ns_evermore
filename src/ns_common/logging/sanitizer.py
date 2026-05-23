@@ -19,6 +19,21 @@ def _safe_to_string(value: Any) -> str:
         return "<unserializable>"
 
 
+def _normalize_sensitive_key(key: Any) -> str:
+    return _safe_to_string(key).strip().lower()
+
+
+def _compact_sensitive_key(key: Any) -> str:
+    normalized = _normalize_sensitive_key(key)
+    return "".join(ch for ch in normalized if ch not in {"_", "-", ".", " "})
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    normalized = _normalize_sensitive_key(key)
+    compact = _compact_sensitive_key(key)
+    return normalized in SENSITIVE_LOG_KEYS or compact in SENSITIVE_LOG_KEYS
+
+
 def sanitize_log_context(value: Any):
     try:
         if value is None or isinstance(value, (bool, int, float)):
@@ -31,7 +46,7 @@ def sanitize_log_context(value: Any):
             result: dict[str, Any] = {}
             for key, item in value.items():
                 normalized_key = _safe_to_string(key)
-                if normalized_key.lower() in SENSITIVE_LOG_KEYS:
+                if _is_sensitive_key(key):
                     result[normalized_key] = "***"
                     continue
                 result[normalized_key] = sanitize_log_context(item)
