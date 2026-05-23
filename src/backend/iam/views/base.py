@@ -39,6 +39,21 @@ class IamRequestViewSet(AuthenticatedRequestViewSet):
         "subsidiary_id",
         "department_id",
     )
+    audit_request_summary_fields = (
+        "id",
+        "user_id",
+        "role_id",
+        "permission_id",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+        "session_id",
+        "device_id",
+        "permission_code",
+        "role_code",
+        "username",
+    )
+    audit_request_body_enabled = False
 
     async def dispatch(self, request, *args, **kwargs):
         response = await super().dispatch(request, *args, **kwargs)  # noqa
@@ -116,8 +131,8 @@ class IamRequestViewSet(AuthenticatedRequestViewSet):
             except (TypeError, ValueError):
                 pass
 
-        request_data = self.get_audit_request_data(request)
-        if not isinstance(request_data, dict):
+        request_data = self.get_request_dict(request)
+        if request_data is None:
             return None
 
         for field in self.audit_resource_id_fields:
@@ -130,16 +145,51 @@ class IamRequestViewSet(AuthenticatedRequestViewSet):
         return None
 
     @staticmethod
-    def get_audit_request_data(request) -> dict | None:
+    def get_request_dict(request) -> dict | None:
         try:
             data = request.data
         except Exception:
             return None
 
-        if isinstance(data, dict):
-            return dict(data)
+        if not isinstance(data, dict):
+            return None
 
-        return {"raw": data}
+        return data
+
+    def get_audit_request_data(self, request) -> dict | None:
+        request_dict = self.get_request_dict(request)
+
+        if self.audit_request_body_enabled and request_dict is not None:
+            return dict(request_dict)
+
+        content_type = getattr(request, "content_type", None)
+
+        if request_dict is not None:
+            selected_fields = {
+                field: request_dict[field]
+                for field in self.audit_request_summary_fields
+                if field in request_dict
+            }
+            return {
+                "method": getattr(request, "method", None),
+                "path": getattr(request, "path", None),
+                "content_type": content_type,
+                "body_type": "dict",
+                "body_size_hint": len(request_dict),
+                "selected_fields": selected_fields,
+            }
+
+        try:
+            data = request.data
+        except Exception:
+            return None
+
+        return {
+            "method": getattr(request, "method", None),
+            "path": getattr(request, "path", None),
+            "content_type": content_type,
+            "body_type": type(data).__name__,
+        }
 
     def get_audit_after_data(self, response_payload: dict) -> dict:
         code, msg = self.get_response_code_and_msg(response_payload)
