@@ -4,6 +4,7 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Dict, Any, List
 
+from ns_backend.db_sql import build_infra_create_sql_path
 from ns_backend.db_vendor import detect_db_vendor
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -13,6 +14,9 @@ ETC_DIR.mkdir(parents=True, exist_ok=True)
 
 DATA_DIR = BASE_DIR.parent.parent / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+SQL_DIR = BASE_DIR.parent.parent / "sql"
+INFRA_SQL_ROOT = SQL_DIR
 
 
 BACKEND_CONFIG_FILE_PATH = ETC_DIR / "backend_config.json"
@@ -277,6 +281,15 @@ for infra_domain, db_alias in INFRA_DB_ROUTER_MAP.items():
 INFRA_DB_VENDOR_MAP = {
     infra_domain: DATABASE_VENDOR_MAP.get(db_alias, "unknown")
     for infra_domain, db_alias in INFRA_DB_ROUTER_MAP.items()
+}
+
+INFRA_CREATE_SQL_PATH_MAP = {
+    infra_domain: build_infra_create_sql_path(
+        sql_root=INFRA_SQL_ROOT,
+        infra_domain=infra_domain,
+        vendor=vendor,
+    )
+    for infra_domain, vendor in INFRA_DB_VENDOR_MAP.items()
 }
 
 DATABASE_ROUTER_MAP = BACKEND_CONFIG.get("database_router_map", {})
