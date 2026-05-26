@@ -22,6 +22,21 @@ class AuditPolicy(BasePolicy):
 
     SENSITIVE_KEYS = {
         "password",
+        "password_payload",
+        "passwordpayload",
+        "raw_password",
+        "rawpassword",
+        "encrypted_password",
+        "encryptedpassword",
+        "password_ciphertext",
+        "passwordciphertext",
+        "ciphertext",
+        "plain_text",
+        "plaintext",
+        "decrypted_password",
+        "decryptedpassword",
+        "password_plaintext",
+        "passwordplaintext",
         "old_password",
         "new_password",
         "confirm_password",
@@ -50,10 +65,38 @@ class AuditPolicy(BasePolicy):
         "secretkey",
         "private_key",
         "privatekey",
+        "rsa_private_key",
+        "rsaprivatekey",
+        "rsa_private_key_file",
+        "rsaprivatekeyfile",
+        "rsa_private_key_passphrase",
+        "rsaprivatekeypassphrase",
+        "private_key_file",
+        "privatekeyfile",
+        "private_key_pem",
+        "privatekeypem",
+        "key_passphrase",
+        "keypassphrase",
+        "passphrase",
         "csrf",
         "csrf_token",
         "csrftoken",
     }
+
+    @staticmethod
+    def normalize_sensitive_key(key: Any) -> str:
+        return str(key).strip().lower()
+
+    @staticmethod
+    def compact_sensitive_key(key: Any) -> str:
+        normalized = str(key).strip().lower()
+        return "".join(ch for ch in normalized if ch not in {"_", "-", ".", " "})
+
+    @classmethod
+    def is_sensitive_key(cls, key: Any) -> bool:
+        normalized = cls.normalize_sensitive_key(key)
+        compact = cls.compact_sensitive_key(key)
+        return normalized in cls.SENSITIVE_KEYS or compact in cls.SENSITIVE_KEYS
 
     @classmethod
     def to_json_safe(cls, value):
@@ -92,7 +135,7 @@ class AuditPolicy(BasePolicy):
             masked: dict[str, Any] = {}
             for key, value in data.items():
                 normalized_key = str(key)
-                if normalized_key.lower() in cls.SENSITIVE_KEYS:
+                if cls.is_sensitive_key(key):
                     masked[normalized_key] = "***"
                     continue
                 masked[normalized_key] = cls.mask_sensitive_data(value)

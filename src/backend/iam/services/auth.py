@@ -17,6 +17,7 @@ from iam.repositories.user import UserRepository
 from iam.services.session import SessionService
 from ns_backend.exceptions import BusinessError
 from ns_backend.logging import emit_log_event, short_identifier
+from ns_backend.security import PasswordTransportService
 from ns_backend.utils.jwt import JwtService
 from ns_common.logging import NsLogEvent
 
@@ -97,10 +98,11 @@ class LoginService:
         if not username:
             raise BusinessError("username cannot be empty", NsErrorCode.USERNAME_EMPTY)
 
-        if not password:
-            raise BusinessError("password cannot be empty", NsErrorCode.PASSWORD_EMPTY)
+        PasswordTransportService.validate_payload_basic(password)
 
         await LoginFailureService.ensure_not_locked(username=username)
+
+        raw_password = PasswordTransportService.resolve(password)
 
         user = await UserRepository.get_active_by_username(username)
 
@@ -113,7 +115,7 @@ class LoginService:
             )
             raise BusinessError("Username or password is incorrect.", NsErrorCode.USERNAME_OR_PASSWORD_INCORRECT)
 
-        if not check_password(password, user.password):
+        if not check_password(raw_password, user.password):
             await LoginFailureService.record_failed(
                 username=username,
                 user=user,

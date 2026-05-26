@@ -24,6 +24,26 @@ except JSONDecodeError:
 
 BACKEND_CONFIG = CONFIG.get("backend", {})
 
+
+def _coerce_positive_int(value, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+
+    if isinstance(value, int):
+        return value if value > 0 else default
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        try:
+            parsed = int(text)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed > 0 else default
+
+    return default
+
 SECRET_KEY = BACKEND_CONFIG.get("secret_key", "") or os.getenv("NS_SECRET_KEY") or ""
 if not SECRET_KEY:
     raise RuntimeError("secret_key is not set")
@@ -37,6 +57,60 @@ REFRESH_TOKEN_EXPIRE_DAYS = BACKEND_CONFIG.get("refresh_token_expire_days", 14)
 JWT_ISSUER = BACKEND_CONFIG.get("jwt_issuer", "ns_evermore")
 JWT_LEEWAY_SECONDS = BACKEND_CONFIG.get("jwt_leeway_seconds", 30)
 JWT_MIN_SECRET_LENGTH = BACKEND_CONFIG.get("jwt_min_secret_length", 32)
+
+PASSWORD_TRANSPORT_MODE = (
+    BACKEND_CONFIG.get("password_transport_mode", "")
+    or os.getenv("NS_PASSWORD_TRANSPORT_MODE")
+    or "plain"
+).strip().lower()
+PASSWORD_TRANSPORT_ALLOWED_MODES = ("plain", "rsa_oaep")
+if PASSWORD_TRANSPORT_MODE not in PASSWORD_TRANSPORT_ALLOWED_MODES:
+    raise RuntimeError(
+        f"password_transport_mode must be one of: {', '.join(PASSWORD_TRANSPORT_ALLOWED_MODES)}"
+    )
+
+_password_transport_max_payload_length = _coerce_positive_int(
+    BACKEND_CONFIG.get("password_transport_max_payload_length"),
+    0,
+)
+if _password_transport_max_payload_length <= 0:
+    _password_transport_max_payload_length = _coerce_positive_int(
+        os.getenv("NS_PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH"),
+        4096,
+    )
+PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH = _password_transport_max_payload_length
+
+_password_plaintext_max_length = _coerce_positive_int(
+    BACKEND_CONFIG.get("password_plaintext_max_length"),
+    0,
+)
+if _password_plaintext_max_length <= 0:
+    _password_plaintext_max_length = _coerce_positive_int(
+        os.getenv("NS_PASSWORD_PLAINTEXT_MAX_LENGTH"),
+        256,
+    )
+PASSWORD_PLAINTEXT_MAX_LENGTH = _password_plaintext_max_length
+PASSWORD_RSA_PRIVATE_KEY = (
+    BACKEND_CONFIG.get("password_rsa_private_key", "")
+    or os.getenv("NS_PASSWORD_RSA_PRIVATE_KEY")
+    or ""
+)
+PASSWORD_RSA_PRIVATE_KEY_FILE = (
+    BACKEND_CONFIG.get("password_rsa_private_key_file", "")
+    or os.getenv("NS_PASSWORD_RSA_PRIVATE_KEY_FILE")
+    or ""
+)
+PASSWORD_RSA_PRIVATE_KEY_PASSPHRASE = (
+    BACKEND_CONFIG.get("password_rsa_private_key_passphrase", "")
+    or os.getenv("NS_PASSWORD_RSA_PRIVATE_KEY_PASSPHRASE")
+    or ""
+)
+if PASSWORD_TRANSPORT_MODE == "rsa_oaep" and not (
+    PASSWORD_RSA_PRIVATE_KEY or PASSWORD_RSA_PRIVATE_KEY_FILE
+):
+    raise RuntimeError(
+        "password_rsa_private_key or password_rsa_private_key_file is required when password_transport_mode is rsa_oaep"
+    )
 
 LOGIN_MAX_FAILED_COUNT = BACKEND_CONFIG.get("log_in_max_failed_count", 5)
 LOGIN_LOCK_MINUTES = BACKEND_CONFIG.get("log_in_lock_minutes", 15)

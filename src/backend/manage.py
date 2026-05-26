@@ -2,6 +2,18 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
+from pathlib import Path
+
+
+def _ensure_project_src_on_path() -> None:
+    # manage.py is located at src/backend/manage.py
+    src_dir = Path(__file__).resolve().parents[1]
+    src_path = str(src_dir)
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
+
+_ensure_project_src_on_path()
 
 
 def main():
