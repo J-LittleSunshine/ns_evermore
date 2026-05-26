@@ -241,6 +241,20 @@ for _db_alias, _db_config in _DATABASES_CONFIG.items():
 
     DATABASES[_db_alias] = db_config
 
+DEFAULT_DB_ALIAS = "default"
+IAM_DB_ALIAS_NAME = "iam"
+
+_INFRA_DB_ROUTER_MAP = BACKEND_CONFIG.get("infra_db_router_map", {})
+if not isinstance(_INFRA_DB_ROUTER_MAP, dict):
+    raise TypeError("infra_db_router_map must be dict")
+
+INFRA_DB_ROUTER_MAP = _INFRA_DB_ROUTER_MAP.copy()
+if IAM_DB_ALIAS_NAME not in INFRA_DB_ROUTER_MAP:
+    if IAM_DB_ALIAS_NAME in DATABASES:
+        INFRA_DB_ROUTER_MAP[IAM_DB_ALIAS_NAME] = IAM_DB_ALIAS_NAME
+    else:
+        INFRA_DB_ROUTER_MAP[IAM_DB_ALIAS_NAME] = DEFAULT_DB_ALIAS
+
 DATABASE_ROUTER_MAP = BACKEND_CONFIG.get("database_router_map", {})
 
 if not isinstance(DATABASE_ROUTER_MAP, dict):

@@ -12,19 +12,11 @@ if TYPE_CHECKING:
 class AppDatabaseRouter:
     INFRA_DEFAULT_DB_ALIAS = "default"
     IAM_APP_LABEL = "iam"
-    IAM_PREFERRED_DB_ALIAS = "iam"
 
     @classmethod
     def get_target_db(cls, app_label: str):
         if app_label == cls.IAM_APP_LABEL:
-            target_db = settings.DATABASE_ROUTER_MAP.get(app_label)
-            if target_db:
-                return target_db
-
-            if cls.IAM_PREFERRED_DB_ALIAS in settings.DATABASES:
-                return cls.IAM_PREFERRED_DB_ALIAS
-
-            return cls.INFRA_DEFAULT_DB_ALIAS
+            return settings.INFRA_DB_ROUTER_MAP[cls.IAM_APP_LABEL]
 
         return settings.DATABASE_ROUTER_MAP.get(app_label)
 
