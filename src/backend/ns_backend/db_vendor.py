@@ -45,12 +45,10 @@ def detect_db_vendor(db_config: dict[str, Any]) -> str:
         return DB_VENDOR_UNKNOWN
 
     for key in ("NS_VENDOR", "VENDOR", "vendor"):
-        try:
-            vendor = normalize_db_vendor(db_config.get(key))
-        except ValueError:
-            vendor = None
-        if vendor:
-            return vendor
+        value = db_config.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        return normalize_db_vendor(value)
 
     engine = str(db_config.get("ENGINE", "") or "").strip().lower()
     if not engine:
