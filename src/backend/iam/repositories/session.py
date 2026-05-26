@@ -259,7 +259,6 @@ class SessionRepository:
             device_data = None
             if device is not None:
                 device_data = {
-                    "id": device.id,
                     "device_id": device.device_id,
                     "device_name": device.device_name,
                     "device_type": device.device_type,
