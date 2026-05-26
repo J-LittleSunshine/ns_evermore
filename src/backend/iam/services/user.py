@@ -72,7 +72,7 @@ class UserService:
 			)
 
 		if not user:
-			raise BusinessError("User does not exist", NsErrorCode.USER_NOT_FOUND_LEGACY)
+			raise BusinessError("User does not exist", NsErrorCode.USER_NOT_FOUND)
 
 		return user
 
@@ -187,7 +187,7 @@ class UserService:
 		password_payload = create_data.pop("password", None)
 
 		if not password_payload:
-			raise BusinessError("password cannot be empty", NsErrorCode.PASSWORD_EMPTY_LEGACY)
+			raise BusinessError("password cannot be empty", NsErrorCode.USER_PASSWORD_EMPTY)
 
 		raw_password = PasswordTransportService.resolve(password_payload)
 		now = timezone.now()
@@ -211,7 +211,7 @@ class UserService:
 		operator_id: int | None = None,
 	) -> dict[str, Any]:
 		if not raw_password:
-			raise BusinessError("password cannot be empty", NsErrorCode.PASSWORD_EMPTY_LEGACY)
+			raise BusinessError("password cannot be empty", NsErrorCode.USER_PASSWORD_EMPTY)
 
 		return {
 			"password": make_password(PasswordTransportService.resolve(raw_password)),

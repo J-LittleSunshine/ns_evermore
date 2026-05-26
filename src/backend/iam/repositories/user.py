@@ -142,7 +142,7 @@ class UserRepository:
             user = user_queryset.first()
 
             if not user:
-                raise BusinessError("User does not exist", NsErrorCode.USER_NOT_FOUND_LEGACY)
+                raise BusinessError("User does not exist", NsErrorCode.USER_NOT_FOUND)
 
             for field, value in data.items():
                 setattr(user, field, value)
@@ -193,7 +193,7 @@ class UserRepository:
             user = user_queryset.first()
 
             if not user:
-                raise BusinessError("User does not exist", NsErrorCode.USER_NOT_FOUND_LEGACY)
+                raise BusinessError("User does not exist", NsErrorCode.USER_NOT_FOUND)
 
             IamUserSession.objects.using(IAM_DB_ALIAS).filter(
                 user_id=user_id,
