@@ -39,7 +39,9 @@ class IamRole(models.Model):
     class Meta:
         managed = False
         db_table = "iam_role"
-        unique_together = (("company", "role_code"),)
+        # Uniqueness is enforced in DDL by generated column key:
+        # (role_scope, role_scope_company_id, role_code)
+        # This model is unmanaged, so no Django migration is generated.
         verbose_name = "Role"
         verbose_name_plural = "Roles"
 
