@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from ns_backend.common import BaseRequestViewSet
 from ns_backend.exceptions import BusinessError
+from ns_common.error_codes import NsErrorCode
 
 
 class AuthenticatedRequestViewSet(BaseRequestViewSet):
@@ -20,10 +21,16 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
         user = await self.get_current_user(request)
 
         if not user:
-            raise BusinessError("User is not logged in or session has expired", 11007)
+            raise BusinessError(
+                "User is not logged in or session has expired",
+                NsErrorCode.USER_NOT_LOGGED_IN_OR_SESSION_EXPIRED,
+            )
 
         if not user.is_active:
-            raise BusinessError("User is disabled", 11008)
+            raise BusinessError(
+                "User is disabled",
+                NsErrorCode.USER_DISABLED,
+            )
 
         request.current_user = user
 
@@ -34,7 +41,10 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
             )
 
             if not has_permission:
-                raise BusinessError(f"Permission denied: {permission_code}", 11009)
+                raise BusinessError(
+                    f"Permission denied: {permission_code}",
+                    NsErrorCode.PERMISSION_DENIED,
+                )
 
     @classmethod
     async def get_current_user(cls, request):
