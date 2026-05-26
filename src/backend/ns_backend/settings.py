@@ -44,6 +44,72 @@ def _coerce_positive_int(value, default: int) -> int:
 
     return default
 
+
+def _coerce_string_tuple(value) -> tuple[str, ...]:
+    if value is None:
+        return ()
+
+    if isinstance(value, (list, tuple, set)):
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+        return tuple(result)
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ()
+
+        try:
+            parsed = json.loads(text)
+        except JSONDecodeError:
+            parts = [part.strip() for part in text.split(",")]
+            result: list[str] = []
+            seen: set[str] = set()
+            for part in parts:
+                if not part or part in seen:
+                    continue
+                seen.add(part)
+                result.append(part)
+            return tuple(result)
+
+        if isinstance(parsed, str):
+            return _coerce_string_tuple((parsed,))
+
+        if isinstance(parsed, (list, tuple, set)):
+            return _coerce_string_tuple(parsed)
+
+        return ()
+
+    return ()
+
+
+def _merge_string_tuples(*values) -> tuple[str, ...]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in _coerce_string_tuple(value):
+            if item in seen:
+                continue
+            seen.add(item)
+            merged.append(item)
+    return tuple(merged)
+
+
+IAM_AUDIT_EXTRA_SENSITIVE_KEYS = _merge_string_tuples(
+    BACKEND_CONFIG.get("extra_sensitive_keys"),
+    os.getenv("NS_EXTRA_SENSITIVE_KEYS"),
+    BACKEND_CONFIG.get("audit_extra_sensitive_keys"),
+    os.getenv("IAM_AUDIT_EXTRA_SENSITIVE_KEYS"),
+)
+
 SECRET_KEY = BACKEND_CONFIG.get("secret_key", "") or os.getenv("NS_SECRET_KEY") or ""
 if not SECRET_KEY:
     raise RuntimeError("secret_key is not set")
@@ -184,8 +250,8 @@ DATABASE_ROUTERS = [
     "ns_backend.db_routers.AppDatabaseRouter",
 ]
 
-LANGUAGE_CODE = "zh-hans"
-TIME_ZONE = "Asia/Shanghai"
-USE_I18N = True
-USE_TZ = True
-STATIC_URL = "static/"
+LANGUAGE_CODE = BACKEND_CONFIG.get("language_code", "zh-hans")
+TIME_ZONE = BACKEND_CONFIG.get("time_zone", "Asia/Shanghai")
+USE_I18N = BACKEND_CONFIG.get("use_t18n", True)
+USE_TZ = BACKEND_CONFIG.get("use_tz", True)
+STATIC_URL = BACKEND_CONFIG.get("static_url", "static/")

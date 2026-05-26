@@ -93,10 +93,45 @@ class AuditPolicy(BasePolicy):
         return "".join(ch for ch in normalized if ch not in {"_", "-", ".", " "})
 
     @classmethod
+    def normalize_sensitive_key_variants(cls, keys: Any) -> set[str]:
+        if keys is None:
+            return set()
+
+        items = keys if isinstance(keys, (list, tuple, set)) else (keys,)
+        variants: set[str] = set()
+        for key in items:
+            if not isinstance(key, str):
+                continue
+            text = key.strip()
+            if not text:
+                continue
+            normalized = cls.normalize_sensitive_key(text)
+            compact = cls.compact_sensitive_key(text)
+            variants.add(normalized)
+            variants.add(compact)
+        return variants
+
+    @classmethod
+    def get_configured_sensitive_keys(cls) -> set[str]:
+        try:
+            from django.conf import settings
+
+            extra_keys = getattr(settings, "IAM_AUDIT_EXTRA_SENSITIVE_KEYS", ())
+        except Exception:
+            return set()
+
+        return cls.normalize_sensitive_key_variants(extra_keys)
+
+    @classmethod
+    def get_effective_sensitive_keys(cls) -> set[str]:
+        return cls.SENSITIVE_KEYS | cls.get_configured_sensitive_keys()
+
+    @classmethod
     def is_sensitive_key(cls, key: Any) -> bool:
         normalized = cls.normalize_sensitive_key(key)
         compact = cls.compact_sensitive_key(key)
-        return normalized in cls.SENSITIVE_KEYS or compact in cls.SENSITIVE_KEYS
+        sensitive_keys = cls.get_effective_sensitive_keys()
+        return normalized in sensitive_keys or compact in sensitive_keys
 
     @classmethod
     def to_json_safe(cls, value):
