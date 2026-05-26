@@ -19,7 +19,7 @@ IAM create SQL 使用目录式路径：
 
 - `mysql.sql`：已完成，来自旧 `sql/create/create_iam.sql` 迁移
 - `sqlite.sql`：已完成，按 `mysql.sql` 结构转换
-- `postgresql.sql`：待补
+- `postgresql.sql`：已完成，按 `mysql.sql` 结构转换
 - `dm8.sql`：待补（后续需要在真实达梦8实例验证）
 
 ## 旧路径状态
