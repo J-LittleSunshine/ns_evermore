@@ -3,7 +3,13 @@ from __future__ import annotations
 
 from django.conf import settings
 
-IAM_DB_ALIAS = settings.DATABASE_ROUTER_MAP.get("iam", "default")
+INFRA_DEFAULT_DB_ALIAS = "default"
+IAM_PREFERRED_DB_ALIAS = "iam"
+IAM_DB_ALIAS = (
+	IAM_PREFERRED_DB_ALIAS
+	if IAM_PREFERRED_DB_ALIAS in settings.DATABASES
+	else INFRA_DEFAULT_DB_ALIAS
+)
 
 DATA_SCOPE_SELF = "SELF"
 DATA_SCOPE_DEPARTMENT = "DEPARTMENT"
