@@ -18,7 +18,7 @@ IAM create SQL 使用目录式路径：
 ## 当前完成状态
 
 - `mysql.sql`：已完成，来自旧 `sql/create/create_iam.sql` 迁移
-- `sqlite.sql`：待补
+- `sqlite.sql`：已完成，按 `mysql.sql` 结构转换
 - `postgresql.sql`：待补
 - `dm8.sql`：待补（后续需要在真实达梦8实例验证）
 
@@ -35,10 +35,10 @@ IAM create SQL 使用目录式路径：
 - 不负责 migration
 - ORM 仍保持 `managed=False`
 - 后续 schema installer 会基于 `INFRA_CREATE_SQL_PATH_MAP` 定位 SQL 文件
+- `sqlite.sql` 可使用 Python 标准库 `sqlite3` 做 in-memory DDL 验证
 
 ## 后续补齐顺序建议
 
-1. `sqlite.sql`
-2. `postgresql.sql`
-3. `dm8.sql`
+1. `postgresql.sql`
+2. `dm8.sql`
 

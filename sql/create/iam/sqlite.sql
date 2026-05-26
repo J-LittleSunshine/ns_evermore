@@ -337,10 +337,10 @@ CREATE TABLE iam_user_device
 );
 CREATE UNIQUE INDEX uk_device_id ON iam_user_device (device_id);
 CREATE UNIQUE INDEX uk_user_fingerprint ON iam_user_device (user_id, fingerprint_hash);
-CREATE INDEX idx_user_id ON iam_user_device (user_id);
-CREATE INDEX idx_user_fingerprint ON iam_user_device (user_id, fingerprint_hash);
-CREATE INDEX idx_last_active_at ON iam_user_device (last_active_at);
-CREATE INDEX idx_status ON iam_user_device (status);
+CREATE INDEX idx_ud_user_id ON iam_user_device (user_id);
+CREATE INDEX idx_ud_user_fingerprint ON iam_user_device (user_id, fingerprint_hash);
+CREATE INDEX idx_ud_last_active_at ON iam_user_device (last_active_at);
+CREATE INDEX idx_ud_status ON iam_user_device (status);
 
 CREATE TABLE iam_user_session
 (
@@ -359,11 +359,11 @@ CREATE TABLE iam_user_session
     CONSTRAINT fk_us_device FOREIGN KEY (device_id) REFERENCES iam_user_device (id)
 );
 CREATE UNIQUE INDEX uk_session_id ON iam_user_session (session_id);
-CREATE INDEX idx_user_id ON iam_user_session (user_id);
-CREATE INDEX idx_device_id ON iam_user_session (device_id);
-CREATE INDEX idx_expired_at ON iam_user_session (expired_at);
-CREATE INDEX idx_revoked_at ON iam_user_session (revoked_at);
-CREATE INDEX idx_user_active ON iam_user_session (user_id, revoked_at, expired_at);
+CREATE INDEX idx_us_user_id ON iam_user_session (user_id);
+CREATE INDEX idx_us_device_id ON iam_user_session (device_id);
+CREATE INDEX idx_us_expired_at ON iam_user_session (expired_at);
+CREATE INDEX idx_us_revoked_at ON iam_user_session (revoked_at);
+CREATE INDEX idx_us_user_active ON iam_user_session (user_id, revoked_at, expired_at);
 
 CREATE TABLE iam_user_token
 (
