@@ -1,0 +1,36 @@
+{
+  "backend": {
+    "secret_key": "change-me-secret-key-at-least-32-chars",
+    "jwt_secret_key": "change-me-jwt-secret-key-at-least-32-chars",
+    "debug": true,
+    "allowed_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "loaded_apps": {
+      "iam": true
+    },
+    "databases": {
+      "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": "db.sqlite3"
+      },
+      "iam": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": "change-me-iam-db-name",
+        "USER": "change-me-iam-db-user",
+        "PASSWORD": "change-me-iam-db-password",
+        "HOST": "change-me-iam-db-host",
+        "PORT": "3306",
+        "OPTIONS": {
+          "charset": "utf8mb4"
+        }
+      }
+    },
+    "infra_db_router_map": {
+      "iam": "iam"
+    },
+    "database_router_map": {}
+  }
+}
+

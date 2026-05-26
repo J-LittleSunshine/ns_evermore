@@ -221,3 +221,5 @@ __marimo__/
 # ns
 /data
 /log
+/etc/backend_config.json
+!/etc/backend_config.example.json
