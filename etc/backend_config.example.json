@@ -13,10 +13,12 @@
     "databases": {
       "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": "db.sqlite3"
+        "NAME": "db.sqlite3",
+        "NS_VENDOR": "sqlite"
       },
       "iam": {
         "ENGINE": "django.db.backends.mysql",
+        "NS_VENDOR": "mysql",
         "NAME": "change-me-iam-db-name",
         "USER": "change-me-iam-db-user",
         "PASSWORD": "change-me-iam-db-password",

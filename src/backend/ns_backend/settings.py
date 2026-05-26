@@ -4,6 +4,8 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Dict, Any, List
 
+from ns_backend.db_vendor import detect_db_vendor
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 ETC_DIR = BASE_DIR.parent.parent / "etc"
@@ -241,6 +243,11 @@ for _db_alias, _db_config in _DATABASES_CONFIG.items():
 
     DATABASES[_db_alias] = db_config
 
+DATABASE_VENDOR_MAP = {
+    alias: detect_db_vendor(db_config)
+    for alias, db_config in DATABASES.items()
+}
+
 DEFAULT_DB_ALIAS = "default"
 IAM_DB_ALIAS_NAME = "iam"
 
@@ -254,6 +261,23 @@ if IAM_DB_ALIAS_NAME not in INFRA_DB_ROUTER_MAP:
         INFRA_DB_ROUTER_MAP[IAM_DB_ALIAS_NAME] = IAM_DB_ALIAS_NAME
     else:
         INFRA_DB_ROUTER_MAP[IAM_DB_ALIAS_NAME] = DEFAULT_DB_ALIAS
+
+for infra_domain, db_alias in INFRA_DB_ROUTER_MAP.items():
+    if not isinstance(infra_domain, str) or not infra_domain.strip():
+        raise TypeError("infra db domain must be non-empty str")
+
+    if not isinstance(db_alias, str) or not db_alias.strip():
+        raise TypeError("infra db alias must be non-empty str")
+
+    if db_alias not in DATABASES:
+        raise RuntimeError(
+            f"infra_db_router_map.{infra_domain} points to undefined database alias: {db_alias}"
+        )
+
+INFRA_DB_VENDOR_MAP = {
+    infra_domain: DATABASE_VENDOR_MAP.get(db_alias, "unknown")
+    for infra_domain, db_alias in INFRA_DB_ROUTER_MAP.items()
+}
 
 DATABASE_ROUTER_MAP = BACKEND_CONFIG.get("database_router_map", {})
 
