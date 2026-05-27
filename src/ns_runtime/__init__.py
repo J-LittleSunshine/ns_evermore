@@ -10,6 +10,12 @@ from ns_runtime.brokers import (
 )
 from ns_runtime.config import RuntimeConfig
 from ns_runtime.coordinator import MasterCoordinator
+from ns_runtime.dispatching import (
+    CapabilityMatchDispatchStrategy,
+    RuntimeTaskDispatchResult,
+    RuntimeTaskDispatcher,
+    RuntimeTaskDispatchStrategy,
+)
 from ns_runtime.endpoints import EndpointRegistry, RuntimeEndpoint
 from ns_runtime.extensions import RuntimeExtension, RuntimeExtensionRegistry
 from ns_runtime.gateway import (
@@ -69,5 +75,9 @@ __all__ = [
     "RuntimeTaskStore",
     "MemoryTaskStore",
     "RuntimeTaskSubmitter",
+    "RuntimeTaskDispatchResult",
+    "RuntimeTaskDispatchStrategy",
+    "CapabilityMatchDispatchStrategy",
+    "RuntimeTaskDispatcher",
 ]
 
