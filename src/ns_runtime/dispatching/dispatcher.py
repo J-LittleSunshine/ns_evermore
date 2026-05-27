@@ -89,6 +89,7 @@ class RuntimeTaskDispatcher:
             endpoints = self._endpoint_registry.list_all()
             selected_endpoint = self._strategy.select_endpoint(task, endpoints)
             if selected_endpoint is None:
+                self._requeue_task_packet(packet)
                 results.append(
                     RuntimeTaskDispatchResult(
                         task=task,
@@ -116,17 +117,39 @@ class RuntimeTaskDispatcher:
                 },
             )
 
+            send_error_detail: str | None = None
             try:
                 sent = await self._gateway.send_packet_to_endpoint(selected_endpoint.endpoint_id, dispatch_packet)
-            except Exception:
+            except Exception as exc:
                 sent = False
+                # 保留 send 异常细节，避免失败路径完全静默，便于调用方诊断下发失败原因。
+                send_error_detail = str(exc)
 
             if not sent:
+                self._requeue_task_packet(packet)
+                result_packet = dispatch_packet
+                if send_error_detail:
+                    result_packet = RuntimePacket.create(
+                        packet_type=dispatch_packet.packet_type,
+                        source_endpoint_id=dispatch_packet.source_endpoint_id,
+                        target_endpoint_id=dispatch_packet.target_endpoint_id,
+                        topic=dispatch_packet.topic,
+                        trace_id=dispatch_packet.trace_id,
+                        tenant_id=dispatch_packet.tenant_id,
+                        operator_id=dispatch_packet.operator_id,
+                        payload={
+                            **dispatch_packet.payload,
+                            "dispatch": {
+                                "selected_endpoint_id": selected_endpoint.endpoint_id,
+                                "send_error": send_error_detail,
+                            },
+                        },
+                    )
                 results.append(
                     RuntimeTaskDispatchResult(
                         task=task,
-                        packet=dispatch_packet,
-                        selected_endpoint=None,
+                        packet=result_packet,
+                        selected_endpoint=selected_endpoint,
                         dispatched=False,
                         reason="send_failed",
                     )
@@ -146,6 +169,10 @@ class RuntimeTaskDispatcher:
             )
 
         return tuple(results)
+
+    def _requeue_task_packet(self, packet: RuntimePacket) -> None:
+        # Phase 6A 只做失败保留：将原始 TASK 消息放回队列，不做 retry 计数、backoff 或 DLQ。
+        self._broker.publish(self._task_topic, packet)
 
     @staticmethod
     def _build_fallback_task(packet: RuntimePacket, task_payload: Mapping[str, Any] | None = None) -> RuntimeTask:
