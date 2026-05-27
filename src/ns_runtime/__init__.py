@@ -27,6 +27,16 @@ from ns_runtime.packets import (
 )
 from ns_runtime.routing import RuntimePacketRouter
 from ns_runtime.service import RuntimeService
+from ns_runtime.tasks import (
+    MemoryTaskStore,
+    RuntimeTask,
+    RuntimeTaskContext,
+    RuntimeTaskStatus,
+    RuntimeTaskStore,
+    RuntimeTaskSubmitRequest,
+    RuntimeTaskSubmitResult,
+    RuntimeTaskSubmitter,
+)
 
 __all__ = [
     "RuntimeConfig",
@@ -51,5 +61,13 @@ __all__ = [
     "RuntimeExtension",
     "RuntimeExtensionRegistry",
     "MasterCoordinator",
+    "RuntimeTaskStatus",
+    "RuntimeTaskContext",
+    "RuntimeTask",
+    "RuntimeTaskSubmitRequest",
+    "RuntimeTaskSubmitResult",
+    "RuntimeTaskStore",
+    "MemoryTaskStore",
+    "RuntimeTaskSubmitter",
 ]
 
