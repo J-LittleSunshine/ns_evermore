@@ -1,44 +1,45 @@
-# IAM Create SQL Directory Contract
+# IAM Infra Schema Installer
 
-本目录定义 IAM 基础模块建库 SQL 的标准入口与约定。
+本目录定义 IAM 基础设施静态 DDL 的标准路径与初始化约定。
 
-## 标准路径
+## 标准 SQL 路径
 
-IAM create SQL 使用目录式路径：
+基础设施建表 SQL 统一路径：
+
+`sql/create/{infra_domain}/{vendor}.sql`
+
+当前 IAM 对应路径：
 
 `sql/create/iam/{vendor}.sql`
 
-当前 `vendor` 约定与 `ns_backend.db_vendor` 保持一致：
+## 当前支持状态
 
-- `mysql`
-- `sqlite`
-- `postgresql`
-- `dm8`
+- `iam/mysql.sql`
+- `iam/sqlite.sql`
+- `iam/postgresql.sql`
+- `dm8` 仅识别 vendor，`iam/dm8.sql` 暂缓；缺失 SQL 时初始化必须失败
 
-## 当前完成状态
+## 初始化顺序
 
-- `mysql.sql`：已完成，来自旧 `sql/create/create_iam.sql` 迁移
-- `sqlite.sql`：已完成，按 `mysql.sql` 结构转换
-- `postgresql.sql`：已完成，按 `mysql.sql` 结构转换
-- `dm8.sql`：待补（后续需要在真实达梦8实例验证）
+```bash
+python manage.py install_infra_schema --domain iam
+python manage.py init_admin
+```
 
-## 旧路径状态
+## Dry-run
 
-旧入口 `sql/create/create_iam.sql` 已删除，不再作为标准入口。
+```bash
+python manage.py install_infra_schema --domain iam --dry-run
+```
 
-## 目录职责边界
+## 幂等策略
 
-本目录只存放静态 DDL：
+- 目标表全部已存在：跳过执行
+- 目标表部分存在：直接失败，提示半初始化风险并要求人工确认
+- 不提供自动 `drop` / `overwrite` / `force`
 
-- 不包含建表器
-- 不自动执行 SQL
-- 不负责 migration
-- ORM 仍保持 `managed=False`
-- 后续 schema installer 会基于 `INFRA_CREATE_SQL_PATH_MAP` 定位 SQL 文件
-- `sqlite.sql` 可使用 Python 标准库 `sqlite3` 做 in-memory DDL 验证
+## 方案边界
 
-## 后续补齐顺序建议
-
-1. `postgresql.sql`
-2. `dm8.sql`
+- 继续使用静态 DDL + `managed=False`
+- 不引入 Django migrations 作为替代
 

@@ -195,6 +195,7 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.staticfiles",
     "adrf",
+    "ns_backend.apps.NsBackendConfig",
 ]
 
 _LOAD_APPS: Dict[str, bool] = BACKEND_CONFIG.get("loaded_apps", {})
