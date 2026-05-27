@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any, Mapping
 
@@ -11,7 +11,7 @@ class RuntimeExtension:
     name: str
     extension_type: str
     provider: Any
-    metadata: dict[str, Any]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class RuntimeExtensionRegistry:

@@ -74,6 +74,10 @@ class RuntimePacket:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> RuntimePacket:
+        packet_id = str(data.get("packet_id") or "").strip()
+        if not packet_id:
+            raise ValueError("packet_id must be non-empty")
+
         raw_payload = data.get("payload", {})
         if not isinstance(raw_payload, dict):
             raise ValueError("payload must be dict")
@@ -95,7 +99,7 @@ class RuntimePacket:
             raise ValueError(f"invalid created_at: {raw_created_at}") from exc
 
         return cls(
-            packet_id=str(data.get("packet_id") or "").strip(),
+            packet_id=packet_id,
             packet_type=RuntimePacketType(str(data.get("packet_type") or "")),
             source_endpoint_id=_to_optional_str(data.get("source_endpoint_id")),
             target_endpoint_id=_to_optional_str(data.get("target_endpoint_id")),

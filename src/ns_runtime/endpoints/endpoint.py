@@ -27,10 +27,14 @@ class RuntimeEndpoint:
         capabilities: Iterable[str] = (),
         metadata: Mapping[str, Any] | None = None,
     ) -> RuntimeEndpoint:
+        endpoint_id_text = str(endpoint_id).strip()
+        if not endpoint_id_text:
+            raise ValueError("endpoint_id must be non-empty")
+
         now = datetime.now(timezone.utc)
         unique_capabilities = _normalize_capabilities(capabilities)
         return cls(
-            endpoint_id=str(endpoint_id).strip(),
+            endpoint_id=endpoint_id_text,
             endpoint_type=endpoint_type,
             capabilities=unique_capabilities,
             metadata=dict(metadata or {}),
