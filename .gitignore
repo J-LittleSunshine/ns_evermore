@@ -218,8 +218,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# ns
-/data
-/log
+# NsEvermore local runtime files
+/data/
+/log/
 /etc/backend_config.json
 !/etc/backend_config.example.json

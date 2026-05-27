@@ -4,6 +4,7 @@ from __future__ import annotations
 from argparse import ArgumentParser
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db import DatabaseError
 
 from ns_backend.infra_schema import install_infra_schema
 
@@ -30,7 +31,7 @@ class Command(BaseCommand):
 
         try:
             result = install_infra_schema(str(domain), dry_run=dry_run)
-        except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        except (ValueError, FileNotFoundError, RuntimeError, DatabaseError) as exc:
             raise CommandError(str(exc)) from exc
 
         self.stdout.write(f"infra_domain: {result.infra_domain}")
