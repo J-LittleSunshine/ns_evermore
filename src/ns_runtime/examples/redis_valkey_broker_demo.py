@@ -29,13 +29,23 @@ def _env_int(name: str, default: int) -> int:
     return int(text)
 
 
+def _env_optional_text(name: str) -> str | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    text = raw.strip()
+    return text or None
+
+
 def main() -> None:
     backend = os.getenv("NS_RUNTIME_BROKER_BACKEND", "redis")
-    url = os.getenv("NS_RUNTIME_BROKER_URL")
+    url = _env_optional_text("NS_RUNTIME_BROKER_URL")
     host = os.getenv("NS_RUNTIME_BROKER_HOST", "127.0.0.1")
     port = _env_int("NS_RUNTIME_BROKER_PORT", 6379)
     db = _env_int("NS_RUNTIME_BROKER_DB", 0)
     prefix = os.getenv("NS_RUNTIME_BROKER_PREFIX", "ns:runtime:demo")
+    username = _env_optional_text("NS_RUNTIME_BROKER_USERNAME")
+    password = _env_optional_text("NS_RUNTIME_BROKER_PASSWORD")
 
     config = RedisValkeyBrokerConfig(
         backend=backend,
@@ -43,6 +53,8 @@ def main() -> None:
         host=host,
         port=port,
         db=db,
+        username=username,
+        password=password,
         key_prefix=prefix,
     )
     broker = RedisValkeyBroker(config=config)
@@ -60,7 +72,13 @@ def main() -> None:
     try:
         broker.start()
         started = True
-        print("[broker] started", backend, host, port, db)
+        # 启动信息仅输出认证是否启用，避免泄露 password 或 URL 中可能包含的敏感信息。
+        auth_enabled = bool(password) or (url is not None and "@" in url) or (username is not None)
+        url_flag = "provided" if url else "none"
+        print(
+            f"[broker] started backend={backend} host={host} port={port} db={db} "
+            f"prefix={prefix} auth={'enabled' if auth_enabled else 'disabled'} url={url_flag}"
+        )
 
         packet = RuntimePacket.create(
             packet_type=RuntimePacketType.EVENT,
@@ -101,6 +119,7 @@ def main() -> None:
     except Exception as exc:
         print("[connection or operation error]", exc)
         print("请确认本地 Redis/Valkey 服务已启动，且连接参数正确。")
+        print("如果 Redis/Valkey 开启认证，请设置 NS_RUNTIME_BROKER_PASSWORD 或使用带认证信息的 NS_RUNTIME_BROKER_URL。")
     finally:
         if started:
             broker.stop()
