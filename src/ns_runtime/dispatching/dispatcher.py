@@ -219,6 +219,45 @@ class RuntimeTaskDispatcher:
             reason="accepted",
         )
 
+    def handle_system_packet(self, packet: RuntimePacket) -> RuntimePacket | None:
+        # 该方法用于挂载到 RuntimePacketRouter，让 WebSocket 上行的 accept_ack 能进入 dispatcher 处理链路。
+        if packet.packet_type != RuntimePacketType.SYSTEM:
+            return None
+        action = str(packet.payload.get("action") or "").strip()
+        if action != "accept_ack":
+            return None
+
+        try:
+            result = self.handle_accept_ack(packet)
+            if result is None:
+                return None
+            return RuntimePacket.create(
+                packet_type=RuntimePacketType.SYSTEM,
+                source_endpoint_id="dispatcher",
+                target_endpoint_id=packet.source_endpoint_id,
+                trace_id=packet.trace_id,
+                tenant_id=packet.tenant_id,
+                operator_id=packet.operator_id,
+                payload={
+                    "ok": True,
+                    "action": "accept_ack_received",
+                    "task_id": result.task.task_id,
+                    "status": result.task.status.value,
+                },
+            )
+        except (ValueError, KeyError) as exc:
+            return RuntimePacket.create(
+                packet_type=RuntimePacketType.ERROR,
+                source_endpoint_id="dispatcher",
+                target_endpoint_id=packet.source_endpoint_id,
+                trace_id=packet.trace_id,
+                payload={
+                    "ok": False,
+                    "action": "accept_ack",
+                    "error_message": str(exc),
+                },
+            )
+
     def requeue_expired_ack(self, now: datetime | None = None) -> tuple[RuntimeTaskDispatchResult, ...]:
         expired_items = self._ack_registry.list_expired(now)
         results: list[RuntimeTaskDispatchResult] = []

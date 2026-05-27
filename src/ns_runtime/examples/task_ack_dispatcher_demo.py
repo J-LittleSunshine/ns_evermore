@@ -85,6 +85,7 @@ async def _run_demo() -> None:
                 gateway=gateway,
                 ack_timeout_seconds=5.0,
             )
+            service.router.register_handler(RuntimePacketType.SYSTEM, dispatcher.handle_system_packet)
 
             wait_packet = asyncio.create_task(websocket.recv())
             dispatch_results = await dispatcher.dispatch_once()
@@ -102,6 +103,9 @@ async def _run_demo() -> None:
                 packet_type=RuntimePacketType.SYSTEM,
                 source_endpoint_id="executor-ack-demo",
                 target_endpoint_id="dispatcher",
+                trace_id="ack-demo-trace-1",
+                tenant_id="tenant-demo",
+                operator_id="operator-demo",
                 payload={
                     "action": "accept_ack",
                     "task_id": task_id,
@@ -109,9 +113,8 @@ async def _run_demo() -> None:
                 },
             )
             await websocket.send(codec.encode(ack_packet))
-
-            ack_result = dispatcher.handle_accept_ack(ack_packet)
-            print("[ack result]", ack_result.reason if ack_result else None)
+            ack_response = codec.decode(await websocket.recv())
+            print("[ack response]", ack_response.packet_type.value, ack_response.payload)
 
             stored_task = task_store.get(submit_result.task.task_id)
             print("[task status]", stored_task.status.value if stored_task else None)
