@@ -12,6 +12,12 @@ from ns_runtime.config import RuntimeConfig
 from ns_runtime.coordinator import MasterCoordinator
 from ns_runtime.endpoints import EndpointRegistry, RuntimeEndpoint
 from ns_runtime.extensions import RuntimeExtension, RuntimeExtensionRegistry
+from ns_runtime.gateway import (
+    WebSocketConnection,
+    WebSocketConnectionManager,
+    WebSocketGateway,
+    WebSocketGatewayConfig,
+)
 from ns_runtime.packets import (
     RuntimeEndpointStatus,
     RuntimeEndpointType,
@@ -37,6 +43,10 @@ __all__ = [
     "RedisValkeyBroker",
     "RedisValkeyBrokerConfig",
     "StreamMessage",
+    "WebSocketGatewayConfig",
+    "WebSocketConnection",
+    "WebSocketConnectionManager",
+    "WebSocketGateway",
     "RuntimePacketRouter",
     "RuntimeExtension",
     "RuntimeExtensionRegistry",
