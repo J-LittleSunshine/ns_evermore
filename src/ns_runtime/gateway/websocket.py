@@ -244,6 +244,17 @@ class WebSocketGateway:
         return await self.connection_manager.broadcast(encoded)
 
     async def _handle_connection(self, websocket: Any) -> None:
+        resolved_path = self._resolve_request_path(websocket)
+        # path 校验是 standalone gateway 的轻量入口约束，不等同于 IAM 鉴权。
+        if resolved_path is not None and resolved_path != self.config.path:
+            close_method = getattr(websocket, "close", None)
+            if callable(close_method):
+                try:
+                    await close_method(code=1008, reason="invalid runtime gateway path")
+                except Exception:
+                    return
+            return
+
         connection_id = uuid4().hex
         now = datetime.now(timezone.utc)
         connection = WebSocketConnection(
@@ -485,4 +496,17 @@ class WebSocketGateway:
         if isinstance(raw_address, tuple):
             return ":".join(str(item) for item in raw_address if item is not None)
         return str(raw_address)
+
+    def _resolve_request_path(self, websocket: Any) -> str | None:
+        request = getattr(websocket, "request", None)
+        if request is not None:
+            request_path = getattr(request, "path", None)
+            if request_path is not None:
+                return str(request_path)
+
+        websocket_path = getattr(websocket, "path", None)
+        if websocket_path is not None:
+            return str(websocket_path)
+
+        return None
 
