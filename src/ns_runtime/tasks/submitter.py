@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Any, Callable, cast
+from typing import cast, Callable, Any
 
 from ns_runtime.brokers import RuntimeBroker
 from ns_runtime.packets import RuntimePacket, RuntimePacketCodec, RuntimePacketType
@@ -49,7 +49,6 @@ class RuntimeTaskSubmitter:
         self._task_store.save(created_task)
 
         queued_task = created_task.mark_queued()
-        self._task_store.save(queued_task)
 
         topic = request.topic or self._default_topic
         packet = RuntimePacket.create(
@@ -65,6 +64,7 @@ class RuntimeTaskSubmitter:
         )
 
         # submitter 仅负责任务入队，不负责后续分发和执行。
+        # QUEUED 状态仅表示 broker 入队成功；在 broker 写入成功前，不应写入 QUEUED 到 task_store。
         broker_message_id: str | None = None
         if self._use_stream:
             stream = request.stream or self._default_stream
@@ -76,6 +76,8 @@ class RuntimeTaskSubmitter:
             broker_message_id = str(raw_message_id)
         else:
             self._broker.publish(topic, packet)
+
+        self._task_store.save(queued_task)
 
         return RuntimeTaskSubmitResult(
             task=queued_task,
