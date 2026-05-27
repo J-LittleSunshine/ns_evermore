@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from ns_runtime.brokers import RuntimeBroker
+from ns_runtime.dispatching.ack import MemoryTaskAckRegistry, RuntimeTaskAckRegistry, RuntimeTaskPendingDispatch
 from ns_runtime.dispatching.models import RuntimeTaskDispatchResult
 from ns_runtime.dispatching.strategies import CapabilityMatchDispatchStrategy, RuntimeTaskDispatchStrategy
 from ns_runtime.endpoints import EndpointRegistry
@@ -22,12 +24,16 @@ class RuntimeTaskDispatcher:
         strategy: RuntimeTaskDispatchStrategy | None = None,
         task_topic: str = "runtime.task.queue",
         max_batch_size: int = 1,
+        ack_registry: RuntimeTaskAckRegistry | None = None,
+        ack_timeout_seconds: float = 10.0,
     ) -> None:
         task_topic_text = str(task_topic).strip()
         if not task_topic_text:
             raise ValueError("task_topic must be non-empty")
         if max_batch_size <= 0:
             raise ValueError("max_batch_size must be greater than 0")
+        if ack_timeout_seconds <= 0:
+            raise ValueError("ack_timeout_seconds must be greater than 0")
 
         self._broker = broker
         self._task_store = task_store
@@ -36,6 +42,8 @@ class RuntimeTaskDispatcher:
         self._strategy = strategy or CapabilityMatchDispatchStrategy()
         self._task_topic = task_topic_text
         self._max_batch_size = max_batch_size
+        self._ack_registry = ack_registry or MemoryTaskAckRegistry()
+        self._ack_timeout_seconds = float(ack_timeout_seconds)
 
     async def dispatch_once(self) -> tuple[RuntimeTaskDispatchResult, ...]:
         packets = self._broker.poll(self._task_topic, self._max_batch_size)
@@ -156,8 +164,20 @@ class RuntimeTaskDispatcher:
                 )
                 continue
 
-            # Phase 6A 中 DISPATCHING 仅表示“已下发到 gateway 目标端点”，不表示 executor 已接收或已 ACK。
+            # Phase 6B 中 DISPATCHING 表示“已下发且等待 accept_ack”，不表示任务已进入执行态。
             dispatched_task = self._task_store.update_status(task.task_id, RuntimeTaskStatus.DISPATCHING)
+            dispatched_at = datetime.now(timezone.utc)
+            pending = RuntimeTaskPendingDispatch(
+                task_id=task.task_id,
+                executor_endpoint_id=selected_endpoint.endpoint_id,
+                original_task_packet=packet,
+                dispatch_packet=dispatch_packet,
+                dispatched_at=dispatched_at,
+                deadline_at=dispatched_at + timedelta(seconds=self._ack_timeout_seconds),
+                dispatch_attempts=1,
+            )
+            # Phase 6B 中 DISPATCHING 表示任务已下发，正在等待 executor accept_ack。
+            self._ack_registry.register_pending(pending)
             results.append(
                 RuntimeTaskDispatchResult(
                     task=dispatched_task,
@@ -173,6 +193,54 @@ class RuntimeTaskDispatcher:
     def _requeue_task_packet(self, packet: RuntimePacket) -> None:
         # Phase 6A 只做失败保留：将原始 TASK 消息放回队列，不做 retry 计数、backoff 或 DLQ。
         self._broker.publish(self._task_topic, packet)
+
+    def handle_accept_ack(self, packet: RuntimePacket) -> RuntimeTaskDispatchResult | None:
+        if packet.packet_type != RuntimePacketType.SYSTEM:
+            return None
+
+        action = str(packet.payload.get("action") or "").strip()
+        if action != "accept_ack":
+            return None
+
+        task_id = str(packet.payload.get("task_id") or "").strip()
+        executor_endpoint_id = str(packet.source_endpoint_id or "").strip()
+        if not task_id:
+            raise ValueError("accept_ack payload.task_id is required")
+        if not executor_endpoint_id:
+            raise ValueError("accept_ack source_endpoint_id is required")
+
+        self._ack_registry.accept(task_id, executor_endpoint_id)
+        accepted_task = self._task_store.update_status(task_id, RuntimeTaskStatus.ACCEPTED)
+        return RuntimeTaskDispatchResult(
+            task=accepted_task,
+            packet=packet,
+            selected_endpoint=None,
+            dispatched=True,
+            reason="accepted",
+        )
+
+    def requeue_expired_ack(self, now: datetime | None = None) -> tuple[RuntimeTaskDispatchResult, ...]:
+        expired_items = self._ack_registry.list_expired(now)
+        results: list[RuntimeTaskDispatchResult] = []
+        for pending in expired_items:
+            removed = self._ack_registry.remove(pending.task_id)
+            if removed is None:
+                continue
+
+            queued_task = self._task_store.update_status(removed.task_id, RuntimeTaskStatus.QUEUED)
+            # Phase 6B 只做 ACK 超时回收：恢复 QUEUED 并回队，不做完整 retry/backoff/DLQ 策略。
+            self._broker.publish(self._task_topic, removed.original_task_packet)
+            results.append(
+                RuntimeTaskDispatchResult(
+                    task=queued_task,
+                    packet=removed.original_task_packet,
+                    selected_endpoint=None,
+                    dispatched=False,
+                    reason="ack_timeout_requeued",
+                )
+            )
+
+        return tuple(results)
 
     @staticmethod
     def _build_fallback_task(packet: RuntimePacket, task_payload: Mapping[str, Any] | None = None) -> RuntimeTask:
