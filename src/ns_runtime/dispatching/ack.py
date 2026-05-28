@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from threading import RLock
 
-from ns_runtime.packets import RuntimePacket
+from ns_common.protocol import RuntimePacket
 
 
 class RuntimeTaskAckStatus(str, Enum):

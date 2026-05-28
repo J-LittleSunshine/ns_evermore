@@ -3,10 +3,16 @@ from __future__ import annotations
 
 from typing import cast, Callable, Any
 
+from ns_common.protocol import (
+    RuntimePacket,
+    RuntimePacketCodec,
+    RuntimePacketType,
+    RuntimeTask,
+    RuntimeTaskSubmitRequest,
+    RuntimeTaskSubmitResult,
+)
 from ns_runtime.brokers import RuntimeBroker
-from ns_runtime.packets import RuntimePacket, RuntimePacketCodec, RuntimePacketType
 from ns_runtime.tasks.memory import MemoryTaskStore
-from ns_runtime.tasks.models import RuntimeTask, RuntimeTaskSubmitRequest, RuntimeTaskSubmitResult
 from ns_runtime.tasks.store import RuntimeTaskStore
 
 

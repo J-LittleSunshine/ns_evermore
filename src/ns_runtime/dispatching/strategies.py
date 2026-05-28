@@ -4,9 +4,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Iterable
 
+from ns_common.protocol import RuntimeEndpointStatus, RuntimeEndpointType, RuntimeTask
 from ns_runtime.endpoints import RuntimeEndpoint
-from ns_runtime.packets import RuntimeEndpointStatus, RuntimeEndpointType
-from ns_runtime.tasks import RuntimeTask
 
 
 class RuntimeTaskDispatchStrategy(ABC):

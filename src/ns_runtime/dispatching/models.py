@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ns_common.protocol import RuntimePacket, RuntimeTask
 from ns_runtime.endpoints import RuntimeEndpoint
-from ns_runtime.packets import RuntimePacket
-from ns_runtime.tasks import RuntimeTask
 
 
 @dataclass(frozen=True)

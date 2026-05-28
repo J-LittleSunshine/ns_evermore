@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from ns_runtime.packets.enums import RuntimePacketType
-from ns_runtime.packets.packet import RuntimePacket
+from ns_common.protocol import RuntimePacket, RuntimePacketType
 
 RuntimePacketHandler = Callable[[RuntimePacket], RuntimePacket | None]
 

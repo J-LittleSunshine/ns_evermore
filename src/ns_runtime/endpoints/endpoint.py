@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from ns_runtime.packets.enums import RuntimeEndpointStatus, RuntimeEndpointType
+from ns_common.protocol import RuntimeEndpointStatus, RuntimeEndpointType
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from ns_common.protocol.tasks.models import (
+from .enums import RuntimeTaskStatus
+from .models import (
     RuntimeTask,
     RuntimeTaskContext,
     RuntimeTaskSubmitRequest,
@@ -9,6 +10,7 @@ from ns_common.protocol.tasks.models import (
 )
 
 __all__ = [
+    "RuntimeTaskStatus",
     "RuntimeTaskContext",
     "RuntimeTask",
     "RuntimeTaskSubmitRequest",

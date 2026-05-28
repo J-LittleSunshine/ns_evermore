@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from threading import RLock
 
-from ns_runtime.tasks.enums import RuntimeTaskStatus
-from ns_runtime.tasks.models import RuntimeTask
+from ns_common.protocol import RuntimeTask, RuntimeTaskStatus
 from ns_runtime.tasks.store import RuntimeTaskStore
 
 

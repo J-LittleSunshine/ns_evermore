@@ -4,8 +4,8 @@ from __future__ import annotations
 from collections import deque
 from threading import RLock
 
+from ns_common.protocol import RuntimePacket
 from ns_runtime.brokers.base import RuntimeBroker
-from ns_runtime.packets.packet import RuntimePacket
 
 
 class MemoryBroker(RuntimeBroker):

@@ -8,8 +8,8 @@ from importlib import import_module
 from typing import Any
 from uuid import uuid4
 
+from ns_common.protocol import RuntimeEndpointType, RuntimePacket, RuntimePacketCodec, RuntimePacketType
 from ns_runtime.endpoints import RuntimeEndpoint
-from ns_runtime.packets import RuntimeEndpointType, RuntimePacket, RuntimePacketCodec, RuntimePacketType
 from ns_runtime.service import RuntimeService
 
 

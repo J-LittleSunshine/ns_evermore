@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ns_runtime.packets.packet import RuntimePacket
+from ns_common.protocol import RuntimePacket
 
 
 class RuntimeBroker(ABC):

@@ -4,14 +4,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
+from ns_common.protocol import RuntimePacket, RuntimePacketType, RuntimeTask, RuntimeTaskContext, RuntimeTaskStatus
 from ns_runtime.brokers import RuntimeBroker
 from ns_runtime.dispatching.ack import MemoryTaskAckRegistry, RuntimeTaskAckRegistry, RuntimeTaskPendingDispatch
 from ns_runtime.dispatching.models import RuntimeTaskDispatchResult
 from ns_runtime.dispatching.strategies import CapabilityMatchDispatchStrategy, RuntimeTaskDispatchStrategy
 from ns_runtime.endpoints import EndpointRegistry
 from ns_runtime.gateway import WebSocketGateway
-from ns_runtime.packets import RuntimePacket, RuntimePacketType
-from ns_runtime.tasks import RuntimeTask, RuntimeTaskContext, RuntimeTaskStatus, RuntimeTaskStore
+from ns_runtime.tasks import RuntimeTaskStore
 
 
 class RuntimeTaskDispatcher:

@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from ns_common.protocol import RuntimeServiceState
 from ns_runtime.brokers.base import RuntimeBroker
 from ns_runtime.brokers.memory import MemoryBroker
 from ns_runtime.config import RuntimeConfig
 from ns_runtime.coordinator.master import MasterCoordinator
 from ns_runtime.endpoints.registry import EndpointRegistry
 from ns_runtime.extensions.registry import RuntimeExtensionRegistry
-from ns_runtime.packets.enums import RuntimeServiceState
 from ns_runtime.routing.router import RuntimePacketRouter
 
 

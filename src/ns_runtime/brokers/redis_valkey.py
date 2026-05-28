@@ -5,9 +5,8 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Any
 
+from ns_common.protocol import RuntimePacket, RuntimePacketCodec
 from ns_runtime.brokers.base import RuntimeBroker
-from ns_runtime.packets.codec import RuntimePacketCodec
-from ns_runtime.packets.packet import RuntimePacket
 
 
 @dataclass(frozen=True)
