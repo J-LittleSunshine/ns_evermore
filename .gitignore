@@ -221,5 +221,8 @@ __marimo__/
 # NsEvermore local runtime files
 /data/
 /log/
-/etc/backend_config.json
-!/etc/backend_config.example.json
+/etc/ns_config.prod.json
+/etc/ns_config.dev.json
+/etc/ns_config.test.json
+/etc/ns_config.local.json
+!/etc/ns_config.example.json

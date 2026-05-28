@@ -3,6 +3,8 @@ from __future__ import annotations
 
 
 class NsErrorCode:
+    SUCCESS = 0
+
     # Common / generic: 10000-10999
     ID_EMPTY = 10001
     DATA_NOT_FOUND = 10002
@@ -109,6 +111,3 @@ class NsErrorCode:
         TOKEN_ROTATION_REVOKED,
         TOKEN_ROTATION_REPLAYED,
     )
-
-
-__all__ = ["NsErrorCode"]
