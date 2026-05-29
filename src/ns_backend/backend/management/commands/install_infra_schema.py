@@ -17,17 +17,8 @@ class Command(BaseCommand):
     help = "Install static infrastructure schema SQL for configured domain."
 
     def add_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument(
-            "--domain",
-            type=str,
-            default="iam",
-            help="Infrastructure domain name, default: iam",
-        )
-        parser.add_argument(
-            "--dry-run",
-            action="store_true",
-            help="Only print install plan without executing SQL.",
-        )
+        parser.add_argument("--domain", type=str, default="iam", help="Infrastructure domain name, default: iam")
+        parser.add_argument("--dry-run", action="store_true", help="Only print install plan without executing SQL.")
 
     def handle(self, *args: object, **options: object) -> None:
         domain = options.get("domain", "iam")

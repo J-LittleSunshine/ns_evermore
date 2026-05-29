@@ -19,10 +19,11 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.staticfiles",
     "adrf",
+    "iam"
 ]
 
 _APP_PATH_MAP = {
-    "iam": "ns_backend.iam.apps.IamConfig",
+    "iam": "ns_backend.iam.apps.IamConfig"
 }
 
 for _app_name, _enabled in _BACKEND.loaded_apps.items():
@@ -36,7 +37,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware"
 ]
 
 ROOT_URLCONF = "backend.urls"
@@ -67,22 +68,12 @@ for _db_alias, _db_config in _DATABASES_CONFIG.items():
 
     DATABASES[_db_alias] = current_config
 
-DATABASE_VENDOR_MAP: dict[str, str] = {
-    alias: detect_db_vendor(db_config)
-    for alias, db_config in DATABASES.items()
-}
+DATABASE_VENDOR_MAP: dict[str, str] = {alias: detect_db_vendor(db_config) for alias, db_config in DATABASES.items()}
 
-_unknown_vendor_aliases = [
-    alias for alias, vendor in DATABASE_VENDOR_MAP.items()
-    if vendor == DB_VENDOR_UNKNOWN
-]
+_unknown_vendor_aliases = [alias for alias, vendor in DATABASE_VENDOR_MAP.items() if vendor == DB_VENDOR_UNKNOWN]
 
 if _unknown_vendor_aliases:
-    raise RuntimeError(
-        "unsupported or unknown database vendor for aliases: "
-        + ", ".join(_unknown_vendor_aliases)
-        + ". Please set NS_VENDOR or ENGINE correctly."
-    )
+    raise RuntimeError("unsupported or unknown database vendor for aliases: " + ", ".join(_unknown_vendor_aliases) + ". Please set NS_VENDOR or ENGINE correctly.")
 
 INFRA_DB_ROUTER_MAP = dict(_BACKEND.infra_db_router_map)
 DATABASE_ROUTER_MAP = dict(_BACKEND.database_router_map)
@@ -99,9 +90,7 @@ for _infra_domain, _db_alias in INFRA_DB_ROUTER_MAP.items():
     if not isinstance(_db_alias, str) or not _db_alias.strip():
         raise TypeError("infra db alias must be non-empty str")
     if _db_alias not in DATABASES:
-        raise RuntimeError(
-            f"infra_db_router_map.{_infra_domain} points to undefined database alias: {_db_alias}"
-        )
+        raise RuntimeError(f"infra_db_router_map.{_infra_domain} points to undefined database alias: {_db_alias}")
 
 for _app_label, _db_alias in DATABASE_ROUTER_MAP.items():
     if not isinstance(_app_label, str) or not _app_label.strip():
@@ -109,13 +98,9 @@ for _app_label, _db_alias in DATABASE_ROUTER_MAP.items():
     if not isinstance(_db_alias, str) or not _db_alias.strip():
         raise TypeError("database_router_map db alias must be non-empty str")
     if _db_alias not in DATABASES:
-        raise RuntimeError(
-            f"database_router_map.{_app_label} points to undefined database alias: {_db_alias}"
-        )
+        raise RuntimeError(f"database_router_map.{_app_label} points to undefined database alias: {_db_alias}")
 
-DATABASE_ROUTERS = [
-    "backend.db.routers.AppDatabaseRouter",
-]
+DATABASE_ROUTERS = ["backend.db.routers.AppDatabaseRouter"]
 
 INFRA_SQL_ROOT = SQL_DIR
 
@@ -124,23 +109,12 @@ INFRA_DB_VENDOR_MAP: dict[str, str] = {
     for infra_domain, db_alias in INFRA_DB_ROUTER_MAP.items()
 }
 
-_unknown_infra_domains = [
-    infra_domain
-    for infra_domain, vendor in INFRA_DB_VENDOR_MAP.items()
-    if vendor == DB_VENDOR_UNKNOWN
-]
+_unknown_infra_domains = [infra_domain for infra_domain, vendor in INFRA_DB_VENDOR_MAP.items() if vendor == DB_VENDOR_UNKNOWN]
 if _unknown_infra_domains:
-    raise RuntimeError(
-        "unsupported infra db vendor for domains: "
-        + ", ".join(_unknown_infra_domains)
-    )
+    raise RuntimeError("unsupported infra db vendor for domains: " + ", ".join(_unknown_infra_domains))
 
 INFRA_CREATE_SQL_PATH_MAP: dict[str, Path] = {
-    infra_domain: build_infra_create_sql_path(
-        sql_root=INFRA_SQL_ROOT,
-        infra_domain=infra_domain,
-        vendor=vendor,
-    )
+    infra_domain: build_infra_create_sql_path(sql_root=INFRA_SQL_ROOT, infra_domain=infra_domain, vendor=vendor)
     for infra_domain, vendor in INFRA_DB_VENDOR_MAP.items()
 }
 

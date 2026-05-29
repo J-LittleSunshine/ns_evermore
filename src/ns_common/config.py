@@ -84,10 +84,7 @@ class NsConfig:
                 if not isinstance(log_config_raw, dict):
                     raise ValueError("log_config must be a JSON object")
 
-                config: NsConfig = cls(
-                    backend_config=_NsBackendConfig(**backend_config_raw),
-                    log_config=_NsLogConfig(**log_config_raw),
-                )
+                config: NsConfig = cls(backend_config=_NsBackendConfig(**backend_config_raw), log_config=_NsLogConfig(**log_config_raw))
                 config._validate()
                 return config
 
@@ -137,14 +134,7 @@ class NsConfig:
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
         temp_file_path: Path | None = None
-        temp_io_config: Dict[str, Any] = {
-            "mode": "w",
-            "encoding": "utf-8",
-            "delete": False,
-            "dir": TMP_DIR,
-            "prefix": "ns_config_",
-            "suffix": ".json.tmp"
-        }
+        temp_io_config: Dict[str, Any] = {"mode": "w", "encoding": "utf-8", "delete": False, "dir": TMP_DIR, "prefix": "ns_config_", "suffix": ".json.tmp"}
         try:
             with tempfile.NamedTemporaryFile(**temp_io_config) as _file:
                 temp_file_path = Path(_file.name)

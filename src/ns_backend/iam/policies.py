@@ -123,8 +123,7 @@ class DataScopePolicy(BasePolicy):
             "company_id": user.company_id,
             "subsidiary_id": user.subsidiary_id,
             "department_id": user.department_id,
-            "user_id": user.id,
-            "is_platform_scope": False,
+            "user_id": user.id, "is_platform_scope": False
         }
 
         if scope == DATA_SCOPE_SELF:

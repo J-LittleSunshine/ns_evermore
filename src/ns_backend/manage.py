@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """Django's command-line utility for administrative tasks."""
+
 import os
 import sys
 
-from backend.path_bootstrap import ensure_src_on_sys_path
+from backend.bootstrap import ensure_src_on_sys_path
 
 ensure_src_on_sys_path()
 
@@ -11,6 +12,7 @@ ensure_src_on_sys_path()
 def main() -> None:
     """Run administrative tasks."""
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
+
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

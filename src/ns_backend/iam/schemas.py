@@ -80,5 +80,4 @@ class PermissionSpec:
 class PermissionProvider(Protocol):
     app_label: str
 
-    def list_permissions(self) -> tuple[PermissionSpec, ...]:
-        ...
+    def list_permissions(self) -> tuple[PermissionSpec, ...]: ...

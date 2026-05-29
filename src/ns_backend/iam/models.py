@@ -65,10 +65,7 @@ class IamUser(models.Model):
     USER_TYPE_PERSONAL = "PERSONAL"
     USER_TYPE_ENTERPRISE = "ENTERPRISE"
 
-    USER_TYPE_CHOICES = (
-        (USER_TYPE_PERSONAL, "Personal user"),
-        (USER_TYPE_ENTERPRISE, "Enterprise user"),
-    )
+    USER_TYPE_CHOICES = ((USER_TYPE_PERSONAL, "Personal user"), (USER_TYPE_ENTERPRISE, "Enterprise user"))
 
     id = models.BigAutoField(primary_key=True)
     username = models.CharField(max_length=64, unique=True)
@@ -101,11 +98,7 @@ class IamPermission(models.Model):
     TYPE_ACTION = "ACTION"
     TYPE_DATA = "DATA"
 
-    TYPE_CHOICES = (
-        (TYPE_MENU, "Menu permission"),
-        (TYPE_ACTION, "Action permission"),
-        (TYPE_DATA, "Data permission"),
-    )
+    TYPE_CHOICES = ((TYPE_MENU, "Menu permission"), (TYPE_ACTION, "Action permission"), (TYPE_DATA, "Data permission"))
 
     id = models.BigAutoField(primary_key=True)
     permission_code = models.CharField(max_length=128, unique=True)
@@ -127,10 +120,7 @@ class IamRole(models.Model):
     SCOPE_PERSONAL = "PERSONAL"
     SCOPE_ENTERPRISE = "ENTERPRISE"
 
-    SCOPE_CHOICES = (
-        (SCOPE_PERSONAL, "Personal scope"),
-        (SCOPE_ENTERPRISE, "Enterprise scope"),
-    )
+    SCOPE_CHOICES = ((SCOPE_PERSONAL, "Personal scope"), (SCOPE_ENTERPRISE, "Enterprise scope"))
 
     id = models.BigAutoField(primary_key=True)
     role_code = models.CharField(max_length=64)

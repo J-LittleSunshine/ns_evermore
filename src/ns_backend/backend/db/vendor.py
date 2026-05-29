@@ -12,12 +12,7 @@ DB_VENDOR_POSTGRESQL = "postgresql"
 DB_VENDOR_DM8 = "dm8"
 DB_VENDOR_UNKNOWN = "unknown"
 
-SUPPORTED_INFRA_DB_VENDORS = (
-    DB_VENDOR_SQLITE,
-    DB_VENDOR_MYSQL,
-    DB_VENDOR_POSTGRESQL,
-    DB_VENDOR_DM8,
-)
+SUPPORTED_INFRA_DB_VENDORS = (DB_VENDOR_SQLITE, DB_VENDOR_MYSQL, DB_VENDOR_POSTGRESQL, DB_VENDOR_DM8)
 
 
 def normalize_db_vendor(value: object) -> str:
@@ -64,10 +59,7 @@ def detect_db_vendor(db_config: dict[str, Any]) -> str:
     if "mysql" in engine or "mariadb" in engine:
         return DB_VENDOR_MYSQL
 
-    if engine in {
-        "django.db.backends.postgresql",
-        "django.db.backends.postgresql_psycopg2",
-    }:
+    if engine in {"django.db.backends.postgresql", "django.db.backends.postgresql_psycopg2"}:
         return DB_VENDOR_POSTGRESQL
     if "postgres" in engine or "psycopg" in engine or "pgsql" in engine:
         return DB_VENDOR_POSTGRESQL

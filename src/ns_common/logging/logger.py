@@ -53,11 +53,7 @@ class _BackupTimedRotatingFileHandler(TimedRotatingFileHandler):
         if self.backupCount <= 0:
             return []
 
-        candidates: list[str] = sorted(
-            str(_path)
-            for _path in self._backup_dir.glob(f"{self._source_filename}.*")
-            if _path.is_file()
-        )
+        candidates: list[str] = sorted(str(_path) for _path in self._backup_dir.glob(f"{self._source_filename}.*") if _path.is_file())
 
         delete_count: int = len(candidates) - self.backupCount
         if delete_count <= 0:
@@ -67,6 +63,7 @@ class _BackupTimedRotatingFileHandler(TimedRotatingFileHandler):
 
 
 if _ConcurrentTimedRotatingFileHandler is not None:
+
     class _BackupConcurrentTimedRotatingFileHandler(_ConcurrentTimedRotatingFileHandler):  # type: ignore[misc]
         """Multiprocess-safe timed rotating handler that stores rotated files under backup."""
 
@@ -87,17 +84,14 @@ if _ConcurrentTimedRotatingFileHandler is not None:
             if backup_count <= 0:
                 return []
 
-            candidates: list[str] = sorted(
-                str(_path)
-                for _path in self._backup_dir.glob(f"{self._source_filename}.*")
-                if _path.is_file()
-            )
+            candidates: list[str] = sorted(str(_path) for _path in self._backup_dir.glob(f"{self._source_filename}.*") if _path.is_file())
 
             delete_count: int = len(candidates) - backup_count
             if delete_count <= 0:
                 return []
 
             return candidates[:delete_count]
+
 else:
     _BackupConcurrentTimedRotatingFileHandler = None
 
@@ -120,11 +114,7 @@ class NsLogger(logging.Logger):
                 self._owner_pid: int = -1
                 self._multiprocessing_mode: bool = multiprocessing_mode
 
-            should_reconfigure: bool = (
-                    not self._initialized
-                    or self._owner_pid != os.getpid()
-                    or self._multiprocessing_mode != multiprocessing_mode
-            )
+            should_reconfigure: bool = not self._initialized or self._owner_pid != os.getpid() or self._multiprocessing_mode != multiprocessing_mode
 
             if not should_reconfigure:
                 return
@@ -158,10 +148,7 @@ class NsLogger(logging.Logger):
 
         self._reset_handlers()
 
-        formatter: logging.Formatter = logging.Formatter(
-            fmt=str(config.get("format", "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s")),
-            datefmt=str(config.get("datefmt", "%Y-%m-%d %H:%M:%S"))
-        )
+        formatter: logging.Formatter = logging.Formatter(fmt=str(config.get("format", "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s")), datefmt=str(config.get("datefmt", "%Y-%m-%d %H:%M:%S")))
 
         main_level: int = self._resolve_level(config.get("file_level", config.get("level", "DEBUG")), logging.DEBUG)
         console_level: int = self._resolve_level(config.get("console_level", config.get("level", "DEBUG")), logging.DEBUG)
@@ -212,14 +199,7 @@ class NsLogger(logging.Logger):
     def _build_file_handler(self, filename: Path, backup_dir: Path, config: Mapping[str, Any]) -> _BackupConcurrentTimedRotatingFileHandler | _BackupTimedRotatingFileHandler:
         at_time: time | None = self._parse_at_time(config.get("at_time"))
 
-        kwargs: dict[str, Any] = {
-            "when": str(config.get("when", "midnight")),
-            "interval": int(config.get("interval", 1)),
-            "backupCount": int(config.get("backup_count", 14)),
-            "encoding": str(config.get("encoding", "utf-8")),
-            "delay": bool(config.get("delay", True)),
-            "utc": bool(config.get("utc", False))
-        }
+        kwargs: dict[str, Any] = {"when": str(config.get("when", "midnight")), "interval": int(config.get("interval", 1)), "backupCount": int(config.get("backup_count", 14)), "encoding": str(config.get("encoding", "utf-8")), "delay": bool(config.get("delay", True)), "utc": bool(config.get("utc", False))}
 
         if at_time is not None:
             kwargs["atTime"] = at_time

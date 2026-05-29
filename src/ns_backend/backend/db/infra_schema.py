@@ -197,7 +197,7 @@ def get_infra_schema_install_plan(infra_domain: str) -> InfraSchemaInstallPlan:
         sql_path=sql_path,
         sql_statement_count=len(statements),
         expected_tables=expected_tables,
-        existing_tables=existing_tables,
+        existing_tables=existing_tables
     )
 
 
@@ -207,11 +207,7 @@ def install_infra_schema(infra_domain: str, *, dry_run: bool = False) -> InfraSc
     expected_index = {name.lower(): name for name in plan.expected_tables}
     existing_index = {name.lower(): name for name in plan.existing_tables}
 
-    existing_expected = tuple(
-        expected_index[name]
-        for name in expected_index
-        if name in existing_index
-    )
+    existing_expected = tuple(expected_index[name] for name in expected_index if name in existing_index)
 
     if len(existing_expected) == len(plan.expected_tables):
         return InfraSchemaInstallResult(
@@ -223,14 +219,11 @@ def install_infra_schema(infra_domain: str, *, dry_run: bool = False) -> InfraSc
             skipped=True,
             executed_statement_count=0,
             expected_tables=plan.expected_tables,
-            existing_tables=plan.existing_tables,
+            existing_tables=plan.existing_tables
         )
 
     if existing_expected:
-        raise RuntimeError(
-            "infra schema is partially initialized, please verify database state manually before retry: "
-            f"domain={plan.infra_domain}, existing_expected_tables={existing_expected}"
-        )
+        raise RuntimeError("infra schema is partially initialized, please verify database state manually before retry: " f"domain={plan.infra_domain}, existing_expected_tables={existing_expected}")
 
     if dry_run:
         return InfraSchemaInstallResult(
@@ -242,7 +235,7 @@ def install_infra_schema(infra_domain: str, *, dry_run: bool = False) -> InfraSc
             skipped=False,
             executed_statement_count=0,
             expected_tables=plan.expected_tables,
-            existing_tables=plan.existing_tables,
+            existing_tables=plan.existing_tables
         )
 
     sql_text = plan.sql_path.read_text(encoding="utf-8")
@@ -265,5 +258,5 @@ def install_infra_schema(infra_domain: str, *, dry_run: bool = False) -> InfraSc
         skipped=False,
         executed_statement_count=executed_statement_count,
         expected_tables=plan.expected_tables,
-        existing_tables=plan.existing_tables,
+        existing_tables=plan.existing_tables
     )

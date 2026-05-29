@@ -14,12 +14,7 @@ ETC_DIR = ROOT_DIR / "etc"
 LOG_DIR = ROOT_DIR / "log"
 TMP_DIR = ROOT_DIR / "tmp"
 SQL_DIR = ROOT_DIR / "sql"
-_REQUIRED_DIRS = [
-    DATA_DIR,
-    ETC_DIR,
-    LOG_DIR,
-    TMP_DIR
-]
+_REQUIRED_DIRS = [DATA_DIR, ETC_DIR, LOG_DIR, TMP_DIR]
 for _dir in _REQUIRED_DIRS:
     _dir.mkdir(parents=True, exist_ok=True)
 
