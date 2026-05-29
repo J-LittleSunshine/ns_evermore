@@ -10,7 +10,7 @@ from uuid import UUID
 
 from django.conf import settings
 
-from backend.exceptions import BusinessError
+from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.constants import (
     USER_TYPE_ENTERPRISE,
     USER_TYPE_PERSONAL,

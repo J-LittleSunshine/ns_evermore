@@ -151,16 +151,11 @@ INSTALLED_APPS = [
     "iam"
 ]
 
-_APP_PATH_MAP = {
-    "iam": "ns_backend.iam.apps.IamConfig"
-}
-
 for _app_name, _enabled in _BACKEND.loaded_apps.items():
     if not _enabled:
         continue
-    _resolved_app = _APP_PATH_MAP.get(_app_name, _app_name)
-    if _resolved_app not in INSTALLED_APPS:
-        INSTALLED_APPS.append(_resolved_app)
+    if _app_name not in INSTALLED_APPS:
+        INSTALLED_APPS.append(_app_name)
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
