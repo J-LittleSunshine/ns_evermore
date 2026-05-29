@@ -1,19 +1,26 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import ipaddress
+import uuid
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from asgiref.sync import sync_to_async
+from django.conf import settings
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
 
+from backend.utils.password_transport import PasswordTransportService
+from ns_backend.backend.common.validators import AuthRequestValidator
+from ns_backend.backend.common.viewset import BaseRequestViewSet
+from ns_backend.backend.exceptions import BusinessError
+from ns_backend.backend.utils.jwt import JwtService
+from ns_backend.iam.auth_rotation import RefreshTokenRotationService
+from ns_backend.iam.models import IamUser, IamUserDevice, IamUserSession, IamUserToken, IamLoginFailureLock
+from ns_backend.iam.services import AuthContextService
+from ns_backend.iam.utils import sha256_text, get_bearer_token_from_request
 from ns_common.error_codes import NsErrorCode
-from ..models import IamUser, IamUserDevice, IamUserSession, IamUserToken
-from ..services import AuthContextService
-from ..utils import sha256_text, get_bearer_token_from_request
-from ...backend.common.validators import AuthRequestValidator
-from ...backend.common.viewset import BaseRequestViewSet
-from ...backend.exceptions import BusinessError
 
 if TYPE_CHECKING:
     pass
@@ -295,52 +302,20 @@ class AuthViewSet(BaseRequestViewSet):
         if not isinstance(user_id, int) or not isinstance(refresh_jti, str):
             raise BusinessError("refresh token invalid or expired", NsErrorCode.REFRESH_TOKEN_INVALID_OR_EXPIRED)
 
-        now = timezone.now()
         refresh_token_hash = JwtService.hash_token(refresh_token)
-
-        old_token = await IamUserToken.objects.select_related("user", "session").filter(user_id=user_id, refresh_jti=refresh_jti, refresh_token_hash=refresh_token_hash, revoked_at__isnull=True, expired_at__gt=now).afirst()
-        if not old_token:
-            raise BusinessError("refresh token invalid or expired", NsErrorCode.REFRESH_TOKEN_INVALID_OR_EXPIRED)
-
-        user = getattr(old_token, "user", None)
-        if user is None or not bool(getattr(user, "is_active", False)):
-            raise BusinessError("User disabled or not found", NsErrorCode.USER_DISABLED_OR_NOT_FOUND)
-
-        session = getattr(old_token, "session", None)
-        if session is not None:
-            if session.revoked_at is not None or session.expired_at <= now:
-                raise BusinessError("refresh token invalid or expired", NsErrorCode.REFRESH_TOKEN_INVALID_OR_EXPIRED)
-            session.last_active_at = now
-            session.login_ip = old_token.client_ip
-            session.user_agent = old_token.user_agent
-            await session.asave(update_fields=["last_active_at", "login_ip", "user_agent"])
-
-        old_token.revoked_at = now
-        await old_token.asave(update_fields=["revoked_at"])
-
-        new_access_token, new_access_jti = JwtService.create_access_token(user_id=user.id, user_type=user.user_type)
-        new_refresh_token, new_refresh_token_hash, new_refresh_jti, new_refresh_expired_at = JwtService.create_refresh_token(user_id=user.id)
-
-        await IamUserToken.objects.acreate(
-            user_id=user.id,
-            session_id=old_token.session_id,
-            refresh_token_hash=new_refresh_token_hash,
-            access_jti=new_access_jti,
-            refresh_jti=new_refresh_jti,
-            client_ip=old_token.client_ip,
-            user_agent=old_token.user_agent,
-            expired_at=new_refresh_expired_at,
-            revoked_at=None,
-            created_at=now,
+        result = await sync_to_async(RefreshTokenRotationService.rotate, thread_sensitive=True)(
+            user_id=user_id,
+            refresh_jti=refresh_jti,
+            refresh_token_hash=refresh_token_hash,
         )
 
         return self.success_response(
             {
-                "access_token": new_access_token,
-                "refresh_token": new_refresh_token,
-                "token_type": "Bearer",
-                "expires_in": int(getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 30)) * 60,
-                "session_id": getattr(session, "session_id", None),
+                "access_token": result.access_token,
+                "refresh_token": result.refresh_token,
+                "token_type": result.token_type,
+                "expires_in": result.expires_in,
+                "session_id": result.session_id,
             }
         )
 
