@@ -225,4 +225,5 @@ __marimo__/
 /etc/ns_config.dev.json
 /etc/ns_config.test.json
 /etc/ns_config.local.json
+/etc/*.json.lock
 !/etc/ns_config.example.json
