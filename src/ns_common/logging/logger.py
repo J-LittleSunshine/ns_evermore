@@ -1,264 +1,292 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import errno
 import logging
 import os
-import shutil
-import time
+import sys
+from dataclasses import asdict
+from datetime import datetime, time, timezone
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+from threading import RLock
+from typing import Any, Mapping, TYPE_CHECKING
+
+from ns_common import LOG_DIR
+from ns_common.config import ns_config
+
+try:
+    from concurrent_log_handler import ConcurrentTimedRotatingFileHandler as _ConcurrentTimedRotatingFileHandler
+except ImportError:
+    _ConcurrentTimedRotatingFileHandler = None
+
+if TYPE_CHECKING:
+    pass
+
+_LOGGER_LOCK: RLock = RLock()
+_LOGGER_MAP: dict[str, "NsLogger"] = {}
+
+_DEFAULT_LEVEL_FILES: tuple[str, ...] = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
-class _LevelFilter(logging.Filter):
-    def __init__(self, level: int):
+class _ExactLevelFilter(logging.Filter):
+
+    def __init__(self, _levelno: int) -> None:
         super().__init__()
-        self._level = level
+        self._levelno: int = _levelno
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        return record.levelno == self._level
-
-
-def _resolve_log_root(log_root: Path | str | None) -> Path:
-    if log_root is not None:
-        return Path(log_root).expanduser().resolve()
-
-    env_root = os.getenv("NS_LOG_ROOT")
-    if env_root:
-        return Path(env_root).expanduser().resolve()
-
-    return (Path.cwd() / "log").resolve()
+    def filter(self, _record: logging.LogRecord) -> bool:
+        return _record.levelno == self._levelno
 
 
-def _validate_component(component: str) -> str:
-    value = str(component or "").strip()
-    if not value:
-        raise ValueError("component cannot be empty")
+class _BackupTimedRotatingFileHandler(TimedRotatingFileHandler):
 
-    if value in {".", ".."} or ".." in value:
-        raise ValueError("component cannot contain '..'")
+    def __init__(self, filename: Path, backup_dir: Path, **kwargs: Any) -> None:
+        self._backup_dir: Path = backup_dir
+        self._source_filename: str = filename.name
+        self._backup_dir.mkdir(parents=True, exist_ok=True)
+        super().__init__(filename=str(filename), **kwargs)
 
-    if "/" in value or "\\" in value:
-        raise ValueError("component must be a single directory name")
+    def rotation_filename(self, _default_name: str) -> str:
+        return str(self._backup_dir / Path(_default_name).name)
 
-    return value
+    def getFilesToDelete(self) -> list[str]:
+        if self.backupCount <= 0:
+            return []
 
+        candidates: list[str] = sorted(str(_path) for _path in self._backup_dir.glob(f"{self._source_filename}.*") if _path.is_file())
 
-def _validate_log_name(log_name: str | None, component: str) -> str:
-    value = str(log_name).strip() if log_name is not None else component
-    if not value:
-        raise ValueError("log_name cannot be empty")
+        delete_count: int = len(candidates) - self.backupCount
+        if delete_count <= 0:
+            return []
 
-    if value in {".", ".."} or ".." in value:
-        raise ValueError("log_name cannot contain '..'")
-
-    if "/" in value or "\\" in value:
-        raise ValueError("log_name must be a single file name")
-
-    return value
+        return candidates[:delete_count]
 
 
-def _validate_pid_folder_prefix(pid_folder_prefix: str) -> str:
-    value = str(pid_folder_prefix or "").strip()
-    if not value:
-        raise ValueError("pid_folder_prefix cannot be empty")
+if _ConcurrentTimedRotatingFileHandler is not None:
 
-    if value in {".", ".."} or ".." in value:
-        raise ValueError("pid_folder_prefix cannot contain '..'")
+    class _BackupConcurrentTimedRotatingFileHandler(_ConcurrentTimedRotatingFileHandler):  # type: ignore[misc]
+        """Multiprocess-safe timed rotating handler that stores rotated files under backup."""
 
-    if "/" in value or "\\" in value:
-        raise ValueError("pid_folder_prefix must be a single directory name prefix")
+        def __init__(self, filename: Path, backup_dir: Path, **kwargs: Any) -> None:
+            self._backup_dir: Path = backup_dir
+            self._source_filename: str = filename.name
+            self._backup_dir.mkdir(parents=True, exist_ok=True)
+            super().__init__(filename=str(filename), **kwargs)
 
-    return value
+        def rotation_filename(self, _default_name: str) -> str:
+            # Keep the default rotated file name and only change its parent directory.
+            return str(self._backup_dir / Path(_default_name).name)
+
+        # noinspection PyPep8Naming
+        def getFilesToDelete(self) -> list[str]:
+            # With a custom backup directory, cleanup must use backup_dir glob matching.
+            backup_count: int = int(getattr(self, "backupCount", 0))
+            if backup_count <= 0:
+                return []
+
+            candidates: list[str] = sorted(str(_path) for _path in self._backup_dir.glob(f"{self._source_filename}.*") if _path.is_file())
+
+            delete_count: int = len(candidates) - backup_count
+            if delete_count <= 0:
+                return []
+
+            return candidates[:delete_count]
+
+else:
+    _BackupConcurrentTimedRotatingFileHandler = None
 
 
 class NsLogger(logging.Logger):
-    _FMT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    def __new__(cls, name: str, multiprocessing_mode: bool = False) -> "NsLogger":
+        with _LOGGER_LOCK:
+            logger: NsLogger | None = _LOGGER_MAP.get(name)
+            if logger is None:
+                logger = super().__new__(cls)
+                _LOGGER_MAP[name] = logger
+            return logger
 
-    def __init__(
-        self,
-        *,
-        logger_name: str,
-        component_dir: Path,
-        log_name: str,
-        level: int = logging.DEBUG,
-        rotation: int = 1,
-        backup_count: int = 30,
-        utc: bool = False,
-    ):
-        super().__init__(logger_name, logging.DEBUG)
-        self.propagate = False
+    def __init__(self, name: str, multiprocessing_mode: bool = False) -> None:
+        with _LOGGER_LOCK:
+            if not getattr(self, "_base_initialized", False):
+                super().__init__(name=name, level=logging.DEBUG)
+                self._base_initialized: bool = True
+                self._initialized: bool = False
+                self._owner_pid: int = -1
+                self._multiprocessing_mode: bool = multiprocessing_mode
 
-        component_dir.mkdir(parents=True, exist_ok=True)
+            should_reconfigure: bool = not self._initialized or self._owner_pid != os.getpid() or self._multiprocessing_mode != multiprocessing_mode
 
-        formatter = logging.Formatter(self._FMT)
+            if not should_reconfigure:
+                return
 
-        self._add_console_handler(level=level, formatter=formatter)
+            self._multiprocessing_mode = multiprocessing_mode
+            self._configure()
 
-        self._add_file_handler(
-            component_dir=component_dir,
-            file_name=f"{log_name}.log",
-            level=logging.DEBUG,
-            formatter=formatter,
-            rotation=rotation,
-            backup_count=backup_count,
-            utc=utc,
-            exact_level=False,
-        )
+    def _log(self, level: int, msg: object, args: Any, exc_info: Any = None, extra: Mapping[str, object] | None = None, stack_info: bool = False, stacklevel: int = 1) -> None:
+        self._ensure_current_process()
+        super()._log(level, msg, args, exc_info, extra, stack_info, stacklevel)
 
-        for log_level in (
-            logging.DEBUG,
-            logging.INFO,
-            logging.WARNING,
-            logging.ERROR,
-            logging.CRITICAL,
-        ):
-            self._add_file_handler(
-                component_dir=component_dir,
-                file_name=f"{logging.getLevelName(log_level).lower()}.log",
-                level=log_level,
-                formatter=formatter,
-                rotation=rotation,
-                backup_count=backup_count,
-                utc=utc,
-                exact_level=True,
-            )
+    def _ensure_current_process(self) -> None:
+        if self._owner_pid == os.getpid() and self._initialized:
+            return
 
-    def _add_console_handler(self, level: int, formatter: logging.Formatter) -> None:
-        console = logging.StreamHandler()
-        console.setLevel(level)
-        console.setFormatter(formatter)
-        self.addHandler(console)
+        with _LOGGER_LOCK:
+            if self._owner_pid == os.getpid() and self._initialized:
+                return
+            self._configure()
 
-    def _add_file_handler(
-        self,
-        *,
-        component_dir: Path,
-        file_name: str,
-        level: int,
-        formatter: logging.Formatter,
-        rotation: int,
-        backup_count: int,
-        utc: bool,
-        exact_level: bool,
-    ) -> None:
-        live_file = component_dir / file_name
+    def _configure(self) -> None:
+        config: dict[str, Any] = asdict(getattr(ns_config, "log_config"))
 
-        handler = TimedRotatingFileHandler(
-            filename=live_file,
-            when="D",
-            interval=rotation,
-            backupCount=backup_count,
-            encoding="utf-8",
-            utc=utc,
-        )
+        utc_enabled: bool = bool(config.get("utc", False))
+        date_text: str = self._get_current_date_text(utc_enabled)
 
-        handler.setLevel(level)
-        if exact_level:
-            handler.addFilter(_LevelFilter(level))
-
-        handler.setFormatter(formatter)
-
-        backup_dir = component_dir / "backup" / Path(file_name).stem
+        active_dir: Path = Path(LOG_DIR) / self.name / date_text
+        backup_dir: Path = Path(LOG_DIR) / self.name / "backup" / date_text
+        active_dir.mkdir(parents=True, exist_ok=True)
         backup_dir.mkdir(parents=True, exist_ok=True)
 
-        def namer(default_name: str) -> str:
-            return str(backup_dir / Path(default_name).name)
+        self._reset_handlers()
 
-        def rotator(src: str, dst: str) -> None:
-            self._safe_rotate(src=src, dst=dst)
+        formatter: logging.Formatter = logging.Formatter(fmt=str(config.get("format", "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s")), datefmt=str(config.get("datefmt", "%Y-%m-%d %H:%M:%S")))
 
-        handler.namer = namer
-        handler.rotator = rotator
-        self.addHandler(handler)
+        main_level: int = self._resolve_level(config.get("file_level", config.get("level", "DEBUG")), logging.DEBUG)
+        console_level: int = self._resolve_level(config.get("console_level", config.get("level", "DEBUG")), logging.DEBUG)
+        level_files: tuple[str, ...] = self._resolve_level_files(config.get("level_files", _DEFAULT_LEVEL_FILES))
+
+        handler_levels: list[int] = [main_level, console_level]
+        handler_levels.extend(self._resolve_level(_level, logging.DEBUG) for _level in level_files)
+        self.setLevel(min(handler_levels))
+        self.propagate = False
+        self.disabled = False
+
+        if bool(config.get("console", True)):
+            console_handler: logging.StreamHandler = logging.StreamHandler(stream=sys.stdout)
+            console_handler.setLevel(console_level)
+            console_handler.setFormatter(formatter)
+            self.addHandler(console_handler)
+
+        main_handler: logging.Handler = self._build_file_handler(active_dir / f"{self.name}.log", backup_dir, config)
+        main_handler.setLevel(main_level)
+        main_handler.setFormatter(formatter)
+        self.addHandler(main_handler)
+
+        for level_name in level_files:
+            level_no: int = self._resolve_level(level_name, logging.DEBUG)
+            level_handler: logging.Handler = self._build_file_handler(active_dir / f"{self.name}.{level_name.lower()}.log", backup_dir, config)
+            level_handler.setLevel(level_no)
+            level_handler.addFilter(_ExactLevelFilter(level_no))
+            level_handler.setFormatter(formatter)
+            self.addHandler(level_handler)
+
+        self._owner_pid = os.getpid()
+        self._initialized = True
+
+    def _reset_handlers(self) -> None:
+        for handler in list(self.handlers):
+            self.removeHandler(handler)
+
+            try:
+                handler.flush()
+            except Exception:  # noqa
+                pass
+
+            try:
+                handler.close()
+            except Exception:  # noqa
+                pass
+
+    def _build_file_handler(self, filename: Path, backup_dir: Path, config: Mapping[str, Any]) -> _BackupConcurrentTimedRotatingFileHandler | _BackupTimedRotatingFileHandler:
+        at_time: time | None = self._parse_at_time(config.get("at_time"))
+
+        kwargs: dict[str, Any] = {"when": str(config.get("when", "midnight")), "interval": int(config.get("interval", 1)), "backupCount": int(config.get("backup_count", 14)), "encoding": str(config.get("encoding", "utf-8")), "delay": bool(config.get("delay", True)), "utc": bool(config.get("utc", False))}
+
+        if at_time is not None:
+            kwargs["atTime"] = at_time
+
+        if self._multiprocessing_mode:
+            if _BackupConcurrentTimedRotatingFileHandler is None:
+                raise RuntimeError("concurrent-log-handler is required when multiprocessing_mode=True.")
+
+            kwargs["maxBytes"] = int(config.get("max_bytes", 0))
+            kwargs["use_gzip"] = bool(config.get("use_gzip", False))
+
+            lock_file_directory: str | None = config.get("lock_file_directory")
+            if lock_file_directory:
+                kwargs["lock_file_directory"] = lock_file_directory
+
+            return _BackupConcurrentTimedRotatingFileHandler(filename=filename, backup_dir=backup_dir, **kwargs)
+
+        return _BackupTimedRotatingFileHandler(filename=filename, backup_dir=backup_dir, **kwargs)
 
     @staticmethod
-    def _safe_rotate(src: str, dst: str) -> None:
-        max_tries = 10
-        backoff = 0.2
-        dst_path = Path(dst)
+    def _resolve_level(_level: Any, _default: int) -> int:
+        if isinstance(_level, int):
+            return _level
 
-        if dst_path.exists():
-            try:
-                os.remove(dst)
-            except PermissionError:
-                pass
+        if isinstance(_level, str):
+            resolved_level: str | int = logging.getLevelName(_level.upper())
+            if isinstance(resolved_level, int):
+                return resolved_level
 
-        for _ in range(max_tries):
-            try:
-                try:
-                    os.replace(src, dst)
-                except OSError as exc:
-                    if exc.errno == errno.EXDEV:
-                        shutil.move(src, dst)
-                    else:
-                        raise
-                return
-            except PermissionError:
-                time.sleep(backoff)
-                backoff *= 1.5
-            except FileNotFoundError:
-                return
+        return _default
 
-        try:
-            shutil.copy2(src, dst)
-            with open(src, "w", encoding="utf-8"):
-                pass
-        except Exception:  # noqa
-            pass
+    @staticmethod
+    def _resolve_level_files(_value: Any) -> tuple[str, ...]:
+        if not isinstance(_value, (list, tuple, set)):
+            return _DEFAULT_LEVEL_FILES
 
+        result: list[str] = []
+        for item in _value:
+            if not isinstance(item, str):
+                continue
 
-_LOGGER_CACHE: dict[tuple[str, str, str, bool, int | None, str], NsLogger] = {}
+            level_name: str = item.upper()
+            resolved_level: str | int = logging.getLevelName(level_name)
+            if isinstance(resolved_level, int):
+                result.append(level_name)
 
+        if not result:
+            return _DEFAULT_LEVEL_FILES
 
-def get_logger(
-    *,
-    component: str,
-    log_name: str | None = None,
-    log_root: Path | str | None = None,
-    level: int = logging.DEBUG,
-    rotation: int = 1,
-    backup_count: int = 30,
-    utc: bool = False,
-    multi_process: bool = False,
-    pid_folder_prefix: str = "pid",
-) -> NsLogger:
-    component_name = _validate_component(component)
-    resolved_root = _resolve_log_root(log_root)
-    resolved_log_name = _validate_log_name(log_name=log_name, component=component_name)
-    resolved_pid_folder_prefix = _validate_pid_folder_prefix(pid_folder_prefix)
-    pid_value = os.getpid() if multi_process else None
+        return tuple(result)
 
-    cache_key = (
-        str(resolved_root),
-        component_name,
-        resolved_log_name,
-        multi_process,
-        pid_value,
-        resolved_pid_folder_prefix,
-    )
-    cached = _LOGGER_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
+    @staticmethod
+    def _parse_at_time(_value: Any) -> time | None:
+        if _value is None or _value == "":
+            return None
 
-    logger_name = f"{component_name}.{resolved_log_name}"
-    component_dir = resolved_root / component_name
-    if multi_process:
-        component_dir = component_dir / f"{resolved_pid_folder_prefix}{pid_value}"
+        if isinstance(_value, time):
+            return _value
 
-    logger = NsLogger(
-        logger_name=logger_name,
-        component_dir=component_dir,
-        log_name=resolved_log_name,
-        level=level,
-        rotation=rotation,
-        backup_count=backup_count,
-        utc=utc,
-    )
+        if not isinstance(_value, str):
+            raise ValueError("Invalid at_time config.")
 
-    _LOGGER_CACHE[cache_key] = logger
-    return logger
+        parts: list[str] = _value.split(":")
+        if len(parts) not in (2, 3):
+            raise ValueError("Invalid at_time config.")
+
+        hour: int = int(parts[0])
+        minute: int = int(parts[1])
+        second: int = int(parts[2]) if len(parts) == 3 else 0
+
+        return time(hour=hour, minute=minute, second=second)
+
+    @staticmethod
+    def _get_current_date_text(_utc_enabled: bool) -> str:
+        if _utc_enabled:
+            return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        return datetime.now().strftime("%Y-%m-%d")
 
 
-__all__ = ["NsLogger", "get_logger"]
+def get_ns_logger(name: str, multiprocessing_mode: bool = False) -> NsLogger:
+    return NsLogger(name=name, multiprocessing_mode=multiprocessing_mode)
 
+
+def close_ns_loggers() -> None:
+    with _LOGGER_LOCK:
+        for logger in _LOGGER_MAP.values():
+            logger._reset_handlers()  # noqa
+            logger._initialized = False
+            logger._owner_pid = -1

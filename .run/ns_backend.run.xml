@@ -5,11 +5,11 @@
     <option name="INTERPRETER_OPTIONS" value="" />
     <option name="PARENT_ENVS" value="true" />
     <envs>
+      <env name="DJANGO_SETTINGS_MODULE" value="ns_backend.backend.settings" />
       <env name="PYTHONUNBUFFERED" value="1" />
-      <env name="DJANGO_SETTINGS_MODULE" value="ns_backend.settings" />
     </envs>
     <option name="SDK_HOME" value="" />
-    <option name="SDK_NAME" value="3.10 WSL (NsServer): (/home/ns/.virtualenvs/ns_backend/bin/python)" />
+    <option name="SDK_NAME" value="Python 3.10 (ns_backend)" />
     <option name="WORKING_DIRECTORY" value="" />
     <option name="IS_MODULE_SDK" value="false" />
     <option name="ADD_CONTENT_ROOTS" value="true" />
