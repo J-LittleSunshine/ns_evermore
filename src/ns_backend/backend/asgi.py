@@ -1,13 +1,15 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
 import os
 
 from ns_backend.backend.bootstrap import ensure_src_on_sys_path, show_banner
 
 ensure_src_on_sys_path()
-
 show_banner()
 
-from django.core.asgi import get_asgi_application
+from django.core.asgi import get_asgi_application  # noqa: E402
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ns_backend.backend.settings")
 
 application = get_asgi_application()

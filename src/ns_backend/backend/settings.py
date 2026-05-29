@@ -144,11 +144,11 @@ DEBUG = _BACKEND.debug
 ALLOWED_HOSTS = list(_BACKEND.allowed_hosts)
 
 INSTALLED_APPS = [
-    "backend",
+    "ns_backend.backend",
     "django.contrib.contenttypes",
     "django.contrib.staticfiles",
     "adrf",
-    "iam"
+    "ns_backend.iam.apps.IamConfig"
 ]
 
 for _app_name, _enabled in _BACKEND.loaded_apps.items():
@@ -164,9 +164,9 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware"
 ]
 
-ROOT_URLCONF = "backend.urls"
-ASGI_APPLICATION = "backend.asgi.application"
-WSGI_APPLICATION = "backend.wsgi.application"
+ROOT_URLCONF = "ns_backend.backend.urls"
+ASGI_APPLICATION = "ns_backend.backend.asgi.application"
+WSGI_APPLICATION = "ns_backend.backend.wsgi.application"
 
 _DATABASES_CONFIG: dict[str, dict[str, Any]] = dict(_BACKEND.databases)
 if not _DATABASES_CONFIG:
@@ -224,7 +224,9 @@ for _app_label, _db_alias in DATABASE_ROUTER_MAP.items():
     if _db_alias not in DATABASES:
         raise RuntimeError(f"database_router_map.{_app_label} points to undefined database alias: {_db_alias}")
 
-DATABASE_ROUTERS = ["backend.db.routers.AppDatabaseRouter"]
+DATABASE_ROUTERS = [
+    "ns_backend.backend.db.routers.AppDatabaseRouter"
+]
 
 INFRA_SQL_ROOT = SQL_DIR
 
