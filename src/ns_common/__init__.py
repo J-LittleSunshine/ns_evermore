@@ -23,12 +23,12 @@ _REQUIRED_DIRS = [
 for _dir in _REQUIRED_DIRS:
     _dir.mkdir(parents=True, exist_ok=True)
 
-_ENV = os.environ.get("NS_ENV", "local").lower()
-if _ENV == "prod":
+NS_ENV = os.environ.get("NS_ENV", "local").lower()
+if NS_ENV == "prod":
     NS_CONFIG_FILE_PATH = ETC_DIR / "ns_config.prod.json"
-elif _ENV == "dev":
+elif NS_ENV == "dev":
     NS_CONFIG_FILE_PATH = ETC_DIR / "ns_config.dev.json"
-elif _ENV == "test":
+elif NS_ENV == "test":
     NS_CONFIG_FILE_PATH = ETC_DIR / "ns_config.test.json"
 else:
     NS_CONFIG_FILE_PATH = ETC_DIR / "ns_config.local.json"

@@ -11,12 +11,45 @@ from typing import Any, ClassVar, Dict
 
 import portalocker
 
-from . import NS_CONFIG_FILE_PATH, TMP_DIR
+from . import NS_CONFIG_FILE_PATH, TMP_DIR, NS_ENV
+
+
+@dataclass(slots=True, kw_only=True)
+class _NsLogConfig:
+    level: str = "DEBUG"
+    file_level: str = "DEBUG"
+    console_level: str = "DEBUG"
+    console: bool = True
+    format: str = "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s"
+    datefmt: str = "%Y-%m-%d %H:%M:%S"
+    when: str = "midnight"
+    interval: int = 1
+    backup_count: int = 14
+    encoding: str = "utf-8"
+    delay: bool = True
+    utc: bool = False
+    at_time: str | None = None
+    max_bytes: int = 0
+    use_gzip: bool = False
+    lock_file_directory: str | None = None
+    level_files: tuple[str, ...] = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
 @dataclass(slots=True, kw_only=True)
 class _NsBackendConfig:
     debug: bool = True
+    secret_key: str = "default_secret_key"
+    jwt_secret_key: str = "default_jwt_secret_key"
+    allowed_hosts: list[str] = field(default_factory=lambda: ["127.0.0.1", "localhost"])
+    loaded_apps: dict[str, bool] = field(default_factory=dict)
+    databases: dict[str, dict[str, Any]] = field(default_factory=dict)
+    infra_db_router_map: dict[str, str] = field(default_factory=dict)
+    database_router_map: dict[str, str] = field(default_factory=dict)
+    language_code: str = "zh-hans"
+    time_zone: str = "Asia/Shanghai"
+    use_i18n: bool = True
+    use_tz: bool = True
+    static_url: str = "static/"
 
 
 @dataclass(slots=True, kw_only=True)
@@ -32,6 +65,7 @@ class _NsExecutorConfig:
 @dataclass(slots=True, kw_only=True)
 class NsConfig:
     backend_config: _NsBackendConfig = field(default_factory=_NsBackendConfig)
+    log_config: _NsLogConfig = field(default_factory=_NsLogConfig)
     _lock: ClassVar[RLock] = RLock()
 
     @classmethod
@@ -40,12 +74,19 @@ class NsConfig:
             with cls._file_lock(config_path):
                 raw_config: dict[str, Any] = cls._load_json_config(config_path)
 
-                backend_config_raw: Any = raw_config.get("backend_config", {})
+                backend_config_raw: Any = raw_config.get("backend_config")
+                if backend_config_raw is None:
+                    backend_config_raw = raw_config.get("backend", {})
                 if not isinstance(backend_config_raw, dict):
-                    raise ValueError("backend_config must be a JSON object")
+                    raise ValueError("backend_config/backend must be a JSON object")
+
+                log_config_raw: Any = raw_config.get("log_config", {})
+                if not isinstance(log_config_raw, dict):
+                    raise ValueError("log_config must be a JSON object")
 
                 config: NsConfig = cls(
                     backend_config=_NsBackendConfig(**backend_config_raw),
+                    log_config=_NsLogConfig(**log_config_raw),
                 )
                 config._validate()
                 return config
@@ -57,7 +98,16 @@ class NsConfig:
                 self.__class__._atomic_write_json(config_path, asdict(self))
 
     def _validate(self) -> None:
-        pass
+        if self.backend_config.secret_key == "default_secret_key":
+            if NS_ENV == "prod":
+                raise RuntimeError("The system detected that the current environment is a production environment, but the backend secret key is not set. For security reasons, please set the secret key first.")
+            if NS_ENV == "test":
+                print("Warning: The system detected that the current environment is a test environment, but the backend secret key is not set. For security reasons, it is recommended to set a unique secret key for testing.")
+
+        allowed_hosts = self.backend_config.allowed_hosts
+        if len(allowed_hosts) == 1 and allowed_hosts[0] == "*":
+            if NS_ENV not in {"dev", "local"}:
+                print("Warning: The system detected that the current environment is not a development or local environment, but the allowed hosts are set to '*'. For security reasons, it is recommended to set the allowed hosts to specific domain names or IP addresses for testing or production.")
 
     @classmethod
     def _file_lock(cls, config_path: Path) -> portalocker.Lock:
@@ -107,5 +157,6 @@ class NsConfig:
         finally:
             if temp_file_path is not None and temp_file_path.exists():
                 temp_file_path.unlink()
+
 
 ns_config: NsConfig = NsConfig.load()

@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from dataclasses import asdict
 from datetime import datetime, time, timezone
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -67,7 +68,7 @@ class _BackupTimedRotatingFileHandler(TimedRotatingFileHandler):
 
 if _ConcurrentTimedRotatingFileHandler is not None:
     class _BackupConcurrentTimedRotatingFileHandler(_ConcurrentTimedRotatingFileHandler):  # type: ignore[misc]
-        """多进程安全时间轮转 handler，并把轮转文件移动到 backup 目录。"""
+        """Multiprocess-safe timed rotating handler that stores rotated files under backup."""
 
         def __init__(self, filename: Path, backup_dir: Path, **kwargs: Any) -> None:
             self._backup_dir: Path = backup_dir
@@ -76,12 +77,12 @@ if _ConcurrentTimedRotatingFileHandler is not None:
             super().__init__(filename=str(filename), **kwargs)
 
         def rotation_filename(self, _default_name: str) -> str:
-            # 保持默认轮转文件名，只迁移到 backup 目录
+            # Keep the default rotated file name and only change its parent directory.
             return str(self._backup_dir / Path(_default_name).name)
 
         # noinspection PyPep8Naming
         def getFilesToDelete(self) -> list[str]:
-            # 自定义 backup 目录后，必须重写清理逻辑
+            # With a custom backup directory, cleanup must use backup_dir glob matching.
             backup_count: int = int(getattr(self, "backupCount", 0))
             if backup_count <= 0:
                 return []
@@ -145,8 +146,7 @@ class NsLogger(logging.Logger):
             self._configure()
 
     def _configure(self) -> None:
-        log_config_map: Mapping[str, Any] = getattr(ns_config, "log_config", {})
-        config: dict[str, Any] = dict(log_config_map.get(self.name, {}))
+        config: dict[str, Any] = asdict(getattr(ns_config, "log_config"))
 
         utc_enabled: bool = bool(config.get("utc", False))
         date_text: str = self._get_current_date_text(utc_enabled)
@@ -209,7 +209,7 @@ class NsLogger(logging.Logger):
             except Exception:  # noqa
                 pass
 
-    def _build_file_handler(self, filename: Path, backup_dir: Path, config: Mapping[str, Any]) -> logging.Handler:
+    def _build_file_handler(self, filename: Path, backup_dir: Path, config: Mapping[str, Any]) -> _BackupConcurrentTimedRotatingFileHandler | _BackupTimedRotatingFileHandler:
         at_time: time | None = self._parse_at_time(config.get("at_time"))
 
         kwargs: dict[str, Any] = {
