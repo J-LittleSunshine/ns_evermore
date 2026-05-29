@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ns_backend.backend.common import CrudRepository
+from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.errors import IamDomainError
 from ns_backend.iam.models import (
     IamUserRole,
@@ -22,8 +24,6 @@ from ns_backend.iam.validators import (
 )
 from ns_backend.iam.views import IamRequestViewSet
 from ns_common.error_codes import NsErrorCode
-from ...backend.common import CrudRepository
-from ...backend.exceptions import BusinessError
 
 if TYPE_CHECKING:
     pass
