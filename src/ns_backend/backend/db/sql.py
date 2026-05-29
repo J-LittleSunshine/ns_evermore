@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .vendor import DB_VENDOR_UNKNOWN, SUPPORTED_INFRA_DB_VENDORS
+from ns_backend.backend.db.vendor import DB_VENDOR_UNKNOWN, SUPPORTED_INFRA_DB_VENDORS
 
 if TYPE_CHECKING:
     pass

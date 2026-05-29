@@ -11,7 +11,7 @@ from typing import Any, ClassVar, Dict
 
 import portalocker
 
-from . import NS_CONFIG_FILE_PATH, TMP_DIR, NS_ENV
+from ns_common import NS_CONFIG_FILE_PATH, TMP_DIR, NS_ENV
 
 
 @dataclass(slots=True, kw_only=True)
@@ -51,6 +51,30 @@ class _NsBackendConfig:
     use_tz: bool = True
     static_url: str = "static/"
 
+    # JWT / auth settings aligned with backup backend.
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 14
+    jwt_issuer: str = "ns_evermore"
+    jwt_leeway_seconds: int = 30
+    jwt_min_secret_length: int = 32
+
+    # Password transport settings aligned with backup backend.
+    password_transport_mode: str = "plain"
+    password_transport_max_payload_length: int = 4096
+    password_plaintext_max_length: int = 256
+    password_rsa_private_key: str = ""
+    password_rsa_private_key_file: str = ""
+    password_rsa_private_key_passphrase: str = ""
+
+    # Login lock settings aligned with backup backend.
+    login_max_failed_count: int = 5
+    login_lock_minutes: int = 15
+
+    # Audit and proxy settings aligned with backup backend.
+    extra_sensitive_keys: list[str] = field(default_factory=list)
+    audit_extra_sensitive_keys: list[str] = field(default_factory=list)
+    trust_x_forwarded_for: bool = False
+
 
 @dataclass(slots=True, kw_only=True)
 class _NsRuntimeConfig:
@@ -84,7 +108,8 @@ class NsConfig:
                 if not isinstance(log_config_raw, dict):
                     raise ValueError("log_config must be a JSON object")
 
-                config: NsConfig = cls(backend_config=_NsBackendConfig(**backend_config_raw), log_config=_NsLogConfig(**log_config_raw))
+                normalized_backend_config = cls._normalize_backend_config(dict(backend_config_raw))
+                config: NsConfig = cls(backend_config=_NsBackendConfig(**normalized_backend_config), log_config=_NsLogConfig(**log_config_raw))
                 config._validate()
                 return config
 
@@ -101,16 +126,39 @@ class NsConfig:
             if NS_ENV == "test":
                 print("Warning: The system detected that the current environment is a test environment, but the backend secret key is not set. For security reasons, it is recommended to set a unique secret key for testing.")
 
+        if self.backend_config.jwt_secret_key == "default_jwt_secret_key":
+            if NS_ENV == "prod":
+                raise RuntimeError("The system detected that the current environment is a production environment, but the JWT secret key is not set. For security reasons, please set the JWT secret key first.")
+            if NS_ENV == "test":
+                print("Warning: The system detected that the current environment is a test environment, but the JWT secret key is not set. For security reasons, it is recommended to set a unique JWT secret key for testing.")
+
+        if self.backend_config.debug and NS_ENV == "prod":
+            raise RuntimeError("DEBUG must be False when NS_ENV is prod.")
+
         allowed_hosts = self.backend_config.allowed_hosts
         if len(allowed_hosts) == 1 and allowed_hosts[0] == "*":
             if NS_ENV not in {"dev", "local"}:
                 print("Warning: The system detected that the current environment is not a development or local environment, but the allowed hosts are set to '*'. For security reasons, it is recommended to set the allowed hosts to specific domain names or IP addresses for testing or production.")
 
     @classmethod
+    def _normalize_backend_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+        """Normalize backup-compatible config keys before dataclass construction."""
+        alias_map: dict[str, str] = {
+            "log_in_max_failed_count": "login_max_failed_count",
+            "log_in_lock_minutes": "login_lock_minutes",
+        }
+
+        for old_key, new_key in alias_map.items():
+            if old_key in raw_config and new_key not in raw_config:
+                raw_config[new_key] = raw_config[old_key]
+            raw_config.pop(old_key, None)
+
+        return raw_config
+
+    @classmethod
     def _file_lock(cls, config_path: Path) -> portalocker.Lock:
         lock_path: Path = config_path.with_suffix(config_path.suffix + ".lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-
         return portalocker.Lock(str(lock_path), mode="a", timeout=10)
 
     @classmethod

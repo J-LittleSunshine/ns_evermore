@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING, Any
 from django.db import IntegrityError
 from django.utils import timezone
 
+from ns_backend.backend.db.routers import AppDatabaseRouter
+from ns_backend.backend.exceptions import BusinessError, ValidateError
 from ns_common.error_codes import NsErrorCode
-from ..db.routers import AppDatabaseRouter
-from ..exceptions import BusinessError, ValidateError
 
 if TYPE_CHECKING:
     pass

@@ -1,6 +1,6 @@
 import os
 
-from .bootstrap import ensure_src_on_sys_path, show_banner
+from ns_backend.backend.bootstrap import ensure_src_on_sys_path, show_banner
 
 ensure_src_on_sys_path()
 

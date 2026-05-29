@@ -5,15 +5,17 @@ from typing import TYPE_CHECKING, Any
 
 from adrf.viewsets import ViewSet
 from django.http import JsonResponse
-from rest_framework.views import APIView
 from rest_framework.generics import GenericAPIView
+from rest_framework.views import APIView
+
+from ns_backend.backend.exceptions import BusinessError
 from ns_common.logging.logger import get_ns_logger
-from ...backend.exceptions import BusinessError
 
 if TYPE_CHECKING:
     pass
 
 _REQUEST_LOGGER = get_ns_logger("backend", False)
+
 
 class BaseRequestViewSet(ViewSet):
     @classmethod

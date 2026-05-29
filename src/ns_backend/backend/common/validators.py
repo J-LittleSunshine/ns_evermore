@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ns_backend.backend.exceptions import ValidateError, BusinessError
 from ns_common.error_codes import NsErrorCode
-
-from ..exceptions import ValidateError, BusinessError
 
 if TYPE_CHECKING:
     pass

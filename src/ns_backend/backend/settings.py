@@ -1,16 +1,145 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import json
+import os
 from pathlib import Path
 from typing import Any
 
+from ns_backend.backend.db.alias import DEFAULT_DB_ALIAS, IAM_DB_ALIAS_NAME
+from ns_backend.backend.db.sql import build_infra_create_sql_path
+from ns_backend.backend.db.vendor import detect_db_vendor, DB_VENDOR_UNKNOWN
 from ns_common import DATA_DIR, SQL_DIR
 from ns_common.config import ns_config
-from .db.alias import DEFAULT_DB_ALIAS, IAM_DB_ALIAS_NAME
-from .db.sql import build_infra_create_sql_path
-from .db.vendor import detect_db_vendor, DB_VENDOR_UNKNOWN
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 _BACKEND = ns_config.backend_config
 
-SECRET_KEY = _BACKEND.secret_key
+
+def _coerce_positive_int(value: Any, default: int) -> int:
+    """Resolve integer config from JSON/env while rejecting bool and non-positive values."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value if value > 0 else default
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        try:
+            parsed = int(text)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed > 0 else default
+    return default
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Resolve bool config from JSON/env values."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+    return default
+
+
+def _coerce_string_tuple(value: Any) -> tuple[str, ...]:
+    """Resolve list-like string config for audit sensitive keys."""
+    if value is None:
+        return ()
+
+    if isinstance(value, (list, tuple, set)):
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+        return tuple(result)
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ()
+
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parts = [part.strip() for part in text.split(",")]
+            result: list[str] = []
+            seen: set[str] = set()
+            for part in parts:
+                if not part or part in seen:
+                    continue
+                seen.add(part)
+                result.append(part)
+            return tuple(result)
+
+        if isinstance(parsed, str):
+            return _coerce_string_tuple((parsed,))
+        if isinstance(parsed, (list, tuple, set)):
+            return _coerce_string_tuple(parsed)
+        return ()
+
+    return ()
+
+
+def _merge_string_tuples(*values: Any) -> tuple[str, ...]:
+    """Merge JSON/env string-list values while preserving order."""
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in _coerce_string_tuple(value):
+            if item in seen:
+                continue
+            seen.add(item)
+            merged.append(item)
+    return tuple(merged)
+
+
+SECRET_KEY = os.getenv("NS_SECRET_KEY") or _BACKEND.secret_key
+JWT_SECRET_KEY = os.getenv("NS_JWT_SECRET_KEY") or _BACKEND.jwt_secret_key
+
+ACCESS_TOKEN_EXPIRE_MINUTES = _coerce_positive_int(os.getenv("NS_ACCESS_TOKEN_EXPIRE_MINUTES") or _BACKEND.access_token_expire_minutes, 30)
+REFRESH_TOKEN_EXPIRE_DAYS = _coerce_positive_int(os.getenv("NS_REFRESH_TOKEN_EXPIRE_DAYS") or _BACKEND.refresh_token_expire_days, 14)
+JWT_ISSUER = os.getenv("NS_JWT_ISSUER") or _BACKEND.jwt_issuer
+JWT_LEEWAY_SECONDS = _coerce_positive_int(os.getenv("NS_JWT_LEEWAY_SECONDS") or _BACKEND.jwt_leeway_seconds, 30)
+JWT_MIN_SECRET_LENGTH = _coerce_positive_int(os.getenv("NS_JWT_MIN_SECRET_LENGTH") or _BACKEND.jwt_min_secret_length, 32)
+
+PASSWORD_TRANSPORT_ALLOWED_MODES = ("plain", "rsa_oaep")
+PASSWORD_TRANSPORT_MODE = (os.getenv("NS_PASSWORD_TRANSPORT_MODE") or _BACKEND.password_transport_mode or "plain").strip().lower()
+if PASSWORD_TRANSPORT_MODE not in PASSWORD_TRANSPORT_ALLOWED_MODES:
+    raise RuntimeError(f"password_transport_mode must be one of: {', '.join(PASSWORD_TRANSPORT_ALLOWED_MODES)}")
+
+PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH = _coerce_positive_int(os.getenv("NS_PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH") or _BACKEND.password_transport_max_payload_length, 4096)
+PASSWORD_PLAINTEXT_MAX_LENGTH = _coerce_positive_int(os.getenv("NS_PASSWORD_PLAINTEXT_MAX_LENGTH") or _BACKEND.password_plaintext_max_length, 256)
+PASSWORD_RSA_PRIVATE_KEY = os.getenv("NS_PASSWORD_RSA_PRIVATE_KEY") or _BACKEND.password_rsa_private_key or ""
+PASSWORD_RSA_PRIVATE_KEY_FILE = os.getenv("NS_PASSWORD_RSA_PRIVATE_KEY_FILE") or _BACKEND.password_rsa_private_key_file or ""
+PASSWORD_RSA_PRIVATE_KEY_PASSPHRASE = os.getenv("NS_PASSWORD_RSA_PRIVATE_KEY_PASSPHRASE") or _BACKEND.password_rsa_private_key_passphrase or ""
+
+if PASSWORD_TRANSPORT_MODE == "rsa_oaep" and not (PASSWORD_RSA_PRIVATE_KEY or PASSWORD_RSA_PRIVATE_KEY_FILE):
+    raise RuntimeError("password_rsa_private_key or password_rsa_private_key_file is required when password_transport_mode is rsa_oaep")
+
+LOGIN_MAX_FAILED_COUNT = _coerce_positive_int(os.getenv("NS_LOGIN_MAX_FAILED_COUNT") or _BACKEND.login_max_failed_count, 5)
+LOGIN_LOCK_MINUTES = _coerce_positive_int(os.getenv("NS_LOGIN_LOCK_MINUTES") or _BACKEND.login_lock_minutes, 15)
+
+IAM_AUDIT_EXTRA_SENSITIVE_KEYS = _merge_string_tuples(
+    _BACKEND.extra_sensitive_keys,
+    os.getenv("NS_EXTRA_SENSITIVE_KEYS"),
+    _BACKEND.audit_extra_sensitive_keys,
+    os.getenv("IAM_AUDIT_EXTRA_SENSITIVE_KEYS"),
+)
+
+TRUST_X_FORWARDED_FOR = _coerce_bool(os.getenv("NS_TRUST_X_FORWARDED_FOR"), _BACKEND.trust_x_forwarded_for)
+
 DEBUG = _BACKEND.debug
 ALLOWED_HOSTS = list(_BACKEND.allowed_hosts)
 

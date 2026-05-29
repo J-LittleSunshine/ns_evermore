@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from django.core.management.base import BaseCommand, CommandError
 from django.db import DatabaseError
 
-from ...db.infra_schema import install_infra_schema
+from ns_backend.backend.db.infra_schema import install_infra_schema
 
 if TYPE_CHECKING:
     pass
