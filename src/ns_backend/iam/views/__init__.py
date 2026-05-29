@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .. import AuthenticatedRequestViewSet
-from ..services import TenantService, VerifyService, PermissionService
+from ns_backend.iam import AuthenticatedRequestViewSet
+from ns_backend.iam.services import TenantService, VerifyService, PermissionService
 
 if TYPE_CHECKING:
     pass

@@ -5,11 +5,10 @@ from typing import TYPE_CHECKING
 
 from django.utils import timezone
 
+from ns_backend.backend.exceptions import BusinessError
+from ns_backend.iam.models import IamUserSession, IamUserToken
+from ns_backend.iam.views import IamRequestViewSet
 from ns_common.error_codes import NsErrorCode
-from . import IamRequestViewSet
-from .auth_views import AuthViewSet
-from ..models import IamUserSession, IamUserToken
-from ...backend.exceptions import BusinessError
 
 if TYPE_CHECKING:
     pass

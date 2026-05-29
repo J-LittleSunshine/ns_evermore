@@ -26,7 +26,6 @@ from .models import (
 )
 from .policies import TenantPolicy, DataScopePolicy
 from .schemas import TenantContext, DataScopeResult
-from .utils import parse_access_token
 from .validators import (
     CompanyValidator,
     DepartmentPermissionValidator,
@@ -356,14 +355,21 @@ class SubsidiaryPermissionCrudService(IamCrudService):
 class VerifyService:
     @classmethod
     async def get_user_by_access_token(cls, access_token: str):
-        parsed = parse_access_token(access_token)
-        if parsed is None:
+        from ns_backend.backend.utils.jwt import JwtService
+
+        payload = JwtService.decode_access_token(access_token)
+        if not payload:
             return None
 
-        user_id, access_jti = parsed
+        user_id = payload.get("uid")
+        access_jti = payload.get("jti")
+
+        if not isinstance(user_id, int) or not isinstance(access_jti, str):
+            return None
+
         now = timezone.now()
 
-        token_record = await IamUserToken.objects.select_related("user").filter(
+        token_record = await IamUserToken.objects.select_related("user", "session").filter(
             user_id=user_id,
             access_jti=access_jti,
             revoked_at__isnull=True,
@@ -372,14 +378,11 @@ class VerifyService:
         if token_record is None:
             return None
 
-        session_id = getattr(token_record, "session_id", None)
-        if session_id:
-            session = await IamUserSession.objects.filter(
-                id=session_id,
-                revoked_at__isnull=True,
-                expired_at__gt=now,
-            ).afirst()
-            if session is None:
+        session = getattr(token_record, "session", None)
+        if session is not None:
+            if session.revoked_at is not None:
+                return None
+            if session.expired_at <= now:
                 return None
 
         user = getattr(token_record, "user", None)

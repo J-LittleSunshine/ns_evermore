@@ -14,7 +14,7 @@ from ns_common.logging.logger import get_ns_logger
 if TYPE_CHECKING:
     pass
 
-_REQUEST_LOGGER = get_ns_logger("backend", False)
+_REQUEST_LOGGER = get_ns_logger("backend", True)
 
 
 class BaseRequestViewSet(ViewSet):

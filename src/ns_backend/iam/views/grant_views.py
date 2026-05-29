@@ -3,10 +3,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ns_common.error_codes import NsErrorCode
-from . import IamRequestViewSet
-from ..errors import IamDomainError
-from ..models import (
+from ns_backend.iam.errors import IamDomainError
+from ns_backend.iam.models import (
     IamUserRole,
     IamPermission,
     IamRolePermission,
@@ -14,14 +12,16 @@ from ..models import (
     IamDepartmentPermission,
     IamSubsidiaryPermission
 )
-from ..policies import DataScopePolicy
-from ..validators import (
+from ns_backend.iam.policies import DataScopePolicy
+from ns_backend.iam.validators import (
     UserRoleValidator,
     RolePermissionValidator,
     UserPermissionValidator,
     DepartmentPermissionValidator,
     SubsidiaryPermissionValidator
 )
+from ns_backend.iam.views import IamRequestViewSet
+from ns_common.error_codes import NsErrorCode
 from ...backend.common import CrudRepository
 from ...backend.exceptions import BusinessError
 
