@@ -11,11 +11,12 @@ from django.conf import settings
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
 
-from backend.utils.password_transport import PasswordTransportService
 from ns_backend.backend.common.validators import AuthRequestValidator
 from ns_backend.backend.common.viewset import BaseRequestViewSet
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.backend.utils.jwt import JwtService
+from ns_backend.backend.utils.password_transport import PasswordTransportService
+from ns_backend.iam import AuditRequestMixin
 from ns_backend.iam.auth_rotation import RefreshTokenRotationService
 from ns_backend.iam.models import IamUser, IamUserDevice, IamUserSession, IamUserToken, IamLoginFailureLock
 from ns_backend.iam.services import AuthContextService
@@ -26,8 +27,9 @@ if TYPE_CHECKING:
     pass
 
 
-class AuthViewSet(BaseRequestViewSet):
+class AuthViewSet(AuditRequestMixin, BaseRequestViewSet):
     SESSION_EXPIRE_MINUTES = 43200
+    audit_resource_type = "iam_auth"
 
     @staticmethod
     def _is_truthy(value: Any) -> bool:
@@ -65,6 +67,7 @@ class AuthViewSet(BaseRequestViewSet):
         if user is None or not bool(getattr(user, "is_active", False)):
             raise BusinessError("User disabled or not found", NsErrorCode.USER_DISABLED_OR_NOT_FOUND)
 
+        request.current_user = user
         return user, token_record
 
     @classmethod
@@ -270,6 +273,8 @@ class AuthViewSet(BaseRequestViewSet):
         user.last_login = now
         await user.asave(update_fields=["last_login"])
         await self.clear_login_failure(username=username)
+
+        request.current_user = user
 
         return self.success_response(
             {

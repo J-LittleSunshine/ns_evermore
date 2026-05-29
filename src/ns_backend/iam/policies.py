@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import json
+from dataclasses import replace
+from datetime import datetime, date
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
-from ns_common.error_codes import NsErrorCode
-from .constants import (
+from django.conf import settings
+
+from backend.exceptions import BusinessError
+from ns_backend.iam.constants import (
     USER_TYPE_ENTERPRISE,
     USER_TYPE_PERSONAL,
     DATA_SCOPE_ALL,
@@ -18,8 +25,9 @@ from .constants import (
     PERMISSION_EFFECT_DENY,
     PERMISSION_EFFECT_ALLOW
 )
-from .errors import IamDomainError
-from .schemas import TenantContext, DataScopeResult, DataScopeFilterPlan, DataScopeFieldMap
+from ns_backend.iam.errors import IamDomainError
+from ns_backend.iam.schemas import TenantContext, DataScopeResult, DataScopeFilterPlan, DataScopeFieldMap, AuditEvent
+from ns_common.error_codes import NsErrorCode
 
 if TYPE_CHECKING:
     pass
@@ -223,3 +231,247 @@ class DataScopePolicy(BasePolicy):
 
         if effect == PERMISSION_EFFECT_ALLOW and not data_scope:
             cls.deny("Data permissions must set data scope", NsErrorCode.DATA_SCOPE_REQUIRED)
+
+
+class AuditPolicy:
+    STATUS_SUCCESS = "SUCCESS"
+    STATUS_FAILED = "FAILED"
+    MAX_AUDIT_STRING_LENGTH = 2048
+    MAX_AUDIT_JSON_LENGTH = 32768
+
+    SENSITIVE_KEYS = {
+        "password",
+        "password_payload",
+        "passwordpayload",
+        "raw_password",
+        "rawpassword",
+        "encrypted_password",
+        "encryptedpassword",
+        "password_ciphertext",
+        "passwordciphertext",
+        "ciphertext",
+        "plain_text",
+        "plaintext",
+        "decrypted_password",
+        "decryptedpassword",
+        "password_plaintext",
+        "passwordplaintext",
+        "old_password",
+        "new_password",
+        "confirm_password",
+        "oldpassword",
+        "newpassword",
+        "confirmpassword",
+        "refresh_token",
+        "access_token",
+        "refreshtoken",
+        "accesstoken",
+        "token",
+        "authtoken",
+        "auth_token",
+        "sessiontoken",
+        "session_token",
+        "authorization",
+        "bearer",
+        "jwt",
+        "jwt_token",
+        "secret",
+        "client_secret",
+        "clientsecret",
+        "api_key",
+        "apikey",
+        "secret_key",
+        "secretkey",
+        "private_key",
+        "privatekey",
+        "rsa_private_key",
+        "rsaprivatekey",
+        "rsa_private_key_file",
+        "rsaprivatekeyfile",
+        "rsa_private_key_passphrase",
+        "rsaprivatekeypassphrase",
+        "private_key_file",
+        "privatekeyfile",
+        "private_key_pem",
+        "privatekeypem",
+        "key_passphrase",
+        "keypassphrase",
+        "passphrase",
+        "csrf",
+        "csrf_token",
+        "csrftoken",
+    }
+
+    @staticmethod
+    def normalize_sensitive_key(key: Any) -> str:
+        return str(key).strip().lower()
+
+    @staticmethod
+    def compact_sensitive_key(key: Any) -> str:
+        normalized = str(key).strip().lower()
+        return "".join(ch for ch in normalized if ch not in {"_", "-", ".", " "})
+
+    @classmethod
+    def normalize_sensitive_key_variants(cls, keys: Any) -> set[str]:
+        if keys is None:
+            return set()
+
+        items = keys if isinstance(keys, (list, tuple, set)) else (keys,)
+        variants: set[str] = set()
+        for key in items:
+            if not isinstance(key, str):
+                continue
+            text = key.strip()
+            if not text:
+                continue
+            variants.add(cls.normalize_sensitive_key(text))
+            variants.add(cls.compact_sensitive_key(text))
+        return variants
+
+    @classmethod
+    def get_configured_sensitive_keys(cls) -> set[str]:
+        extra_keys = getattr(settings, "IAM_AUDIT_EXTRA_SENSITIVE_KEYS", ())
+        return cls.normalize_sensitive_key_variants(extra_keys)
+
+    @classmethod
+    def get_effective_sensitive_keys(cls) -> set[str]:
+        return cls.SENSITIVE_KEYS | cls.get_configured_sensitive_keys()
+
+    @classmethod
+    def is_sensitive_key(cls, key: Any) -> bool:
+        normalized = cls.normalize_sensitive_key(key)
+        compact = cls.compact_sensitive_key(key)
+        sensitive_keys = cls.get_effective_sensitive_keys()
+        return normalized in sensitive_keys or compact in sensitive_keys
+
+    @classmethod
+    def to_json_safe(cls, value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+
+        if isinstance(value, (Decimal, UUID)):
+            return str(value)
+
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+
+        if isinstance(value, dict):
+            return {str(key): cls.to_json_safe(item) for key, item in value.items()}
+
+        if isinstance(value, (list, tuple, set)):
+            return [cls.to_json_safe(item) for item in value]
+
+        return str(value)
+
+    @classmethod
+    def mask_sensitive_data(cls, data: Any) -> Any:
+        if data is None:
+            return None
+
+        if isinstance(data, dict):
+            masked: dict[str, Any] = {}
+            for key, value in data.items():
+                normalized_key = str(key)
+                if cls.is_sensitive_key(key):
+                    masked[normalized_key] = "***"
+                    continue
+                masked[normalized_key] = cls.mask_sensitive_data(value)
+            return masked
+
+        if isinstance(data, (list, tuple, set)):
+            return [cls.mask_sensitive_data(item) for item in data]
+
+        return cls.to_json_safe(data)
+
+    @classmethod
+    def get_json_length(cls, value: Any) -> int:
+        try:
+            return len(json.dumps(value, ensure_ascii=False, default=str))
+        except Exception:  # noqa
+            return len(str(value))
+
+    @classmethod
+    def limit_audit_value(cls, value: Any) -> Any:
+        safe_value = cls.to_json_safe(value)
+        if isinstance(safe_value, str) and len(safe_value) > cls.MAX_AUDIT_STRING_LENGTH:
+            return {
+                "__truncated__": True,
+                "type": "string",
+                "length": len(safe_value),
+                "value": safe_value[:cls.MAX_AUDIT_STRING_LENGTH],
+            }
+        return safe_value
+
+    @classmethod
+    def limit_audit_payload(cls, value: Any) -> Any:
+        if value is None:
+            return None
+
+        if isinstance(value, dict):
+            limited_obj = {str(key): cls.limit_audit_payload(item) for key, item in value.items()}
+            json_length = cls.get_json_length(limited_obj)
+            if json_length > cls.MAX_AUDIT_JSON_LENGTH:
+                return {
+                    "__truncated__": True,
+                    "type": "object",
+                    "length": json_length,
+                }
+            return limited_obj
+
+        if isinstance(value, (list, tuple, set)):
+            limited_arr = [cls.limit_audit_payload(item) for item in value]
+            json_length = cls.get_json_length(limited_arr)
+            if json_length > cls.MAX_AUDIT_JSON_LENGTH:
+                return {
+                    "__truncated__": True,
+                    "type": "array",
+                    "length": json_length,
+                }
+            return limited_arr
+
+        return cls.limit_audit_value(value)
+
+    @classmethod
+    def normalize_payload(cls, value: Any) -> Any:
+        masked = cls.mask_sensitive_data(value)
+        return cls.limit_audit_payload(masked)
+
+    @classmethod
+    def normalize_status(cls, status: str | None) -> str:
+        if status == cls.STATUS_FAILED:
+            return cls.STATUS_FAILED
+        return cls.STATUS_SUCCESS
+
+    @staticmethod
+    def truncate(value: str | None, max_length: int) -> str | None:
+        if value is None:
+            return None
+        return str(value)[:max_length]
+
+    @classmethod
+    def normalize_event(cls, event: AuditEvent) -> AuditEvent:
+        if not event.operation_type:
+            raise BusinessError("operation_type is required", NsErrorCode.AUDIT_OPERATION_TYPE_REQUIRED)
+
+        if not event.resource_type:
+            raise BusinessError("resource_type is required", NsErrorCode.AUDIT_RESOURCE_TYPE_REQUIRED)
+
+        return replace(
+            event,
+            operation_type=cls.truncate(event.operation_type, 64),
+            resource_type=cls.truncate(event.resource_type, 64),
+            request_method=cls.truncate(event.request_method, 16),
+            request_path=cls.truncate(event.request_path, 255),
+            client_ip=cls.truncate(event.client_ip, 64),
+            user_agent=cls.truncate(event.user_agent, 512),
+            request_data=cls.normalize_payload(event.request_data),
+            before_data=cls.normalize_payload(event.before_data),
+            after_data=cls.normalize_payload(event.after_data),
+            extra_data=cls.normalize_payload(event.extra_data),
+            status=cls.normalize_status(event.status),
+            error_message=cls.truncate(event.error_message, 512),
+            trace_id=cls.truncate(event.trace_id, 64),
+        )
