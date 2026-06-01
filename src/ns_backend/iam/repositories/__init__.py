@@ -17,6 +17,7 @@ from ns_backend.iam.repositories.grant import (
     UserPermissionGrantRepository,
     UserRoleGrantRepository
 )
+from ns_backend.iam.repositories.organization import OrganizationRepository
 from ns_backend.iam.repositories.permission import PermissionRepository
 from ns_backend.iam.repositories.permission_sync import PermissionSyncRepository
 from ns_backend.iam.repositories.session import UserSessionRepository
@@ -35,6 +36,7 @@ __all__ = [
     "GrantPermissionRepository",
     "IamBaseRepository",
     "LoginFailureRepository",
+    "OrganizationRepository",
     "PermissionRepository",
     "PermissionSyncRepository",
     "RolePermissionGrantRepository",
