@@ -525,3 +525,61 @@ class TenantPolicy(BasePolicy):
             return context.company_id
 
         return None
+
+
+class UserPolicy(BasePolicy):
+    """User operation policy."""
+
+    ADMIN_USER_PERMISSION = "iam:user:update_staff"
+    SUPERUSER_PERMISSION = "iam:user:update_superuser"
+
+    @classmethod
+    async def ensure_can_operate_user(cls, *, operator: Any, target_user: Any) -> None:
+        """Ensure operator can operate target user."""
+        if bool(getattr(target_user, "is_superuser", False)) and not bool(getattr(operator, "is_superuser", False)):
+            cls.deny("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
+
+        if bool(getattr(target_user, "is_staff", False)) or bool(getattr(target_user, "is_superuser", False)):
+            has_permission = await cls.has_admin_user_permission(operator)
+            if not has_permission:
+                cls.deny(f"Permission denied: {cls.ADMIN_USER_PERMISSION}", NsErrorCode.PERMISSION_DENIED)
+
+    @classmethod
+    async def ensure_can_update_critical_fields(cls, *, operator: Any, update_data: dict[str, Any]) -> None:
+        """Ensure operator can update staff or superuser flags."""
+        if bool(getattr(operator, "is_superuser", False)):
+            return
+
+        if cls.is_truthy(update_data.get("is_superuser")):
+            cls.deny("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
+
+        critical_field_permissions = {
+            "is_staff": cls.ADMIN_USER_PERMISSION,
+            "is_superuser": cls.SUPERUSER_PERMISSION,
+        }
+
+        for field, permission_code in critical_field_permissions.items():
+            if field not in update_data:
+                continue
+
+            if not cls.is_truthy(update_data.get(field)):
+                continue
+
+            has_permission = await cls.has_permission(user=operator, permission_code=permission_code)
+            if not has_permission:
+                cls.deny(f"Permission denied: {permission_code}", NsErrorCode.PERMISSION_DENIED)
+
+    @classmethod
+    async def has_admin_user_permission(cls, operator: Any) -> bool:
+        """Check whether operator can operate administrator users."""
+        if bool(getattr(operator, "is_superuser", False)):
+            return True
+
+        return await cls.has_permission(user=operator, permission_code=cls.ADMIN_USER_PERMISSION)
+
+    @staticmethod
+    async def has_permission(*, user: Any, permission_code: str) -> bool:
+        """Check user permission with lazy import to avoid policy-service import cycles."""
+        from ns_backend.iam.services.permission import PermissionService
+
+        return await PermissionService.has_permission(user=user, permission_code=permission_code)

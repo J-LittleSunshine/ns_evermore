@@ -10,7 +10,7 @@ from ns_backend.backend.exceptions import BusinessError
 from ns_backend.backend.utils.password_transport import PasswordTransportService
 from ns_backend.iam.constants import USER_TYPE_ENTERPRISE
 from ns_backend.iam.models import IamCompany, IamDepartment, IamPermission, IamRole, IamSubsidiary, IamUser
-from ns_backend.iam.policies import OrganizationPolicy, TenantPolicy
+from ns_backend.iam.policies import OrganizationPolicy, TenantPolicy, UserPolicy
 from ns_backend.iam.repositories import IamBaseRepository, UserSessionRepository, UserTokenRepository
 from ns_backend.iam.schemas import TenantContext
 from ns_backend.iam.validators import CompanyValidator, DepartmentValidator, PermissionValidator, RoleValidator, SubsidiaryValidator, UserValidator
@@ -386,6 +386,9 @@ class UserService(IamBaseService):
 
             if cls.is_truthy(data.get("is_superuser")):
                 raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
+
+            if cls.is_truthy(data.get("is_staff")):
+                raise BusinessError(f"Permission denied: {UserPolicy.ADMIN_USER_PERMISSION}", NsErrorCode.PERMISSION_DENIED)
 
         company_id = data.get("company_id", getattr(item, "company_id", None))
         if company_id in (None, ""):
