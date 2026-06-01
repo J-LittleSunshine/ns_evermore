@@ -23,13 +23,6 @@ from ns_backend.iam.services.grant import (
     UserPermissionGrantService,
     UserRoleGrantService
 )
-from ns_backend.iam.services.legacy import (
-    DepartmentPermissionCrudService,
-    RolePermissionCrudService,
-    SubsidiaryPermissionCrudService,
-    UserPermissionCrudService,
-    UserRoleCrudService,
-)
 from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.permission_sync import PermissionSyncService
 from ns_backend.iam.services.session import SessionService
@@ -46,24 +39,19 @@ __all__ = [
     "AuthService",
     "CompanyService",
     "DataScopeService",
-    "DepartmentPermissionCrudService",
     "DepartmentPermissionGrantService",
     "DepartmentService",
     "IamBaseService",
     "PermissionBaseService",
     "PermissionService",
     "PermissionSyncService",
-    "RolePermissionCrudService",
     "RolePermissionGrantService",
     "RoleService",
     "SessionService",
-    "SubsidiaryPermissionCrudService",
     "SubsidiaryPermissionGrantService",
     "SubsidiaryService",
     "TenantService",
-    "UserPermissionCrudService",
     "UserPermissionGrantService",
-    "UserRoleCrudService",
     "UserRoleGrantService",
     "UserService",
     "VerifyService",
