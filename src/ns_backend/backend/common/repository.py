@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 class BaseRepository:
-    """Common async CRUD repository for Django models."""
+    """Common async repository for Django model resource operations."""
 
     @staticmethod
     def ensure_model_class(model_class: Any) -> None:
