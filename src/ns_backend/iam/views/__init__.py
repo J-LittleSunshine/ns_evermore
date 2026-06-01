@@ -42,6 +42,7 @@ class BaseIamViewSet(IamRequestViewSet):
             page_size=request.data.get("page_size", 20),
             filters=request.data.get("filters"),
             keyword=request.data.get("keyword"),
+            order_by=request.data.get("order_by"),
             tenant_context=self._tenant_context(request),
         )
         return self.success_response(data)

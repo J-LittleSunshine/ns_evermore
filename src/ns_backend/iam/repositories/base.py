@@ -25,7 +25,8 @@ class IamBaseRepository:
             page_size: int | str | None,
             tenant_filter: dict[str, Any] | None = None,
             filters: dict[str, Any] | None = None,
-            keyword_conditions: list[dict[str, Any]] | None = None
+            keyword_conditions: list[dict[str, Any]] | None = None,
+            order_by: tuple[str, ...] = ("-id",)
     ) -> dict[str, Any]:
         """List IAM model rows with pagination."""
         return await BaseRepository.list_items(
@@ -36,6 +37,7 @@ class IamBaseRepository:
             tenant_filter=tenant_filter,
             filters=filters,
             keyword_conditions=keyword_conditions,
+            order_by=order_by,
         )
 
     @staticmethod

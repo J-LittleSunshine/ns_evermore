@@ -38,6 +38,7 @@ class IamBaseService:
     update_fields: tuple[str, ...] = ()
     filter_fields: tuple[str, ...] = ()
     keyword_fields: tuple[str, ...] = ()
+    order_fields: tuple[str, ...] = ("id",)
 
     tenant_scope_field: str | None = None
     tenant_create_field: str | None = None
@@ -56,12 +57,14 @@ class IamBaseService:
             page_size: int | str | None = 20,
             filters: dict[str, Any] | None = None,
             keyword: str | None = None,
+            order_by: list[str] | tuple[str, ...] | str | None = None,
             tenant_context: TenantContext | None = None
     ) -> dict[str, Any]:
         """List IAM resources."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         query_filters = cls.build_list_filters(filters=filters)
         keyword_conditions = cls.build_keyword_conditions(keyword=keyword)
+        safe_order_by = cls.build_order_by(order_by=order_by)
         return await IamBaseRepository.list_items(
             model_class=cls.model_class,
             fields=cls.list_fields,
@@ -70,6 +73,7 @@ class IamBaseService:
             tenant_filter=tenant_filter,
             filters=query_filters,
             keyword_conditions=keyword_conditions,
+            order_by=safe_order_by,
         )
 
     @classmethod
@@ -226,6 +230,38 @@ class IamBaseService:
             for field in cls.keyword_fields
         ]
 
+    @classmethod
+    def build_order_by(cls, *, order_by: list[str] | tuple[str, ...] | str | None = None) -> tuple[str, ...]:
+        """Build safe order_by fields."""
+        if order_by in (None, ""):
+            return ("-id",)
+
+        if isinstance(order_by, str):
+            raw_items = [order_by]
+        elif isinstance(order_by, (list, tuple)):
+            raw_items = list(order_by)
+        else:
+            raise BusinessError("order_by must be a string or list", NsErrorCode.INVALID_VALUE)
+
+        allowed_order_fields = set(cls.order_fields)
+        result: list[str] = []
+
+        for item in raw_items:
+            if not isinstance(item, str):
+                raise BusinessError("order_by field is invalid", NsErrorCode.INVALID_VALUE)
+
+            value = item.strip()
+            if not value:
+                continue
+
+            field_name = value[1:] if value.startswith("-") else value
+            if field_name not in allowed_order_fields:
+                raise BusinessError(f"Ordering field is not allowed: {field_name}", NsErrorCode.INVALID_VALUE)
+
+            result.append(value)
+
+        return tuple(result) if result else ("-id",)
+
 class CompanyService(IamBaseService):
     """Company resource operation service."""
 
@@ -239,6 +275,7 @@ class CompanyService(IamBaseService):
     update_fields = ("company_name", "legal_name", "status")
     filter_fields = ("id", "company_code", "company_name", "status")
     keyword_fields = ("company_name", "company_code")
+    order_fields = ("id", "company_code", "company_name", "status", "created_at", "updated_at")
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
@@ -268,6 +305,7 @@ class DepartmentService(IamBaseService):
     update_fields = ("department_name", "status")
     filter_fields = ("id", "company_id", "subsidiary_id", "parent_id", "department_code", "department_name", "status")
     keyword_fields = ("department_name", "department_code")
+    order_fields = ("id", "company_id", "subsidiary_id", "parent_id", "department_code", "department_name", "status", "created_at", "updated_at")
 
     @classmethod
     async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any = None, tenant_context: TenantContext | None = None) -> None:
@@ -290,6 +328,8 @@ class PermissionBaseService(IamBaseService):
     update_fields = ("permission_name", "permission_type", "parent_id", "status")
     filter_fields = ("id", "permission_code", "permission_name", "permission_type", "parent_id", "status")
     keyword_fields = ("permission_name", "permission_code")
+    order_fields = ("id", "permission_code", "permission_name", "permission_type", "parent_id", "status", "created_at", "updated_at")
+
 
 
 class RoleService(IamBaseService):
@@ -305,6 +345,7 @@ class RoleService(IamBaseService):
     update_fields = ("role_name", "status")
     filter_fields = ("id", "company_id", "role_code", "role_name", "role_scope", "status")
     keyword_fields = ("role_name", "role_code")
+    order_fields = ("id", "company_id", "role_code", "role_name", "role_scope", "status", "created_at", "updated_at")
 
 
 class SubsidiaryService(IamBaseService):
@@ -320,6 +361,7 @@ class SubsidiaryService(IamBaseService):
     update_fields = ("subsidiary_name", "status")
     filter_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status")
     keyword_fields = ("subsidiary_name", "subsidiary_code")
+    order_fields = ("id", "username", "email", "phone", "display_name", "user_type", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser", "last_login", "created_at", "updated_at")
 
 
 class UserService(IamBaseService):
