@@ -262,6 +262,7 @@ class IamBaseService:
 
         return tuple(result) if result else ("-id",)
 
+
 class CompanyService(IamBaseService):
     """Company resource operation service."""
 
@@ -331,7 +332,6 @@ class PermissionBaseService(IamBaseService):
     order_fields = ("id", "permission_code", "permission_name", "permission_type", "parent_id", "status", "created_at", "updated_at")
 
 
-
 class RoleService(IamBaseService):
     """Role resource operation service."""
 
@@ -361,8 +361,7 @@ class SubsidiaryService(IamBaseService):
     update_fields = ("subsidiary_name", "status")
     filter_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status")
     keyword_fields = ("subsidiary_name", "subsidiary_code")
-    order_fields = ("id", "username", "email", "phone", "display_name", "user_type", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser", "last_login", "created_at", "updated_at")
-
+    order_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status", "created_at", "updated_at")
 
 class UserService(IamBaseService):
     """User resource operation service."""
@@ -393,6 +392,7 @@ class UserService(IamBaseService):
     update_fields = ("email", "phone", "display_name", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser")
     filter_fields = ("id", "username", "email", "phone", "display_name", "user_type", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser")
     keyword_fields = ("username", "display_name", "email", "phone")
+    order_fields = ("id", "username", "email", "phone", "display_name", "user_type", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser", "last_login", "created_at", "updated_at")
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
