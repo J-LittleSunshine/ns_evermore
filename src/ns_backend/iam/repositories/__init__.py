@@ -8,6 +8,7 @@ from ns_backend.iam.repositories.audit import AuditRepository
 from ns_backend.iam.repositories.auth import AuthUserRepository, LoginFailureRepository
 from ns_backend.iam.repositories.base import IamBaseRepository
 from ns_backend.iam.repositories.data_scope import DataScopeRepository
+from ns_backend.iam.repositories.data_scope_filter import DataScopeQuerySetHelper
 from ns_backend.iam.repositories.device import UserDeviceRepository
 from ns_backend.iam.repositories.grant import (
     DepartmentPermissionGrantRepository,
@@ -31,6 +32,7 @@ __all__ = [
     "AdminRepository",
     "AuditRepository",
     "AuthUserRepository",
+    "DataScopeQuerySetHelper",
     "DataScopeRepository",
     "DepartmentPermissionGrantRepository",
     "GrantPermissionRepository",
