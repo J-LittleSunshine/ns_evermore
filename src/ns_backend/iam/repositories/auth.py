@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from asgiref.sync import sync_to_async
 from django.db import IntegrityError, transaction
+from django.db.models import Case, DateTimeField, F, Value, When
+from django.utils import timezone
 
 from ns_backend.backend.common import BaseRepository
 from ns_backend.backend.exceptions import BusinessError
@@ -48,6 +51,26 @@ class LoginFailureRepository:
         return await IamLoginFailureLock.objects.using(db_alias).filter(username=username).afirst()
 
     @staticmethod
+    async def reset_record(record: IamLoginFailureLock) -> None:
+        """Reset an expired login failure lock record."""
+        record.failed_count = 0
+        record.locked_until = None
+        record.updated_at = timezone.now()
+
+        db_alias = record._state.db or BaseRepository.resolve_db_alias(model_class=IamLoginFailureLock)  # noqa
+        await record.asave(using=db_alias, update_fields=["failed_count", "locked_until", "updated_at"])
+
+    @staticmethod
+    async def clear_by_username(username: str) -> None:
+        """Clear login failure lock state while keeping the history row."""
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamLoginFailureLock)
+        await IamLoginFailureLock.objects.using(db_alias).filter(username=username).aupdate(
+            failed_count=0,
+            locked_until=None,
+            updated_at=timezone.now(),
+        )
+
+    @staticmethod
     async def create_failed_record(data: dict[str, Any]) -> IamLoginFailureLock:
         """Create login failure lock record."""
         db_alias = BaseRepository.resolve_db_alias(model_class=IamLoginFailureLock)
@@ -62,11 +85,69 @@ class LoginFailureRepository:
         db_alias = record._state.db or BaseRepository.resolve_db_alias(model_class=IamLoginFailureLock)  # noqa
         await record.asave(using=db_alias, update_fields=list(data.keys()))
 
-    @staticmethod
-    async def clear_by_username(username: str) -> None:
-        """Clear login failure lock by username."""
+    @classmethod
+    async def record_failed(cls, *, username: str, user: Any | None, max_failed_count: int, lock_minutes: int, client_ip: str | None = None, user_agent: str | None = None) -> None:
+        """Record one failed login attempt with atomic counter update."""
         db_alias = BaseRepository.resolve_db_alias(model_class=IamLoginFailureLock)
-        await IamLoginFailureLock.objects.using(db_alias).filter(username=username).adelete()
+        now = timezone.now()
+        locked_until = now + timedelta(minutes=lock_minutes)
+
+        update_fields: dict[str, Any] = {
+            "failed_count": F("failed_count") + 1,
+            "locked_until": Case(
+                When(failed_count__gte=max_failed_count - 1, then=Value(locked_until)),
+                default=F("locked_until"),
+                output_field=DateTimeField(),
+            ),
+            "last_failed_at": now,
+            "last_client_ip": client_ip,
+            "last_user_agent": user_agent,
+            "updated_at": now,
+        }
+
+        if user is not None:
+            update_fields["user_id"] = getattr(user, "id", None)
+
+        affected_rows = await IamLoginFailureLock.objects.using(db_alias).filter(username=username).aupdate(**update_fields)
+        if affected_rows:
+            return
+
+        try:
+            await IamLoginFailureLock.objects.using(db_alias).acreate(
+                username=username,
+                user_id=getattr(user, "id", None) if user is not None else None,
+                failed_count=1,
+                locked_until=locked_until if max_failed_count <= 1 else None,
+                last_failed_at=now,
+                last_client_ip=client_ip,
+                last_user_agent=user_agent,
+                created_at=now,
+                updated_at=now,
+            )
+            return
+        except IntegrityError:
+            retry_rows = await IamLoginFailureLock.objects.using(db_alias).filter(username=username).aupdate(**update_fields)
+            if retry_rows:
+                return
+
+        try:
+            await IamLoginFailureLock.objects.using(db_alias).acreate(
+                username=username,
+                user_id=getattr(user, "id", None) if user is not None else None,
+                failed_count=1,
+                locked_until=locked_until if max_failed_count <= 1 else None,
+                last_failed_at=now,
+                last_client_ip=client_ip,
+                last_user_agent=user_agent,
+                created_at=now,
+                updated_at=now,
+            )
+        except IntegrityError as exc:
+            final_rows = await IamLoginFailureLock.objects.using(db_alias).filter(username=username).aupdate(**update_fields)
+            if final_rows:
+                return
+
+            raise BusinessError("Failed to update login failure counter, please try again later", NsErrorCode.LOGIN_FAILURE_UPDATE_FAILED) from exc
 
 
 class AuthLoginBundleRepository:

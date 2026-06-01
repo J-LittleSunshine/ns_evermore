@@ -97,52 +97,21 @@ class AuthService:
                 data={"locked_until": record.locked_until.isoformat()},
             )
 
-        await LoginFailureRepository.update_failed_record(
-            record,
-            {
-                "failed_count": 0,
-                "locked_until": None,
-                "updated_at": now,
-            },
-        )
+        await LoginFailureRepository.reset_record(record)
 
     @classmethod
     async def record_login_failed(cls, *, username: str, user: Any | None, client_ip: str | None, user_agent: str | None) -> None:
-        now = timezone.now()
+        """Record failed login attempt with repository-level atomic counter update."""
         max_failed_count = int(getattr(settings, "LOGIN_MAX_FAILED_COUNT", 5))
         lock_minutes = int(getattr(settings, "LOGIN_LOCK_MINUTES", 15))
 
-        record = await LoginFailureRepository.get_by_username(username)
-        if record is None:
-            failed_count = 1
-            locked_until = now + timedelta(minutes=lock_minutes) if failed_count >= max_failed_count else None
-            await LoginFailureRepository.create_failed_record(
-                {
-                    "username": username,
-                    "user_id": getattr(user, "id", None),
-                    "failed_count": failed_count,
-                    "locked_until": locked_until,
-                    "last_failed_at": now,
-                    "last_client_ip": client_ip,
-                    "last_user_agent": user_agent,
-                    "created_at": now,
-                    "updated_at": now,
-                }
-            )
-            return
-
-        failed_count = int(record.failed_count or 0) + 1
-        await LoginFailureRepository.update_failed_record(
-            record,
-            {
-                "user_id": getattr(user, "id", None),
-                "failed_count": failed_count,
-                "locked_until": now + timedelta(minutes=lock_minutes) if failed_count >= max_failed_count else None,
-                "last_failed_at": now,
-                "last_client_ip": client_ip,
-                "last_user_agent": user_agent,
-                "updated_at": now,
-            },
+        await LoginFailureRepository.record_failed(
+            username=username,
+            user=user,
+            max_failed_count=max_failed_count,
+            lock_minutes=lock_minutes,
+            client_ip=client_ip,
+            user_agent=user_agent,
         )
 
     @staticmethod
