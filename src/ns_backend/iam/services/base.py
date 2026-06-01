@@ -191,6 +191,35 @@ class IamBaseService:
         company_id = data.get("company_id")
         return None if company_id in (None, "") else int(company_id)
 
+    @staticmethod
+    def normalize_company_id_for_create(value: Any) -> int:
+        """Normalize company_id for company-bound create operations."""
+        if value is None or value == "":
+            raise BusinessError("company_id cannot be empty", NsErrorCode.ID_EMPTY)
+
+        try:
+            company_id = int(value)
+        except (TypeError, ValueError) as exc:
+            raise BusinessError("company_id has invalid format", NsErrorCode.INVALID_VALUE) from exc
+
+        if company_id <= 0:
+            raise BusinessError("company_id must be positive", NsErrorCode.INVALID_VALUE)
+
+        return company_id
+
+    @classmethod
+    def build_company_scoped_create_data(cls, *, data: dict[str, Any], tenant_context: TenantContext | None = None) -> dict[str, Any]:
+        """Build create payload for resources that must be bound to a company."""
+        create_data = dict(data)
+
+        if tenant_context is not None and not TenantPolicy.is_platform_admin(tenant_context):
+            TenantPolicy.ensure_enterprise_context(tenant_context)
+            create_data["company_id"] = cls.normalize_company_id_for_create(tenant_context.company_id)
+            return create_data
+
+        create_data["company_id"] = cls.normalize_company_id_for_create(create_data.get("company_id"))
+        return create_data
+
     @classmethod
     def build_list_filters(cls, *, filters: dict[str, Any] | None = None) -> dict[str, Any]:
         """Build safe exact-match list filters."""
@@ -311,6 +340,12 @@ class DepartmentService(IamBaseService):
     order_fields = ("id", "company_id", "subsidiary_id", "parent_id", "department_code", "department_name", "status", "created_at", "updated_at")
 
     @classmethod
+    async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
+        """Create department with company boundary resolved before validation."""
+        create_data = cls.build_company_scoped_create_data(data=data, tenant_context=tenant_context)
+        return await super().create_item(data=create_data, operator=operator, operator_id=operator_id, tenant_context=tenant_context)
+
+    @classmethod
     async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any = None, tenant_context: TenantContext | None = None) -> None:
         """Validate organization boundary before creating department."""
         company_id = cls.resolve_company_id_for_payload(data=data, tenant_context=tenant_context)
@@ -377,6 +412,11 @@ class SubsidiaryService(IamBaseService):
     keyword_fields = ("subsidiary_name", "subsidiary_code")
     order_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status", "created_at", "updated_at")
 
+    @classmethod
+    async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
+        """Create subsidiary with company boundary resolved before validation."""
+        create_data = cls.build_company_scoped_create_data(data=data, tenant_context=tenant_context)
+        return await super().create_item(data=create_data, operator=operator, operator_id=operator_id, tenant_context=tenant_context)
 
 class UserService(IamBaseService):
     """User resource operation service."""
