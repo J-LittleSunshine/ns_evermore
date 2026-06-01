@@ -7,9 +7,10 @@ from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 
 from ns_backend.backend.exceptions import BusinessError
+from ns_backend.backend.utils.password_transport import PasswordTransportService
 from ns_backend.iam.constants import USER_TYPE_ENTERPRISE
 from ns_backend.iam.models import IamCompany, IamDepartment, IamPermission, IamRole, IamSubsidiary, IamUser
-from ns_backend.iam.policies import TenantPolicy
+from ns_backend.iam.policies import OrganizationPolicy, TenantPolicy
 from ns_backend.iam.repositories import IamBaseRepository, UserSessionRepository, UserTokenRepository
 from ns_backend.iam.schemas import TenantContext
 from ns_backend.iam.validators import CompanyValidator, DepartmentValidator, PermissionValidator, RoleValidator, SubsidiaryValidator, UserValidator
@@ -25,7 +26,8 @@ class IamBaseService:
     Service responsibilities:
     1. Resolve tenant filters and tenant create values.
     2. Validate create/update payloads.
-    3. Delegate all persistence operations to repositories.
+    3. Run resource-specific business rule hooks.
+    4. Delegate all persistence operations to repositories.
     """
 
     model_class: Any = None
@@ -38,6 +40,11 @@ class IamBaseService:
     tenant_scope_field: str | None = None
     tenant_create_field: str | None = None
     enterprise_resource_required: bool = False
+
+    @staticmethod
+    def is_truthy(value: Any) -> bool:
+        """Return whether value is treated as true in request payload."""
+        return value in (True, 1, "1", "true", "True", "yes", "YES", "on", "ON")
 
     @classmethod
     async def list_items(cls, *, page: int | str | None = 1, page_size: int | str | None = 20, tenant_context: TenantContext | None = None) -> dict[str, Any]:
@@ -55,6 +62,8 @@ class IamBaseService:
     async def create_item(cls, *, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """Create IAM resource."""
         validated_data = cls.validate_create_data(data)
+        await cls.validate_create_business_rules(data=validated_data, tenant_context=tenant_context)
+
         tenant_create_values = cls.get_tenant_create_values(tenant_context=tenant_context)
         return await IamBaseRepository.create_item_with_audit(model_class=cls.model_class, data=validated_data, operator_id=operator_id, tenant_create_values=tenant_create_values)
 
@@ -63,6 +72,9 @@ class IamBaseService:
         """Update IAM resource."""
         validated_data = cls.validate_update_data(data)
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
+        item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
+
+        await cls.validate_update_business_rules(item=item, data=validated_data, tenant_context=tenant_context)
         await IamBaseRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
 
     @classmethod
@@ -70,6 +82,16 @@ class IamBaseService:
         """Delete IAM resource."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         await IamBaseRepository.delete_item_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], tenant_context: TenantContext | None = None) -> None:
+        """Validate resource-specific create business rules."""
+        return None
+
+    @classmethod
+    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], tenant_context: TenantContext | None = None) -> None:
+        """Validate resource-specific update business rules."""
+        return None
 
     @classmethod
     def validate_create_data(cls, data: dict[str, Any]) -> dict[str, Any]:
@@ -133,6 +155,16 @@ class IamBaseService:
 
         raise BusinessError("Personal users cannot access enterprise organization resources", NsErrorCode.ENTERPRISE_ORG_FORBIDDEN_PERSONAL)
 
+    @classmethod
+    def resolve_company_id_for_payload(cls, *, data: dict[str, Any], tenant_context: TenantContext | None = None) -> int | None:
+        """Resolve effective company id for a create/update payload."""
+        if tenant_context is not None and not TenantPolicy.is_platform_admin(tenant_context):
+            TenantPolicy.ensure_enterprise_context(tenant_context)
+            return tenant_context.company_id
+
+        company_id = data.get("company_id")
+        return None if company_id in (None, "") else int(company_id)
+
 
 class CompanyService(IamBaseService):
     """Company resource operation service."""
@@ -146,18 +178,19 @@ class CompanyService(IamBaseService):
     list_fields = detail_fields = ("id", "company_code", "company_name", "legal_name", "status")
     update_fields = ("company_name", "legal_name", "status")
 
+    @classmethod
+    async def create_item(cls, *, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
+        """Create company. Only platform administrators can create companies."""
+        if tenant_context is not None:
+            OrganizationPolicy.ensure_can_create_company(tenant_context)
+        return await super().create_item(data=data, operator_id=operator_id, tenant_context=tenant_context)
 
-class SubsidiaryService(IamBaseService):
-    """Subsidiary resource operation service."""
-
-    model_class = IamSubsidiary
-    validator_class = SubsidiaryValidator
-    tenant_scope_field = "company_id"
-    tenant_create_field = "company_id"
-    enterprise_resource_required = True
-
-    list_fields = detail_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status")
-    update_fields = ("subsidiary_name", "status")
+    @classmethod
+    async def delete_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> None:
+        """Delete company. Only platform administrators can delete companies."""
+        if tenant_context is not None:
+            OrganizationPolicy.ensure_can_delete_company(tenant_context)
+        await super().delete_item(item_id=item_id, tenant_context=tenant_context)
 
 
 class DepartmentService(IamBaseService):
@@ -171,6 +204,16 @@ class DepartmentService(IamBaseService):
 
     list_fields = detail_fields = ("id", "company_id", "subsidiary_id", "parent_id", "department_code", "department_name", "status")
     update_fields = ("department_name", "status")
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], tenant_context: TenantContext | None = None) -> None:
+        """Validate organization boundary before creating department."""
+        company_id = cls.resolve_company_id_for_payload(data=data, tenant_context=tenant_context)
+        if company_id is None:
+            return
+
+        await OrganizationPolicy.ensure_subsidiary_belongs_to_company(subsidiary_id=data.get("subsidiary_id"), company_id=company_id)
+        await OrganizationPolicy.ensure_parent_department_belongs_to_company(parent_id=data.get("parent_id"), company_id=company_id)
 
 
 class PermissionBaseService(IamBaseService):
@@ -194,6 +237,19 @@ class RoleService(IamBaseService):
 
     list_fields = detail_fields = ("id", "company_id", "role_code", "role_name", "role_scope", "status")
     update_fields = ("role_name", "status")
+
+
+class SubsidiaryService(IamBaseService):
+    """Subsidiary resource operation service."""
+
+    model_class = IamSubsidiary
+    validator_class = SubsidiaryValidator
+    tenant_scope_field = "company_id"
+    tenant_create_field = "company_id"
+    enterprise_resource_required = True
+
+    list_fields = detail_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status")
+    update_fields = ("subsidiary_name", "status")
 
 
 class UserService(IamBaseService):
@@ -228,15 +284,17 @@ class UserService(IamBaseService):
     async def create_item(cls, *, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """Create user and hash password before persistence."""
         validated_data = cls.validate_create_data(data)
-        raw_password = validated_data.get("password")
-        if raw_password is None or raw_password == "":
+        create_data = cls.build_user_create_payload(data=validated_data, tenant_context=tenant_context)
+
+        raw_password_payload = create_data.get("password")
+        if raw_password_payload is None or raw_password_payload == "":
             raise BusinessError("password cannot be empty", NsErrorCode.USER_PASSWORD_EMPTY)
 
-        create_data = dict(validated_data)
-        create_data["password"] = make_password(str(raw_password))
+        raw_password = PasswordTransportService.resolve(str(raw_password_payload))
+        create_data["password"] = make_password(raw_password)
 
-        tenant_create_values = cls.get_tenant_create_values(tenant_context=tenant_context)
-        return await IamBaseRepository.create_item_with_audit(model_class=cls.model_class, data=create_data, operator_id=operator_id, tenant_create_values=tenant_create_values)
+        await cls.validate_user_organization_assignment(data=create_data)
+        return await IamBaseRepository.create_item_with_audit(model_class=cls.model_class, data=create_data, operator_id=operator_id, tenant_create_values=None)
 
     @classmethod
     async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
@@ -246,6 +304,8 @@ class UserService(IamBaseService):
         prev_is_active = bool(getattr(item, "is_active", False))
 
         validated_data = cls.validate_update_data(data)
+        await cls.validate_update_business_rules(item=item, data=validated_data, tenant_context=tenant_context)
+
         await IamBaseRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
 
         next_is_active = validated_data.get("is_active")
@@ -260,6 +320,9 @@ class UserService(IamBaseService):
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
+        if tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
+            raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
+
         now = timezone.now()
         await cls.revoke_user_sessions_and_tokens(user_id=item.id, revoked_at=now)
         await IamBaseRepository.delete_item(item)
@@ -273,16 +336,76 @@ class UserService(IamBaseService):
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
+        if tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
+            raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
+
         now = timezone.now()
+        raw_password = PasswordTransportService.resolve(password)
         await IamBaseRepository.update_item(
             instance=item,
             data={
-                "password": make_password(password),
+                "password": make_password(raw_password),
                 "updated_by": operator_id,
                 "updated_at": now,
             },
         )
         await cls.revoke_user_sessions_and_tokens(user_id=item.id, revoked_at=now)
+
+    @classmethod
+    def build_user_create_payload(cls, *, data: dict[str, Any], tenant_context: TenantContext | None = None) -> dict[str, Any]:
+        """Build tenant-safe user create payload."""
+        create_data = dict(data)
+
+        if tenant_context is None:
+            return create_data
+
+        if TenantPolicy.is_platform_admin(tenant_context):
+            return create_data
+
+        TenantPolicy.ensure_enterprise_context(tenant_context)
+
+        if cls.is_truthy(create_data.get("is_superuser")):
+            raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
+
+        create_data["company_id"] = tenant_context.company_id
+        create_data["user_type"] = USER_TYPE_ENTERPRISE
+        create_data["is_superuser"] = 0
+        return create_data
+
+    @classmethod
+    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], tenant_context: TenantContext | None = None) -> None:
+        """Validate user update business rules."""
+        if tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
+            raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
+
+        if tenant_context is not None and not TenantPolicy.is_platform_admin(tenant_context):
+            if "company_id" in data:
+                raise BusinessError("Updating field is not allowed: company_id", NsErrorCode.UPDATE_FIELD_NOT_ALLOWED)
+
+            if cls.is_truthy(data.get("is_superuser")):
+                raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
+
+        company_id = data.get("company_id", getattr(item, "company_id", None))
+        if company_id in (None, ""):
+            return
+
+        organization_data = {
+            "company_id": company_id,
+            "subsidiary_id": data.get("subsidiary_id", getattr(item, "subsidiary_id", None)),
+            "department_id": data.get("department_id", getattr(item, "department_id", None)),
+        }
+        await cls.validate_user_organization_assignment(data=organization_data)
+
+    @staticmethod
+    async def validate_user_organization_assignment(*, data: dict[str, Any]) -> None:
+        """Validate user subsidiary and department assignment under company."""
+        company_id = data.get("company_id")
+        if company_id in (None, ""):
+            return
+
+        normalized_company_id = int(company_id)
+        await OrganizationPolicy.ensure_subsidiary_belongs_to_company(subsidiary_id=data.get("subsidiary_id"), company_id=normalized_company_id)
+        await OrganizationPolicy.ensure_department_belongs_to_company(department_id=data.get("department_id"), company_id=normalized_company_id)
 
     @staticmethod
     async def revoke_user_sessions_and_tokens(*, user_id: int, revoked_at) -> None:
