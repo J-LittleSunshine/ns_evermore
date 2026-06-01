@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.errors import IamDomainError
-from ns_backend.iam.policies import DataScopePolicy
+from ns_backend.iam.policies import DataScopePolicy, GrantPolicy
 from ns_backend.iam.repositories import (
     DepartmentPermissionGrantRepository,
     GrantPermissionRepository,
@@ -49,11 +49,14 @@ class UserRoleGrantService:
     """User-role grant service."""
 
     @classmethod
-    async def bind_user_role(cls, *, data: dict[str, Any], operator_id: int | None) -> dict[str, Any]:
+    async def bind_user_role(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None) -> dict[str, Any]:
         """Bind role to user idempotently."""
         validated_data = UserRoleValidator.validate_create(data)
         user_id = _to_positive_int(validated_data.get("user_id"), "user_id")
         role_id = _to_positive_int(validated_data.get("role_id"), "role_id")
+
+        if operator is not None:
+            await GrantPolicy.ensure_can_bind_user_role(user_id=user_id, role_id=role_id, operator=operator)
 
         existed = await UserRoleGrantRepository.get_existing(user_id=user_id, role_id=role_id)
         if existed:
@@ -62,10 +65,13 @@ class UserRoleGrantService:
         return await UserRoleGrantRepository.create(user_id=user_id, role_id=role_id, operator_id=operator_id)
 
     @classmethod
-    async def unbind_user_role(cls, *, data: dict[str, Any]) -> None:
+    async def unbind_user_role(cls, *, data: dict[str, Any], operator: Any = None) -> None:
         """Unbind role from user idempotently."""
         user_id = _to_positive_int(data.get("user_id"), "user_id")
         role_id = _to_positive_int(data.get("role_id"), "role_id")
+
+        if operator is not None:
+            await GrantPolicy.ensure_can_bind_user_role(user_id=user_id, role_id=role_id, operator=operator)
 
         item = await UserRoleGrantRepository.get_existing(user_id=user_id, role_id=role_id)
         if item:
@@ -76,12 +82,15 @@ class RolePermissionGrantService:
     """Role-permission grant service."""
 
     @classmethod
-    async def grant_role_permission(cls, *, data: dict[str, Any], operator_id: int | None) -> dict[str, Any]:
+    async def grant_role_permission(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None) -> dict[str, Any]:
         """Grant permission to role idempotently."""
         validated_data = RolePermissionValidator.validate_create(data)
         role_id = _to_positive_int(validated_data.get("role_id"), "role_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
         data_scope = validated_data.get("data_scope")
+
+        if operator is not None:
+            await GrantPolicy.ensure_can_operate_role(role_id=role_id, operator=operator)
 
         existed = await RolePermissionGrantRepository.get_existing(role_id=role_id, permission_id=permission_id)
         if existed:
@@ -106,10 +115,13 @@ class RolePermissionGrantService:
         )
 
     @classmethod
-    async def revoke_role_permission(cls, *, data: dict[str, Any]) -> None:
+    async def revoke_role_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
         """Revoke permission from role idempotently."""
         role_id = _to_positive_int(data.get("role_id"), "role_id")
         permission_id = _to_positive_int(data.get("permission_id"), "permission_id")
+
+        if operator is not None:
+            await GrantPolicy.ensure_can_operate_role(role_id=role_id, operator=operator)
 
         item = await RolePermissionGrantRepository.get_existing(role_id=role_id, permission_id=permission_id)
         if item:
@@ -120,13 +132,16 @@ class UserPermissionGrantService:
     """User-permission grant service."""
 
     @classmethod
-    async def grant_user_permission(cls, *, data: dict[str, Any], operator_id: int | None) -> dict[str, Any]:
+    async def grant_user_permission(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None) -> dict[str, Any]:
         """Grant permission to user idempotently."""
         validated_data = UserPermissionValidator.validate_create(data)
         user_id = _to_positive_int(validated_data.get("user_id"), "user_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
         effect = validated_data.get("effect")
         data_scope = validated_data.get("data_scope")
+
+        if operator is not None:
+            await GrantPolicy.ensure_can_operate_user(user_id=user_id, operator=operator)
 
         existed = await UserPermissionGrantRepository.get_existing(user_id=user_id, permission_id=permission_id)
         if existed:
@@ -153,10 +168,13 @@ class UserPermissionGrantService:
         )
 
     @classmethod
-    async def revoke_user_permission(cls, *, data: dict[str, Any]) -> None:
+    async def revoke_user_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
         """Revoke permission from user idempotently."""
         user_id = _to_positive_int(data.get("user_id"), "user_id")
         permission_id = _to_positive_int(data.get("permission_id"), "permission_id")
+
+        if operator is not None:
+            await GrantPolicy.ensure_can_operate_user(user_id=user_id, operator=operator)
 
         item = await UserPermissionGrantRepository.get_existing(user_id=user_id, permission_id=permission_id)
         if item:
@@ -167,13 +185,16 @@ class DepartmentPermissionGrantService:
     """Department-permission grant service."""
 
     @classmethod
-    async def grant_department_permission(cls, *, data: dict[str, Any], operator_id: int | None) -> dict[str, Any]:
+    async def grant_department_permission(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None) -> dict[str, Any]:
         """Grant permission to department idempotently."""
         validated_data = DepartmentPermissionValidator.validate_create(data)
         department_id = _to_positive_int(validated_data.get("department_id"), "department_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
         effect = validated_data.get("effect")
         data_scope = validated_data.get("data_scope")
+
+        if operator is not None:
+            await GrantPolicy.ensure_can_operate_department(department_id=department_id, operator=operator)
 
         existed = await DepartmentPermissionGrantRepository.get_existing(department_id=department_id, permission_id=permission_id)
         if existed:
@@ -200,10 +221,13 @@ class DepartmentPermissionGrantService:
         )
 
     @classmethod
-    async def revoke_department_permission(cls, *, data: dict[str, Any]) -> None:
+    async def revoke_department_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
         """Revoke permission from department idempotently."""
         department_id = _to_positive_int(data.get("department_id"), "department_id")
         permission_id = _to_positive_int(data.get("permission_id"), "permission_id")
+
+        if operator is not None:
+            await GrantPolicy.ensure_can_operate_department(department_id=department_id, operator=operator)
 
         item = await DepartmentPermissionGrantRepository.get_existing(department_id=department_id, permission_id=permission_id)
         if item:
@@ -214,13 +238,16 @@ class SubsidiaryPermissionGrantService:
     """Subsidiary-permission grant service."""
 
     @classmethod
-    async def grant_subsidiary_permission(cls, *, data: dict[str, Any], operator_id: int | None) -> dict[str, Any]:
+    async def grant_subsidiary_permission(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None) -> dict[str, Any]:
         """Grant permission to subsidiary idempotently."""
         validated_data = SubsidiaryPermissionValidator.validate_create(data)
         subsidiary_id = _to_positive_int(validated_data.get("subsidiary_id"), "subsidiary_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
         effect = validated_data.get("effect")
         data_scope = validated_data.get("data_scope")
+
+        if operator is not None:
+            await GrantPolicy.ensure_can_operate_subsidiary(subsidiary_id=subsidiary_id, operator=operator)
 
         existed = await SubsidiaryPermissionGrantRepository.get_existing(subsidiary_id=subsidiary_id, permission_id=permission_id)
         if existed:
@@ -247,10 +274,13 @@ class SubsidiaryPermissionGrantService:
         )
 
     @classmethod
-    async def revoke_subsidiary_permission(cls, *, data: dict[str, Any]) -> None:
+    async def revoke_subsidiary_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
         """Revoke permission from subsidiary idempotently."""
         subsidiary_id = _to_positive_int(data.get("subsidiary_id"), "subsidiary_id")
         permission_id = _to_positive_int(data.get("permission_id"), "permission_id")
+
+        if operator is not None:
+            await GrantPolicy.ensure_can_operate_subsidiary(subsidiary_id=subsidiary_id, operator=operator)
 
         item = await SubsidiaryPermissionGrantRepository.get_existing(subsidiary_id=subsidiary_id, permission_id=permission_id)
         if item:

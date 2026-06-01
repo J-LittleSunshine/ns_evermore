@@ -12,6 +12,7 @@ from ns_backend.iam.repositories.data_scope_filter import DataScopeQuerySetHelpe
 from ns_backend.iam.repositories.device import UserDeviceRepository
 from ns_backend.iam.repositories.grant import (
     DepartmentPermissionGrantRepository,
+    GrantBoundaryRepository,
     GrantPermissionRepository,
     RolePermissionGrantRepository,
     SubsidiaryPermissionGrantRepository,
@@ -38,6 +39,7 @@ __all__ = [
     "DataScopeRepository",
     "DepartmentPermissionGrantRepository",
     "GrantPermissionRepository",
+    "GrantBoundaryRepository",
     "IamBaseRepository",
     "LoginFailureRepository",
     "OrganizationRepository",

@@ -5,14 +5,17 @@ from typing import TYPE_CHECKING, Any
 
 from ns_backend.backend.common import BaseRepository
 from ns_backend.iam.models import (
+    IamDepartment,
     IamDepartmentPermission,
     IamPermission,
+    IamRole,
     IamRolePermission,
+    IamSubsidiary,
     IamSubsidiaryPermission,
+    IamUser,
     IamUserPermission,
     IamUserRole,
 )
-
 if TYPE_CHECKING:
     pass
 
@@ -25,6 +28,40 @@ class GrantPermissionRepository:
         """Load permission by primary key."""
         return await IamPermission.objects.filter(id=permission_id).afirst()
 
+class GrantBoundaryRepository:
+    """Repository for IAM grant boundary lookup."""
+
+    @staticmethod
+    async def user_exists(user_id: int) -> bool:
+        """Check whether user exists."""
+        return await IamUser.objects.filter(id=user_id).aexists()
+
+    @staticmethod
+    async def get_user_company_id(user_id: int) -> int | None:
+        """Load user company id."""
+        item = await IamUser.objects.filter(id=user_id).values("company_id").afirst()
+        return None if item is None else item.get("company_id")
+
+    @staticmethod
+    async def get_role_scope_and_company_id(role_id: int) -> tuple[str, int | None] | None:
+        """Load role scope and company id."""
+        item = await IamRole.objects.filter(id=role_id).values("role_scope", "company_id").afirst()
+        if item is None:
+            return None
+
+        return item.get("role_scope"), item.get("company_id")
+
+    @staticmethod
+    async def get_department_company_id(department_id: int) -> int | None:
+        """Load department company id."""
+        item = await IamDepartment.objects.filter(id=department_id).values("company_id").afirst()
+        return None if item is None else item.get("company_id")
+
+    @staticmethod
+    async def get_subsidiary_company_id(subsidiary_id: int) -> int | None:
+        """Load subsidiary company id."""
+        item = await IamSubsidiary.objects.filter(id=subsidiary_id).values("company_id").afirst()
+        return None if item is None else item.get("company_id")
 
 class UserRoleGrantRepository:
     """Repository for user-role grant records."""

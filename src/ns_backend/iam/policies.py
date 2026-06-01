@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from _typeshed import _VT_co
 from dataclasses import replace
 from datetime import datetime, date
 from decimal import Decimal
@@ -431,6 +432,129 @@ class DataScopePolicy(BasePolicy):
             cls.deny("Data permissions must set data scope", NsErrorCode.DATA_SCOPE_REQUIRED)
 
 
+class GrantPolicy(BasePolicy):
+    """IAM grant boundary policy."""
+
+    @classmethod
+    async def ensure_can_bind_user_role(cls, *, user_id: int, role_id: int, operator: Any) -> None:
+        """Ensure operator can bind role to user."""
+        from ns_backend.iam.repositories import GrantBoundaryRepository
+        from ns_backend.iam.services.tenant import TenantService
+
+        if not await GrantBoundaryRepository.user_exists(user_id):
+            cls.deny("User does not exist", NsErrorCode.USER_NOT_FOUND)
+
+        role_info = await GrantBoundaryRepository.get_role_scope_and_company_id(role_id)
+        if not role_info:
+            cls.deny("Role does not exist", NsErrorCode.DATA_NOT_FOUND)
+
+        user_company_id = await GrantBoundaryRepository.get_user_company_id(user_id)
+        role_scope, role_company_id = role_info
+        context = TenantService.from_user(operator)
+
+        if TenantPolicy.is_platform_admin(context):
+            if role_scope == "PERSONAL" and user_company_id is not None:
+                cls.deny("Cannot bind user role across companies", 14031)
+
+            if role_scope == "ENTERPRISE" and user_company_id != role_company_id:
+                cls.deny("Cannot bind user role across companies", 14031)
+
+            return
+
+        TenantPolicy.ensure_enterprise_context(context)
+        operator_company_id = context.company_id
+
+        if user_company_id != operator_company_id:
+            cls.deny("Cannot operate users from other companies", 14033)
+
+        if role_company_id != operator_company_id:
+            cls.deny("Cannot operate roles from other companies", 14032)
+
+        if user_company_id != role_company_id:
+            cls.deny("Cannot bind user role across companies", 14031)
+
+    @classmethod
+    async def ensure_can_operate_role(cls, *, role_id: int, operator: Any) -> None:
+        """Ensure operator can operate role."""
+        from ns_backend.iam.repositories import GrantBoundaryRepository
+        from ns_backend.iam.services.tenant import TenantService
+
+        role_info = await GrantBoundaryRepository.get_role_scope_and_company_id(role_id)
+        if not role_info:
+            cls.deny("Role does not exist", NsErrorCode.DATA_NOT_FOUND)
+
+        _, role_company_id = role_info
+        context = TenantService.from_user(operator)
+
+        if TenantPolicy.is_platform_admin(context):
+            return
+
+        TenantPolicy.ensure_enterprise_context(context)
+
+        if role_company_id != context.company_id:
+            cls.deny("Cannot operate roles from other companies", 14032)
+
+    @classmethod
+    async def ensure_can_operate_user(cls, *, user_id: int, operator: Any) -> None:
+        """Ensure operator can operate user."""
+        from ns_backend.iam.repositories import GrantBoundaryRepository
+        from ns_backend.iam.services.tenant import TenantService
+
+        if not await GrantBoundaryRepository.user_exists(user_id):
+            cls.deny("User does not exist", NsErrorCode.USER_NOT_FOUND)
+
+        user_company_id = await GrantBoundaryRepository.get_user_company_id(user_id)
+        context = TenantService.from_user(operator)
+
+        if TenantPolicy.is_platform_admin(context):
+            return
+
+        TenantPolicy.ensure_enterprise_context(context)
+
+        if user_company_id != context.company_id:
+            cls.deny("Cannot operate users from other companies", 14033)
+
+    @classmethod
+    async def ensure_can_operate_department(cls, *, department_id: int, operator: Any) -> None:
+        """Ensure operator can operate department."""
+        from ns_backend.iam.repositories import GrantBoundaryRepository
+        from ns_backend.iam.services.tenant import TenantService
+
+        department_company_id = await GrantBoundaryRepository.get_department_company_id(department_id)
+        if department_company_id is None:
+            cls.deny("Data not found", NsErrorCode.DATA_NOT_FOUND)
+
+        context = TenantService.from_user(operator)
+
+        if TenantPolicy.is_platform_admin(context):
+            return
+
+        TenantPolicy.ensure_enterprise_context(context)
+
+        if department_company_id != context.company_id:
+            cls.deny("Cannot operate departments from other companies", 14034)
+
+    @classmethod
+    async def ensure_can_operate_subsidiary(cls, *, subsidiary_id: int, operator: Any) -> None:
+        """Ensure operator can operate subsidiary."""
+        from ns_backend.iam.repositories import GrantBoundaryRepository
+        from ns_backend.iam.services.tenant import TenantService
+
+        subsidiary_company_id = await GrantBoundaryRepository.get_subsidiary_company_id(subsidiary_id)
+        if subsidiary_company_id is None:
+            cls.deny("Data not found", NsErrorCode.DATA_NOT_FOUND)
+
+        context = TenantService.from_user(operator)
+
+        if TenantPolicy.is_platform_admin(context):
+            return
+
+        TenantPolicy.ensure_enterprise_context(context)
+
+        if subsidiary_company_id != context.company_id:
+            cls.deny("Cannot operate subsidiaries from other companies", 14035)
+
+
 class OrganizationPolicy(BasePolicy):
     """Organization boundary policy."""
 
@@ -485,7 +609,7 @@ class RolePolicy(BasePolicy):
     """IAM role boundary policy."""
 
     @classmethod
-    async def build_create_payload(cls, *, context: TenantContext | None, data: dict[str, Any]) -> dict[str, Any]:
+    async def build_create_payload(cls, *, context: TenantContext | None, data: dict[str, Any]) -> dict[str, _VT_co] | None:
         """Build tenant-safe role create payload."""
         from ns_backend.iam.repositories import RoleRepository
 
@@ -523,7 +647,7 @@ class RolePolicy(BasePolicy):
 
             final_data["company_id"] = normalized_company_id
             return final_data
-        
+
         # noinspection PyInconsistentReturns
         cls.deny("Invalid role_scope value", NsErrorCode.INVALID_VALUE)
 
