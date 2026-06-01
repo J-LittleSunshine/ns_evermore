@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ns_backend.iam.services.audit import AuditService
 from ns_backend.iam.services.auth import AuthLoginResult, AuthService
+from ns_backend.iam.services.auth_context import AuthContextService
+from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.grant import (
     DepartmentPermissionGrantService,
     RolePermissionGrantService,
@@ -12,15 +15,11 @@ from ns_backend.iam.services.grant import (
     UserRoleGrantService
 )
 from ns_backend.iam.services.legacy import (
-    AuditService,
-    AuthContextService,
     CompanyCrudService,
-    DataScopeService,
     DepartmentCrudService,
     DepartmentPermissionCrudService,
     IamCrudService,
     PermissionCrudService,
-    PermissionService,
     PermissionSyncService,
     RoleCrudService,
     RolePermissionCrudService,
@@ -31,6 +30,7 @@ from ns_backend.iam.services.legacy import (
     UserPermissionCrudService,
     UserRoleCrudService,
 )
+from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.session import SessionService
 from ns_backend.iam.services.verify import VerifyService
 
