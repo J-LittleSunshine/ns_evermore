@@ -50,12 +50,12 @@ class PermissionSyncRepository:
         update_fields: list[str] = []
 
         for field in (
-            "permission_name",
-            "permission_type",
-            "parent_id",
-            "status",
-            "updated_by",
-            "updated_at",
+                "permission_name",
+                "permission_type",
+                "parent_id",
+                "status",
+                "updated_by",
+                "updated_at",
         ):
             if field not in data:
                 continue
@@ -79,6 +79,3 @@ class PermissionSyncRepository:
     async def get_permission_by_code(code: str) -> IamPermission | None:
         """Load one permission by code."""
         return await IamPermission.objects.filter(permission_code=code).afirst()
-
-
-__all__ = ["PermissionSyncRepository"]

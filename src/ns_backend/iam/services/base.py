@@ -10,7 +10,7 @@ from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.constants import USER_TYPE_ENTERPRISE
 from ns_backend.iam.models import IamCompany, IamDepartment, IamPermission, IamRole, IamSubsidiary, IamUser
 from ns_backend.iam.policies import TenantPolicy
-from ns_backend.iam.repositories import IamBaseRepository, UserSessionRepository, UserTokenRepository
+from ns_backend.iam.repositories import IamRepository, UserSessionRepository, UserTokenRepository
 from ns_backend.iam.schemas import TenantContext
 from ns_backend.iam.validators import CompanyValidator, DepartmentValidator, PermissionValidator, RoleValidator, SubsidiaryValidator, UserValidator
 from ns_common.error_codes import NsErrorCode
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     pass
 
 
-class IamBaseService:
+class IamService:
     """Base IAM CRUD service.
 
     Service responsibilities:
@@ -43,33 +43,33 @@ class IamBaseService:
     async def list_items(cls, *, page: int | str | None = 1, page_size: int | str | None = 20, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """List IAM resources."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        return await IamBaseRepository.list_items(model_class=cls.model_class, fields=cls.list_fields, page=page, page_size=page_size, tenant_filter=tenant_filter)
+        return await IamRepository.list_items(model_class=cls.model_class, fields=cls.list_fields, page=page, page_size=page_size, tenant_filter=tenant_filter)
 
     @classmethod
     async def detail_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """Get IAM resource detail."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        return await IamBaseRepository.detail_item(model_class=cls.model_class, item_id=item_id, fields=cls.detail_fields, tenant_filter=tenant_filter)
+        return await IamRepository.detail_item(model_class=cls.model_class, item_id=item_id, fields=cls.detail_fields, tenant_filter=tenant_filter)
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """Create IAM resource."""
         validated_data = cls.validate_create_data(data)
         tenant_create_values = cls.get_tenant_create_values(tenant_context=tenant_context)
-        return await IamBaseRepository.create_item_with_audit(model_class=cls.model_class, data=validated_data, operator_id=operator_id, tenant_create_values=tenant_create_values)
+        return await IamRepository.create_item_with_audit(model_class=cls.model_class, data=validated_data, operator_id=operator_id, tenant_create_values=tenant_create_values)
 
     @classmethod
     async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
         """Update IAM resource."""
         validated_data = cls.validate_update_data(data)
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        await IamBaseRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
+        await IamRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
 
     @classmethod
     async def delete_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> None:
         """Delete IAM resource."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        await IamBaseRepository.delete_item_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
+        await IamRepository.delete_item_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
     @classmethod
     def validate_create_data(cls, data: dict[str, Any]) -> dict[str, Any]:
@@ -134,7 +134,7 @@ class IamBaseService:
         raise BusinessError("Personal users cannot access enterprise organization resources", NsErrorCode.ENTERPRISE_ORG_FORBIDDEN_PERSONAL)
 
 
-class CompanyService(IamBaseService):
+class CompanyService(IamService):
     """Company service."""
 
     model_class = IamCompany
@@ -147,7 +147,7 @@ class CompanyService(IamBaseService):
     update_fields = ("company_name", "legal_name", "status")
 
 
-class SubsidiaryService(IamBaseService):
+class SubsidiaryService(IamService):
     """Subsidiary service."""
 
     model_class = IamSubsidiary
@@ -160,7 +160,7 @@ class SubsidiaryService(IamBaseService):
     update_fields = ("subsidiary_name", "status")
 
 
-class DepartmentService(IamBaseService):
+class DepartmentService(IamService):
     """Department service."""
 
     model_class = IamDepartment
@@ -173,7 +173,7 @@ class DepartmentService(IamBaseService):
     update_fields = ("department_name", "status")
 
 
-class PermissionService(IamBaseService):
+class PermissionService(IamService):
     """Permission service."""
 
     model_class = IamPermission
@@ -183,7 +183,7 @@ class PermissionService(IamBaseService):
     update_fields = ("permission_name", "permission_type", "parent_id", "status")
 
 
-class RoleService(IamBaseService):
+class RoleService(IamService):
     """Role service."""
 
     model_class = IamRole
@@ -196,7 +196,7 @@ class RoleService(IamBaseService):
     update_fields = ("role_name", "status")
 
 
-class UserService(IamBaseService):
+class UserService(IamService):
     """User service."""
 
     model_class = IamUser
@@ -236,17 +236,17 @@ class UserService(IamBaseService):
         create_data["password"] = make_password(str(raw_password))
 
         tenant_create_values = cls.get_tenant_create_values(tenant_context=tenant_context)
-        return await IamCrudRepository.create_item_with_audit(model_class=cls.model_class, data=create_data, operator_id=operator_id, tenant_create_values=tenant_create_values)
+        return await IamRepository.create_item_with_audit(model_class=cls.model_class, data=create_data, operator_id=operator_id, tenant_create_values=tenant_create_values)
 
     @classmethod
     async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
         """Update user and revoke sessions/tokens when user is disabled."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        item = await IamCrudRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
+        item = await IamRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
         prev_is_active = bool(getattr(item, "is_active", False))
 
         validated_data = cls.validate_update_data(data)
-        await IamCrudRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
+        await IamRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
 
         next_is_active = validated_data.get("is_active")
         should_revoke = prev_is_active and str(next_is_active) == "0"
@@ -258,11 +258,11 @@ class UserService(IamBaseService):
     async def delete_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> None:
         """Delete user and revoke all active sessions/tokens first."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        item = await IamCrudRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
+        item = await IamRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
         now = timezone.now()
         await cls.revoke_user_sessions_and_tokens(user_id=item.id, revoked_at=now)
-        await IamCrudRepository.delete_item(item)
+        await IamRepository.delete_item(item)
 
     @classmethod
     async def reset_password(cls, *, item_id: int | str | None, password: str | None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
@@ -271,10 +271,10 @@ class UserService(IamBaseService):
             raise BusinessError("password cannot be empty", NsErrorCode.USER_PASSWORD_EMPTY)
 
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        item = await IamCrudRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
+        item = await IamRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
         now = timezone.now()
-        await IamCrudRepository.update_item(
+        await IamRepository.update_item(
             instance=item,
             data={
                 "password": make_password(password),
@@ -289,14 +289,3 @@ class UserService(IamBaseService):
         """Revoke all active sessions and tokens of one user."""
         await UserSessionRepository.revoke_by_user_id(user_id=user_id, revoked_at=revoked_at)
         await UserTokenRepository.revoke_by_user_id(user_id=user_id, revoked_at=revoked_at)
-
-
-__all__ = [
-    "CompanyService",
-    "DepartmentService",
-    "IamBaseService",
-    "PermissionService",
-    "RoleService",
-    "SubsidiaryService",
-    "UserService",
-]

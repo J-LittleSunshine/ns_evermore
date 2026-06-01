@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from ns_backend.iam.repositories.audit import AuditRepository
 from ns_backend.iam.repositories.auth import AuthUserRepository, LoginFailureRepository
+from ns_backend.iam.repositories.base import IamRepository
 from ns_backend.iam.repositories.data_scope import DataScopeRepository
 from ns_backend.iam.repositories.device import UserDeviceRepository
 from ns_backend.iam.repositories.grant import (
@@ -42,4 +43,5 @@ __all__ = [
     "UserSessionRepository",
     "UserTokenRepository",
     "UserTokenRotationRepository",
+    "IamRepository"
 ]

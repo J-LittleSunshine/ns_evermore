@@ -9,7 +9,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from ns_backend.iam.repositories import PermissionSyncRepository
-from ns_backend.backend.common import NsBaseRepository
+from ns_backend.backend.common import BaseRepository
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.constants import USER_TYPE_ENTERPRISE, PERMISSION_EFFECT_DENY, PERMISSION_EFFECT_ALLOW, USER_TYPE_PERSONAL, DATA_SCOPE_DEPARTMENT_TREE
 from ns_backend.iam.models import (
@@ -79,29 +79,29 @@ class IamCrudService:
     @classmethod
     async def list_items(cls, *, page: int | str | None = 1, page_size: int | str | None = 20, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        return await NsBaseRepository.list_items(model_class=cls.model_class, fields=cls.list_fields, page=page, page_size=page_size, tenant_filter=tenant_filter)
+        return await BaseRepository.list_items(model_class=cls.model_class, fields=cls.list_fields, page=page, page_size=page_size, tenant_filter=tenant_filter)
 
     @classmethod
     async def detail_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        return await NsBaseRepository.detail_item(model_class=cls.model_class, item_id=item_id, fields=cls.detail_fields, tenant_filter=tenant_filter)
+        return await BaseRepository.detail_item(model_class=cls.model_class, item_id=item_id, fields=cls.detail_fields, tenant_filter=tenant_filter)
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         validated_data = cls.validate_create_data(data)
         tenant_create_values = cls.get_tenant_create_values(tenant_context=tenant_context)
-        return await NsBaseRepository.create_item_with_audit(model_class=cls.model_class, data=validated_data, operator_id=operator_id, tenant_create_values=tenant_create_values)
+        return await BaseRepository.create_item_with_audit(model_class=cls.model_class, data=validated_data, operator_id=operator_id, tenant_create_values=tenant_create_values)
 
     @classmethod
     async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
         validated_data = cls.validate_update_data(data)
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        await NsBaseRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
+        await BaseRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
 
     @classmethod
     async def delete_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> None:
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        await NsBaseRepository.delete_item_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
+        await BaseRepository.delete_item_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
     @classmethod
     def validate_create_data(cls, data: dict[str, Any]) -> dict[str, Any]:
@@ -250,7 +250,7 @@ class UserCrudService(IamCrudService):
         create_data["password"] = make_password(str(raw_password))
 
         tenant_create_values = cls.get_tenant_create_values(tenant_context=tenant_context)
-        return await NsBaseRepository.create_item_with_audit(
+        return await BaseRepository.create_item_with_audit(
             model_class=cls.model_class,
             data=create_data,
             operator_id=operator_id,
@@ -260,7 +260,7 @@ class UserCrudService(IamCrudService):
     @classmethod
     async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        item = await NsBaseRepository.get_required_by_id(
+        item = await BaseRepository.get_required_by_id(
             model_class=cls.model_class,
             item_id=item_id,
             tenant_filter=tenant_filter,
@@ -268,7 +268,7 @@ class UserCrudService(IamCrudService):
         prev_is_active = bool(getattr(item, "is_active", False))
 
         validated_data = cls.validate_update_data(data)
-        await NsBaseRepository.update_item_with_audit(
+        await BaseRepository.update_item_with_audit(
             model_class=cls.model_class,
             item_id=item_id,
             data=validated_data,
@@ -286,7 +286,7 @@ class UserCrudService(IamCrudService):
     @classmethod
     async def delete_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> None:
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        item = await NsBaseRepository.get_required_by_id(
+        item = await BaseRepository.get_required_by_id(
             model_class=cls.model_class,
             item_id=item_id,
             tenant_filter=tenant_filter,
@@ -296,7 +296,7 @@ class UserCrudService(IamCrudService):
         await IamUserSession.objects.filter(user_id=item.id, revoked_at__isnull=True).aupdate(revoked_at=now)
         await IamUserToken.objects.filter(user_id=item.id, revoked_at__isnull=True).aupdate(revoked_at=now)
 
-        await NsBaseRepository.delete_item(item)
+        await BaseRepository.delete_item(item)
 
     @classmethod
     async def reset_password(cls, *, item_id: int | str | None, password: str | None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
@@ -304,14 +304,14 @@ class UserCrudService(IamCrudService):
             raise BusinessError("password cannot be empty", NsErrorCode.USER_PASSWORD_EMPTY)
 
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        item = await NsBaseRepository.get_required_by_id(
+        item = await BaseRepository.get_required_by_id(
             model_class=cls.model_class,
             item_id=item_id,
             tenant_filter=tenant_filter,
         )
 
         now = timezone.now()
-        await NsBaseRepository.update_item(
+        await BaseRepository.update_item(
             instance=item,
             data={
                 "password": make_password(password),

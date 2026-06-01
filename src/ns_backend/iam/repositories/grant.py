@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ns_backend.backend.common import NsBaseRepository
+from ns_backend.backend.common import BaseRepository
 from ns_backend.iam.models import (
     IamDepartmentPermission,
     IamPermission,
@@ -37,7 +37,7 @@ class UserRoleGrantRepository:
     @staticmethod
     async def create(*, user_id: int, role_id: int, operator_id: int | None) -> dict[str, Any]:
         """Create user-role binding."""
-        return await NsBaseRepository.create_item_with_audit(
+        return await BaseRepository.create_item_with_audit(
             model_class=IamUserRole,
             data={
                 "user_id": user_id,
@@ -49,7 +49,7 @@ class UserRoleGrantRepository:
     @staticmethod
     async def delete(item: IamUserRole) -> None:
         """Delete user-role binding."""
-        await NsBaseRepository.delete_item(item)
+        await BaseRepository.delete_item(item)
 
 
 class RolePermissionGrantRepository:
@@ -63,7 +63,7 @@ class RolePermissionGrantRepository:
     @staticmethod
     async def create(*, role_id: int, permission_id: int, data_scope: str | None, expired_at, operator_id: int | None) -> dict[str, Any]:
         """Create role-permission binding."""
-        return await NsBaseRepository.create_item_with_audit(
+        return await BaseRepository.create_item_with_audit(
             model_class=IamRolePermission,
             data={
                 "role_id": role_id,
@@ -78,7 +78,7 @@ class RolePermissionGrantRepository:
     @staticmethod
     async def delete(item: IamRolePermission) -> None:
         """Delete role-permission binding."""
-        await NsBaseRepository.delete_item(item)
+        await BaseRepository.delete_item(item)
 
 
 class UserPermissionGrantRepository:
@@ -92,7 +92,7 @@ class UserPermissionGrantRepository:
     @staticmethod
     async def create(*, user_id: int, permission_id: int, effect: str, data_scope: str | None, expired_at, operator_id: int | None) -> dict[str, Any]:
         """Create user-permission binding."""
-        return await NsBaseRepository.create_item_with_audit(
+        return await BaseRepository.create_item_with_audit(
             model_class=IamUserPermission,
             data={
                 "user_id": user_id,
@@ -108,7 +108,7 @@ class UserPermissionGrantRepository:
     @staticmethod
     async def delete(item: IamUserPermission) -> None:
         """Delete user-permission binding."""
-        await NsBaseRepository.delete_item(item)
+        await BaseRepository.delete_item(item)
 
 
 class DepartmentPermissionGrantRepository:
@@ -122,7 +122,7 @@ class DepartmentPermissionGrantRepository:
     @staticmethod
     async def create(*, department_id: int, permission_id: int, effect: str, data_scope: str | None, expired_at, operator_id: int | None) -> dict[str, Any]:
         """Create department-permission binding."""
-        return await NsBaseRepository.create_item_with_audit(
+        return await BaseRepository.create_item_with_audit(
             model_class=IamDepartmentPermission,
             data={
                 "department_id": department_id,
@@ -138,7 +138,7 @@ class DepartmentPermissionGrantRepository:
     @staticmethod
     async def delete(item: IamDepartmentPermission) -> None:
         """Delete department-permission binding."""
-        await NsBaseRepository.delete_item(item)
+        await BaseRepository.delete_item(item)
 
 
 class SubsidiaryPermissionGrantRepository:
@@ -152,7 +152,7 @@ class SubsidiaryPermissionGrantRepository:
     @staticmethod
     async def create(*, subsidiary_id: int, permission_id: int, effect: str, data_scope: str | None, expired_at, operator_id: int | None) -> dict[str, Any]:
         """Create subsidiary-permission binding."""
-        return await NsBaseRepository.create_item_with_audit(
+        return await BaseRepository.create_item_with_audit(
             model_class=IamSubsidiaryPermission,
             data={
                 "subsidiary_id": subsidiary_id,
@@ -168,4 +168,4 @@ class SubsidiaryPermissionGrantRepository:
     @staticmethod
     async def delete(item: IamSubsidiaryPermission) -> None:
         """Delete subsidiary-permission binding."""
-        await NsBaseRepository.delete_item(item)
+        await BaseRepository.delete_item(item)
