@@ -51,6 +51,9 @@ class UserRoleGrantService:
     @classmethod
     async def bind_user_role(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None) -> dict[str, Any]:
         """Bind role to user idempotently."""
+        if not data.get("user_id") or not data.get("role_id"):
+            raise BusinessError("user_id and role_id cannot be empty", 13011)
+
         validated_data = UserRoleValidator.validate_create(data)
         user_id = _to_positive_int(validated_data.get("user_id"), "user_id")
         role_id = _to_positive_int(validated_data.get("role_id"), "role_id")
@@ -67,6 +70,9 @@ class UserRoleGrantService:
     @classmethod
     async def unbind_user_role(cls, *, data: dict[str, Any], operator: Any = None) -> None:
         """Unbind role from user idempotently."""
+        if not data.get("user_id") or not data.get("role_id"):
+            raise BusinessError("user_id and role_id cannot be empty", 13011)
+
         user_id = _to_positive_int(data.get("user_id"), "user_id")
         role_id = _to_positive_int(data.get("role_id"), "role_id")
 
@@ -84,6 +90,9 @@ class RolePermissionGrantService:
     @classmethod
     async def grant_role_permission(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None) -> dict[str, Any]:
         """Grant permission to role idempotently."""
+        if not data.get("role_id") or not data.get("permission_id"):
+            raise BusinessError("role_id and permission_id cannot be empty", 13012)
+
         validated_data = RolePermissionValidator.validate_create(data)
         role_id = _to_positive_int(validated_data.get("role_id"), "role_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
@@ -117,6 +126,9 @@ class RolePermissionGrantService:
     @classmethod
     async def revoke_role_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
         """Revoke permission from role idempotently."""
+        if not data.get("role_id") or not data.get("permission_id"):
+            raise BusinessError("role_id and permission_id cannot be empty", 13012)
+
         role_id = _to_positive_int(data.get("role_id"), "role_id")
         permission_id = _to_positive_int(data.get("permission_id"), "permission_id")
 
@@ -134,6 +146,9 @@ class UserPermissionGrantService:
     @classmethod
     async def grant_user_permission(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None) -> dict[str, Any]:
         """Grant permission to user idempotently."""
+        if not data.get("user_id") or not data.get("permission_id"):
+            raise BusinessError("user_id and permission_id cannot be empty", 13013)
+
         validated_data = UserPermissionValidator.validate_create(data)
         user_id = _to_positive_int(validated_data.get("user_id"), "user_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
@@ -170,6 +185,9 @@ class UserPermissionGrantService:
     @classmethod
     async def revoke_user_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
         """Revoke permission from user idempotently."""
+        if not data.get("user_id") or not data.get("permission_id"):
+            raise BusinessError("user_id and permission_id cannot be empty", 13013)
+
         user_id = _to_positive_int(data.get("user_id"), "user_id")
         permission_id = _to_positive_int(data.get("permission_id"), "permission_id")
 
@@ -187,6 +205,9 @@ class DepartmentPermissionGrantService:
     @classmethod
     async def grant_department_permission(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None) -> dict[str, Any]:
         """Grant permission to department idempotently."""
+        if not data.get("department_id") or not data.get("permission_id"):
+            raise BusinessError("department_id and permission_id cannot be empty", 13014)
+
         validated_data = DepartmentPermissionValidator.validate_create(data)
         department_id = _to_positive_int(validated_data.get("department_id"), "department_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
@@ -223,6 +244,9 @@ class DepartmentPermissionGrantService:
     @classmethod
     async def revoke_department_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
         """Revoke permission from department idempotently."""
+        if not data.get("department_id") or not data.get("permission_id"):
+            raise BusinessError("department_id and permission_id cannot be empty", 13014)
+
         department_id = _to_positive_int(data.get("department_id"), "department_id")
         permission_id = _to_positive_int(data.get("permission_id"), "permission_id")
 
@@ -240,6 +264,9 @@ class SubsidiaryPermissionGrantService:
     @classmethod
     async def grant_subsidiary_permission(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None) -> dict[str, Any]:
         """Grant permission to subsidiary idempotently."""
+        if not data.get("subsidiary_id") or not data.get("permission_id"):
+            raise BusinessError("subsidiary_id and permission_id cannot be empty", 13015)
+
         validated_data = SubsidiaryPermissionValidator.validate_create(data)
         subsidiary_id = _to_positive_int(validated_data.get("subsidiary_id"), "subsidiary_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
@@ -276,6 +303,9 @@ class SubsidiaryPermissionGrantService:
     @classmethod
     async def revoke_subsidiary_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
         """Revoke permission from subsidiary idempotently."""
+        if not data.get("subsidiary_id") or not data.get("permission_id"):
+            raise BusinessError("subsidiary_id and permission_id cannot be empty", 13015)
+
         subsidiary_id = _to_positive_int(data.get("subsidiary_id"), "subsidiary_id")
         permission_id = _to_positive_int(data.get("permission_id"), "permission_id")
 

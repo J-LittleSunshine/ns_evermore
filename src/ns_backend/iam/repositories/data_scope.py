@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.db.models import Q
 
+from ns_backend.backend.common import BaseRepository
 from ns_backend.iam.constants import ROLE_SCOPE_ENTERPRISE, ROLE_SCOPE_PERSONAL, PERMISSION_EFFECT_ALLOW
 from ns_backend.iam.models import (
     IamDepartment,
@@ -68,7 +69,8 @@ class DataScopeRepository:
     @classmethod
     async def list_user_scopes(cls, *, user_id: int, permission_ids: list[int], now) -> list[str]:
         """List user direct allow data scopes."""
-        queryset = IamUserPermission.objects.filter(
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamUserPermission)
+        queryset = IamUserPermission.objects.using(db_alias).filter(
             cls.valid_time_filter(now),
             user_id=user_id,
             permission_id__in=permission_ids,
@@ -80,7 +82,8 @@ class DataScopeRepository:
     @classmethod
     async def list_department_scopes(cls, *, department_id: int, permission_ids: list[int], now) -> list[str]:
         """List department direct allow data scopes."""
-        queryset = IamDepartmentPermission.objects.filter(
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamDepartmentPermission)
+        queryset = IamDepartmentPermission.objects.using(db_alias).filter(
             cls.valid_time_filter(now),
             department_id=department_id,
             permission_id__in=permission_ids,
@@ -92,7 +95,8 @@ class DataScopeRepository:
     @classmethod
     async def list_subsidiary_scopes(cls, *, subsidiary_id: int, permission_ids: list[int], now) -> list[str]:
         """List subsidiary direct allow data scopes."""
-        queryset = IamSubsidiaryPermission.objects.filter(
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamSubsidiaryPermission)
+        queryset = IamSubsidiaryPermission.objects.using(db_alias).filter(
             cls.valid_time_filter(now),
             subsidiary_id=subsidiary_id,
             permission_id__in=permission_ids,
@@ -105,7 +109,8 @@ class DataScopeRepository:
     async def list_role_scopes(cls, *, user_id: int, permission_ids: list[int], now, role_scope: str, company_id: int | None) -> list[str]:
         """List role allow data scopes."""
         role_ids = cls._build_user_role_ids_query(user_id=user_id, role_scope=role_scope, company_id=company_id)
-        queryset = IamRolePermission.objects.filter(
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamRolePermission)
+        queryset = IamRolePermission.objects.using(db_alias).filter(
             cls.valid_time_filter(now),
             role_id__in=role_ids,
             permission_id__in=permission_ids,
@@ -127,7 +132,8 @@ class DataScopeRepository:
             if not frontier_ids:
                 break
 
-            queryset = IamDepartment.objects.filter(company_id=company_id, parent_id__in=frontier_ids).values_list("id", flat=True)
+            db_alias = BaseRepository.resolve_db_alias(model_class=IamDepartment)
+            queryset = IamDepartment.objects.using(db_alias).filter(company_id=company_id, parent_id__in=frontier_ids).values_list("id", flat=True)
             child_ids = [item async for item in queryset]
 
             next_frontier_ids: list[int] = []
@@ -145,7 +151,8 @@ class DataScopeRepository:
     @classmethod
     async def _has_direct_effect(cls, model_class, *, subject_field: str, subject_id: int, permission_ids: list[int], effect: str, now) -> bool:
         """Check direct permission effect on a grant model."""
-        return await model_class.objects.filter(
+        db_alias = BaseRepository.resolve_db_alias(model_class=model_class)
+        return await model_class.objects.using(db_alias).filter(
             cls.valid_time_filter(now),
             **{subject_field: subject_id},
             permission_id__in=permission_ids,
@@ -167,4 +174,5 @@ class DataScopeRepository:
         elif role_scope == ROLE_SCOPE_ENTERPRISE and company_id is not None:
             role_filter["role__company_id"] = company_id
 
-        return IamUserRole.objects.filter(**role_filter).values("role_id")
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamUserRole)
+        return IamUserRole.objects.using(db_alias).filter(**role_filter).values("role_id")

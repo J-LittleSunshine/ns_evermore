@@ -9,7 +9,6 @@ from ns_backend.iam.repositories.auth import AuthLoginBundleRepository, AuthUser
 from ns_backend.iam.repositories.base import IamBaseRepository
 from ns_backend.iam.repositories.data_scope import DataScopeRepository
 from ns_backend.iam.repositories.data_scope_filter import DataScopeQuerySetHelper
-from ns_backend.iam.repositories.device import UserDeviceRepository
 from ns_backend.iam.repositories.grant import (
     DepartmentPermissionGrantRepository,
     GrantBoundaryRepository,
@@ -50,7 +49,6 @@ __all__ = [
     "RolePermissionGrantRepository",
     "SubsidiaryPermissionGrantRepository",
     "TokenRotationResult",
-    "UserDeviceRepository",
     "UserPermissionGrantRepository",
     "UserRepository",
     "UserRoleGrantRepository",

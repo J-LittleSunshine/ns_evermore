@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.db import IntegrityError
 
+from ns_backend.backend.common import BaseRepository
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.models import IamPermission
 from ns_common.error_codes import NsErrorCode
@@ -23,7 +24,8 @@ class PermissionSyncRepository:
             return {}
 
         result: dict[str, IamPermission] = {}
-        queryset = IamPermission.objects.filter(permission_code__in=codes)
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamPermission)
+        queryset = IamPermission.objects.using(db_alias).filter(permission_code__in=codes)
 
         async for item in queryset:
             result[item.permission_code] = item
@@ -40,7 +42,8 @@ class PermissionSyncRepository:
     async def create_permission(data: dict[str, Any]) -> IamPermission:
         """Create one permission."""
         try:
-            return await IamPermission.objects.acreate(**data)
+            db_alias = BaseRepository.resolve_db_alias(model_class=IamPermission)
+            return await IamPermission.objects.using(db_alias).acreate(**data)
         except IntegrityError as exc:
             raise BusinessError(f"Failed to create permission: {exc}", NsErrorCode.PERMISSION_CREATE_FAILED) from exc
 
@@ -71,11 +74,13 @@ class PermissionSyncRepository:
             return
 
         try:
-            await permission.asave(update_fields=update_fields)
+            db_alias = permission._state.db or BaseRepository.resolve_db_alias(model_class=IamPermission)  # noqa
+            await permission.asave(using=db_alias, update_fields=update_fields)
         except IntegrityError as exc:
             raise BusinessError(f"Failed to update permission: {exc}", NsErrorCode.PERMISSION_UPDATE_FAILED) from exc
 
     @staticmethod
     async def get_permission_by_code(code: str) -> IamPermission | None:
         """Load one permission by code."""
-        return await IamPermission.objects.filter(permission_code=code).afirst()
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamPermission)
+        return await IamPermission.objects.using(db_alias).filter(permission_code=code).afirst()

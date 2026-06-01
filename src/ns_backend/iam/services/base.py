@@ -418,6 +418,7 @@ class SubsidiaryService(IamBaseService):
         create_data = cls.build_company_scoped_create_data(data=data, tenant_context=tenant_context)
         return await super().create_item(data=create_data, operator=operator, operator_id=operator_id, tenant_context=tenant_context)
 
+
 class UserService(IamBaseService):
     """User resource operation service."""
 
@@ -444,10 +445,54 @@ class UserService(IamBaseService):
         "created_at",
         "updated_at"
     )
-    update_fields = ("email", "phone", "display_name", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser")
-    filter_fields = ("id", "username", "email", "phone", "display_name", "user_type", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser")
-    keyword_fields = ("username", "display_name", "email", "phone")
-    order_fields = ("id", "username", "email", "phone", "display_name", "user_type", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser", "last_login", "created_at", "updated_at")
+    update_fields = (
+        "email",
+        "phone",
+        "display_name",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+        "is_active",
+        "is_staff",
+        "is_superuser"
+    )
+    filter_fields = (
+        "id",
+        "username",
+        "email",
+        "phone",
+        "display_name",
+        "user_type",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+        "is_active",
+        "is_staff",
+        "is_superuser"
+    )
+    keyword_fields = (
+        "username",
+        "display_name",
+        "email",
+        "phone"
+    )
+    order_fields = (
+        "id",
+        "username",
+        "email",
+        "phone",
+        "display_name",
+        "user_type",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+        "is_active",
+        "is_staff",
+        "is_superuser",
+        "last_login",
+        "created_at",
+        "updated_at"
+    )
 
     @classmethod
     async def list_items(
@@ -506,17 +551,28 @@ class UserService(IamBaseService):
         else:
             tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
 
-        return await IamBaseRepository.detail_item(
-            model_class=cls.model_class,
-            item_id=item_id,
-            fields=cls.detail_fields,
-            tenant_filter=tenant_filter,
-        )
+        item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
+
+        if operator is not None:
+            await UserPolicy.ensure_can_operate_user(operator=operator, target_user=item)
+
+        result: dict[str, Any] = {}
+        for field in cls.detail_fields:
+            value = getattr(item, field)
+            if value is not None and hasattr(value, "isoformat"):
+                value = value.isoformat()
+            result[field] = value
+
+        return result
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """Create user and hash password before persistence."""
         create_payload = cls.build_user_create_payload(data=data, tenant_context=tenant_context)
+
+        if operator is not None:
+            await UserPolicy.ensure_can_update_critical_fields(operator=operator, update_data=create_payload)
+
         validated_data = cls.validate_create_data(create_payload)
 
         raw_password_payload = validated_data.get("password")
@@ -534,7 +590,10 @@ class UserService(IamBaseService):
     @classmethod
     async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
         """Update user and revoke sessions/tokens atomically when user is disabled."""
-        tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
+        if operator is not None:
+            tenant_filter = UserPolicy.get_user_tenant_filter(operator=operator)
+        else:
+            tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
         prev_is_active = bool(getattr(item, "is_active", False))
 
@@ -557,7 +616,10 @@ class UserService(IamBaseService):
     @classmethod
     async def delete_item(cls, *, item_id: int | str | None, operator: Any = None, tenant_context: TenantContext | None = None) -> None:
         """Delete user and revoke all active sessions/tokens in one transaction."""
-        tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
+        if operator is not None:
+            tenant_filter = UserPolicy.get_user_tenant_filter(operator=operator)
+        else:
+            tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
         if operator is not None:
@@ -573,7 +635,10 @@ class UserService(IamBaseService):
         if not isinstance(password, str) or not password:
             raise BusinessError("password cannot be empty", NsErrorCode.USER_PASSWORD_EMPTY)
 
-        tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
+        if operator is not None:
+            tenant_filter = UserPolicy.get_user_tenant_filter(operator=operator)
+        else:
+            tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
         if operator is not None:
@@ -601,6 +666,9 @@ class UserService(IamBaseService):
 
         if TenantPolicy.is_platform_admin(tenant_context):
             return create_data
+
+        if TenantPolicy.is_personal_user(tenant_context):
+            raise BusinessError("Personal users cannot create users", NsErrorCode.PERSONAL_USER_CANNOT_CREATE_USER)
 
         TenantPolicy.ensure_enterprise_context(tenant_context)
 
