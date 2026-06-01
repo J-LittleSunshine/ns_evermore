@@ -79,7 +79,7 @@ class IamBaseService:
         )
 
     @classmethod
-    async def detail_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
+    async def detail_item(cls, *, item_id: int | str | None, operator: Any = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """Get IAM resource detail."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         return await IamBaseRepository.detail_item(model_class=cls.model_class, item_id=item_id, fields=cls.detail_fields, tenant_filter=tenant_filter)
@@ -444,6 +444,21 @@ class UserService(IamBaseService):
             filters=query_filters,
             keyword_conditions=keyword_conditions,
             order_by=safe_order_by,
+        )
+
+    @classmethod
+    async def detail_item(cls, *, item_id: int | str | None, operator: Any = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
+        """Get user detail with backup-aligned access boundary."""
+        if operator is not None:
+            tenant_filter = UserPolicy.get_user_tenant_filter(operator=operator)
+        else:
+            tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
+
+        return await IamBaseRepository.detail_item(
+            model_class=cls.model_class,
+            item_id=item_id,
+            fields=cls.detail_fields,
+            tenant_filter=tenant_filter,
         )
 
     @classmethod

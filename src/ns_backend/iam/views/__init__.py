@@ -52,8 +52,10 @@ class BaseIamViewSet(IamRequestViewSet):
         return self.success_response(data)
 
     async def detail_item(self, request, *args, **kwargs):
+        user = self._current_user(request)
         data = await self.service.detail_item(
             item_id=request.data.get("id"),
+            operator=user,
             tenant_context=self._tenant_context(request),
         )
         return self.success_response(data)
