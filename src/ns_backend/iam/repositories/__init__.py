@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ns_backend.iam.repositories.admin import AdminRepository
 from ns_backend.iam.repositories.audit import AuditRepository
 from ns_backend.iam.repositories.auth import AuthUserRepository, LoginFailureRepository
 from ns_backend.iam.repositories.base import IamBaseRepository
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     pass
 
 __all__ = [
+    "AdminRepository",
     "AuditRepository",
     "AuthUserRepository",
     "DataScopeRepository",

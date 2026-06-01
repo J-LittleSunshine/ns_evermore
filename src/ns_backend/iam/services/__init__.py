@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ns_backend.iam.services.admin import AdminService
 from ns_backend.iam.services.audit import AuditService
 from ns_backend.iam.services.auth import AuthLoginResult, AuthService
 from ns_backend.iam.services.auth_context import AuthContextService
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     pass
 
 __all__ = [
+    "AdminService",
     "AuditService",
     "AuthContextService",
     "AuthLoginResult",
