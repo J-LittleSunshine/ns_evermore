@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from _typeshed import _VT_co
 from dataclasses import replace
 from datetime import datetime, date
 from decimal import Decimal
@@ -609,7 +608,7 @@ class RolePolicy(BasePolicy):
     """IAM role boundary policy."""
 
     @classmethod
-    async def build_create_payload(cls, *, context: TenantContext | None, data: dict[str, Any]) -> dict[str, _VT_co] | None:
+    async def build_create_payload(cls, *, context: TenantContext | None, data: dict[str, Any]) -> dict[str, Any] | None:
         """Build tenant-safe role create payload."""
         from ns_backend.iam.repositories import RoleRepository
 
