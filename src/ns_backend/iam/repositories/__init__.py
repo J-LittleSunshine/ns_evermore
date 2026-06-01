@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from ns_backend.iam.repositories.admin import AdminRepository
 from ns_backend.iam.repositories.audit import AuditRepository
-from ns_backend.iam.repositories.auth import AuthUserRepository, LoginFailureRepository
+from ns_backend.iam.repositories.auth import AuthLoginBundleRepository, AuthUserRepository, LoginFailureRepository
 from ns_backend.iam.repositories.base import IamBaseRepository
 from ns_backend.iam.repositories.data_scope import DataScopeRepository
 from ns_backend.iam.repositories.data_scope_filter import DataScopeQuerySetHelper
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 __all__ = [
     "AdminRepository",
     "AuditRepository",
+    "AuthLoginBundleRepository",
     "AuthUserRepository",
     "DataScopeQuerySetHelper",
     "DataScopeRepository",

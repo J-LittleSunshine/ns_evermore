@@ -15,9 +15,9 @@ from ns_backend.backend.exceptions import BusinessError
 from ns_backend.backend.utils.jwt import JwtService
 from ns_backend.backend.utils.password_transport import PasswordTransportService
 from ns_backend.iam.repositories import (
+    AuthLoginBundleRepository,
     AuthUserRepository,
     LoginFailureRepository,
-    UserDeviceRepository,
     UserSessionRepository,
     UserTokenRepository,
     UserTokenRotationRepository,
@@ -233,75 +233,25 @@ class AuthService:
         device_payload = cls.get_device_payload(data)
         fingerprint_hash = sha256_text(device_payload["fingerprint"])
 
-        device = await UserDeviceRepository.get_by_user_and_fingerprint(user_id=user.id, fingerprint_hash=fingerprint_hash)
-        if not device:
-            device = await UserDeviceRepository.create_device(
-                {
-                    "user_id": user.id,
-                    "device_id": device_payload["device_id"],
-                    "device_name": device_payload["device_name"],
-                    "device_type": device_payload["device_type"],
-                    "os_name": device_payload["os_name"] or None,
-                    "browser_name": device_payload["browser_name"] or None,
-                    "fingerprint_hash": fingerprint_hash,
-                    "trusted": 0,
-                    "status": 1,
-                    "first_login_at": now,
-                    "last_active_at": now,
-                    "last_client_ip": client_ip,
-                    "created_at": now,
-                    "updated_at": now,
-                }
-            )
-        else:
-            await UserDeviceRepository.update_device(
-                device,
-                {
-                    "device_name": device_payload["device_name"],
-                    "device_type": device_payload["device_type"],
-                    "os_name": device_payload["os_name"] or None,
-                    "browser_name": device_payload["browser_name"] or None,
-                    "last_active_at": now,
-                    "last_client_ip": client_ip,
-                    "updated_at": now,
-                },
-            )
-
         access_token, access_jti = JwtService.create_access_token(user_id=user.id, user_type=user.user_type)
         refresh_token, refresh_token_hash, refresh_jti, refresh_expired_at = JwtService.create_refresh_token(user_id=user.id)
 
         session_public_id = uuid.uuid4().hex
-        session = await UserSessionRepository.create_session(
-            {
-                "user_id": user.id,
-                "device_id": device.id,
-                "session_id": session_public_id,
-                "login_ip": client_ip,
-                "user_agent": user_agent,
-                "risk_level": 0,
-                "last_active_at": now,
-                "expired_at": now + timedelta(minutes=cls.SESSION_EXPIRE_MINUTES),
-                "revoked_at": None,
-                "created_at": now,
-            }
+        session, device = await AuthLoginBundleRepository.create_login_bundle_with_device(
+            user_id=user.id,
+            device_payload=device_payload,
+            fingerprint_hash=fingerprint_hash,
+            client_ip=client_ip,
+            user_agent=user_agent,
+            session_public_id=session_public_id,
+            session_expired_at=now + timedelta(minutes=cls.SESSION_EXPIRE_MINUTES),
+            refresh_token_hash=refresh_token_hash,
+            access_jti=access_jti,
+            refresh_jti=refresh_jti,
+            token_expired_at=refresh_expired_at,
+            now=now,
         )
 
-        await UserTokenRepository.create_token(
-            {
-                "user_id": user.id,
-                "session_id": session.id,
-                "refresh_token_hash": refresh_token_hash,
-                "access_jti": access_jti,
-                "refresh_jti": refresh_jti,
-                "client_ip": client_ip,
-                "user_agent": user_agent,
-                "expired_at": refresh_expired_at,
-                "revoked_at": None,
-                "created_at": now,
-            }
-        )
-
-        await AuthUserRepository.update_last_login(user, now)
         await cls.clear_login_failure(username=username)
 
         return AuthLoginResult(
