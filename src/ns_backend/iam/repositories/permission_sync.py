@@ -12,6 +12,7 @@ from ns_common.error_codes import NsErrorCode
 if TYPE_CHECKING:
     pass
 
+
 class PermissionSyncRepository:
     """Repository for iam_permission synchronization."""
 
@@ -78,3 +79,6 @@ class PermissionSyncRepository:
     async def get_permission_by_code(code: str) -> IamPermission | None:
         """Load one permission by code."""
         return await IamPermission.objects.filter(permission_code=code).afirst()
+
+
+__all__ = ["PermissionSyncRepository"]

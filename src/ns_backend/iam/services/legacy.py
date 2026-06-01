@@ -8,7 +8,7 @@ from django.contrib.auth.hashers import make_password
 from django.db.models import Q
 from django.utils import timezone
 
-from backup.backend.iam.repositories.permission_sync import PermissionSyncRepository
+from ns_backend.iam.repositories import PermissionSyncRepository
 from ns_backend.backend.common import CrudRepository
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.constants import USER_TYPE_ENTERPRISE, PERMISSION_EFFECT_DENY, PERMISSION_EFFECT_ALLOW, USER_TYPE_PERSONAL, DATA_SCOPE_DEPARTMENT_TREE

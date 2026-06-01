@@ -8,7 +8,6 @@ from django.http import JsonResponse
 
 from ns_backend.backend.common.viewset import BaseRequestViewSet
 from ns_backend.backend.exceptions import BusinessError
-from ns_backend.iam.services import AuditService
 from ns_common.error_codes import NsErrorCode
 from ns_common.logging.logger import get_ns_logger
 
@@ -279,6 +278,8 @@ class AuditRequestMixin:
     async def record_operation_audit(self, request, response) -> None:
         response_code: int | None = None
         try:
+            from ns_backend.iam.services import AuditService
+
             response_payload = self.parse_response_payload(response)
             code, msg = self.get_response_code_and_msg(response_payload)
             response_code = code
