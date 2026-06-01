@@ -23,6 +23,7 @@ from ns_backend.iam.repositories.permission import PermissionRepository
 from ns_backend.iam.repositories.permission_sync import PermissionSyncRepository
 from ns_backend.iam.repositories.session import UserSessionRepository
 from ns_backend.iam.repositories.token import UserTokenRepository, UserTokenRotationRepository
+from ns_backend.iam.repositories.user import UserRepository
 from ns_backend.iam.schemas import TokenRotationResult
 
 if TYPE_CHECKING:
@@ -46,6 +47,7 @@ __all__ = [
     "TokenRotationResult",
     "UserDeviceRepository",
     "UserPermissionGrantRepository",
+    "UserRepository",
     "UserRoleGrantRepository",
     "UserSessionRepository",
     "UserTokenRepository",
