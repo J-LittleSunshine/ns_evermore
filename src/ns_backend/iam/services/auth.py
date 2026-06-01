@@ -14,6 +14,7 @@ from django.utils import timezone
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.backend.utils.jwt import JwtService
 from ns_backend.backend.utils.password_transport import PasswordTransportService
+from ns_backend.iam import IAM_LOGGER
 from ns_backend.iam.repositories import (
     AuthLoginBundleRepository,
     AuthUserRepository,
@@ -145,8 +146,13 @@ class AuthService:
         )
 
     @staticmethod
-    async def clear_login_failure(username: str) -> None:
-        await LoginFailureRepository.clear_by_username(username)
+    async def clear_login_failure(username: str, user_id: int) -> None:
+        try:
+            await LoginFailureRepository.clear_by_username(username)
+        except Exception as exc:
+            IAM_LOGGER.warning(
+                f"login failure clear failed | username={username} user_id={user_id} exception={exc.__class__.__name__}", exc_info=True,
+            )
 
     @staticmethod
     def get_client_ip(request) -> str | None:
@@ -252,7 +258,7 @@ class AuthService:
             now=now,
         )
 
-        await cls.clear_login_failure(username=username)
+        await cls.clear_login_failure(username=username, user_id=user.id)
 
         return AuthLoginResult(
             user=user,
