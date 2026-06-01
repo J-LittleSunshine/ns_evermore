@@ -9,7 +9,7 @@ from ns_backend.backend.exceptions import BusinessError
 from ns_backend.backend.utils.password_transport import PasswordTransportService
 from ns_backend.iam.constants import USER_TYPE_ENTERPRISE
 from ns_backend.iam.models import IamCompany, IamDepartment, IamPermission, IamRole, IamSubsidiary, IamUser
-from ns_backend.iam.policies import OrganizationPolicy, TenantPolicy, UserPolicy
+from ns_backend.iam.policies import OrganizationPolicy, TenantPolicy, UserPolicy, RolePolicy
 from ns_backend.iam.repositories import IamBaseRepository, UserRepository, UserSessionRepository, UserTokenRepository
 from ns_backend.iam.schemas import TenantContext
 from ns_backend.iam.validators import CompanyValidator, DepartmentValidator, PermissionValidator, RoleValidator, SubsidiaryValidator, UserValidator
@@ -340,7 +340,7 @@ class RoleService(IamBaseService):
     model_class = IamRole
     validator_class = RoleValidator
     tenant_scope_field = "company_id"
-    tenant_create_field = "company_id"
+    tenant_create_field = None
     enterprise_resource_required = False
 
     list_fields = detail_fields = ("id", "company_id", "role_code", "role_name", "role_scope", "status")
@@ -348,6 +348,18 @@ class RoleService(IamBaseService):
     filter_fields = ("id", "company_id", "role_code", "role_name", "role_scope", "status")
     keyword_fields = ("role_name", "role_code")
     order_fields = ("id", "company_id", "role_code", "role_name", "role_scope", "status", "created_at", "updated_at")
+
+    @classmethod
+    async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
+        """Create role with backup-aligned role boundary policy."""
+        validated_data = cls.validate_create_data(data)
+        create_data = await RolePolicy.build_create_payload(context=tenant_context, data=validated_data)
+        return await IamBaseRepository.create_item_with_audit(model_class=cls.model_class, data=create_data, operator_id=operator_id, tenant_create_values=None)
+
+    @classmethod
+    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], operator: Any = None, tenant_context: TenantContext | None = None) -> None:
+        """Validate immutable role update fields."""
+        RolePolicy.ensure_can_update_fields(data=data)
 
 
 class SubsidiaryService(IamBaseService):

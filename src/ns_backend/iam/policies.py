@@ -481,6 +481,62 @@ class OrganizationPolicy(BasePolicy):
             cls.deny("Parent department does not belong to the current company", 14043)
 
 
+class RolePolicy(BasePolicy):
+    """IAM role boundary policy."""
+
+    @classmethod
+    async def build_create_payload(cls, *, context: TenantContext | None, data: dict[str, Any]) -> dict[str, Any]:
+        """Build tenant-safe role create payload."""
+        from ns_backend.iam.repositories import RoleRepository
+
+        role_scope = data.get("role_scope")
+        role_code = data.get("role_code")
+        final_data = dict(data)
+
+        if role_scope == "PERSONAL":
+            if context is None or not TenantPolicy.is_platform_admin(context):
+                cls.deny("Only platform administrators can create PERSONAL roles", NsErrorCode.ROLE_PERSONAL_PLATFORM_ADMIN_ONLY)
+
+            if final_data.get("company_id") is not None:
+                cls.deny("PERSONAL roles cannot be bound to a company", NsErrorCode.ROLE_PERSONAL_COMPANY_FORBIDDEN)
+
+            if await RoleRepository.exists_personal_role_code(role_code=role_code):
+                cls.deny("Role code already exists", NsErrorCode.ROLE_CODE_ALREADY_EXISTS)
+
+            final_data["company_id"] = None
+            return final_data
+
+        if role_scope == "ENTERPRISE":
+            if context is not None and TenantPolicy.is_platform_admin(context):
+                company_id = final_data.get("company_id")
+                if not company_id:
+                    cls.deny("ENTERPRISE roles must be bound to a company", NsErrorCode.ROLE_ENTERPRISE_COMPANY_REQUIRED)
+            else:
+                if context is None:
+                    cls.deny("ENTERPRISE roles must be bound to a company", NsErrorCode.ROLE_ENTERPRISE_COMPANY_REQUIRED)
+                TenantPolicy.ensure_enterprise_context(context)
+                company_id = context.company_id
+
+            normalized_company_id = int(company_id)
+            if await RoleRepository.exists_enterprise_role_code(company_id=normalized_company_id, role_code=role_code):
+                cls.deny("Role code already exists", NsErrorCode.ROLE_CODE_ALREADY_EXISTS)
+
+            final_data["company_id"] = normalized_company_id
+            return final_data
+        
+        # noinspection PyInconsistentReturns
+        cls.deny("Invalid role_scope value", NsErrorCode.INVALID_VALUE)
+
+    @classmethod
+    def ensure_can_update_fields(cls, *, data: dict[str, Any]) -> None:
+        """Reject immutable role fields."""
+        if "company_id" in data:
+            cls.deny("Updating field is not allowed: company_id", NsErrorCode.UPDATE_FIELD_NOT_ALLOWED)
+
+        if "role_scope" in data:
+            cls.deny("Updating field is not allowed: role_scope", NsErrorCode.UPDATE_FIELD_NOT_ALLOWED)
+
+
 class TenantPolicy(BasePolicy):
     @classmethod
     def is_platform_admin(cls, context: TenantContext) -> bool:
