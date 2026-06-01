@@ -583,3 +583,52 @@ class UserPolicy(BasePolicy):
         from ns_backend.iam.services.permission import PermissionService
 
         return await PermissionService.has_permission(user=user, permission_code=permission_code)
+
+    @classmethod
+    def get_user_tenant_filter(cls, *, operator: Any) -> dict[str, Any] | None:
+        """Resolve user list tenant filter for operator."""
+        from ns_backend.iam.services.tenant import TenantService
+
+        context = TenantService.from_user(operator)
+
+        if TenantPolicy.is_platform_admin(context):
+            return None
+
+        if TenantPolicy.is_enterprise_user(context):
+            TenantPolicy.ensure_enterprise_context(context)
+            return {"company_id": context.company_id}
+
+        return {"id": context.user_id}
+
+    @classmethod
+    async def build_user_list_visibility_filters(cls, *, operator: Any, include_staff: Any = None, include_superuser: Any = None) -> dict[str, Any]:
+        """Build visibility filters for user list.
+
+        Default behavior aligns with backup:
+        1. Hide staff and superuser by default.
+        2. include_staff=true allows staff users when operator has admin-user permission.
+        3. include_superuser=true only allows platform superusers to see superusers.
+        """
+        requested_include_superuser = cls.is_truthy(include_superuser)
+        requested_include_staff = cls.is_truthy(include_staff) or requested_include_superuser
+
+        if requested_include_superuser and not bool(getattr(operator, "is_superuser", False)):
+            cls.deny("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
+
+        if requested_include_staff:
+            has_permission = await cls.has_admin_user_permission(operator)
+            if not has_permission:
+                cls.deny(f"Permission denied: {cls.ADMIN_USER_PERMISSION}", NsErrorCode.PERMISSION_DENIED)
+
+        if not requested_include_staff:
+            return {
+                "is_staff": 0,
+                "is_superuser": 0,
+            }
+
+        if not requested_include_superuser:
+            return {
+                "is_superuser": 0,
+            }
+
+        return {}

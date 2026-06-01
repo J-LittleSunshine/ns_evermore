@@ -57,6 +57,9 @@ class IamBaseService:
             filters: dict[str, Any] | None = None,
             keyword: str | None = None,
             order_by: list[str] | tuple[str, ...] | str | None = None,
+            include_staff: Any = None,
+            include_superuser: Any = None,
+            operator: Any = None,
             tenant_context: TenantContext | None = None
     ) -> dict[str, Any]:
         """List IAM resources."""
@@ -393,6 +396,55 @@ class UserService(IamBaseService):
     filter_fields = ("id", "username", "email", "phone", "display_name", "user_type", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser")
     keyword_fields = ("username", "display_name", "email", "phone")
     order_fields = ("id", "username", "email", "phone", "display_name", "user_type", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser", "last_login", "created_at", "updated_at")
+
+    @classmethod
+    async def list_items(
+            cls,
+            *,
+            page: int | str | None = 1,
+            page_size: int | str | None = 20,
+            filters: dict[str, Any] | None = None,
+            keyword: str | None = None,
+            order_by: list[str] | tuple[str, ...] | str | None = None,
+            include_staff: Any = None,
+            include_superuser: Any = None,
+            operator: Any = None,
+            tenant_context: TenantContext | None = None
+    ) -> dict[str, Any]:
+        """List users with tenant and administrator visibility policy."""
+        if operator is not None:
+            tenant_filter = UserPolicy.get_user_tenant_filter(operator=operator)
+            visibility_filters = await UserPolicy.build_user_list_visibility_filters(
+                operator=operator,
+                include_staff=include_staff,
+                include_superuser=include_superuser,
+            )
+        else:
+            tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
+            visibility_filters = {
+                "is_staff": 0,
+                "is_superuser": 0,
+            }
+
+        query_filters = cls.build_list_filters(filters=filters)
+        query_filters = {
+            **query_filters,
+            **visibility_filters,
+        }
+
+        keyword_conditions = cls.build_keyword_conditions(keyword=keyword)
+        safe_order_by = cls.build_order_by(order_by=order_by)
+
+        return await IamBaseRepository.list_items(
+            model_class=cls.model_class,
+            fields=cls.list_fields,
+            page=page,
+            page_size=page_size,
+            tenant_filter=tenant_filter,
+            filters=query_filters,
+            keyword_conditions=keyword_conditions,
+            order_by=safe_order_by,
+        )
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:

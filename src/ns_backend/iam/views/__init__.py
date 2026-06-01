@@ -37,12 +37,16 @@ class BaseIamViewSet(IamRequestViewSet):
         return TenantService.from_user(user)
 
     async def list_item(self, request, *args, **kwargs):
+        user = self._current_user(request)
         data = await self.service.list_items(
             page=request.data.get("page", 1),
             page_size=request.data.get("page_size", 20),
             filters=request.data.get("filters"),
             keyword=request.data.get("keyword"),
             order_by=request.data.get("order_by"),
+            include_staff=request.data.get("include_staff"),
+            include_superuser=request.data.get("include_superuser"),
+            operator=user,
             tenant_context=self._tenant_context(request),
         )
         return self.success_response(data)
