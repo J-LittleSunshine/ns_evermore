@@ -59,37 +59,37 @@ class IamBaseService:
         return await IamBaseRepository.detail_item(model_class=cls.model_class, item_id=item_id, fields=cls.detail_fields, tenant_filter=tenant_filter)
 
     @classmethod
-    async def create_item(cls, *, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
+    async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """Create IAM resource."""
         validated_data = cls.validate_create_data(data)
-        await cls.validate_create_business_rules(data=validated_data, tenant_context=tenant_context)
+        await cls.validate_create_business_rules(data=validated_data, operator=operator, tenant_context=tenant_context)
 
         tenant_create_values = cls.get_tenant_create_values(tenant_context=tenant_context)
         return await IamBaseRepository.create_item_with_audit(model_class=cls.model_class, data=validated_data, operator_id=operator_id, tenant_create_values=tenant_create_values)
 
     @classmethod
-    async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
+    async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
         """Update IAM resource."""
         validated_data = cls.validate_update_data(data)
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
-        await cls.validate_update_business_rules(item=item, data=validated_data, tenant_context=tenant_context)
+        await cls.validate_update_business_rules(item=item, data=validated_data, operator=operator, tenant_context=tenant_context)
         await IamBaseRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
 
     @classmethod
-    async def delete_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> None:
+    async def delete_item(cls, *, item_id: int | str | None, operator: Any = None, tenant_context: TenantContext | None = None) -> None:
         """Delete IAM resource."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         await IamBaseRepository.delete_item_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
     @classmethod
-    async def validate_create_business_rules(cls, *, data: dict[str, Any], tenant_context: TenantContext | None = None) -> None:
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any = None, tenant_context: TenantContext | None = None) -> None:
         """Validate resource-specific create business rules."""
         return None
 
     @classmethod
-    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], tenant_context: TenantContext | None = None) -> None:
+    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], operator: Any = None, tenant_context: TenantContext | None = None) -> None:
         """Validate resource-specific update business rules."""
         return None
 
@@ -179,18 +179,18 @@ class CompanyService(IamBaseService):
     update_fields = ("company_name", "legal_name", "status")
 
     @classmethod
-    async def create_item(cls, *, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
+    async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """Create company. Only platform administrators can create companies."""
         if tenant_context is not None:
             OrganizationPolicy.ensure_can_create_company(tenant_context)
-        return await super().create_item(data=data, operator_id=operator_id, tenant_context=tenant_context)
+        return await super().create_item(data=data, operator=operator, operator_id=operator_id, tenant_context=tenant_context)
 
     @classmethod
-    async def delete_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> None:
+    async def delete_item(cls, *, item_id: int | str | None, operator: Any = None, tenant_context: TenantContext | None = None) -> None:
         """Delete company. Only platform administrators can delete companies."""
         if tenant_context is not None:
             OrganizationPolicy.ensure_can_delete_company(tenant_context)
-        await super().delete_item(item_id=item_id, tenant_context=tenant_context)
+        await super().delete_item(item_id=item_id, operator=operator, tenant_context=tenant_context)
 
 
 class DepartmentService(IamBaseService):
@@ -206,7 +206,7 @@ class DepartmentService(IamBaseService):
     update_fields = ("department_name", "status")
 
     @classmethod
-    async def validate_create_business_rules(cls, *, data: dict[str, Any], tenant_context: TenantContext | None = None) -> None:
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any = None, tenant_context: TenantContext | None = None) -> None:
         """Validate organization boundary before creating department."""
         company_id = cls.resolve_company_id_for_payload(data=data, tenant_context=tenant_context)
         if company_id is None:
@@ -214,7 +214,6 @@ class DepartmentService(IamBaseService):
 
         await OrganizationPolicy.ensure_subsidiary_belongs_to_company(subsidiary_id=data.get("subsidiary_id"), company_id=company_id)
         await OrganizationPolicy.ensure_parent_department_belongs_to_company(parent_id=data.get("parent_id"), company_id=company_id)
-
 
 class PermissionBaseService(IamBaseService):
     """Permission resource operation service."""
@@ -281,7 +280,7 @@ class UserService(IamBaseService):
     update_fields = ("email", "phone", "display_name", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser")
 
     @classmethod
-    async def create_item(cls, *, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
+    async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """Create user and hash password before persistence."""
         create_payload = cls.build_user_create_payload(data=data, tenant_context=tenant_context)
         validated_data = cls.validate_create_data(create_payload)
@@ -299,14 +298,14 @@ class UserService(IamBaseService):
         return await IamBaseRepository.create_item_with_audit(model_class=cls.model_class, data=create_data, operator_id=operator_id, tenant_create_values=None)
 
     @classmethod
-    async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
+    async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
         """Update user and revoke sessions/tokens when user is disabled."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
         prev_is_active = bool(getattr(item, "is_active", False))
 
         validated_data = cls.validate_update_data(data)
-        await cls.validate_update_business_rules(item=item, data=validated_data, tenant_context=tenant_context)
+        await cls.validate_update_business_rules(item=item, data=validated_data, operator=operator, tenant_context=tenant_context)
 
         await IamBaseRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
 
@@ -317,12 +316,14 @@ class UserService(IamBaseService):
             await cls.revoke_user_sessions_and_tokens(user_id=item.id, revoked_at=now)
 
     @classmethod
-    async def delete_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> None:
+    async def delete_item(cls, *, item_id: int | str | None, operator: Any = None, tenant_context: TenantContext | None = None) -> None:
         """Delete user and revoke all active sessions/tokens first."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
-        if tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
+        if operator is not None:
+            await UserPolicy.ensure_can_operate_user(operator=operator, target_user=item)
+        elif tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
             raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
 
         now = timezone.now()
@@ -330,7 +331,7 @@ class UserService(IamBaseService):
         await IamBaseRepository.delete_item(item)
 
     @classmethod
-    async def reset_password(cls, *, item_id: int | str | None, password: str | None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
+    async def reset_password(cls, *, item_id: int | str | None, password: str | None, operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
         """Reset user password and revoke all active sessions/tokens."""
         if not isinstance(password, str) or not password:
             raise BusinessError("password cannot be empty", NsErrorCode.USER_PASSWORD_EMPTY)
@@ -338,7 +339,9 @@ class UserService(IamBaseService):
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
-        if tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
+        if operator is not None:
+            await UserPolicy.ensure_can_operate_user(operator=operator, target_user=item)
+        elif tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
             raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
 
         now = timezone.now()
@@ -375,20 +378,17 @@ class UserService(IamBaseService):
         return create_data
 
     @classmethod
-    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], tenant_context: TenantContext | None = None) -> None:
+    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], operator: Any = None, tenant_context: TenantContext | None = None) -> None:
         """Validate user update business rules."""
-        if tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
+        if operator is not None:
+            await UserPolicy.ensure_can_operate_user(operator=operator, target_user=item)
+            await UserPolicy.ensure_can_update_critical_fields(operator=operator, update_data=data)
+        elif tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
             raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
 
         if tenant_context is not None and not TenantPolicy.is_platform_admin(tenant_context):
             if "company_id" in data:
                 raise BusinessError("Updating field is not allowed: company_id", NsErrorCode.UPDATE_FIELD_NOT_ALLOWED)
-
-            if cls.is_truthy(data.get("is_superuser")):
-                raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
-
-            if cls.is_truthy(data.get("is_staff")):
-                raise BusinessError(f"Permission denied: {UserPolicy.ADMIN_USER_PERMISSION}", NsErrorCode.PERMISSION_DENIED)
 
         company_id = data.get("company_id", getattr(item, "company_id", None))
         if company_id in (None, ""):

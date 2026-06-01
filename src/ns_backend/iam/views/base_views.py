@@ -38,6 +38,7 @@ class UserViewSet(BaseIamViewSet):
         await self.service.reset_password(
             item_id=request.data.get("id"),
             password=request.data.get("password"),
+            operator=operator,
             operator_id=getattr(operator, "id", None),
             tenant_context=self._tenant_context(request),
         )

@@ -55,6 +55,7 @@ class BaseIamViewSet(IamRequestViewSet):
         user = self._current_user(request)
         result = await self.service.create_item(
             data=request.data,
+            operator=user,
             operator_id=getattr(user, "id", None),
             tenant_context=self._tenant_context(request),
         )
@@ -65,14 +66,17 @@ class BaseIamViewSet(IamRequestViewSet):
         await self.service.update_item(
             item_id=request.data.get("id"),
             data=request.data,
+            operator=user,
             operator_id=getattr(user, "id", None),
             tenant_context=self._tenant_context(request),
         )
         return self.success_response()
 
     async def delete_item(self, request, *args, **kwargs):
+        user = self._current_user(request)
         await self.service.delete_item(
             item_id=request.data.get("id"),
+            operator=user,
             tenant_context=self._tenant_context(request),
         )
         return self.success_response()
