@@ -60,7 +60,8 @@ class IamBaseService:
     ) -> dict[str, Any]:
         """List IAM resources."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        query_filters = cls.build_list_filters(filters=filters, keyword=keyword)
+        query_filters = cls.build_list_filters(filters=filters)
+        keyword_conditions = cls.build_keyword_conditions(keyword=keyword)
         return await IamBaseRepository.list_items(
             model_class=cls.model_class,
             fields=cls.list_fields,
@@ -68,6 +69,7 @@ class IamBaseService:
             page_size=page_size,
             tenant_filter=tenant_filter,
             filters=query_filters,
+            keyword_conditions=keyword_conditions,
         )
 
     @classmethod
@@ -184,40 +186,45 @@ class IamBaseService:
         return None if company_id in (None, "") else int(company_id)
 
     @classmethod
-    def build_list_filters(cls, *, filters: dict[str, Any] | None = None, keyword: str | None = None) -> dict[str, Any]:
-        """Build safe list filters."""
+    def build_list_filters(cls, *, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Build safe exact-match list filters."""
         result: dict[str, Any] = {}
 
-        if filters:
-            allowed_filter_fields = set(cls.filter_fields)
-            for field, value in filters.items():
-                if value in (None, ""):
-                    continue
-                if field not in allowed_filter_fields:
-                    raise BusinessError(f"Filtering field is not allowed: {field}", NsErrorCode.INVALID_VALUE)
-                result[field] = value
+        if filters is None:
+            return result
 
-        if keyword is not None and str(keyword).strip():
-            keyword_value = str(keyword).strip()
-            keyword_filters = cls.build_keyword_filters(keyword_value)
-            result.update(keyword_filters)
+        if not isinstance(filters, dict):
+            raise BusinessError("filters must be an object", NsErrorCode.INVALID_VALUE)
+
+        allowed_filter_fields = set(cls.filter_fields)
+        for field, value in filters.items():
+            if value in (None, ""):
+                continue
+
+            if not isinstance(field, str) or not field:
+                raise BusinessError("Filtering field is invalid", NsErrorCode.INVALID_VALUE)
+
+            if field not in allowed_filter_fields:
+                raise BusinessError(f"Filtering field is not allowed: {field}", NsErrorCode.INVALID_VALUE)
+
+            result[field] = value
 
         return result
 
     @classmethod
-    def build_keyword_filters(cls, keyword: str) -> dict[str, Any]:
-        """Build keyword filters.
+    def build_keyword_conditions(cls, *, keyword: str | None = None) -> list[dict[str, Any]]:
+        """Build safe OR keyword conditions."""
+        if keyword is None:
+            return []
 
-        BaseRepository only accepts AND filters, so keyword search is limited to
-        the first configured keyword field. If OR keyword search is needed later,
-        add a QuerySet-level repository method with Q objects.
-        """
-        if not cls.keyword_fields:
-            return {}
+        keyword_value = str(keyword).strip()
+        if not keyword_value:
+            return []
 
-        first_keyword_field = cls.keyword_fields[0]
-        return {f"{first_keyword_field}__icontains": keyword}
-
+        return [
+            {f"{field}__icontains": keyword_value}
+            for field in cls.keyword_fields
+        ]
 
 class CompanyService(IamBaseService):
     """Company resource operation service."""

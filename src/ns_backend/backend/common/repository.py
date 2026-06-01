@@ -5,6 +5,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
 from django.db import IntegrityError
+from django.db.models import Q
 from django.utils import timezone
 
 from ns_backend.backend.db.routers import AppDatabaseRouter
@@ -56,6 +57,7 @@ class BaseRepository:
             page_size: int | str | None,
             tenant_filter: dict[str, Any] | None = None,
             filters: dict[str, Any] | None = None,
+            keyword_conditions: list[dict[str, Any]] | None = None,
             *,
             db_alias: str | None = None,
             order_by: tuple[str, ...] = ("-id",)
@@ -70,6 +72,12 @@ class BaseRepository:
 
         if filters:
             queryset = queryset.filter(**filters)
+
+        if keyword_conditions:
+            keyword_query = Q()
+            for condition in keyword_conditions:
+                keyword_query |= Q(**condition)
+            queryset = queryset.filter(keyword_query)
 
         offset: int = (normalized_page - 1) * normalized_page_size
         total: int = await queryset.acount()
