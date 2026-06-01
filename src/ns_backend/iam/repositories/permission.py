@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from django.db.models import Q
 
+from ns_backend.iam.constants import USER_TYPE_ENTERPRISE, USER_TYPE_PERSONAL
 from ns_backend.iam.models import (
     IamDepartmentPermission,
     IamPermission,
     IamRolePermission,
     IamSubsidiaryPermission,
     IamUserPermission,
-    IamUserRole,
+    IamUserRole
 )
 
 if TYPE_CHECKING:
@@ -19,30 +20,26 @@ if TYPE_CHECKING:
 
 
 class PermissionRepository:
-    """Repository for IAM permission resolution."""
-
-    SUBJECT_USER = "user"
-    SUBJECT_DEPARTMENT = "department"
-    SUBJECT_SUBSIDIARY = "subsidiary"
+    """Repository for IAM permission lookup and permission grant queries."""
 
     @staticmethod
-    def valid_time_q(now) -> Q:
-        """Build validity time query."""
+    def valid_time_filter(now) -> Q:
+        """Build permission grant validity filter."""
         return Q(expired_at__isnull=True) | Q(expired_at__gt=now)
 
     @staticmethod
     async def get_active_permission_by_code(permission_code: str) -> IamPermission | None:
-        """Load one active permission by code."""
+        """Load active permission node by code."""
         return await IamPermission.objects.filter(status=1, permission_code=permission_code).only("id", "parent_id").afirst()
 
     @staticmethod
     async def get_active_permission_by_id(permission_id: int) -> IamPermission | None:
-        """Load one active permission by id."""
+        """Load active permission node by primary key."""
         return await IamPermission.objects.filter(id=permission_id, status=1).only("id", "parent_id").afirst()
 
     @staticmethod
-    async def list_active_permissions() -> list[dict]:
-        """List active permissions for permission-code and menu resolution."""
+    async def list_active_permissions() -> list[dict[str, Any]]:
+        """List active permissions for effective permission calculation."""
         queryset = IamPermission.objects.filter(status=1).values(
             "id",
             "permission_code",
@@ -53,25 +50,47 @@ class PermissionRepository:
         return [row async for row in queryset]
 
     @classmethod
-    async def has_direct_effect(cls, *, subject_type: str, subject_id: int, permission_ids: list[int], effect: str, now) -> bool:
-        """Check direct user/department/subsidiary permission effect."""
-        model_class, subject_field = cls._resolve_subject_model(subject_type)
-        return await model_class.objects.filter(
-            cls.valid_time_q(now),
-            **{subject_field: subject_id},
-            permission_id__in=permission_ids,
-            permission__status=1,
+    async def has_user_effect(cls, *, user_id: int, permission_ids: list[int], effect: str, now) -> bool:
+        """Check whether user has a direct permission effect."""
+        return await cls._has_direct_effect(
+            IamUserPermission,
+            subject_field="user_id",
+            subject_id=user_id,
+            permission_ids=permission_ids,
             effect=effect,
-        ).aexists()
+            now=now,
+        )
 
     @classmethod
-    async def has_role_permission(cls, *, user_id: int, permission_ids: list[int], now, role_scope: str, company_id: int | None) -> bool:
-        """Check role permission allow status."""
-        role_filter = cls._build_role_filter(user_id=user_id, role_scope=role_scope, company_id=company_id)
-        role_ids = IamUserRole.objects.filter(**role_filter).values("role_id")
+    async def has_department_effect(cls, *, department_id: int, permission_ids: list[int], effect: str, now) -> bool:
+        """Check whether department has a direct permission effect."""
+        return await cls._has_direct_effect(
+            IamDepartmentPermission,
+            subject_field="department_id",
+            subject_id=department_id,
+            permission_ids=permission_ids,
+            effect=effect,
+            now=now,
+        )
 
+    @classmethod
+    async def has_subsidiary_effect(cls, *, subsidiary_id: int, permission_ids: list[int], effect: str, now) -> bool:
+        """Check whether subsidiary has a direct permission effect."""
+        return await cls._has_direct_effect(
+            IamSubsidiaryPermission,
+            subject_field="subsidiary_id",
+            subject_id=subsidiary_id,
+            permission_ids=permission_ids,
+            effect=effect,
+            now=now,
+        )
+
+    @classmethod
+    async def has_role_allow(cls, *, user_id: int, permission_ids: list[int], now, role_scope: str, company_id: int | None) -> bool:
+        """Check whether user's roles allow at least one permission in the chain."""
+        role_ids = cls._build_user_role_ids_query(user_id=user_id, role_scope=role_scope, company_id=company_id)
         return await IamRolePermission.objects.filter(
-            cls.valid_time_q(now),
+            cls.valid_time_filter(now),
             role_id__in=role_ids,
             permission_id__in=permission_ids,
             permission__status=1,
@@ -79,9 +98,9 @@ class PermissionRepository:
 
     @classmethod
     async def list_user_permission_ids(cls, *, user_id: int, now, effect: str) -> set[int]:
-        """List direct user permission ids by effect."""
+        """List user direct permission ids by effect."""
         queryset = IamUserPermission.objects.filter(
-            cls.valid_time_q(now),
+            cls.valid_time_filter(now),
             user_id=user_id,
             permission__status=1,
             effect=effect,
@@ -90,9 +109,9 @@ class PermissionRepository:
 
     @classmethod
     async def list_department_permission_ids(cls, *, department_id: int, now, effect: str) -> set[int]:
-        """List department permission ids by effect."""
+        """List department direct permission ids by effect."""
         queryset = IamDepartmentPermission.objects.filter(
-            cls.valid_time_q(now),
+            cls.valid_time_filter(now),
             department_id=department_id,
             permission__status=1,
             effect=effect,
@@ -101,9 +120,9 @@ class PermissionRepository:
 
     @classmethod
     async def list_subsidiary_permission_ids(cls, *, subsidiary_id: int, now, effect: str) -> set[int]:
-        """List subsidiary permission ids by effect."""
+        """List subsidiary direct permission ids by effect."""
         queryset = IamSubsidiaryPermission.objects.filter(
-            cls.valid_time_q(now),
+            cls.valid_time_filter(now),
             subsidiary_id=subsidiary_id,
             permission__status=1,
             effect=effect,
@@ -112,42 +131,35 @@ class PermissionRepository:
 
     @classmethod
     async def list_role_permission_ids(cls, *, user_id: int, now, role_scope: str, company_id: int | None) -> set[int]:
-        """List role permission ids by role scope."""
-        role_filter = cls._build_role_filter(user_id=user_id, role_scope=role_scope, company_id=company_id)
-        role_ids = IamUserRole.objects.filter(**role_filter).values("role_id")
-        queryset = IamRolePermission.objects.filter(
-            cls.valid_time_q(now),
-            role_id__in=role_ids,
-            permission__status=1,
-        ).values_list("permission_id", flat=True)
+        """List role permission ids for a user by role scope."""
+        role_ids = cls._build_user_role_ids_query(user_id=user_id, role_scope=role_scope, company_id=company_id)
+        queryset = IamRolePermission.objects.filter(cls.valid_time_filter(now), role_id__in=role_ids, permission__status=1).values_list("permission_id", flat=True)
         return {item async for item in queryset}
 
+    @classmethod
+    async def _has_direct_effect(cls, model_class, *, subject_field: str, subject_id: int, permission_ids: list[int], effect: str, now) -> bool:
+        """Check direct permission effect on a grant model."""
+        return await model_class.objects.filter(
+            cls.valid_time_filter(now),
+            **{subject_field: subject_id},
+            permission_id__in=permission_ids,
+            permission__status=1,
+            effect=effect,
+        ).aexists()
+
     @staticmethod
-    def _build_role_filter(*, user_id: int, role_scope: str, company_id: int | None) -> dict:
-        """Build role lookup filter."""
-        role_filter = {
+    def _build_user_role_ids_query(*, user_id: int, role_scope: str, company_id: int | None):
+        """Build user role id subquery for role-permission lookup."""
+        role_filter: dict[str, Any] = {
             "user_id": user_id,
             "role__status": 1,
             "role__role_scope": role_scope,
         }
 
-        if role_scope == "PERSONAL":
+        if role_scope == USER_TYPE_PERSONAL:
             role_filter["role__company_id__isnull"] = True
-        elif company_id is not None:
+        elif role_scope == USER_TYPE_ENTERPRISE and company_id is not None:
             role_filter["role__company_id"] = company_id
 
-        return role_filter
+        return IamUserRole.objects.filter(**role_filter).values("role_id")
 
-    @classmethod
-    def _resolve_subject_model(cls, subject_type: str):
-        """Resolve subject type to model and subject id field."""
-        if subject_type == cls.SUBJECT_USER:
-            return IamUserPermission, "user_id"
-
-        if subject_type == cls.SUBJECT_DEPARTMENT:
-            return IamDepartmentPermission, "department_id"
-
-        if subject_type == cls.SUBJECT_SUBSIDIARY:
-            return IamSubsidiaryPermission, "subsidiary_id"
-
-        raise ValueError(f"Unsupported permission subject type: {subject_type}")

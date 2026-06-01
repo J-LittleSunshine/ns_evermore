@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ns_backend.iam.repositories.auth import AuthUserRepository, LoginFailureRepository
+from ns_backend.iam.repositories.data_scope import DataScopeRepository
 from ns_backend.iam.repositories.device import UserDeviceRepository
 from ns_backend.iam.repositories.grant import (
     DepartmentPermissionGrantRepository,
@@ -13,6 +14,7 @@ from ns_backend.iam.repositories.grant import (
     UserPermissionGrantRepository,
     UserRoleGrantRepository
 )
+from ns_backend.iam.repositories.permission import PermissionRepository
 from ns_backend.iam.repositories.permission_sync import PermissionSyncRepository
 from ns_backend.iam.repositories.session import UserSessionRepository
 from ns_backend.iam.repositories.token import UserTokenRepository, UserTokenRotationRepository
@@ -23,9 +25,11 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AuthUserRepository",
+    "DataScopeRepository",
     "DepartmentPermissionGrantRepository",
     "GrantPermissionRepository",
     "LoginFailureRepository",
+    "PermissionRepository",
     "PermissionSyncRepository",
     "RolePermissionGrantRepository",
     "SubsidiaryPermissionGrantRepository",
