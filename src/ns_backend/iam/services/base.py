@@ -10,7 +10,7 @@ from ns_backend.backend.utils.password_transport import PasswordTransportService
 from ns_backend.iam.constants import USER_TYPE_ENTERPRISE
 from ns_backend.iam.models import IamCompany, IamDepartment, IamPermission, IamRole, IamSubsidiary, IamUser
 from ns_backend.iam.policies import OrganizationPolicy, TenantPolicy, UserPolicy, RolePolicy
-from ns_backend.iam.repositories import IamBaseRepository, UserRepository, UserSessionRepository, UserTokenRepository
+from ns_backend.iam.repositories import IamBaseRepository, UserRepository, UserSessionRepository
 from ns_backend.iam.schemas import TenantContext
 from ns_backend.iam.validators import CompanyValidator, DepartmentValidator, PermissionValidator, RoleValidator, SubsidiaryValidator, UserValidator
 from ns_common.error_codes import NsErrorCode
@@ -649,6 +649,5 @@ class UserService(IamBaseService):
 
     @staticmethod
     async def revoke_user_sessions_and_tokens(*, user_id: int, revoked_at) -> None:
-        """Revoke all active sessions and tokens of one user."""
-        await UserSessionRepository.revoke_by_user_id(user_id=user_id, revoked_at=revoked_at)
-        await UserTokenRepository.revoke_by_user_id(user_id=user_id, revoked_at=revoked_at)
+        """Revoke all active sessions and tokens of one user atomically."""
+        await UserSessionRepository.revoke_user_sessions_and_tokens(user_id=user_id, revoked_at=revoked_at)
