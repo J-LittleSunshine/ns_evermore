@@ -183,14 +183,18 @@ class AuthService:
         user_agent = str(request.headers.get("User-Agent", "") or "").strip()
         return user_agent[:512] or None
 
-    @staticmethod
-    def get_device_payload(data: dict[str, Any]) -> dict[str, str]:
+    @classmethod
+    def get_device_payload(cls, *, data: dict[str, Any], username: str, client_ip: str | None = None, user_agent: str | None = None) -> dict[str, str]:
+        """Build normalized device payload for login bundle creation."""
         device_id = str(data.get("device_id", "") or "").strip() or uuid.uuid4().hex
         device_name = str(data.get("device_name", "") or "").strip() or "Unknown Device"
         device_type = str(data.get("device_type", "") or "").strip() or "WEB"
         os_name = str(data.get("os_name", "") or "").strip()
         browser_name = str(data.get("browser_name", "") or "").strip()
-        fingerprint = str(data.get("fingerprint", "") or "").strip() or device_id
+        fingerprint = str(data.get("fingerprint", "") or "").strip()
+
+        if not fingerprint:
+            fingerprint = cls.build_fallback_fingerprint(username=username, client_ip=client_ip, user_agent=user_agent)
 
         return {
             "device_id": device_id[:128],
@@ -236,7 +240,7 @@ class AuthService:
             raise BusinessError("username or password incorrect", NsErrorCode.USERNAME_OR_PASSWORD_INCORRECT)
 
         now = timezone.now()
-        device_payload = cls.get_device_payload(data)
+        device_payload = cls.get_device_payload(data=data, username=username, client_ip=client_ip, user_agent=user_agent)
         fingerprint_hash = sha256_text(device_payload["fingerprint"])
 
         access_token, access_jti = JwtService.create_access_token(user_id=user.id, user_type=user.user_type)
@@ -355,3 +359,14 @@ class AuthService:
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
         }
+
+    @staticmethod
+    def build_fallback_fingerprint(*, username: str, client_ip: str | None = None, user_agent: str | None = None) -> str:
+        """Build deterministic fallback fingerprint when client fingerprint is missing."""
+        return "|".join(
+            [
+                username,
+                client_ip or "",
+                user_agent or "",
+            ]
+        )
