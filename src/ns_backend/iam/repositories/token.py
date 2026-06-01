@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
 from django.utils import timezone
@@ -15,8 +14,6 @@ from ns_common.error_codes import NsErrorCode
 
 if TYPE_CHECKING:
     pass
-
-
 
 
 class UserTokenRepository:

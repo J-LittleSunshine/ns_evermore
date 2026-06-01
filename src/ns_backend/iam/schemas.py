@@ -103,17 +103,3 @@ class AuthLoginResult:
     user: Any
     data: dict[str, Any]
 
-
-@dataclass(frozen=True, slots=True)
-class RefreshTokenRotationResult:
-    access_token: str
-    refresh_token: str
-    token_type: str
-    expires_in: int
-    session_id: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class RotationOutcome:
-    status: Literal["rotated", "replayed", "invalid", "expired", "user_inactive", "session_unavailable"]
-    result: RefreshTokenRotationResult | None = None
