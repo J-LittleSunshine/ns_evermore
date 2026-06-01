@@ -4,14 +4,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from django.contrib.auth.hashers import make_password
-from django.utils import timezone
 
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.backend.utils.password_transport import PasswordTransportService
 from ns_backend.iam.constants import USER_TYPE_ENTERPRISE
 from ns_backend.iam.models import IamCompany, IamDepartment, IamPermission, IamRole, IamSubsidiary, IamUser
 from ns_backend.iam.policies import OrganizationPolicy, TenantPolicy, UserPolicy
-from ns_backend.iam.repositories import IamBaseRepository, UserSessionRepository, UserTokenRepository
+from ns_backend.iam.repositories import IamBaseRepository, UserRepository, UserSessionRepository, UserTokenRepository
 from ns_backend.iam.schemas import TenantContext
 from ns_backend.iam.validators import CompanyValidator, DepartmentValidator, PermissionValidator, RoleValidator, SubsidiaryValidator, UserValidator
 from ns_common.error_codes import NsErrorCode
@@ -363,6 +362,7 @@ class SubsidiaryService(IamBaseService):
     keyword_fields = ("subsidiary_name", "subsidiary_code")
     order_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status", "created_at", "updated_at")
 
+
 class UserService(IamBaseService):
     """User resource operation service."""
 
@@ -414,7 +414,7 @@ class UserService(IamBaseService):
 
     @classmethod
     async def update_item(cls, *, item_id: int | str | None, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
-        """Update user and revoke sessions/tokens when user is disabled."""
+        """Update user and revoke sessions/tokens atomically when user is disabled."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
         prev_is_active = bool(getattr(item, "is_active", False))
@@ -422,17 +422,22 @@ class UserService(IamBaseService):
         validated_data = cls.validate_update_data(data)
         await cls.validate_update_business_rules(item=item, data=validated_data, operator=operator, tenant_context=tenant_context)
 
-        await IamBaseRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
-
         next_is_active = validated_data.get("is_active")
         should_revoke = prev_is_active and str(next_is_active) == "0"
         if should_revoke:
-            now = timezone.now()
-            await cls.revoke_user_sessions_and_tokens(user_id=item.id, revoked_at=now)
+            await UserRepository.update_user_and_revoke_sessions_tokens(
+                item_id=item_id,
+                data=validated_data,
+                operator_id=operator_id,
+                tenant_filter=tenant_filter,
+            )
+            return
+
+        await IamBaseRepository.update_item_with_audit(model_class=cls.model_class, item_id=item_id, data=validated_data, operator_id=operator_id, tenant_filter=tenant_filter)
 
     @classmethod
     async def delete_item(cls, *, item_id: int | str | None, operator: Any = None, tenant_context: TenantContext | None = None) -> None:
-        """Delete user and revoke all active sessions/tokens first."""
+        """Delete user and revoke all active sessions/tokens in one transaction."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
         item = await IamBaseRepository.get_required_by_id(model_class=cls.model_class, item_id=item_id, tenant_filter=tenant_filter)
 
@@ -441,13 +446,11 @@ class UserService(IamBaseService):
         elif tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
             raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
 
-        now = timezone.now()
-        await cls.revoke_user_sessions_and_tokens(user_id=item.id, revoked_at=now)
-        await IamBaseRepository.delete_item(item)
+        await UserRepository.revoke_and_delete_user(item_id=item_id, tenant_filter=tenant_filter)
 
     @classmethod
     async def reset_password(cls, *, item_id: int | str | None, password: str | None, operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> None:
-        """Reset user password and revoke all active sessions/tokens."""
+        """Reset user password and revoke all active sessions/tokens in one transaction."""
         if not isinstance(password, str) or not password:
             raise BusinessError("password cannot be empty", NsErrorCode.USER_PASSWORD_EMPTY)
 
@@ -459,17 +462,15 @@ class UserService(IamBaseService):
         elif tenant_context is not None and not tenant_context.is_superuser and bool(getattr(item, "is_superuser", False)):
             raise BusinessError("Staff administrators cannot operate on superusers", NsErrorCode.STAFF_CANNOT_OPERATE_SUPERUSER)
 
-        now = timezone.now()
         raw_password = PasswordTransportService.resolve(password)
-        await IamBaseRepository.update_item(
-            instance=item,
+        await UserRepository.update_user_and_revoke_sessions_tokens(
+            item_id=item_id,
             data={
                 "password": make_password(raw_password),
-                "updated_by": operator_id,
-                "updated_at": now,
             },
+            operator_id=operator_id,
+            tenant_filter=tenant_filter,
         )
-        await cls.revoke_user_sessions_and_tokens(user_id=item.id, revoked_at=now)
 
     @classmethod
     def build_user_create_payload(cls, *, data: dict[str, Any], tenant_context: TenantContext | None = None) -> dict[str, Any]:
