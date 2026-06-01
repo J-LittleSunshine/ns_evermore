@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-
+from asgiref.sync import sync_to_async
 from django.db import transaction
 from django.utils import timezone
 
@@ -75,13 +75,24 @@ class UserTokenRepository:
     async def revoke_token_session(cls, *, token_record: IamUserToken, revoked_at) -> bool:
         """Revoke token and its session if the token is session-bound."""
         db_alias = token_record._state.db or BaseRepository.resolve_db_alias(model_class=IamUserToken)  # noqa
+        return await sync_to_async(cls._revoke_token_session_sync, thread_sensitive=True)(
+            token_id=token_record.id,
+            session_id=token_record.session_id,
+            revoked_at=revoked_at,
+            db_alias=db_alias,
+        )
 
-        if token_record.session_id:
-            await IamUserSession.objects.using(db_alias).filter(id=token_record.session_id, revoked_at__isnull=True).aupdate(revoked_at=revoked_at)
-            updated_count = await IamUserToken.objects.using(db_alias).filter(session_id=token_record.session_id, revoked_at__isnull=True).aupdate(revoked_at=revoked_at)
-            return updated_count > 0
+    @staticmethod
+    def _revoke_token_session_sync(*, token_id: int, session_id: int | None, revoked_at, db_alias: str) -> bool:
+        """Synchronously revoke token/session in one transaction."""
+        with transaction.atomic(using=db_alias):
+            if session_id:
+                session_updated = IamUserSession.objects.using(db_alias).filter(id=session_id, revoked_at__isnull=True).update(revoked_at=revoked_at)
+                token_updated = IamUserToken.objects.using(db_alias).filter(session_id=session_id, revoked_at__isnull=True).update(revoked_at=revoked_at)
+                return session_updated > 0 or token_updated > 0
 
-        return await cls.revoke_token_record(token_record=token_record, revoked_at=revoked_at)
+            token_updated = IamUserToken.objects.using(db_alias).filter(id=token_id, revoked_at__isnull=True).update(revoked_at=revoked_at)
+            return token_updated > 0
 
 
 class UserTokenRotationRepository:

@@ -74,6 +74,34 @@ class UserSessionRepository:
             db_alias=db_alias,
         )
 
+    @classmethod
+    async def revoke_user_sessions_and_tokens(cls, *, user_id: int, revoked_at) -> int:
+        """Revoke all sessions and tokens of one user atomically."""
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamUserSession)
+        return await sync_to_async(cls._revoke_user_sessions_and_tokens_sync, thread_sensitive=True)(
+            user_id=user_id,
+            revoked_at=revoked_at,
+            db_alias=db_alias,
+        )
+
+    @staticmethod
+    def _revoke_user_sessions_and_tokens_sync(*, user_id: int, revoked_at, db_alias: str) -> int:
+        """Synchronous transaction for user session-token revocation."""
+        with transaction.atomic(using=db_alias):
+            session_ids = list(
+                IamUserSession.objects.using(db_alias)
+                .select_for_update()
+                .filter(user_id=user_id)
+                .values_list("id", flat=True)
+            )
+
+            updated_count = 0
+            if session_ids:
+                updated_count = IamUserSession.objects.using(db_alias).filter(id__in=session_ids, revoked_at__isnull=True).update(revoked_at=revoked_at)
+
+            IamUserToken.objects.using(db_alias).filter(user_id=user_id, revoked_at__isnull=True).update(revoked_at=revoked_at)
+            return updated_count
+
     @staticmethod
     def _revoke_session_and_tokens_by_id_sync(*, session_pk: int, revoked_at, db_alias: str) -> int:
         """Synchronous transaction for session-token revocation."""

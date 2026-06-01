@@ -309,8 +309,7 @@ class AuthService:
         now = timezone.now()
 
         if logout_all:
-            await UserTokenRepository.revoke_by_user_id(user_id=user.id, revoked_at=now)
-            await UserSessionRepository.revoke_by_user_id(user_id=user.id, revoked_at=now)
+            await UserSessionRepository.revoke_user_sessions_and_tokens(user_id=user.id, revoked_at=now)
             return {"success": True, "logout_all": True}
 
         refresh_revoked = False
