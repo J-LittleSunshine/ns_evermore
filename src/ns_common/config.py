@@ -75,6 +75,9 @@ class _NsBackendConfig:
     audit_extra_sensitive_keys: list[str] = field(default_factory=list)
     trust_x_forwarded_for: bool = False
 
+    # Permission provider settings aligned with backup backend.
+    iam_permission_providers: list[str] = field(default_factory=list)
+
 
 @dataclass(slots=True, kw_only=True)
 class _NsRuntimeConfig:

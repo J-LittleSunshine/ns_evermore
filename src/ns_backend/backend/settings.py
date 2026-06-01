@@ -138,6 +138,12 @@ IAM_AUDIT_EXTRA_SENSITIVE_KEYS = _merge_string_tuples(
     os.getenv("IAM_AUDIT_EXTRA_SENSITIVE_KEYS"),
 )
 
+IAM_PERMISSION_PROVIDERS = _merge_string_tuples(
+    _BACKEND.iam_permission_providers,
+    os.getenv("NS_IAM_PERMISSION_PROVIDERS"),
+    os.getenv("IAM_PERMISSION_PROVIDERS"),
+)
+
 TRUST_X_FORWARDED_FOR = _coerce_bool(os.getenv("NS_TRUST_X_FORWARDED_FOR"), _BACKEND.trust_x_forwarded_for)
 
 DEBUG = _BACKEND.debug
