@@ -9,10 +9,10 @@ if TYPE_CHECKING:
     pass
 
 
-class IamRepository:
-    """Repository facade for IAM generic base operations.
+class IamBaseRepository:
+    """Repository facade for IAM base resource operations.
 
-    This repository owns all calls to backend CrudRepository so IAM services do
+    This repository owns all calls to backend BaseRepository so IAM services do
     not call persistence helpers directly.
     """
 

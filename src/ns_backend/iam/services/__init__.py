@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from ns_backend.iam.services.audit import AuditService
 from ns_backend.iam.services.auth import AuthLoginResult, AuthService
 from ns_backend.iam.services.auth_context import AuthContextService
+from ns_backend.iam.services.base import CompanyService, DepartmentService, IamBaseService, PermissionBaseService, RoleService, SubsidiaryService, UserService
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.grant import (
     DepartmentPermissionGrantService,
@@ -15,18 +16,11 @@ from ns_backend.iam.services.grant import (
     UserRoleGrantService
 )
 from ns_backend.iam.services.legacy import (
-    CompanyCrudService,
-    DepartmentCrudService,
     DepartmentPermissionCrudService,
-    IamCrudService,
-    PermissionCrudService,
     PermissionSyncService,
-    RoleCrudService,
     RolePermissionCrudService,
-    SubsidiaryCrudService,
     SubsidiaryPermissionCrudService,
     TenantService,
-    UserCrudService,
     UserPermissionCrudService,
     UserRoleCrudService,
 )
@@ -42,27 +36,27 @@ __all__ = [
     "AuthContextService",
     "AuthLoginResult",
     "AuthService",
-    "CompanyCrudService",
+    "CompanyService",
     "DataScopeService",
-    "DepartmentCrudService",
     "DepartmentPermissionCrudService",
     "DepartmentPermissionGrantService",
-    "IamCrudService",
-    "PermissionCrudService",
+    "DepartmentService",
+    "IamBaseService",
+    "PermissionBaseService",
     "PermissionService",
     "PermissionSyncService",
-    "RoleCrudService",
     "RolePermissionCrudService",
     "RolePermissionGrantService",
+    "RoleService",
     "SessionService",
-    "SubsidiaryCrudService",
     "SubsidiaryPermissionCrudService",
     "SubsidiaryPermissionGrantService",
+    "SubsidiaryService",
     "TenantService",
-    "UserCrudService",
     "UserPermissionCrudService",
     "UserPermissionGrantService",
     "UserRoleCrudService",
     "UserRoleGrantService",
+    "UserService",
     "VerifyService",
 ]

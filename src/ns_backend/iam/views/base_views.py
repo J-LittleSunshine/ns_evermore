@@ -3,39 +3,39 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ns_backend.iam.services import CompanyCrudService, SubsidiaryCrudService, DepartmentCrudService, PermissionCrudService, RoleCrudService, UserCrudService
-from ns_backend.iam.views import BaseIamCrudViewSet
+from ns_backend.iam.services import CompanyService, DepartmentService, PermissionBaseService, RoleService, SubsidiaryService, UserService
+from ns_backend.iam.views import BaseIamViewSet
 
 if TYPE_CHECKING:
     pass
 
 
-class CompanyViewSet(BaseIamCrudViewSet):
-    crud_service_class = CompanyCrudService
+class CompanyViewSet(BaseIamViewSet):
+    service_class = CompanyService
 
 
-class SubsidiaryViewSet(BaseIamCrudViewSet):
-    crud_service_class = SubsidiaryCrudService
+class SubsidiaryViewSet(BaseIamViewSet):
+    service_class = SubsidiaryService
 
 
-class DepartmentViewSet(BaseIamCrudViewSet):
-    crud_service_class = DepartmentCrudService
+class DepartmentViewSet(BaseIamViewSet):
+    service_class = DepartmentService
 
 
-class PermissionViewSet(BaseIamCrudViewSet):
-    crud_service_class = PermissionCrudService
+class PermissionViewSet(BaseIamViewSet):
+    service_class = PermissionBaseService
 
 
-class RoleViewSet(BaseIamCrudViewSet):
-    crud_service_class = RoleCrudService
+class RoleViewSet(BaseIamViewSet):
+    service_class = RoleService
 
 
-class UserViewSet(BaseIamCrudViewSet):
-    crud_service_class = UserCrudService
+class UserViewSet(BaseIamViewSet):
+    service_class = UserService
 
     async def reset_password(self, request, *args, **kwargs):
         operator = getattr(request, "current_user", None)
-        await self.crud.reset_password(
+        await self.service.reset_password(
             item_id=request.data.get("id"),
             password=request.data.get("password"),
             operator_id=getattr(operator, "id", None),
