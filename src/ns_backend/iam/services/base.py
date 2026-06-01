@@ -283,14 +283,16 @@ class UserService(IamBaseService):
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
         """Create user and hash password before persistence."""
-        validated_data = cls.validate_create_data(data)
-        create_data = cls.build_user_create_payload(data=validated_data, tenant_context=tenant_context)
+        create_payload = cls.build_user_create_payload(data=data, tenant_context=tenant_context)
+        validated_data = cls.validate_create_data(create_payload)
 
-        raw_password_payload = create_data.get("password")
+        raw_password_payload = validated_data.get("password")
         if raw_password_payload is None or raw_password_payload == "":
             raise BusinessError("password cannot be empty", NsErrorCode.USER_PASSWORD_EMPTY)
 
-        raw_password = PasswordTransportService.resolve(str(raw_password_payload))
+        raw_password = PasswordTransportService.resolve(raw_password_payload)
+
+        create_data = dict(validated_data)
         create_data["password"] = make_password(raw_password)
 
         await cls.validate_user_organization_assignment(data=create_data)
