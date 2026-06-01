@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     pass
 
 
-class CrudRepository:
+class NsBaseRepository:
     """Common async CRUD repository for Django models."""
 
     @staticmethod
