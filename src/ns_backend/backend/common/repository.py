@@ -48,13 +48,28 @@ class BaseRepository:
         return queryset
 
     @classmethod
-    async def list_items(cls, model_class: Any, fields: tuple[str, ...], page: int | str | None, page_size: int | str | None, tenant_filter: dict[str, Any] | None = None, *, db_alias: str | None = None, order_by: tuple[str, ...] = ("-id",)) -> dict[str, Any]:
+    async def list_items(
+            cls,
+            model_class: Any,
+            fields: tuple[str, ...],
+            page: int | str | None,
+            page_size: int | str | None,
+            tenant_filter: dict[str, Any] | None = None,
+            filters: dict[str, Any] | None = None,
+            *,
+            db_alias: str | None = None,
+            order_by: tuple[str, ...] = ("-id",)
+    ) -> dict[str, Any]:
+        """List model rows with pagination and safe filters."""
         cls.ensure_model_class(model_class)
         normalized_page, normalized_page_size = cls.normalize_page(page, page_size)
         queryset = cls.build_queryset(model_class=model_class, db_alias=db_alias, order_by=order_by)
 
         if tenant_filter:
             queryset = queryset.filter(**tenant_filter)
+
+        if filters:
+            queryset = queryset.filter(**filters)
 
         offset: int = (normalized_page - 1) * normalized_page_size
         total: int = await queryset.acount()
@@ -63,7 +78,15 @@ class BaseRepository:
         async for item in queryset[offset: offset + normalized_page_size].aiterator():
             rows.append(cls.serialize(item, fields))
 
-        return {"items": rows, "pagination": {"page": normalized_page, "page_size": normalized_page_size, "total": total, "total_pages": (total + normalized_page_size - 1) // normalized_page_size}}
+        return {
+            "items": rows,
+            "pagination": {
+                "page": normalized_page,
+                "page_size": normalized_page_size,
+                "total": total,
+                "total_pages": (total + normalized_page_size - 1) // normalized_page_size,
+            },
+        }
 
     @classmethod
     async def get_by_id(cls, model_class: Any, item_id: int, *, db_alias: str | None = None) -> Any | None:

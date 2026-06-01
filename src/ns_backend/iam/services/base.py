@@ -36,6 +36,8 @@ class IamBaseService:
     list_fields: tuple[str, ...] = ()
     detail_fields: tuple[str, ...] = ()
     update_fields: tuple[str, ...] = ()
+    filter_fields: tuple[str, ...] = ()
+    keyword_fields: tuple[str, ...] = ()
 
     tenant_scope_field: str | None = None
     tenant_create_field: str | None = None
@@ -47,10 +49,26 @@ class IamBaseService:
         return value in (True, 1, "1", "true", "True", "yes", "YES", "on", "ON")
 
     @classmethod
-    async def list_items(cls, *, page: int | str | None = 1, page_size: int | str | None = 20, tenant_context: TenantContext | None = None) -> dict[str, Any]:
+    async def list_items(
+            cls,
+            *,
+            page: int | str | None = 1,
+            page_size: int | str | None = 20,
+            filters: dict[str, Any] | None = None,
+            keyword: str | None = None,
+            tenant_context: TenantContext | None = None
+    ) -> dict[str, Any]:
         """List IAM resources."""
         tenant_filter = cls.get_tenant_filter(tenant_context=tenant_context)
-        return await IamBaseRepository.list_items(model_class=cls.model_class, fields=cls.list_fields, page=page, page_size=page_size, tenant_filter=tenant_filter)
+        query_filters = cls.build_list_filters(filters=filters, keyword=keyword)
+        return await IamBaseRepository.list_items(
+            model_class=cls.model_class,
+            fields=cls.list_fields,
+            page=page,
+            page_size=page_size,
+            tenant_filter=tenant_filter,
+            filters=query_filters,
+        )
 
     @classmethod
     async def detail_item(cls, *, item_id: int | str | None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
@@ -165,6 +183,41 @@ class IamBaseService:
         company_id = data.get("company_id")
         return None if company_id in (None, "") else int(company_id)
 
+    @classmethod
+    def build_list_filters(cls, *, filters: dict[str, Any] | None = None, keyword: str | None = None) -> dict[str, Any]:
+        """Build safe list filters."""
+        result: dict[str, Any] = {}
+
+        if filters:
+            allowed_filter_fields = set(cls.filter_fields)
+            for field, value in filters.items():
+                if value in (None, ""):
+                    continue
+                if field not in allowed_filter_fields:
+                    raise BusinessError(f"Filtering field is not allowed: {field}", NsErrorCode.INVALID_VALUE)
+                result[field] = value
+
+        if keyword is not None and str(keyword).strip():
+            keyword_value = str(keyword).strip()
+            keyword_filters = cls.build_keyword_filters(keyword_value)
+            result.update(keyword_filters)
+
+        return result
+
+    @classmethod
+    def build_keyword_filters(cls, keyword: str) -> dict[str, Any]:
+        """Build keyword filters.
+
+        BaseRepository only accepts AND filters, so keyword search is limited to
+        the first configured keyword field. If OR keyword search is needed later,
+        add a QuerySet-level repository method with Q objects.
+        """
+        if not cls.keyword_fields:
+            return {}
+
+        first_keyword_field = cls.keyword_fields[0]
+        return {f"{first_keyword_field}__icontains": keyword}
+
 
 class CompanyService(IamBaseService):
     """Company resource operation service."""
@@ -177,6 +230,8 @@ class CompanyService(IamBaseService):
 
     list_fields = detail_fields = ("id", "company_code", "company_name", "legal_name", "status")
     update_fields = ("company_name", "legal_name", "status")
+    filter_fields = ("id", "company_code", "company_name", "status")
+    keyword_fields = ("company_name", "company_code")
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:
@@ -204,6 +259,8 @@ class DepartmentService(IamBaseService):
 
     list_fields = detail_fields = ("id", "company_id", "subsidiary_id", "parent_id", "department_code", "department_name", "status")
     update_fields = ("department_name", "status")
+    filter_fields = ("id", "company_id", "subsidiary_id", "parent_id", "department_code", "department_name", "status")
+    keyword_fields = ("department_name", "department_code")
 
     @classmethod
     async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any = None, tenant_context: TenantContext | None = None) -> None:
@@ -215,6 +272,7 @@ class DepartmentService(IamBaseService):
         await OrganizationPolicy.ensure_subsidiary_belongs_to_company(subsidiary_id=data.get("subsidiary_id"), company_id=company_id)
         await OrganizationPolicy.ensure_parent_department_belongs_to_company(parent_id=data.get("parent_id"), company_id=company_id)
 
+
 class PermissionBaseService(IamBaseService):
     """Permission resource operation service."""
 
@@ -223,6 +281,8 @@ class PermissionBaseService(IamBaseService):
 
     list_fields = detail_fields = ("id", "permission_code", "permission_name", "permission_type", "parent_id", "status")
     update_fields = ("permission_name", "permission_type", "parent_id", "status")
+    filter_fields = ("id", "permission_code", "permission_name", "permission_type", "parent_id", "status")
+    keyword_fields = ("permission_name", "permission_code")
 
 
 class RoleService(IamBaseService):
@@ -236,6 +296,8 @@ class RoleService(IamBaseService):
 
     list_fields = detail_fields = ("id", "company_id", "role_code", "role_name", "role_scope", "status")
     update_fields = ("role_name", "status")
+    filter_fields = ("id", "company_id", "role_code", "role_name", "role_scope", "status")
+    keyword_fields = ("role_name", "role_code")
 
 
 class SubsidiaryService(IamBaseService):
@@ -249,6 +311,8 @@ class SubsidiaryService(IamBaseService):
 
     list_fields = detail_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status")
     update_fields = ("subsidiary_name", "status")
+    filter_fields = ("id", "company_id", "subsidiary_code", "subsidiary_name", "status")
+    keyword_fields = ("subsidiary_name", "subsidiary_code")
 
 
 class UserService(IamBaseService):
@@ -278,6 +342,8 @@ class UserService(IamBaseService):
         "updated_at"
     )
     update_fields = ("email", "phone", "display_name", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser")
+    filter_fields = ("id", "username", "email", "phone", "display_name", "user_type", "company_id", "subsidiary_id", "department_id", "is_active", "is_staff", "is_superuser")
+    keyword_fields = ("username", "display_name", "email", "phone")
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator: Any = None, operator_id: int | None = None, tenant_context: TenantContext | None = None) -> dict[str, Any]:

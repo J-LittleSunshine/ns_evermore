@@ -17,9 +17,24 @@ class IamBaseRepository:
     """
 
     @staticmethod
-    async def list_items(*, model_class: Any, fields: tuple[str, ...], page: int | str | None, page_size: int | str | None, tenant_filter: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def list_items(
+            *,
+            model_class: Any,
+            fields: tuple[str, ...],
+            page: int | str | None,
+            page_size: int | str | None,
+            tenant_filter: dict[str, Any] | None = None,
+            filters: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """List IAM model rows with pagination."""
-        return await BaseRepository.list_items(model_class=model_class, fields=fields, page=page, page_size=page_size, tenant_filter=tenant_filter)
+        return await BaseRepository.list_items(
+            model_class=model_class,
+            fields=fields,
+            page=page,
+            page_size=page_size,
+            tenant_filter=tenant_filter,
+            filters=filters,
+        )
 
     @staticmethod
     async def detail_item(*, model_class: Any, item_id: int | str | None, fields: tuple[str, ...], tenant_filter: dict[str, Any] | None = None) -> dict[str, Any]:

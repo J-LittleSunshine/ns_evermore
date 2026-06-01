@@ -40,6 +40,8 @@ class BaseIamViewSet(IamRequestViewSet):
         data = await self.service.list_items(
             page=request.data.get("page", 1),
             page_size=request.data.get("page_size", 20),
+            filters=request.data.get("filters"),
+            keyword=request.data.get("keyword"),
             tenant_context=self._tenant_context(request),
         )
         return self.success_response(data)
