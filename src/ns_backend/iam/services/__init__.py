@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    pass
+from ns_backend.iam.services.auth import AuthLoginResult, AuthService
 from ns_backend.iam.services.legacy import (
     AuditService,
     AuthContextService,
@@ -24,12 +23,17 @@ from ns_backend.iam.services.legacy import (
     UserCrudService,
     UserPermissionCrudService,
     UserRoleCrudService,
-    VerifyService,
 )
+from ns_backend.iam.services.verify import VerifyService
+
+if TYPE_CHECKING:
+    pass
 
 __all__ = [
     "AuditService",
     "AuthContextService",
+    "AuthLoginResult",
+    "AuthService",
     "CompanyCrudService",
     "DataScopeService",
     "DepartmentCrudService",

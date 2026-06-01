@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, Literal
 
 if TYPE_CHECKING:
     pass
@@ -81,3 +81,39 @@ class PermissionProvider(Protocol):
     app_label: str
 
     def list_permissions(self) -> tuple[PermissionSpec, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class TokenRotationResult:
+    access_token: str
+    refresh_token: str
+    token_type: str
+    expires_in: int
+    session_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class TokenRotationOutcome:
+    status: Literal["rotated", "replayed", "invalid", "expired", "user_inactive", "session_unavailable"]
+    result: TokenRotationResult | None = None
+
+
+@dataclass(slots=True)
+class AuthLoginResult:
+    user: Any
+    data: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshTokenRotationResult:
+    access_token: str
+    refresh_token: str
+    token_type: str
+    expires_in: int
+    session_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RotationOutcome:
+    status: Literal["rotated", "replayed", "invalid", "expired", "user_inactive", "session_unavailable"]
+    result: RefreshTokenRotationResult | None = None
