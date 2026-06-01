@@ -139,6 +139,7 @@ class AuditRequestMixin:
         return str(getattr(request, "method", "unknown")).lower()
 
     def get_audit_resource_type(self) -> str:
+        """Resolve audit resource type from view or service model metadata."""
         if self.audit_resource_type:
             return self.audit_resource_type
 
@@ -147,8 +148,8 @@ class AuditRequestMixin:
             # noinspection PyProtectedMember
             return str(model_class._meta.db_table)
 
-        crud_service_class = getattr(self, "crud_service_class", None)
-        service_model_class = getattr(crud_service_class, "model_class", None)
+        service_class = getattr(self, "service_class", None)
+        service_model_class = getattr(service_class, "model_class", None)
         if service_model_class is not None:
             # noinspection PyProtectedMember
             return str(service_model_class._meta.db_table)
