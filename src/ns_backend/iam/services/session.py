@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from django.utils import timezone
 
 from ns_backend.backend.exceptions import BusinessError
+from ns_backend.backend.utils.jwt import JwtService
 from ns_backend.iam.repositories import UserSessionRepository, UserTokenRepository
 from ns_common.error_codes import NsErrorCode
 
@@ -16,47 +17,124 @@ if TYPE_CHECKING:
 class SessionService:
     """Session management service.
 
-    业务规则：
-    1. 用户只能查看自己的 session。
-    2. 用户只能吊销自己的 session。
-    3. 吊销 session 时必须联动吊销该 session 下的 token。
+    Service responsibilities:
+    1. Let users list only their own sessions.
+    2. Mark the current session by access token.
+    3. Derive active state from session availability and valid tokens.
+    4. Revoke one session and all its tokens atomically through repository.
     """
 
     @classmethod
-    async def list_current_user_sessions(cls, *, user_id: int) -> dict[str, list[dict[str, Any]]]:
-        """List current user's sessions."""
+    async def list_current_user_sessions(cls, *, user: Any, access_token: str | None = None) -> dict[str, list[dict[str, Any]]]:
+        """List current user's sessions with active/current/device metadata."""
+        if not user or not bool(getattr(user, "is_active", False)):
+            return {"items": []}
+
+        user_id = int(getattr(user, "id"))
+        now = timezone.now()
+        current_session_pk = await cls.get_current_session_pk(user=user, access_token=access_token, now=now)
+        valid_token_session_ids = await UserSessionRepository.list_valid_token_session_ids(user_id=user_id, now=now)
         sessions = await UserSessionRepository.list_by_user_id(user_id=user_id)
+
         return {
             "items": [
-                cls.serialize_session(session)
+                cls.serialize_session(
+                    session=session,
+                    current_session_pk=current_session_pk,
+                    valid_token_session_ids=valid_token_session_ids,
+                    now=now,
+                )
                 for session in sessions
             ]
         }
 
     @classmethod
-    async def revoke_current_user_session(cls, *, user_id: int, session_id: str) -> None:
+    async def revoke_current_user_session(cls, *, user: Any, session_id: str) -> dict[str, Any]:
         """Revoke current user's session and all tokens under this session."""
+        if not user or not bool(getattr(user, "is_active", False)):
+            raise BusinessError("User is not logged in or session has expired", NsErrorCode.USER_NOT_LOGGED_IN_OR_SESSION_EXPIRED)
+
         clean_session_id = str(session_id or "").strip()
         if not clean_session_id:
             raise BusinessError("session_id cannot be empty", NsErrorCode.SESSION_ID_EMPTY)
 
-        session = await UserSessionRepository.get_by_user_and_public_id(user_id=user_id, session_id=clean_session_id)
+        session = await UserSessionRepository.get_by_user_and_public_id(user_id=int(getattr(user, "id")), session_id=clean_session_id)
         if session is None:
-            raise BusinessError("session not found", NsErrorCode.SESSION_NOT_FOUND)
+            raise BusinessError("Session does not exist", NsErrorCode.SESSION_NOT_FOUND)
 
-        now = timezone.now()
-        await UserSessionRepository.revoke_by_id(session_pk=session.id, revoked_at=now)
-        await UserTokenRepository.revoke_by_session_id(session_pk=session.id, revoked_at=now)
+        if session.revoked_at is not None:
+            return {
+                "success": False,
+                "revoked": False,
+                "session_id": session.session_id,
+            }
+
+        updated_count = await UserSessionRepository.revoke_session_and_tokens_by_id(session_pk=session.id, revoked_at=timezone.now())
+        revoked = updated_count > 0
+        return {
+            "success": revoked,
+            "revoked": revoked,
+            "session_id": session.session_id,
+        }
+
+    @classmethod
+    async def get_current_session_pk(cls, *, user: Any, access_token: str | None, now) -> int | None:
+        """Resolve current session primary key from the current access token."""
+        if not user or not access_token:
+            return None
+
+        payload = JwtService.decode_access_token(access_token)
+        if not payload:
+            return None
+
+        payload_user_id = payload.get("uid")
+        access_jti = payload.get("jti")
+        if payload_user_id != getattr(user, "id", None):
+            return None
+
+        if not isinstance(access_jti, str) or not access_jti:
+            return None
+
+        token_record = await UserTokenRepository.get_active_access_token_record(user_id=int(getattr(user, "id")), access_jti=access_jti, now=now)
+        if token_record is None:
+            return None
+
+        return token_record.session_id
 
     @staticmethod
-    def serialize_session(session) -> dict[str, Any]:
+    def serialize_session(*, session, current_session_pk: int | None, valid_token_session_ids: set[int], now) -> dict[str, Any]:
         """Serialize session model to API payload."""
+        expired_at = session.expired_at
+        revoked_at = session.revoked_at
+        session_available = bool(revoked_at is None and expired_at is not None and expired_at > now)
+        has_valid_token = session.id in valid_token_session_ids
+
+        device = getattr(session, "device", None)
+        device_data = None
+        if device is not None:
+            device_data = {
+                "device_id": device.device_id,
+                "device_name": device.device_name,
+                "device_type": device.device_type,
+                "os_name": device.os_name,
+                "browser_name": device.browser_name,
+                "trusted": device.trusted,
+                "status": device.status,
+                "last_client_ip": device.last_client_ip,
+            }
+
         return {
             "session_id": session.session_id,
-            "device_id": session.device_id,
             "login_ip": session.login_ip,
             "user_agent": session.user_agent,
+            "risk_level": session.risk_level,
             "last_active_at": session.last_active_at.isoformat() if session.last_active_at else None,
-            "expired_at": session.expired_at.isoformat() if session.expired_at else None,
-            "revoked_at": session.revoked_at.isoformat() if session.revoked_at else None,
+            "expired_at": expired_at.isoformat() if expired_at else None,
+            "revoked_at": revoked_at.isoformat() if revoked_at else None,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "is_current": session.id == current_session_pk,
+            "session_available": session_available,
+            "has_valid_token": has_valid_token,
+            "is_active": session_available and has_valid_token,
+            "device": device_data,
         }

@@ -11,13 +11,16 @@ if TYPE_CHECKING:
 
 
 class SessionViewSet(IamRequestViewSet):
+    audit_resource_type = "iam_user_session"
+
     async def list_sessions(self, request, *args, **kwargs):
         user = request.current_user
-        data = await SessionService.list_current_user_sessions(user_id=user.id)
+        access_token = self.get_bearer_token_from_request(request)
+        data = await SessionService.list_current_user_sessions(user=user, access_token=access_token)
         return self.success_response(data)
 
     async def revoke_session(self, request, *args, **kwargs):
         user = request.current_user
         session_id = str(request.data.get("session_id", "")).strip()
-        await SessionService.revoke_current_user_session(user_id=user.id, session_id=session_id)
-        return self.success_response()
+        data = await SessionService.revoke_current_user_session(user=user, session_id=session_id)
+        return self.success_response(data)
