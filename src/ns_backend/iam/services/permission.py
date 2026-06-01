@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.utils import timezone
 
-from ns_backend.iam.constants import USER_TYPE_ENTERPRISE, USER_TYPE_PERSONAL, PERMISSION_EFFECT_ALLOW, PERMISSION_EFFECT_DENY
+from ns_backend.iam.constants import USER_TYPE_ENTERPRISE, USER_TYPE_PERSONAL, PERMISSION_EFFECT_ALLOW, PERMISSION_EFFECT_DENY, ROLE_SCOPE_PERSONAL, ROLE_SCOPE_ENTERPRISE
 from ns_backend.iam.repositories import PermissionRepository
 
 if TYPE_CHECKING:
@@ -111,7 +111,7 @@ class PermissionService:
             return False
 
         has_user_allow = await cls._has_direct_effect(subject_type=cls.SUBJECT_USER, subject_id=user_id, permission_ids=permission_ids, effect=PERMISSION_EFFECT_ALLOW, now=now)
-        has_role_allow = await cls._has_role_allow(user_id=user_id, permission_ids=permission_ids, now=now, role_scope=USER_TYPE_PERSONAL, company_id=None)
+        has_role_allow = await cls._has_role_allow(user_id=user_id, permission_ids=permission_ids, now=now, role_scope=ROLE_SCOPE_PERSONAL, company_id=None)
         return has_user_allow or has_role_allow
 
     @classmethod
@@ -139,7 +139,7 @@ class PermissionService:
             return False
 
         has_user_allow = await cls._has_direct_effect(subject_type=cls.SUBJECT_USER, subject_id=user_id, permission_ids=permission_ids, effect=PERMISSION_EFFECT_ALLOW, now=now)
-        has_role_allow = await cls._has_role_allow(user_id=user_id, permission_ids=permission_ids, now=now, role_scope=USER_TYPE_ENTERPRISE, company_id=company_id)
+        has_role_allow = await cls._has_role_allow(user_id=user_id, permission_ids=permission_ids, now=now, role_scope=ROLE_SCOPE_ENTERPRISE, company_id=company_id)
         has_department_allow = False
         has_subsidiary_allow = False
 
@@ -192,7 +192,7 @@ class PermissionService:
         if user_type == USER_TYPE_PERSONAL:
             deny_ids = await cls._list_user_permission_ids(user_id, now, effect=PERMISSION_EFFECT_DENY)
             allow_ids = await cls._list_user_permission_ids(user_id, now, effect=PERMISSION_EFFECT_ALLOW)
-            allow_ids.update(await cls._list_role_permission_ids(user_id=user_id, now=now, role_scope=USER_TYPE_PERSONAL, company_id=None))
+            allow_ids.update(await cls._list_role_permission_ids(user_id=user_id, now=now, role_scope=ROLE_SCOPE_PERSONAL, company_id=None))
             return cls.expand_effective_permission_ids(active_permissions=active_permissions, allow_ids=allow_ids, deny_ids=deny_ids)
 
         if user_type == USER_TYPE_ENTERPRISE:
@@ -202,7 +202,7 @@ class PermissionService:
 
             deny_ids = await cls._list_user_permission_ids(user_id, now, effect=PERMISSION_EFFECT_DENY)
             allow_ids = await cls._list_user_permission_ids(user_id, now, effect=PERMISSION_EFFECT_ALLOW)
-            allow_ids.update(await cls._list_role_permission_ids(user_id=user_id, now=now, role_scope=USER_TYPE_ENTERPRISE, company_id=company_id))
+            allow_ids.update(await cls._list_role_permission_ids(user_id=user_id, now=now, role_scope=ROLE_SCOPE_ENTERPRISE, company_id=company_id))
 
             department_id = getattr(user, "department_id", None)
             subsidiary_id = getattr(user, "subsidiary_id", None)

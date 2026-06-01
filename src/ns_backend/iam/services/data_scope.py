@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.utils import timezone
 
-from ns_backend.iam.constants import USER_TYPE_ENTERPRISE, USER_TYPE_PERSONAL, DATA_SCOPE_DEPARTMENT_TREE, PERMISSION_EFFECT_DENY
+from ns_backend.iam.constants import USER_TYPE_ENTERPRISE, USER_TYPE_PERSONAL, DATA_SCOPE_DEPARTMENT_TREE, PERMISSION_EFFECT_DENY, ROLE_SCOPE_PERSONAL, ROLE_SCOPE_ENTERPRISE
 from ns_backend.iam.policies import DataScopePolicy
 from ns_backend.iam.repositories import DataScopeRepository
 from ns_backend.iam.schemas import DataScopeFieldMap, DataScopeFilterPlan, DataScopeResult
@@ -72,7 +72,7 @@ class DataScopeService:
 
         scopes: list[str] = []
         scopes.extend(await cls._list_user_scopes(user_id, permission_ids, now))
-        scopes.extend(await cls._list_role_scopes(user_id, permission_ids, now, role_scope=USER_TYPE_PERSONAL, company_id=None))
+        scopes.extend(await cls._list_role_scopes(user_id, permission_ids, now, role_scope=ROLE_SCOPE_PERSONAL, company_id=None))
 
         if not scopes:
             return DataScopePolicy.denied_result()
@@ -102,7 +102,7 @@ class DataScopeService:
 
         scopes: list[str] = []
         scopes.extend(await cls._list_user_scopes(user_id, permission_ids, now))
-        scopes.extend(await cls._list_role_scopes(user_id, permission_ids, now, role_scope=USER_TYPE_ENTERPRISE, company_id=company_id))
+        scopes.extend(await cls._list_role_scopes(user_id, permission_ids, now, role_scope=ROLE_SCOPE_ENTERPRISE, company_id=company_id))
 
         if department_id:
             scopes.extend(await cls._list_department_scopes(department_id, permission_ids, now))

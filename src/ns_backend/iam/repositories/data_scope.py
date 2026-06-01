@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.db.models import Q
 
-from ns_backend.iam.constants import USER_TYPE_ENTERPRISE, USER_TYPE_PERSONAL, PERMISSION_EFFECT_ALLOW
+from ns_backend.iam.constants import ROLE_SCOPE_ENTERPRISE, ROLE_SCOPE_PERSONAL, PERMISSION_EFFECT_ALLOW
 from ns_backend.iam.models import (
     IamDepartment,
     IamDepartmentPermission,
@@ -162,9 +162,9 @@ class DataScopeRepository:
             "role__role_scope": role_scope,
         }
 
-        if role_scope == USER_TYPE_PERSONAL:
+        if role_scope == ROLE_SCOPE_PERSONAL:
             role_filter["role__company_id__isnull"] = True
-        elif role_scope == USER_TYPE_ENTERPRISE and company_id is not None:
+        elif role_scope == ROLE_SCOPE_ENTERPRISE and company_id is not None:
             role_filter["role__company_id"] = company_id
 
         return IamUserRole.objects.filter(**role_filter).values("role_id")
