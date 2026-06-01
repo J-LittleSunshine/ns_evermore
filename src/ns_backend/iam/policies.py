@@ -8,8 +8,6 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from django.conf import settings
-
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.constants import (
     USER_TYPE_ENTERPRISE,
@@ -21,9 +19,11 @@ from ns_backend.iam.constants import (
     DATA_SCOPE_DEPARTMENT_TREE,
     DATA_SCOPE_SUBSIDIARY,
     DATA_SCOPE_COMPANY,
+    ROLE_SCOPE_PERSONAL,
+    ROLE_SCOPE_ENTERPRISE,
     PERMISSION_TYPE_DATA,
     PERMISSION_EFFECT_DENY,
-    PERMISSION_EFFECT_ALLOW
+    PERMISSION_EFFECT_ALLOW,
 )
 from ns_backend.iam.errors import IamDomainError
 from ns_backend.iam.schemas import TenantContext, DataScopeResult, DataScopeFilterPlan, DataScopeFieldMap, AuditEvent
@@ -130,7 +130,13 @@ class AuditPolicy:
 
     @classmethod
     def get_configured_sensitive_keys(cls) -> set[str]:
-        extra_keys = getattr(settings, "IAM_AUDIT_EXTRA_SENSITIVE_KEYS", ())
+        try:
+            from django.conf import settings
+
+            extra_keys = getattr(settings, "IAM_AUDIT_EXTRA_SENSITIVE_KEYS", ())
+        except Exception:  # noqa
+            return set()
+
         return cls.normalize_sensitive_key_variants(extra_keys)
 
     @classmethod
@@ -452,10 +458,10 @@ class GrantPolicy(BasePolicy):
         context = TenantService.from_user(operator)
 
         if TenantPolicy.is_platform_admin(context):
-            if role_scope == "PERSONAL" and user_company_id is not None:
+            if role_scope == ROLE_SCOPE_PERSONAL and user_company_id is not None:
                 cls.deny("Cannot bind user role across companies", 14031)
 
-            if role_scope == "ENTERPRISE" and user_company_id != role_company_id:
+            if role_scope == ROLE_SCOPE_ENTERPRISE and user_company_id != role_company_id:
                 cls.deny("Cannot bind user role across companies", 14031)
 
             return
@@ -608,7 +614,21 @@ class RolePolicy(BasePolicy):
     """IAM role boundary policy."""
 
     @classmethod
-    async def build_create_payload(cls, *, context: TenantContext | None, data: dict[str, Any]) -> dict[str, Any] | None:
+    def normalize_company_id(cls, value: Any) -> int:
+        """Normalize company id for role boundary policy."""
+        try:
+            company_id = int(value)
+        except (TypeError, ValueError) as exc:
+            raise IamDomainError(message="company_id is invalid", code=NsErrorCode.INVALID_VALUE) from exc
+
+        if company_id <= 0:
+            cls.deny("company_id is invalid", NsErrorCode.INVALID_VALUE)
+
+        return company_id
+
+    # noinspection PyTypeChecker
+    @classmethod
+    async def build_create_payload(cls, *, context: TenantContext | None, data: dict[str, Any]) -> dict[str, Any]:
         """Build tenant-safe role create payload."""
         from ns_backend.iam.repositories import RoleRepository
 
@@ -616,7 +636,7 @@ class RolePolicy(BasePolicy):
         role_code = data.get("role_code")
         final_data = dict(data)
 
-        if role_scope == "PERSONAL":
+        if role_scope == ROLE_SCOPE_PERSONAL:
             if context is None or not TenantPolicy.is_platform_admin(context):
                 cls.deny("Only platform administrators can create PERSONAL roles", NsErrorCode.ROLE_PERSONAL_PLATFORM_ADMIN_ONLY)
 
@@ -629,7 +649,7 @@ class RolePolicy(BasePolicy):
             final_data["company_id"] = None
             return final_data
 
-        if role_scope == "ENTERPRISE":
+        if role_scope == ROLE_SCOPE_ENTERPRISE:
             if context is not None and TenantPolicy.is_platform_admin(context):
                 company_id = final_data.get("company_id")
                 if not company_id:
@@ -640,7 +660,7 @@ class RolePolicy(BasePolicy):
                 TenantPolicy.ensure_enterprise_context(context)
                 company_id = context.company_id
 
-            normalized_company_id = int(company_id)
+            normalized_company_id = cls.normalize_company_id(company_id)
             if await RoleRepository.exists_enterprise_role_code(company_id=normalized_company_id, role_code=role_code):
                 cls.deny("Role code already exists", NsErrorCode.ROLE_CODE_ALREADY_EXISTS)
 
