@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ns_backend.backend.common import BaseRepository
+from ns_backend.iam.constants import RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW
 from ns_backend.iam.models import IamResource, IamResourceAction
 
 if TYPE_CHECKING:
@@ -18,6 +19,7 @@ class ResourceRepository:
         "resource_type",
         "resource_name",
         "module_code",
+        "access_mode",
         "status",
         "created_at",
         "updated_at",
@@ -46,7 +48,20 @@ class ResourceRepository:
         return await IamResource.objects.using(db_alias).filter(resource_type=resource_type, status=1).afirst()
 
     @staticmethod
-    async def create_resource(*, resource_type: str, resource_name: str, module_code: str, status: int, operator_id: int | None) -> dict[str, Any]:
+    async def get_resource_access_mode(resource_type: str) -> str | None:
+        """Return one resource type access_mode value."""
+        db_alias: str = BaseRepository.resolve_db_alias(model_class=IamResource)
+        row = await IamResource.objects.using(db_alias).filter(resource_type=resource_type).values("access_mode").afirst()
+        if not isinstance(row, dict):
+            return None
+
+        access_mode = row.get("access_mode")
+        if access_mode in (None, ""):
+            return RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW
+        return str(access_mode)
+
+    @staticmethod
+    async def create_resource(*, resource_type: str, resource_name: str, module_code: str, access_mode: str, status: int, operator_id: int | None) -> dict[str, Any]:
         """Create one resource registration row."""
         return await BaseRepository.create_item_with_audit(
             model_class=IamResource,
@@ -54,19 +69,21 @@ class ResourceRepository:
                 "resource_type": resource_type,
                 "resource_name": resource_name,
                 "module_code": module_code,
+                "access_mode": access_mode,
                 "status": status,
             },
             operator_id=operator_id,
         )
 
     @staticmethod
-    async def update_resource(*, item: IamResource, resource_name: str, module_code: str, status: int, operator_id: int | None) -> None:
+    async def update_resource(*, item: IamResource, resource_name: str, module_code: str, access_mode: str, status: int, operator_id: int | None) -> None:
         """Update one resource registration row."""
         update_data: dict[str, Any] = BaseRepository.fill_update_audit_fields(
             model_class=IamResource,
             data={
                 "resource_name": resource_name,
                 "module_code": module_code,
+                "access_mode": access_mode,
                 "status": status,
             },
             operator_id=operator_id,

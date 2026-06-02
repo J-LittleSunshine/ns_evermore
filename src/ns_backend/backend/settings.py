@@ -34,6 +34,24 @@ def _coerce_positive_int(value: Any, default: int) -> int:
     return default
 
 
+def _coerce_non_negative_int(value: Any, default: int) -> int:
+    """Resolve integer config while allowing zero as a valid non-negative value."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value if value >= 0 else default
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        try:
+            parsed = int(text)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed >= 0 else default
+    return default
+
+
 def _coerce_bool(value: Any, default: bool) -> bool:
     """Resolve bool config from JSON/env values."""
     if isinstance(value, bool):
@@ -45,6 +63,32 @@ def _coerce_bool(value: Any, default: bool) -> bool:
         if text in {"0", "false", "no", "n", "off"}:
             return False
     return default
+
+
+def _coerce_float_in_range(value: Any, default: float, *, min_value: float, max_value: float) -> float:
+    """Resolve float config from JSON/env and clamp to one inclusive range."""
+    if isinstance(value, bool):
+        return default
+
+    parsed_value: float
+    if isinstance(value, (int, float)):
+        parsed_value = float(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        try:
+            parsed_value = float(text)
+        except (TypeError, ValueError):
+            return default
+    else:
+        return default
+
+    if parsed_value < min_value:
+        return min_value
+    if parsed_value > max_value:
+        return max_value
+    return parsed_value
 
 
 def _coerce_string_tuple(value: Any) -> tuple[str, ...]:
@@ -158,6 +202,53 @@ IAM_MODULE_REGISTRATION_HOOKS = _merge_string_tuples(
 IAM_AUTH_CONTEXT_TTL_SECONDS = _coerce_positive_int(
     os.getenv("NS_IAM_AUTH_CONTEXT_TTL_SECONDS") or os.getenv("IAM_AUTH_CONTEXT_TTL_SECONDS") or getattr(_BACKEND, "iam_auth_context_ttl_seconds", 300),
     300,
+)
+
+IAM_AUTH_BACKOFF_ENABLED = _coerce_bool(
+    os.getenv("NS_IAM_AUTH_BACKOFF_ENABLED") or os.getenv("IAM_AUTH_BACKOFF_ENABLED"),
+    _coerce_bool(getattr(_BACKEND, "iam_auth_backoff_enabled", True), True),
+)
+
+IAM_AUTH_BACKOFF_MAX_RETRIES = _coerce_non_negative_int(
+    os.getenv("NS_IAM_AUTH_BACKOFF_MAX_RETRIES") or os.getenv("IAM_AUTH_BACKOFF_MAX_RETRIES") or getattr(_BACKEND, "iam_auth_backoff_max_retries", 3),
+    3,
+)
+
+IAM_AUTH_BACKOFF_BASE_DELAY_MS = _coerce_non_negative_int(
+    os.getenv("NS_IAM_AUTH_BACKOFF_BASE_DELAY_MS") or os.getenv("IAM_AUTH_BACKOFF_BASE_DELAY_MS") or getattr(_BACKEND, "iam_auth_backoff_base_delay_ms", 50),
+    50,
+)
+
+IAM_AUTH_BACKOFF_MAX_DELAY_MS = _coerce_non_negative_int(
+    os.getenv("NS_IAM_AUTH_BACKOFF_MAX_DELAY_MS") or os.getenv("IAM_AUTH_BACKOFF_MAX_DELAY_MS") or getattr(_BACKEND, "iam_auth_backoff_max_delay_ms", 1000),
+    1000,
+)
+
+IAM_AUTH_BACKOFF_JITTER_RATIO = _coerce_float_in_range(
+    os.getenv("NS_IAM_AUTH_BACKOFF_JITTER_RATIO") or os.getenv("IAM_AUTH_BACKOFF_JITTER_RATIO") or getattr(_BACKEND, "iam_auth_backoff_jitter_ratio", 0.5),
+    0.5,
+    min_value=0.0,
+    max_value=1.0,
+)
+
+IAM_AUTH_LOCAL_FALLBACK_CACHE_ENABLED = _coerce_bool(
+    os.getenv("NS_IAM_AUTH_LOCAL_FALLBACK_CACHE_ENABLED") or os.getenv("IAM_AUTH_LOCAL_FALLBACK_CACHE_ENABLED"),
+    _coerce_bool(getattr(_BACKEND, "iam_auth_local_fallback_cache_enabled", True), True),
+)
+
+IAM_AUTH_LOCAL_FALLBACK_CACHE_TTL_SECONDS = _coerce_positive_int(
+    os.getenv("NS_IAM_AUTH_LOCAL_FALLBACK_CACHE_TTL_SECONDS") or os.getenv("IAM_AUTH_LOCAL_FALLBACK_CACHE_TTL_SECONDS") or getattr(_BACKEND, "iam_auth_local_fallback_cache_ttl_seconds", 3),
+    3,
+)
+
+IAM_AUTH_LOCAL_FALLBACK_CACHE_MAX_SIZE = _coerce_positive_int(
+    os.getenv("NS_IAM_AUTH_LOCAL_FALLBACK_CACHE_MAX_SIZE") or os.getenv("IAM_AUTH_LOCAL_FALLBACK_CACHE_MAX_SIZE") or getattr(_BACKEND, "iam_auth_local_fallback_cache_max_size", 1024),
+    1024,
+)
+
+IAM_AUTH_SINGLE_FLIGHT_ENABLED = _coerce_bool(
+    os.getenv("NS_IAM_AUTH_SINGLE_FLIGHT_ENABLED") or os.getenv("IAM_AUTH_SINGLE_FLIGHT_ENABLED"),
+    _coerce_bool(getattr(_BACKEND, "iam_auth_single_flight_enabled", True), True),
 )
 
 _IAM_AUTH_CONTEXT_REDIS_URL = str(

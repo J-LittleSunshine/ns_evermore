@@ -208,6 +208,7 @@ CREATE TABLE iam_resource
     resource_type VARCHAR(128) NOT NULL,
     resource_name VARCHAR(128) NOT NULL,
     module_code VARCHAR(64) NOT NULL,
+    access_mode VARCHAR(32) NOT NULL DEFAULT 'RBAC_DEFAULT_ALLOW',
     status SMALLINT NOT NULL DEFAULT 1,
     created_by BIGINT NULL,
     updated_by BIGINT NULL,
@@ -514,6 +515,7 @@ CREATE INDEX idx_sp_created_by ON iam_subsidiary_permission (created_by);
 CREATE INDEX idx_sp_updated_by ON iam_subsidiary_permission (updated_by);
 CREATE UNIQUE INDEX uk_resource_type ON iam_resource (resource_type);
 CREATE INDEX idx_resource_module_code ON iam_resource (module_code);
+CREATE INDEX idx_ir_access_mode ON iam_resource (access_mode);
 CREATE INDEX idx_resource_status ON iam_resource (status);
 CREATE INDEX idx_resource_created_by ON iam_resource (created_by);
 CREATE INDEX idx_resource_updated_by ON iam_resource (updated_by);

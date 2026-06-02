@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, Literal
 
+from ns_backend.iam.constants import RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW
+
 if TYPE_CHECKING:
     pass
 
@@ -53,6 +55,7 @@ class UserAuthorizationContext:
     role_ids: list[int] = field(default_factory=list)
     readable_resource_ids: list[str] = field(default_factory=list)
     readable_resource_filters: dict[str, Any] = field(default_factory=dict)
+    access_mode: str = RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW
     version: int = 1
 
 

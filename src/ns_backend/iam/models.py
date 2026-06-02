@@ -5,7 +5,12 @@ from typing import TYPE_CHECKING
 
 from django.db import models
 
-from ns_backend.iam.constants import DATA_SCOPE_CHOICES
+from ns_backend.iam.constants import (
+    DATA_SCOPE_CHOICES,
+    RESOURCE_ACCESS_MODE_ACL_REQUIRED,
+    RESOURCE_ACCESS_MODE_CHOICES,
+    RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW,
+)
 
 if TYPE_CHECKING:
     pass
@@ -117,10 +122,16 @@ class IamPermission(models.Model):
 
 
 class IamResource(models.Model):
+    ACCESS_MODE_RBAC_DEFAULT_ALLOW = RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW
+    ACCESS_MODE_ACL_REQUIRED = RESOURCE_ACCESS_MODE_ACL_REQUIRED
+
+    ACCESS_MODE_CHOICES = RESOURCE_ACCESS_MODE_CHOICES
+
     id = models.BigAutoField(primary_key=True)
     resource_type = models.CharField(max_length=128, unique=True)
     resource_name = models.CharField(max_length=128)
     module_code = models.CharField(max_length=64)
+    access_mode = models.CharField(max_length=32, choices=ACCESS_MODE_CHOICES, default=ACCESS_MODE_RBAC_DEFAULT_ALLOW)
     status = models.SmallIntegerField(default=1)
     created_by = models.BigIntegerField(null=True, blank=True)
     updated_by = models.BigIntegerField(null=True, blank=True)

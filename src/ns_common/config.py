@@ -85,6 +85,17 @@ class _NsBackendConfig:
     iam_auth_context_ttl_seconds: int = 300
     iam_auth_context_redis_url: str = ""
 
+    # Authorization fallback resilience settings.
+    iam_auth_backoff_enabled: bool = True
+    iam_auth_backoff_max_retries: int = 3
+    iam_auth_backoff_base_delay_ms: int = 50
+    iam_auth_backoff_max_delay_ms: int = 1000
+    iam_auth_backoff_jitter_ratio: float = 0.5
+    iam_auth_local_fallback_cache_enabled: bool = True
+    iam_auth_local_fallback_cache_ttl_seconds: int = 3
+    iam_auth_local_fallback_cache_max_size: int = 1024
+    iam_auth_single_flight_enabled: bool = True
+
 
 @dataclass(slots=True, kw_only=True)
 class _NsRuntimeConfig:

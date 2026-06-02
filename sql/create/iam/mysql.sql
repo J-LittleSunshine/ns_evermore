@@ -408,6 +408,7 @@ CREATE TABLE iam_resource
     resource_type VARCHAR(128) NOT NULL COMMENT '资源类型编码',
     resource_name VARCHAR(128) NOT NULL COMMENT '资源名称',
     module_code VARCHAR(64) NOT NULL COMMENT '所属模块编码',
+    access_mode VARCHAR(32) NOT NULL DEFAULT 'RBAC_DEFAULT_ALLOW' COMMENT '资源访问模式',
     status TINYINT NOT NULL DEFAULT 1 COMMENT '状态',
     created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
     updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
@@ -416,6 +417,7 @@ CREATE TABLE iam_resource
 
     UNIQUE KEY uk_resource_type (resource_type),
     KEY idx_resource_module_code (module_code),
+    KEY idx_ir_access_mode (access_mode),
     KEY idx_resource_status (status),
     KEY idx_resource_created_by (created_by),
     KEY idx_resource_updated_by (updated_by),

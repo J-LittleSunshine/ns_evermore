@@ -5,7 +5,11 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from ns_backend.backend.exceptions import BusinessError
-from ns_backend.iam.constants import RECOMMENDED_ACTION_CODES
+from ns_backend.iam.constants import (
+    RECOMMENDED_ACTION_CODES,
+    RESOURCE_ACCESS_MODE_ACL_REQUIRED,
+    RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW,
+)
 from ns_backend.iam.models import IamResourceRelation
 from ns_backend.iam.repositories import ResourceRelationRepository, ResourceRepository
 from ns_common.error_codes import NsErrorCode
@@ -79,6 +83,16 @@ class ResourceRegistryService:
         return action_code
 
     @classmethod
+    def _normalize_access_mode(cls, value: Any) -> str:
+        access_mode = str(value or "").strip().upper()
+        if not access_mode:
+            return RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW
+
+        if access_mode not in {RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW, RESOURCE_ACCESS_MODE_ACL_REQUIRED}:
+            raise BusinessError("access_mode is invalid", NsErrorCode.INVALID_VALUE)
+        return access_mode
+
+    @classmethod
     def _normalize_relation_type(cls, value: Any) -> str:
         relation_type = str(value or IamResourceRelation.RELATION_PARENT).strip().upper()
         if relation_type != IamResourceRelation.RELATION_PARENT:
@@ -92,6 +106,7 @@ class ResourceRegistryService:
         resource_type: str = cls._normalize_resource_type(request_data.get("resource_type"))
         resource_name: str = cls._normalize_required_text(request_data.get("resource_name"), "resource_name")
         module_code: str = cls._normalize_module_code(value=request_data.get("module_code"), resource_type=resource_type)
+        access_mode: str = cls._normalize_access_mode(request_data.get("access_mode"))
         status: int = cls._normalize_status(request_data.get("status"))
 
         existing = await ResourceRepository.get_resource_by_type(resource_type)
@@ -100,6 +115,7 @@ class ResourceRegistryService:
                 resource_type=resource_type,
                 resource_name=resource_name,
                 module_code=module_code,
+                access_mode=access_mode,
                 status=status,
                 operator_id=operator_id,
             )
@@ -108,6 +124,7 @@ class ResourceRegistryService:
             (
                 existing.resource_name != resource_name,
                 existing.module_code != module_code,
+                cls._normalize_access_mode(getattr(existing, "access_mode", None)) != access_mode,
                 existing.status != status,
             )
         )
@@ -116,6 +133,7 @@ class ResourceRegistryService:
                 item=existing,
                 resource_name=resource_name,
                 module_code=module_code,
+                access_mode=access_mode,
                 status=status,
                 operator_id=operator_id,
             )
@@ -206,6 +224,9 @@ class ResourceRegistryService:
 
         if request_data.get("status") not in (None, ""):
             filters["status"] = cls._normalize_status(request_data.get("status"))
+
+        if request_data.get("access_mode") not in (None, ""):
+            filters["access_mode"] = cls._normalize_access_mode(request_data.get("access_mode"))
 
         list_result: dict[str, Any] = await ResourceRepository.list_resources(page=page, page_size=page_size, filters=filters or None)
         items: list[dict[str, Any]] = list_result.get("items", [])
