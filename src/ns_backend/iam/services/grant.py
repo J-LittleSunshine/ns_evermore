@@ -22,6 +22,7 @@ from ns_backend.iam.validators import (
     UserPermissionValidator,
     UserRoleValidator,
 )
+from ns_backend.iam.services.authorization_context import AuthorizationContextService
 from ns_common.error_codes import NsErrorCode
 
 if TYPE_CHECKING:
@@ -71,7 +72,9 @@ class UserRoleGrantService:
         if existed:
             return {"id": existed.id}
 
-        return await UserRoleGrantRepository.create(user_id=user_id, role_id=role_id, operator_id=operator_id)
+        created = await UserRoleGrantRepository.create(user_id=user_id, role_id=role_id, operator_id=operator_id)
+        AuthorizationContextService.invalidate_user(user_id)
+        return created
 
     @classmethod
     async def unbind_user_role(cls, *, data: dict[str, Any], operator: Any = None) -> None:
@@ -88,6 +91,7 @@ class UserRoleGrantService:
         item = await UserRoleGrantRepository.get_existing(user_id=user_id, role_id=role_id)
         if item:
             await UserRoleGrantRepository.delete(item)
+            AuthorizationContextService.invalidate_user(user_id)
 
 
 class RolePermissionGrantService:
@@ -121,13 +125,15 @@ class RolePermissionGrantService:
         except IamDomainError as exc:
             _raise_business_from_domain_error(exc)
 
-        return await RolePermissionGrantRepository.create(
+        created = await RolePermissionGrantRepository.create(
             role_id=role_id,
             permission_id=permission_id,
             data_scope=data_scope,
             expired_at=validated_data.get("expired_at"),
             operator_id=operator_id,
         )
+        AuthorizationContextService.invalidate_all()
+        return created
 
     @classmethod
     async def revoke_role_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
@@ -144,6 +150,7 @@ class RolePermissionGrantService:
         item = await RolePermissionGrantRepository.get_existing(role_id=role_id, permission_id=permission_id)
         if item:
             await RolePermissionGrantRepository.delete(item)
+            AuthorizationContextService.invalidate_all()
 
 
 class UserPermissionGrantService:
@@ -179,7 +186,7 @@ class UserPermissionGrantService:
         except IamDomainError as exc:
             _raise_business_from_domain_error(exc)
 
-        return await UserPermissionGrantRepository.create(
+        created = await UserPermissionGrantRepository.create(
             user_id=user_id,
             permission_id=permission_id,
             effect=effect,
@@ -187,6 +194,8 @@ class UserPermissionGrantService:
             expired_at=validated_data.get("expired_at"),
             operator_id=operator_id,
         )
+        AuthorizationContextService.invalidate_user(user_id)
+        return created
 
     @classmethod
     async def revoke_user_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
@@ -203,6 +212,7 @@ class UserPermissionGrantService:
         item = await UserPermissionGrantRepository.get_existing(user_id=user_id, permission_id=permission_id)
         if item:
             await UserPermissionGrantRepository.delete(item)
+            AuthorizationContextService.invalidate_user(user_id)
 
 
 class DepartmentPermissionGrantService:
@@ -238,7 +248,7 @@ class DepartmentPermissionGrantService:
         except IamDomainError as exc:
             _raise_business_from_domain_error(exc)
 
-        return await DepartmentPermissionGrantRepository.create(
+        created = await DepartmentPermissionGrantRepository.create(
             department_id=department_id,
             permission_id=permission_id,
             effect=effect,
@@ -246,6 +256,8 @@ class DepartmentPermissionGrantService:
             expired_at=validated_data.get("expired_at"),
             operator_id=operator_id,
         )
+        AuthorizationContextService.invalidate_all()
+        return created
 
     @classmethod
     async def revoke_department_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
@@ -262,6 +274,7 @@ class DepartmentPermissionGrantService:
         item = await DepartmentPermissionGrantRepository.get_existing(department_id=department_id, permission_id=permission_id)
         if item:
             await DepartmentPermissionGrantRepository.delete(item)
+            AuthorizationContextService.invalidate_all()
 
 
 class SubsidiaryPermissionGrantService:
@@ -297,7 +310,7 @@ class SubsidiaryPermissionGrantService:
         except IamDomainError as exc:
             _raise_business_from_domain_error(exc)
 
-        return await SubsidiaryPermissionGrantRepository.create(
+        created = await SubsidiaryPermissionGrantRepository.create(
             subsidiary_id=subsidiary_id,
             permission_id=permission_id,
             effect=effect,
@@ -305,6 +318,8 @@ class SubsidiaryPermissionGrantService:
             expired_at=validated_data.get("expired_at"),
             operator_id=operator_id,
         )
+        AuthorizationContextService.invalidate_all()
+        return created
 
     @classmethod
     async def revoke_subsidiary_permission(cls, *, data: dict[str, Any], operator: Any = None) -> None:
@@ -321,3 +336,4 @@ class SubsidiaryPermissionGrantService:
         item = await SubsidiaryPermissionGrantRepository.get_existing(subsidiary_id=subsidiary_id, permission_id=permission_id)
         if item:
             await SubsidiaryPermissionGrantRepository.delete(item)
+            AuthorizationContextService.invalidate_all()

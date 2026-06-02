@@ -499,6 +499,29 @@ CREATE TABLE iam_resource_acl
   DEFAULT CHARSET = utf8mb4 COMMENT ='资源实例ACL表';
 
 
+CREATE TABLE iam_resource_relation
+(
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '资源关系ID',
+    resource_type VARCHAR(128) NOT NULL COMMENT '子资源类型',
+    resource_id VARCHAR(128) NOT NULL COMMENT '子资源实例ID',
+    parent_resource_type VARCHAR(128) NOT NULL COMMENT '父资源类型',
+    parent_resource_id VARCHAR(128) NOT NULL COMMENT '父资源实例ID',
+    relation_type VARCHAR(32) NOT NULL DEFAULT 'PARENT' COMMENT '关系类型',
+    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+
+    UNIQUE KEY uk_resource_relation_unique (resource_type, resource_id, parent_resource_type, parent_resource_id),
+    KEY idx_resource_relation_resource (resource_type, resource_id),
+    KEY idx_resource_relation_parent (parent_resource_type, parent_resource_id),
+
+    CONSTRAINT chk_resource_relation_type
+        CHECK (relation_type IN ('PARENT'))
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='资源继承关系表';
+
+
 CREATE TABLE iam_policy
 (
     id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '策略ID',
@@ -653,14 +676,18 @@ CREATE TABLE iam_audit_log
     action_code VARCHAR(64) NOT NULL COMMENT '动作编码',
     result VARCHAR(16) NOT NULL COMMENT '判定结果',
     reason VARCHAR(512) NOT NULL COMMENT '判定原因',
+    matched_acl_id BIGINT UNSIGNED NULL COMMENT '命中ACL ID',
     matched_policy_id BIGINT UNSIGNED NULL COMMENT '命中策略ID',
     matched_rule_id BIGINT UNSIGNED NULL COMMENT '命中规则ID',
+    matched_source VARCHAR(32) NULL COMMENT '命中来源',
     trace_id VARCHAR(64) NULL COMMENT '链路追踪ID',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
 
     KEY idx_decision_audit_subject (subject_type, subject_id),
     KEY idx_decision_audit_resource_action (resource_type, resource_id, action_code),
     KEY idx_decision_audit_result (result),
+    KEY idx_decision_audit_matched_acl (matched_acl_id),
+    KEY idx_decision_audit_matched_source (matched_source),
     KEY idx_decision_audit_trace_id (trace_id),
     KEY idx_decision_audit_created_at (created_at),
 

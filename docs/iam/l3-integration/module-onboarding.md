@@ -44,3 +44,14 @@ Business applications should expose one authorization gateway in their own frame
 
 Do not allow direct retriever/tool/data-access execution that bypasses IAM checks.
 
+## 6. Optional Hook-Based Auto Registration
+
+Configure `IAM_MODULE_REGISTRATION_HOOKS` to run module onboarding hooks during permission sync.
+
+Each hook can register:
+
+- Resource/Action (`ResourceRegistryService`)
+- Policy/Rules (`PolicyService`)
+
+This enables new module onboarding without modifying IAM core service code.
+

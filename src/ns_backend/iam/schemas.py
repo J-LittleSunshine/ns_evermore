@@ -48,6 +48,15 @@ class DataScopeFilterPlan:
 
 
 @dataclass(frozen=True)
+class UserAuthorizationContext:
+    user_id: int
+    role_ids: list[int] = field(default_factory=list)
+    readable_resource_ids: list[str] = field(default_factory=list)
+    readable_resource_filters: dict[str, Any] = field(default_factory=dict)
+    version: int = 1
+
+
+@dataclass(frozen=True)
 class AuditEvent:
     operation_type: str
     resource_type: str

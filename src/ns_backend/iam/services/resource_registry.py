@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from ns_backend.backend.exceptions import BusinessError
-from ns_backend.iam.repositories import ResourceRepository
+from ns_backend.iam.constants import RECOMMENDED_ACTION_CODES
+from ns_backend.iam.models import IamResourceRelation
+from ns_backend.iam.repositories import ResourceRelationRepository, ResourceRepository
 from ns_common.error_codes import NsErrorCode
 
 if TYPE_CHECKING:
@@ -14,42 +17,8 @@ if TYPE_CHECKING:
 class ResourceRegistryService:
     """Service for IAM resource/action registration APIs."""
 
-    ALLOWED_ACTION_CODES: set[str] = {
-        "add",
-        "approve",
-        "batch_check",
-        "bind",
-        "check",
-        "create",
-        "current_user",
-        "data_scopes",
-        "delete",
-        "detail",
-        "disable",
-        "execute",
-        "grant",
-        "list",
-        "login",
-        "logout",
-        "manage",
-        "menus",
-        "permissions",
-        "profile",
-        "publish",
-        "read",
-        "refresh",
-        "register",
-        "remove",
-        "reset_password",
-        "revoke",
-        "share",
-        "sync",
-        "unbind",
-        "update",
-        "update_staff",
-        "update_superuser",
-        "write",
-    }
+    ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+    RECOMMENDED_ACTION_CODE_SET: set[str] = set(RECOMMENDED_ACTION_CODES)
 
     @staticmethod
     def _ensure_request_data(data: dict[str, Any] | None) -> dict[str, Any]:
@@ -105,9 +74,16 @@ class ResourceRegistryService:
     @classmethod
     def _normalize_action_code(cls, value: Any) -> str:
         action_code: str = cls._normalize_required_text(value, "action_code").lower()
-        if action_code not in cls.ALLOWED_ACTION_CODES:
+        if cls.ACTION_CODE_PATTERN.fullmatch(action_code) is None:
             raise BusinessError(f"Invalid action code: {action_code}", NsErrorCode.PERMISSION_ACTION_INVALID)
         return action_code
+
+    @classmethod
+    def _normalize_relation_type(cls, value: Any) -> str:
+        relation_type = str(value or IamResourceRelation.RELATION_PARENT).strip().upper()
+        if relation_type != IamResourceRelation.RELATION_PARENT:
+            raise BusinessError("relation_type is invalid", NsErrorCode.INVALID_VALUE)
+        return relation_type
 
     @classmethod
     async def register_resource(cls, *, data: dict[str, Any], operator_id: int | None) -> dict[str, Any]:
@@ -181,6 +157,36 @@ class ResourceRegistryService:
         return {"id": existing.id}
 
     @classmethod
+    async def register_resource_relation(cls, *, data: dict[str, Any], operator_id: int | None) -> dict[str, Any]:
+        """Register one parent-child relation for resource inheritance."""
+        request_data: dict[str, Any] = cls._ensure_request_data(data)
+        resource_type: str = cls._normalize_resource_type(request_data.get("resource_type"))
+        resource_id: str = cls._normalize_required_text(request_data.get("resource_id"), "resource_id")
+        parent_resource_type: str = cls._normalize_resource_type(request_data.get("parent_resource_type"))
+        parent_resource_id: str = cls._normalize_required_text(request_data.get("parent_resource_id"), "parent_resource_id")
+        relation_type: str = cls._normalize_relation_type(request_data.get("relation_type"))
+
+        if resource_type == parent_resource_type and resource_id == parent_resource_id:
+            raise BusinessError("resource cannot inherit from itself", NsErrorCode.INVALID_VALUE)
+
+        resource = await ResourceRepository.get_resource_by_type(resource_type)
+        if resource is None:
+            raise BusinessError("resource_type does not exist", NsErrorCode.DATA_NOT_FOUND)
+
+        parent_resource = await ResourceRepository.get_resource_by_type(parent_resource_type)
+        if parent_resource is None:
+            raise BusinessError("parent_resource_type does not exist", NsErrorCode.DATA_NOT_FOUND)
+
+        return await ResourceRelationRepository.upsert_parent_relation(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            parent_resource_type=parent_resource_type,
+            parent_resource_id=parent_resource_id,
+            relation_type=relation_type,
+            operator_id=operator_id,
+        )
+
+    @classmethod
     async def list_resources(cls, *, data: dict[str, Any]) -> dict[str, Any]:
         """List resource registrations with action rows."""
         request_data: dict[str, Any] = cls._ensure_request_data(data)
@@ -220,6 +226,7 @@ class ResourceRegistryService:
 
         for item in items:
             item["actions"] = action_group.get(int(item["id"]), [])
+            item["recommended_actions"] = sorted(cls.RECOMMENDED_ACTION_CODE_SET)
 
         return list_result
 

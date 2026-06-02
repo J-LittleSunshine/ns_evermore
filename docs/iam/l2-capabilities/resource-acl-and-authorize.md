@@ -5,11 +5,14 @@
 Purpose:
 
 - Register module-independent resource types and action codes.
+- Action legality is controlled by `iam_resource_action` (no hardcoded service whitelist).
+- Recommended builtin action taxonomy: `read/write/delete/manage/execute/approve/share`.
 
 Core APIs:
 
 - `POST /iam/resource/register`
 - `POST /iam/resource/action/register`
+- `POST /iam/resource/relation/register`
 - `POST /iam/resource/list`
 
 ## 2. Resource ACL
@@ -17,6 +20,7 @@ Core APIs:
 Purpose:
 
 - Manage instance-level authorization rules.
+- ACL effect supports parent-resource inheritance via `iam_resource_relation`.
 
 Supported subjects:
 

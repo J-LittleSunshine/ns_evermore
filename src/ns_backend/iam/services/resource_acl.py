@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from django.utils import timezone
 
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.constants import normalize_data_scope, to_storage_data_scope
-from ns_backend.iam.repositories import ResourceAclRepository, ResourceRepository
+from ns_backend.iam.repositories import ResourceAclRepository, ResourceRelationRepository, ResourceRepository
+from ns_backend.iam.services.authorization_context import AuthorizationContextService
 from ns_common.error_codes import NsErrorCode
 
 if TYPE_CHECKING:
@@ -27,43 +29,7 @@ class ResourceAclService:
 
     EFFECT_ALLOW = "ALLOW"
     EFFECT_DENY = "DENY"
-
-    ALLOWED_ACTION_CODES: set[str] = {
-        "add",
-        "approve",
-        "batch_check",
-        "bind",
-        "check",
-        "create",
-        "current_user",
-        "data_scopes",
-        "delete",
-        "detail",
-        "disable",
-        "execute",
-        "grant",
-        "list",
-        "login",
-        "logout",
-        "manage",
-        "menus",
-        "permissions",
-        "profile",
-        "publish",
-        "read",
-        "refresh",
-        "register",
-        "remove",
-        "reset_password",
-        "revoke",
-        "share",
-        "sync",
-        "unbind",
-        "update",
-        "update_staff",
-        "update_superuser",
-        "write",
-    }
+    ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
     @staticmethod
     def _ensure_request_data(data: dict[str, Any] | None) -> dict[str, Any]:
@@ -107,7 +73,7 @@ class ResourceAclService:
     @classmethod
     def _normalize_action_code(cls, value: Any) -> str:
         action_code: str = cls._normalize_required_text(value, "action_code").lower()
-        if action_code not in cls.ALLOWED_ACTION_CODES:
+        if cls.ACTION_CODE_PATTERN.fullmatch(action_code) is None:
             raise BusinessError("action_code is invalid", NsErrorCode.PERMISSION_ACTION_INVALID)
         return action_code
 
@@ -180,7 +146,7 @@ class ResourceAclService:
             action_code=action_code,
         )
         if existing is None:
-            return await ResourceAclRepository.create_acl(
+            created = await ResourceAclRepository.create_acl(
                 subject_type=subject_type,
                 subject_id=subject_id,
                 resource_type=resource_type,
@@ -191,6 +157,8 @@ class ResourceAclService:
                 expired_at=expired_at,
                 operator_id=operator_id,
             )
+            AuthorizationContextService.invalidate_all()
+            return created
 
         has_changes: bool = any(
             (
@@ -207,6 +175,7 @@ class ResourceAclService:
                 expired_at=expired_at,
                 operator_id=operator_id,
             )
+            AuthorizationContextService.invalidate_all()
 
         return {"id": existing.id}
 
@@ -231,6 +200,7 @@ class ResourceAclService:
             return {"revoked": False}
 
         await ResourceAclRepository.delete_acl(existing)
+        AuthorizationContextService.invalidate_all()
         return {"revoked": True}
 
     @classmethod
@@ -287,33 +257,76 @@ class ResourceAclService:
         for subject_type, subject_id in subject_bindings:
             normalized_bindings.append((cls._normalize_subject_type(subject_type), cls._normalize_positive_int(subject_id, "subject_id")))
 
+        normalized_resource_type = cls._normalize_resource_type(resource_type)
+        normalized_resource_id = cls._normalize_resource_id(resource_id)
+        normalized_action_code = cls._normalize_action_code(action_code)
+
         now = timezone.now()
-        effect_rows: list[dict[str, Any]] = await ResourceAclRepository.list_active_effects(
+        resource_chain: list[dict[str, Any]] = await ResourceRelationRepository.list_ancestor_chain(
+            resource_type=normalized_resource_type,
+            resource_id=normalized_resource_id,
+        )
+        resource_pairs: list[tuple[str, str]] = [
+            (str(item.get("resource_type") or "").strip().lower(), str(item.get("resource_id") or "").strip())
+            for item in resource_chain
+            if str(item.get("resource_type") or "").strip() and str(item.get("resource_id") or "").strip()
+        ]
+        if not resource_pairs:
+            resource_pairs = [(normalized_resource_type, normalized_resource_id)]
+
+        depth_map: dict[tuple[str, str], int] = {
+            (str(item.get("resource_type") or "").strip().lower(), str(item.get("resource_id") or "").strip()): int(item.get("depth") or 0)
+            for item in resource_chain
+            if str(item.get("resource_type") or "").strip() and str(item.get("resource_id") or "").strip()
+        }
+
+        effect_rows: list[dict[str, Any]] = await ResourceAclRepository.list_active_effects_for_resources(
             subject_bindings=normalized_bindings,
-            resource_type=cls._normalize_resource_type(resource_type),
-            resource_id=cls._normalize_resource_id(resource_id),
-            action_code=cls._normalize_action_code(action_code),
+            resource_pairs=resource_pairs,
+            action_code=normalized_action_code,
             now=now,
         )
 
         if not effect_rows:
             return None
 
-        deny_rows: list[dict[str, Any]] = [row for row in effect_rows if str(row.get("effect", "")).upper() == cls.EFFECT_DENY]
+        def _sort_key(row: dict[str, Any]) -> tuple[int, int]:
+            row_pair = (str(row.get("resource_type") or "").strip().lower(), str(row.get("resource_id") or "").strip())
+            depth = depth_map.get(row_pair, 99)
+            return depth, int(row.get("id") or 0)
+
+        sorted_rows = sorted(effect_rows, key=_sort_key)
+
+        deny_rows: list[dict[str, Any]] = [row for row in sorted_rows if str(row.get("effect", "")).upper() == cls.EFFECT_DENY]
         if deny_rows:
             deny_item: dict[str, Any] = deny_rows[0]
+            row_pair = (str(deny_item.get("resource_type") or "").strip().lower(), str(deny_item.get("resource_id") or "").strip())
+            depth = depth_map.get(row_pair, 0)
+            matched_source = "acl:self" if depth == 0 else f"acl:inherited:{depth}"
             return {
                 "effect": cls.EFFECT_DENY,
                 "matched_acl_id": deny_item.get("id"),
+                "matched_source": matched_source,
+                "matched_acl_depth": depth,
+                "matched_resource_type": row_pair[0],
+                "matched_resource_id": row_pair[1],
                 "reason": "ACL_DENY",
             }
 
-        allow_rows: list[dict[str, Any]] = [row for row in effect_rows if str(row.get("effect", "")).upper() == cls.EFFECT_ALLOW]
+        allow_rows: list[dict[str, Any]] = [row for row in sorted_rows if str(row.get("effect", "")).upper() == cls.EFFECT_ALLOW]
         if allow_rows:
             allow_item: dict[str, Any] = allow_rows[0]
+            row_pair = (str(allow_item.get("resource_type") or "").strip().lower(), str(allow_item.get("resource_id") or "").strip())
+            depth = depth_map.get(row_pair, 0)
+            matched_source = "acl:self" if depth == 0 else f"acl:inherited:{depth}"
             return {
                 "effect": cls.EFFECT_ALLOW,
                 "matched_acl_id": allow_item.get("id"),
+                "matched_source": matched_source,
+                "matched_acl_depth": depth,
+                "matched_resource_type": row_pair[0],
+                "matched_resource_id": row_pair[1],
+                "data_scope": allow_item.get("data_scope"),
                 "reason": "ACL_ALLOW",
             }
 

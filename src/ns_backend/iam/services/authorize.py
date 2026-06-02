@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from ns_backend.backend.exceptions import BusinessError
-from ns_backend.iam.repositories import AuthorizeRepository
+from ns_backend.iam.repositories import AuthorizeRepository, ResourceRepository
 from ns_backend.iam.schemas import DataScopeFieldMap, DataScopeFilterPlan
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.decision_audit import DecisionAuditService
@@ -28,6 +29,7 @@ class AuthorizeService:
 
     EFFECT_ALLOW = "allow"
     EFFECT_DENY = "deny"
+    ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
     @staticmethod
     def _ensure_request_data(data: dict[str, Any] | None) -> dict[str, Any]:
@@ -61,9 +63,19 @@ class AuthorizeService:
     def _normalize_action_code(cls, value: Any) -> str:
         """Normalize and validate the action code."""
         action_code: str = cls._normalize_required_text(value, "action_code").lower()
-        if action_code not in ResourceAclService.ALLOWED_ACTION_CODES:
+        if cls.ACTION_CODE_PATTERN.fullmatch(action_code) is None:
             raise BusinessError("action_code is invalid", NsErrorCode.PERMISSION_ACTION_INVALID)
         return action_code
+
+    @staticmethod
+    async def _ensure_resource_action_registered(*, resource_type: str, action_code: str) -> None:
+        """Ensure resource/action tuple is registered in IAM resource-action table."""
+        exists = await ResourceRepository.has_action_for_resource_type(
+            resource_type=resource_type,
+            action_code=action_code,
+        )
+        if not exists:
+            raise BusinessError("resource_type/action_code is not registered", NsErrorCode.DATA_NOT_FOUND)
 
     @staticmethod
     def _normalize_permission_code(value: Any) -> str | None:
@@ -139,8 +151,12 @@ class AuthorizeService:
         reason: str,
         matched_source: str,
         filters: dict[str, Any] | None = None,
+        matched_acl_id: int | None = None,
         matched_policy_id: int | None = None,
         matched_rule_id: int | None = None,
+        matched_rbac_permission_code: str | None = None,
+        hit_details: dict[str, Any] | None = None,
+        decision_chain: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Build one normalized authorization decision payload."""
         return {
@@ -148,10 +164,28 @@ class AuthorizeService:
             "effect": cls.EFFECT_ALLOW if allowed else cls.EFFECT_DENY,
             "reason": reason,
             "matched_source": matched_source,
+            "matched_acl_id": matched_acl_id,
             "matched_policy_id": matched_policy_id,
             "matched_rule_id": matched_rule_id,
+            "matched_rbac_permission_code": matched_rbac_permission_code,
             "filters": {} if filters is None else filters,
+            "hit_details": {} if hit_details is None else hit_details,
+            "decision_chain": [] if decision_chain is None else decision_chain,
         }
+
+    @staticmethod
+    def _append_chain(chain: list[dict[str, Any]], *, source: str, effect: str, reason: str, **extra: Any) -> None:
+        """Append one normalized chain step for authorization tracing."""
+        item: dict[str, Any] = {
+            "source": source,
+            "effect": effect,
+            "reason": reason,
+        }
+        for key, value in extra.items():
+            if value in (None, "", [], {}):
+                continue
+            item[key] = value
+        chain.append(item)
 
     @classmethod
     async def _build_subject_bindings(cls, *, user: Any) -> list[tuple[str, int]]:
@@ -206,8 +240,11 @@ class AuthorizeService:
             action_code=action_code,
             result="ALLOW" if bool(decision.get("allowed")) else "DENY",
             reason=str(decision.get("reason") or ""),
+            matched_acl_id=decision.get("matched_acl_id"),
             matched_policy_id=decision.get("matched_policy_id"),
             matched_rule_id=decision.get("matched_rule_id"),
+            matched_source=decision.get("matched_source"),
+            decision_chain=decision.get("decision_chain"),
             trace_id=trace_id,
         )
 
@@ -242,11 +279,26 @@ class AuthorizeService:
         resource_id: str = cls._normalize_resource_id(request_data.get("resource_id"))
         action_code: str = cls._normalize_action_code(request_data.get("action_code"))
 
+        decision_chain: list[dict[str, Any]] = []
+        hit_details: dict[str, Any] = {
+            "acl": {"matched": False},
+            "policy": {"matched": False},
+            "rbac": {"matched": False},
+        }
+
         if user is None or not bool(getattr(user, "is_active", False)):
+            cls._append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_NONE,
+                effect=cls.EFFECT_DENY,
+                reason="USER_INACTIVE",
+            )
             decision = cls._build_decision(
                 allowed=False,
                 reason="USER_INACTIVE",
                 matched_source=cls.MATCHED_SOURCE_NONE,
+                hit_details=hit_details,
+                decision_chain=decision_chain,
             )
             return await cls._finalize_decision(
                 user=user,
@@ -257,6 +309,8 @@ class AuthorizeService:
                 trace_id=trace_id,
             )
 
+        await cls._ensure_resource_action_registered(resource_type=resource_type, action_code=action_code)
+
         permission_code: str | None = cls._resolve_permission_code(
             request_data=request_data,
             resource_type=resource_type,
@@ -264,11 +318,19 @@ class AuthorizeService:
         )
 
         if bool(getattr(user, "is_superuser", False)):
+            cls._append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_SUPERUSER,
+                effect=cls.EFFECT_ALLOW,
+                reason="SUPERUSER_BYPASS",
+            )
             decision = cls._build_decision(
                 allowed=True,
                 reason="SUPERUSER_BYPASS",
                 matched_source=cls.MATCHED_SOURCE_SUPERUSER,
                 filters={},
+                hit_details=hit_details,
+                decision_chain=decision_chain,
             )
             return await cls._finalize_decision(
                 user=user,
@@ -287,11 +349,36 @@ class AuthorizeService:
             action_code=action_code,
         )
 
+        if acl_result is None:
+            cls._append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_ACL,
+                effect="none",
+                reason="ACL_NOT_MATCHED",
+            )
+
         if acl_result is not None and acl_result.get("effect") == ResourceAclService.EFFECT_DENY:
+            hit_details["acl"] = {
+                "matched": True,
+                "effect": ResourceAclService.EFFECT_DENY,
+                "matched_acl_id": acl_result.get("matched_acl_id"),
+                "matched_source": acl_result.get("matched_source"),
+            }
+            cls._append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_ACL,
+                effect=cls.EFFECT_DENY,
+                reason=str(acl_result.get("reason", "ACL_DENY")),
+                matched_acl_id=acl_result.get("matched_acl_id"),
+                matched_source=acl_result.get("matched_source"),
+            )
             decision = cls._build_decision(
                 allowed=False,
                 reason=str(acl_result.get("reason", "ACL_DENY")),
                 matched_source=cls.MATCHED_SOURCE_ACL,
+                matched_acl_id=acl_result.get("matched_acl_id"),
+                hit_details=hit_details,
+                decision_chain=decision_chain,
             )
             return await cls._finalize_decision(
                 user=user,
@@ -310,12 +397,28 @@ class AuthorizeService:
             context=cls._normalize_context(request_data.get("context")),
         )
         if policy_result is not None and str(policy_result.get("effect", "")).upper() == PolicyEngineService.EFFECT_DENY:
+            hit_details["policy"] = {
+                "matched": True,
+                "effect": PolicyEngineService.EFFECT_DENY,
+                "matched_policy_id": policy_result.get("matched_policy_id"),
+                "matched_rule_id": policy_result.get("matched_rule_id"),
+            }
+            cls._append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_POLICY,
+                effect=cls.EFFECT_DENY,
+                reason=str(policy_result.get("reason") or "POLICY_DENY"),
+                matched_policy_id=policy_result.get("matched_policy_id"),
+                matched_rule_id=policy_result.get("matched_rule_id"),
+            )
             decision = cls._build_decision(
                 allowed=False,
                 reason=str(policy_result.get("reason") or "POLICY_DENY"),
                 matched_source=cls.MATCHED_SOURCE_POLICY,
                 matched_policy_id=policy_result.get("matched_policy_id"),
                 matched_rule_id=policy_result.get("matched_rule_id"),
+                hit_details=hit_details,
+                decision_chain=decision_chain,
             )
             return await cls._finalize_decision(
                 user=user,
@@ -327,16 +430,36 @@ class AuthorizeService:
             )
 
         if acl_result is not None and acl_result.get("effect") == ResourceAclService.EFFECT_ALLOW:
+            hit_details["acl"] = {
+                "matched": True,
+                "effect": ResourceAclService.EFFECT_ALLOW,
+                "matched_acl_id": acl_result.get("matched_acl_id"),
+                "matched_source": acl_result.get("matched_source"),
+            }
             acl_filters: dict[str, Any] = await cls._resolve_data_filters(
                 user=user,
                 permission_code=permission_code,
                 field_map_data=request_data.get("field_map"),
+            )
+            if acl_result.get("data_scope"):
+                acl_filters.setdefault("acl_data_scope", acl_result.get("data_scope"))
+
+            cls._append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_ACL,
+                effect=cls.EFFECT_ALLOW,
+                reason=str(acl_result.get("reason", "ACL_ALLOW")),
+                matched_acl_id=acl_result.get("matched_acl_id"),
+                matched_source=acl_result.get("matched_source"),
             )
             decision = cls._build_decision(
                 allowed=True,
                 reason=str(acl_result.get("reason", "ACL_ALLOW")),
                 matched_source=cls.MATCHED_SOURCE_ACL,
                 filters=acl_filters,
+                matched_acl_id=acl_result.get("matched_acl_id"),
+                hit_details=hit_details,
+                decision_chain=decision_chain,
             )
             return await cls._finalize_decision(
                 user=user,
@@ -348,6 +471,12 @@ class AuthorizeService:
             )
 
         if policy_result is not None and str(policy_result.get("effect", "")).upper() == PolicyEngineService.EFFECT_ALLOW:
+            hit_details["policy"] = {
+                "matched": True,
+                "effect": PolicyEngineService.EFFECT_ALLOW,
+                "matched_policy_id": policy_result.get("matched_policy_id"),
+                "matched_rule_id": policy_result.get("matched_rule_id"),
+            }
             policy_filters: dict[str, Any] = await cls._resolve_data_filters(
                 user=user,
                 permission_code=permission_code,
@@ -357,6 +486,15 @@ class AuthorizeService:
             if data_scope:
                 policy_filters.setdefault("policy_data_scope", data_scope)
 
+            cls._append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_POLICY,
+                effect=cls.EFFECT_ALLOW,
+                reason=str(policy_result.get("reason") or "POLICY_ALLOW"),
+                matched_policy_id=policy_result.get("matched_policy_id"),
+                matched_rule_id=policy_result.get("matched_rule_id"),
+            )
+
             decision = cls._build_decision(
                 allowed=True,
                 reason=str(policy_result.get("reason") or "POLICY_ALLOW"),
@@ -364,6 +502,8 @@ class AuthorizeService:
                 filters=policy_filters,
                 matched_policy_id=policy_result.get("matched_policy_id"),
                 matched_rule_id=policy_result.get("matched_rule_id"),
+                hit_details=hit_details,
+                decision_chain=decision_chain,
             )
             return await cls._finalize_decision(
                 user=user,
@@ -377,16 +517,31 @@ class AuthorizeService:
         if permission_code is not None:
             has_rbac_permission: bool = await PermissionService.has_permission(user=user, permission_code=permission_code)
             if has_rbac_permission:
+                hit_details["rbac"] = {
+                    "matched": True,
+                    "effect": cls.EFFECT_ALLOW,
+                    "permission_code": permission_code,
+                }
                 rbac_filters: dict[str, Any] = await cls._resolve_data_filters(
                     user=user,
                     permission_code=permission_code,
                     field_map_data=request_data.get("field_map"),
+                )
+                cls._append_chain(
+                    decision_chain,
+                    source=cls.MATCHED_SOURCE_RBAC,
+                    effect=cls.EFFECT_ALLOW,
+                    reason="RBAC_ALLOW",
+                    permission_code=permission_code,
                 )
                 decision = cls._build_decision(
                     allowed=True,
                     reason="RBAC_ALLOW",
                     matched_source=cls.MATCHED_SOURCE_RBAC,
                     filters=rbac_filters,
+                    matched_rbac_permission_code=permission_code,
+                    hit_details=hit_details,
+                    decision_chain=decision_chain,
                 )
                 return await cls._finalize_decision(
                     user=user,
@@ -397,10 +552,28 @@ class AuthorizeService:
                     trace_id=trace_id,
                 )
 
+            cls._append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_RBAC,
+                effect=cls.EFFECT_DENY,
+                reason="RBAC_NOT_GRANTED",
+                permission_code=permission_code,
+            )
+
+        if policy_result is None:
+            cls._append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_POLICY,
+                effect="none",
+                reason="POLICY_NOT_MATCHED",
+            )
+
         decision = cls._build_decision(
             allowed=False,
             reason="NO_MATCHED_RULE",
             matched_source=cls.MATCHED_SOURCE_NONE,
+            hit_details=hit_details,
+            decision_chain=decision_chain,
         )
         return await cls._finalize_decision(
             user=user,

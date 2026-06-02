@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from ns_backend.iam.services.admin import AdminService
 from ns_backend.iam.services.audit import AuditService
 from ns_backend.iam.services.authorize import AuthorizeService
+from ns_backend.iam.services.authorization_context import AuthorizationContextService
 from ns_backend.iam.services.auth import AuthLoginResult, AuthService
 from ns_backend.iam.services.auth_context import AuthContextService
 from ns_backend.iam.services.base import (
@@ -26,11 +27,13 @@ from ns_backend.iam.services.grant import (
     UserPermissionGrantService,
     UserRoleGrantService
 )
+from ns_backend.iam.services.module_hook import ModuleRegistrationHookService
 from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.permission_sync import PermissionSyncService
 from ns_backend.iam.services.policy import PolicyService
 from ns_backend.iam.services.policy_engine import PolicyEngineService
 from ns_backend.iam.services.resource_acl import ResourceAclService
+from ns_backend.iam.services.resource_access_filter import ResourceAccessFilterService
 from ns_backend.iam.services.resource_registry import ResourceRegistryService
 from ns_backend.iam.services.session import SessionService
 from ns_backend.iam.services.tenant import TenantService
@@ -43,6 +46,7 @@ __all__ = [
     "AdminService",
     "AuditService",
     "AuthorizeService",
+    "AuthorizationContextService",
     "AuthContextService",
     "AuthLoginResult",
     "AuthService",
@@ -52,12 +56,14 @@ __all__ = [
     "DepartmentPermissionGrantService",
     "DepartmentService",
     "IamBaseService",
+    "ModuleRegistrationHookService",
     "PermissionBaseService",
     "PermissionService",
     "PermissionSyncService",
     "PolicyEngineService",
     "PolicyService",
     "ResourceAclService",
+    "ResourceAccessFilterService",
     "ResourceRegistryService",
     "RolePermissionGrantService",
     "RoleService",

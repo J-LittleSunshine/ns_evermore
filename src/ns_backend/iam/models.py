@@ -188,6 +188,28 @@ class IamResourceAcl(models.Model):
         unique_together = (("subject_type", "subject_id", "resource_type", "resource_id", "action_code"),)
 
 
+class IamResourceRelation(models.Model):
+    RELATION_PARENT = "PARENT"
+
+    RELATION_TYPE_CHOICES = ((RELATION_PARENT, "Parent relation"),)
+
+    id = models.BigAutoField(primary_key=True)
+    resource_type = models.CharField(max_length=128)
+    resource_id = models.CharField(max_length=128)
+    parent_resource_type = models.CharField(max_length=128)
+    parent_resource_id = models.CharField(max_length=128)
+    relation_type = models.CharField(max_length=32, choices=RELATION_TYPE_CHOICES, default=RELATION_PARENT)
+    created_by = models.BigIntegerField(null=True, blank=True)
+    updated_by = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "iam_resource_relation"
+        unique_together = (("resource_type", "resource_id", "parent_resource_type", "parent_resource_id"),)
+
+
 class IamPolicy(models.Model):
     id = models.BigAutoField(primary_key=True)
     policy_code = models.CharField(max_length=128, unique=True)
@@ -477,8 +499,10 @@ class IamAuditLog(models.Model):
     action_code = models.CharField(max_length=64)
     result = models.CharField(max_length=16, choices=RESULT_CHOICES)
     reason = models.CharField(max_length=512)
+    matched_acl_id = models.BigIntegerField(null=True, blank=True)
     matched_policy_id = models.BigIntegerField(null=True, blank=True)
     matched_rule_id = models.BigIntegerField(null=True, blank=True)
+    matched_source = models.CharField(max_length=32, null=True, blank=True)
     trace_id = models.CharField(max_length=64, null=True, blank=True)
     created_at = models.DateTimeField()
 

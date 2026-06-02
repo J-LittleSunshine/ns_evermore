@@ -40,6 +40,12 @@ class ResourceRepository:
         return await IamResource.objects.using(db_alias).filter(resource_type=resource_type).afirst()
 
     @staticmethod
+    async def get_active_resource_by_type(resource_type: str) -> IamResource | None:
+        """Load one enabled resource row by resource_type."""
+        db_alias: str = BaseRepository.resolve_db_alias(model_class=IamResource)
+        return await IamResource.objects.using(db_alias).filter(resource_type=resource_type, status=1).afirst()
+
+    @staticmethod
     async def create_resource(*, resource_type: str, resource_name: str, module_code: str, status: int, operator_id: int | None) -> dict[str, Any]:
         """Create one resource registration row."""
         return await BaseRepository.create_item_with_audit(
@@ -127,4 +133,51 @@ class ResourceRepository:
             "status",
         )
         return [item async for item in queryset]
+
+    @staticmethod
+    async def has_action_for_resource_type(*, resource_type: str, action_code: str, active_only: bool = True) -> bool:
+        """Return whether one action is registered under one resource type."""
+        db_alias: str = BaseRepository.resolve_db_alias(model_class=IamResourceAction)
+        filters: dict[str, Any] = {
+            "resource__resource_type": resource_type,
+            "action_code": action_code,
+        }
+        if active_only:
+            filters["resource__status"] = 1
+            filters["status"] = 1
+
+        return await IamResourceAction.objects.using(db_alias).filter(**filters).aexists()
+
+    @staticmethod
+    async def action_exists_globally(*, action_code: str, active_only: bool = True) -> bool:
+        """Return whether one action code is registered in any resource type."""
+        db_alias: str = BaseRepository.resolve_db_alias(model_class=IamResourceAction)
+        filters: dict[str, Any] = {"action_code": action_code}
+        if active_only:
+            filters["resource__status"] = 1
+            filters["status"] = 1
+
+        return await IamResourceAction.objects.using(db_alias).filter(**filters).aexists()
+
+    @staticmethod
+    async def list_resource_types_by_action(*, action_code: str, active_only: bool = True) -> list[str]:
+        """List resource types that expose one action code."""
+        db_alias: str = BaseRepository.resolve_db_alias(model_class=IamResourceAction)
+        filters: dict[str, Any] = {"action_code": action_code}
+        if active_only:
+            filters["resource__status"] = 1
+            filters["status"] = 1
+
+        queryset = IamResourceAction.objects.using(db_alias).filter(**filters).values_list("resource__resource_type", flat=True)
+        result: list[str] = []
+        seen: set[str] = set()
+
+        async for resource_type in queryset:
+            normalized = str(resource_type or "").strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+
+        return result
 

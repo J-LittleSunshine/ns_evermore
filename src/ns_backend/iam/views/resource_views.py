@@ -28,6 +28,10 @@ class ResourceViewSet(IamRequestViewSet):
         result = await ResourceRegistryService.register_resource_action(data=request.data, operator_id=_operator_id(request))
         return self.success_response(result)
 
+    async def register_resource_relation(self, request, *args, **kwargs):
+        result = await ResourceRegistryService.register_resource_relation(data=request.data, operator_id=_operator_id(request))
+        return self.success_response(result)
+
     async def list_resources(self, request, *args, **kwargs):
         result = await ResourceRegistryService.list_resources(data=request.data)
         return self.success_response(result)

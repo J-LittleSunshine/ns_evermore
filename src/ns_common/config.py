@@ -78,6 +78,12 @@ class _NsBackendConfig:
 
     # Permission provider settings aligned with backup backend.
     iam_permission_providers: list[str] = field(default_factory=list)
+    iam_module_registration_hooks: list[str] = field(default_factory=list)
+
+    # Authorization-context cache settings.
+    iam_auth_context_cache_alias: str = "default"
+    iam_auth_context_ttl_seconds: int = 300
+    iam_auth_context_redis_url: str = ""
 
 
 @dataclass(slots=True, kw_only=True)

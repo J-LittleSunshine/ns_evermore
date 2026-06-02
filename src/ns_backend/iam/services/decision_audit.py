@@ -73,6 +73,39 @@ class DecisionAuditService:
             return None
         return int(value)
 
+    @staticmethod
+    def _normalize_optional_source(value: Any) -> str | None:
+        """Normalize optional matched-source marker."""
+        if value in (None, ""):
+            return None
+        return str(value).strip().lower()[:32] or None
+
+    @classmethod
+    def _build_reason_with_chain(cls, *, reason: str, decision_chain: Any) -> str:
+        """Build reason text with compact decision chain for audit traceability."""
+        base_reason = str(reason or "").strip()
+        if not isinstance(decision_chain, list) or not decision_chain:
+            return base_reason[:512]
+
+        chain_parts: list[str] = []
+        for item in decision_chain:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source") or "none").strip().lower()
+            effect = str(item.get("effect") or "none").strip().lower()
+            item_reason = str(item.get("reason") or "").strip().upper()
+            if item_reason:
+                chain_parts.append(f"{source}:{effect}:{item_reason}")
+            else:
+                chain_parts.append(f"{source}:{effect}")
+
+        if not chain_parts:
+            return base_reason[:512]
+
+        chain_text = " > ".join(chain_parts)
+        merged = f"{base_reason} | chain={chain_text}" if base_reason else f"chain={chain_text}"
+        return merged[:512]
+
     @classmethod
     def _build_record_payload(
         cls,
@@ -85,8 +118,11 @@ class DecisionAuditService:
         action_code: str,
         result: str,
         reason: str,
+        matched_acl_id: int | None,
         matched_policy_id: int | None,
         matched_rule_id: int | None,
+        matched_source: str | None,
+        decision_chain: list[dict[str, Any]] | None,
         trace_id: str | None,
     ) -> dict[str, Any]:
         """Build normalized audit-log payload for repository write."""
@@ -98,9 +134,11 @@ class DecisionAuditService:
             "resource_id": str(resource_id or "").strip()[:128],
             "action_code": str(action_code or "").strip()[:64],
             "result": cls._normalize_result(result),
-            "reason": str(reason or "")[:512],
+            "reason": cls._build_reason_with_chain(reason=reason, decision_chain=decision_chain),
+            "matched_acl_id": cls._normalize_optional_int(matched_acl_id),
             "matched_policy_id": cls._normalize_optional_int(matched_policy_id),
             "matched_rule_id": cls._normalize_optional_int(matched_rule_id),
+            "matched_source": cls._normalize_optional_source(matched_source),
             "trace_id": None if not trace_id else str(trace_id)[:64],
         }
 
@@ -127,8 +165,11 @@ class DecisionAuditService:
         action_code: str,
         result: str,
         reason: str,
+        matched_acl_id: int | None = None,
         matched_policy_id: int | None = None,
         matched_rule_id: int | None = None,
+        matched_source: str | None = None,
+        decision_chain: list[dict[str, Any]] | None = None,
         trace_id: str | None = None,
     ) -> dict[str, Any]:
         """Record one authorization decision audit row."""
@@ -142,8 +183,11 @@ class DecisionAuditService:
                 action_code=action_code,
                 result=result,
                 reason=reason,
+                matched_acl_id=matched_acl_id,
                 matched_policy_id=matched_policy_id,
                 matched_rule_id=matched_rule_id,
+                matched_source=matched_source,
+                decision_chain=decision_chain,
                 trace_id=trace_id,
             )
         )
@@ -202,6 +246,14 @@ class DecisionAuditService:
 
         if data.get("result") not in (None, ""):
             filters["result"] = cls._normalize_result(data.get("result"))
+
+        if data.get("matched_acl_id") not in (None, ""):
+            filters["matched_acl_id"] = cls._normalize_positive_int(data.get("matched_acl_id"), "matched_acl_id")
+
+        if data.get("matched_source") not in (None, ""):
+            matched_source = cls._normalize_optional_source(data.get("matched_source"))
+            if matched_source:
+                filters["matched_source"] = matched_source
 
         return await DecisionAuditRepository.list_logs(page=page, page_size=page_size, filters=filters or None)
 

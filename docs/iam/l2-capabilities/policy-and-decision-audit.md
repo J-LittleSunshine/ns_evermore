@@ -42,8 +42,11 @@ Decision audit records include at least:
 - subject/resource/action
 - result
 - reason
+- matched ACL id/source
 - matched policy/rule id
 - trace id
+
+Current write payload also keeps compact chain trace in `reason`, e.g. ACL/Policy/RBAC hit order.
 
 ## 4. Strict Decision Audit Mode
 

@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.constants import to_storage_data_scope
-from ns_backend.iam.repositories import PolicyRepository
+from ns_backend.iam.repositories import PolicyRepository, ResourceRepository
+from ns_backend.iam.services.authorization_context import AuthorizationContextService
 from ns_backend.iam.services.resource_acl import ResourceAclService
 from ns_common.error_codes import NsErrorCode
 
@@ -18,6 +20,7 @@ class PolicyService:
 
     EFFECT_ALLOW = "ALLOW"
     EFFECT_DENY = "DENY"
+    ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
     @staticmethod
     def _ensure_request_data(data: dict[str, Any] | None) -> dict[str, Any]:
@@ -93,9 +96,19 @@ class PolicyService:
     @classmethod
     def _normalize_action_code(cls, value: Any) -> str:
         action_code: str = cls._normalize_required_text(value, "action_code").lower()
-        if action_code not in ResourceAclService.ALLOWED_ACTION_CODES:
+        if cls.ACTION_CODE_PATTERN.fullmatch(action_code) is None:
             raise BusinessError("action_code is invalid", NsErrorCode.PERMISSION_ACTION_INVALID)
         return action_code
+
+    @classmethod
+    def _normalize_optional_resource_type(cls, value: Any) -> str | None:
+        if value in (None, ""):
+            return None
+
+        resource_type = str(value).strip().lower()
+        if not resource_type or " " in resource_type:
+            raise BusinessError("resource_type is invalid", NsErrorCode.INVALID_VALUE)
+        return resource_type
 
     @classmethod
     def _normalize_effect(cls, value: Any, *, default: str) -> str:
@@ -172,6 +185,7 @@ class PolicyService:
             return {"id": policy.id}
 
         await PolicyRepository.update_policy(item=policy, data=update_data, operator_id=operator_id)
+        AuthorizationContextService.invalidate_all()
         return {"id": policy.id}
 
     @classmethod
@@ -191,6 +205,7 @@ class PolicyService:
             },
             operator_id=operator_id,
         )
+        AuthorizationContextService.invalidate_all()
         return {"id": policy.id}
 
     @classmethod
@@ -203,6 +218,7 @@ class PolicyService:
             raise BusinessError("policy not found", NsErrorCode.DATA_NOT_FOUND)
 
         await PolicyRepository.update_policy(item=policy, data={"status": 0}, operator_id=operator_id)
+        AuthorizationContextService.invalidate_all()
         return {"id": policy.id}
 
     @classmethod
@@ -217,7 +233,7 @@ class PolicyService:
 
         subject_type = cls._normalize_subject_type(request_data.get("subject_type"))
         subject_id = cls._normalize_optional_positive_int(request_data.get("subject_id"), "subject_id")
-        resource_type = cls._normalize_optional_text(request_data.get("resource_type"))
+        resource_type = cls._normalize_optional_resource_type(request_data.get("resource_type"))
         resource_id = cls._normalize_optional_text(request_data.get("resource_id"))
         action_code = cls._normalize_action_code(request_data.get("action_code"))
         effect = cls._normalize_effect(request_data.get("effect"), default=cls.EFFECT_DENY)
@@ -226,7 +242,23 @@ class PolicyService:
         priority = cls._normalize_priority(request_data.get("priority"), default=0)
         status = cls._normalize_status(request_data.get("status"), default=1)
 
-        return await PolicyRepository.create_rule(
+        if resource_type is not None:
+            resource = await ResourceRepository.get_active_resource_by_type(resource_type)
+            if resource is None:
+                raise BusinessError("resource_type does not exist", NsErrorCode.DATA_NOT_FOUND)
+
+            has_action = await ResourceRepository.has_action_for_resource_type(
+                resource_type=resource_type,
+                action_code=action_code,
+            )
+            if not has_action:
+                raise BusinessError("action_code does not exist under resource_type", NsErrorCode.DATA_NOT_FOUND)
+        else:
+            has_global_action = await ResourceRepository.action_exists_globally(action_code=action_code)
+            if not has_global_action:
+                raise BusinessError("action_code is not registered", NsErrorCode.DATA_NOT_FOUND)
+
+        created = await PolicyRepository.create_rule(
             policy_id=policy_id,
             subject_type=subject_type,
             subject_id=subject_id,
@@ -240,6 +272,8 @@ class PolicyService:
             status=status,
             operator_id=operator_id,
         )
+        AuthorizationContextService.invalidate_all()
+        return created
 
     @classmethod
     async def remove_rule(cls, *, data: dict[str, Any]) -> dict[str, bool]:
@@ -251,6 +285,7 @@ class PolicyService:
             return {"removed": False}
 
         await PolicyRepository.delete_rule(rule)
+        AuthorizationContextService.invalidate_all()
         return {"removed": True}
 
     @classmethod

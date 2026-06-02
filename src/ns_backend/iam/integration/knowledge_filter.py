@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ns_backend.backend.exceptions import BusinessError
-from ns_backend.iam.services.authorize import AuthorizeService
+from ns_backend.iam.services.resource_access_filter import ResourceAccessFilterService
 from ns_common.error_codes import NsErrorCode
 
 if TYPE_CHECKING:
@@ -86,42 +86,71 @@ class KnowledgeAuthorizationFilter:
         return True, None
 
     @classmethod
-    def _build_authorize_items(
+    def _build_decision_items_from_retrieval_filter(
         cls,
         *,
         candidates: list[dict[str, Any]],
-        resource_type: str,
-        action_code: str,
+        retrieval_filter: dict[str, Any],
         resource_id_field: str,
-        permission_code: str | None,
     ) -> list[dict[str, Any]]:
-        """Build authorize batch items from candidate payloads."""
-        items: list[dict[str, Any]] = []
+        """Build per-candidate decisions from retrieval-stage filter plan."""
+        allowed_ids = {str(item) for item in retrieval_filter.get("allowed_resource_ids", []) if str(item).strip()}
+        denied_ids = {str(item) for item in retrieval_filter.get("denied_resource_ids", []) if str(item).strip()}
+        filters = retrieval_filter.get("filters") if isinstance(retrieval_filter.get("filters"), dict) else {}
+        deny_all = bool(filters.get("deny_all", False))
+        default_allow = bool(filters.get("default_allow", False))
+        data_scope_filters = filters.get("data_scope") if isinstance(filters.get("data_scope"), dict) else {}
+
+        decision_items: list[dict[str, Any]] = []
         for candidate in candidates:
-            field_exists, resource_id = cls._read_candidate_field(candidate=candidate, field_name=resource_id_field)
-            if not field_exists or resource_id in (None, ""):
+            exists, resource_id_value = cls._read_candidate_field(candidate=candidate, field_name=resource_id_field)
+            if not exists or resource_id_value in (None, ""):
                 raise BusinessError(f"candidate missing field: {resource_id_field}", NsErrorCode.INVALID_VALUE)
 
-            items.append(
+            resource_id = str(resource_id_value)
+            allowed = False
+            reason = "NO_MATCHED_RULE"
+
+            if resource_id in denied_ids:
+                allowed = False
+                reason = "ACL_DENY"
+            elif resource_id in allowed_ids:
+                allowed = True
+                reason = "ACL_ALLOW"
+            elif deny_all:
+                allowed = False
+                reason = "RETRIEVAL_FILTER_DENY"
+            elif default_allow:
+                allowed = True
+                reason = "RBAC_ALLOW"
+
+            if allowed:
+                matches_scope, scope_reason = cls._matches_decision_filters(
+                    candidate=candidate,
+                    decision_filters=data_scope_filters,
+                )
+                if not matches_scope:
+                    allowed = False
+                    reason = scope_reason or "DATA_SCOPE_FILTER_DENY"
+
+            decision_items.append(
                 {
-                    "resource_type": resource_type,
-                    "resource_id": str(resource_id),
-                    "action_code": action_code,
-                    "permission_code": permission_code,
+                    "allowed": allowed,
+                    "effect": "allow" if allowed else "deny",
+                    "reason": reason,
+                    "matched_source": "retrieval_filter",
+                    "filters": data_scope_filters if allowed else {},
+                    "decision_chain": [
+                        {
+                            "source": "retrieval_filter",
+                            "effect": "allow" if allowed else "deny",
+                            "reason": reason,
+                        }
+                    ],
                 }
             )
 
-        return items
-
-    @staticmethod
-    def _validate_decision_items(*, decision_items: list[Any], candidate_count: int) -> None:
-        """Validate authorize batch decisions against candidate count and shape."""
-        if len(decision_items) != candidate_count:
-            raise BusinessError("authorize decision count mismatch", NsErrorCode.PERMISSION_DENIED)
-
-        for decision_item in decision_items:
-            if not isinstance(decision_item, dict):
-                raise BusinessError("authorize decision item is invalid", NsErrorCode.PERMISSION_DENIED)
+        return decision_items
 
     @classmethod
     def _split_candidates_by_decision(
@@ -180,21 +209,20 @@ class KnowledgeAuthorizationFilter:
                 "decision_items": [],
             }
 
-        items = cls._build_authorize_items(
-            candidates=normalized_candidates,
+        retrieval_filter = await ResourceAccessFilterService.resolve_retrieval_filter(
+            user=user,
             resource_type=resource_type,
             action_code=action_code,
-            resource_id_field=resource_id_field,
             permission_code=permission_code,
+            field_map=None,
         )
 
-        batch_result = await AuthorizeService.batch_check(
-            user=user,
-            data={"items": items},
-            trace_id=trace_id,
+        decision_items: list[dict[str, Any]] = cls._build_decision_items_from_retrieval_filter(
+            candidates=normalized_candidates,
+            retrieval_filter=retrieval_filter,
+            resource_id_field=resource_id_field,
         )
-        decision_items: list[dict[str, Any]] = list(batch_result.get("items", []))
-        cls._validate_decision_items(decision_items=decision_items, candidate_count=len(normalized_candidates))
+
         allowed_items, denied_items = cls._split_candidates_by_decision(
             candidates=normalized_candidates,
             decision_items=decision_items,

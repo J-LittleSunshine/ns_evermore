@@ -23,8 +23,10 @@ class DecisionAuditRepository:
         "action_code",
         "result",
         "reason",
+        "matched_acl_id",
         "matched_policy_id",
         "matched_rule_id",
+        "matched_source",
         "trace_id",
         "created_at",
     )

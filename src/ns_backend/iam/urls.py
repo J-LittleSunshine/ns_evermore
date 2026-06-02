@@ -95,6 +95,7 @@ urlpatterns = [
 
     path("resource/register", ResourceViewSet.as_view({"post": "register_resource"}, required_permissions=("iam:resource:register",))),
     path("resource/action/register", ResourceViewSet.as_view({"post": "register_resource_action"}, required_permissions=("iam:resource:action:register",))),
+    path("resource/relation/register", ResourceViewSet.as_view({"post": "register_resource_relation"}, required_permissions=("iam:resource:relation:register",))),
     path("resource/list", ResourceViewSet.as_view({"post": "list_resources"}, required_permissions=("iam:resource:list",))),
 
     path("acl/grant", ResourceAclViewSet.as_view({"post": "grant_acl"}, required_permissions=("iam:acl:grant",))),

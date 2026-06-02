@@ -149,6 +149,50 @@ IAM_PERMISSION_PROVIDERS = _merge_string_tuples(
     os.getenv("IAM_PERMISSION_PROVIDERS"),
 )
 
+IAM_MODULE_REGISTRATION_HOOKS = _merge_string_tuples(
+    getattr(_BACKEND, "iam_module_registration_hooks", ()),
+    os.getenv("NS_IAM_MODULE_REGISTRATION_HOOKS"),
+    os.getenv("IAM_MODULE_REGISTRATION_HOOKS"),
+)
+
+IAM_AUTH_CONTEXT_TTL_SECONDS = _coerce_positive_int(
+    os.getenv("NS_IAM_AUTH_CONTEXT_TTL_SECONDS") or os.getenv("IAM_AUTH_CONTEXT_TTL_SECONDS") or getattr(_BACKEND, "iam_auth_context_ttl_seconds", 300),
+    300,
+)
+
+_IAM_AUTH_CONTEXT_REDIS_URL = str(
+    os.getenv("NS_IAM_AUTH_CONTEXT_REDIS_URL")
+    or os.getenv("IAM_AUTH_CONTEXT_REDIS_URL")
+    or getattr(_BACKEND, "iam_auth_context_redis_url", "")
+    or ""
+).strip()
+
+_IAM_AUTH_CONTEXT_CACHE_ALIAS = str(
+    os.getenv("NS_IAM_AUTH_CONTEXT_CACHE_ALIAS")
+    or os.getenv("IAM_AUTH_CONTEXT_CACHE_ALIAS")
+    or getattr(_BACKEND, "iam_auth_context_cache_alias", "")
+    or ""
+).strip()
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "ns_evermore_default_cache",
+        "TIMEOUT": IAM_AUTH_CONTEXT_TTL_SECONDS,
+    }
+}
+
+if _IAM_AUTH_CONTEXT_REDIS_URL:
+    CACHES["iam_auth"] = {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": _IAM_AUTH_CONTEXT_REDIS_URL,
+        "TIMEOUT": IAM_AUTH_CONTEXT_TTL_SECONDS,
+    }
+
+IAM_AUTH_CONTEXT_CACHE_ALIAS = _IAM_AUTH_CONTEXT_CACHE_ALIAS or ("iam_auth" if _IAM_AUTH_CONTEXT_REDIS_URL else "default")
+if IAM_AUTH_CONTEXT_CACHE_ALIAS not in CACHES:
+    IAM_AUTH_CONTEXT_CACHE_ALIAS = "default"
+
 TRUST_X_FORWARDED_FOR = _coerce_bool(os.getenv("NS_TRUST_X_FORWARDED_FOR"), _BACKEND.trust_x_forwarded_for)
 
 DEBUG = _BACKEND.debug

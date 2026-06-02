@@ -22,10 +22,10 @@ def _build_agent_context() -> dict[str, str]:
 
 
 async def filter_knowledge_candidates_before_retriever(
-    *,
-    user: Any,
-    candidates: list[dict[str, Any]],
-    trace_id: str | None = None,
+        *,
+        user: Any,
+        candidates: list[dict[str, Any]],
+        trace_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Filter candidate chunks/documents before retriever recall."""
     filter_result = await KnowledgeAuthorizationFilter.filter_candidates(
@@ -41,12 +41,12 @@ async def filter_knowledge_candidates_before_retriever(
 
 
 async def run_knowledge_retriever_with_iam(
-    *,
-    user: Any,
-    candidates: list[dict[str, Any]],
-    retriever_callable,
-    retriever_kwargs: dict[str, Any] | None = None,
-    trace_id: str | None = None,
+        *,
+        user: Any,
+        candidates: list[dict[str, Any]],
+        retriever_callable,
+        retriever_kwargs: dict[str, Any] | None = None,
+        trace_id: str | None = None,
 ) -> dict[str, Any]:
     """Run retriever with IAM filtering applied before execution."""
     return await KnowledgeRetrieverIamFacade.recall_with_iam(
@@ -63,11 +63,11 @@ async def run_knowledge_retriever_with_iam(
 
 
 async def ensure_agent_tool_executable(
-    *,
-    user: Any,
-    tool_name: str,
-    resource_id: str,
-    trace_id: str | None = None,
+        *,
+        user: Any,
+        tool_name: str,
+        resource_id: str,
+        trace_id: str | None = None,
 ) -> dict[str, Any]:
     """Authorize one agent tool call before invocation."""
     return await AgentToolAuthorizationGuard.ensure_tool_allowed(
@@ -80,14 +80,14 @@ async def ensure_agent_tool_executable(
 
 
 async def run_agent_tool_with_iam(
-    *,
-    user: Any,
-    tool_name: str,
-    resource_id: str,
-    tool_callable,
-    tool_args: list[Any] | tuple[Any, ...] | None = None,
-    tool_kwargs: dict[str, Any] | None = None,
-    trace_id: str | None = None,
+        *,
+        user: Any,
+        tool_name: str,
+        resource_id: str,
+        tool_callable,
+        tool_args: list[Any] | tuple[Any, ...] | None = None,
+        tool_kwargs: dict[str, Any] | None = None,
+        trace_id: str | None = None,
 ) -> dict[str, Any]:
     """Authorize and execute one agent tool callback via IAM facade."""
     return await AgentToolIamFacade.execute_tool_with_iam(
@@ -100,5 +100,3 @@ async def run_agent_tool_with_iam(
         tool_kwargs=tool_kwargs,
         trace_id=trace_id,
     )
-
-

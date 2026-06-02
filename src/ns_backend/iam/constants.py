@@ -8,6 +8,16 @@ if TYPE_CHECKING:
 
 INFRA_IAM_DOMAIN = "iam"
 
+RECOMMENDED_ACTION_CODES = (
+    "read",
+    "write",
+    "delete",
+    "manage",
+    "execute",
+    "approve",
+    "share",
+)
+
 DATA_SCOPE_SELF = "SELF"
 DATA_SCOPE_DEPARTMENT = "DEPARTMENT"
 DATA_SCOPE_DEPARTMENT_AND_CHILDREN = "DEPARTMENT_AND_CHILDREN"

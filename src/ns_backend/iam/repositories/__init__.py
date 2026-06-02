@@ -25,6 +25,7 @@ from ns_backend.iam.repositories.permission import PermissionRepository
 from ns_backend.iam.repositories.permission_sync import PermissionSyncRepository
 from ns_backend.iam.repositories.policy import PolicyRepository
 from ns_backend.iam.repositories.resource import ResourceRepository
+from ns_backend.iam.repositories.resource_relation import ResourceRelationRepository
 from ns_backend.iam.repositories.resource_acl import ResourceAclRepository
 from ns_backend.iam.repositories.role import RoleRepository
 from ns_backend.iam.repositories.session import UserSessionRepository
@@ -54,6 +55,7 @@ __all__ = [
     "PermissionSyncRepository",
     "PolicyRepository",
     "ResourceAclRepository",
+    "ResourceRelationRepository",
     "ResourceRepository",
     "RoleRepository",
     "RolePermissionGrantRepository",

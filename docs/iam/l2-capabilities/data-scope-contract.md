@@ -40,5 +40,12 @@ Example:
 
 Business modules must consume IAM `filters` output from authorize decisions.
 
+Retriever-stage integration can call `ResourceAccessFilterService.resolve_retrieval_filter(...)` and consume:
+
+- `allowed_resource_ids`
+- `denied_resource_ids`
+- `filters.orm.include` / `filters.orm.exclude`
+- `filters.vector.must` / `filters.vector.must_not`
+
 Do not infer data scope from local enums or local role assumptions.
 

@@ -83,6 +83,7 @@ IAM_BUILTIN_PERMISSIONS: tuple[PermissionSpec, ...] = (
     PermissionSpec(code="iam:resource", name="IAM Resource", permission_type="MENU"),
     PermissionSpec(code="iam:resource:register", name="Register resource", permission_type="ACTION", parent_code="iam:resource"),
     PermissionSpec(code="iam:resource:action:register", name="Register resource action", permission_type="ACTION", parent_code="iam:resource"),
+    PermissionSpec(code="iam:resource:relation:register", name="Register resource relation", permission_type="ACTION", parent_code="iam:resource"),
     PermissionSpec(code="iam:resource:list", name="List resources", permission_type="ACTION", parent_code="iam:resource"),
 
     PermissionSpec(code="iam:acl", name="IAM Resource ACL", permission_type="MENU"),

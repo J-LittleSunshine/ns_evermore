@@ -149,3 +149,73 @@ class ResourceAclRepository:
 
         return [item async for item in queryset]
 
+    @staticmethod
+    async def list_active_effects_for_resources(
+        *,
+        subject_bindings: list[tuple[str, int]],
+        resource_pairs: list[tuple[str, str]],
+        action_code: str,
+        now,
+    ) -> list[dict[str, Any]]:
+        """List active ACL effects for one subject against multiple resources."""
+        if not subject_bindings or not resource_pairs:
+            return []
+
+        subject_query: Q = Q()
+        for subject_type, subject_id in subject_bindings:
+            subject_query |= Q(subject_type=subject_type, subject_id=subject_id)
+
+        resource_query: Q = Q()
+        for resource_type, resource_id in resource_pairs:
+            resource_query |= Q(resource_type=resource_type, resource_id=resource_id)
+
+        db_alias: str = BaseRepository.resolve_db_alias(model_class=IamResourceAcl)
+        queryset = IamResourceAcl.objects.using(db_alias).filter(
+            subject_query,
+            resource_query,
+            action_code=action_code,
+        ).filter(Q(expired_at__isnull=True) | Q(expired_at__gt=now)).values(
+            "id",
+            "subject_type",
+            "subject_id",
+            "resource_type",
+            "resource_id",
+            "effect",
+            "data_scope",
+            "expired_at",
+        )
+        return [item async for item in queryset]
+
+    @staticmethod
+    async def list_active_effects_for_resource_type_action(
+        *,
+        subject_bindings: list[tuple[str, int]],
+        resource_type: str,
+        action_code: str,
+        now,
+    ) -> list[dict[str, Any]]:
+        """List active ACL effects for one subject and resource type/action scope."""
+        if not subject_bindings:
+            return []
+
+        subject_query: Q = Q()
+        for subject_type, subject_id in subject_bindings:
+            subject_query |= Q(subject_type=subject_type, subject_id=subject_id)
+
+        db_alias: str = BaseRepository.resolve_db_alias(model_class=IamResourceAcl)
+        queryset = IamResourceAcl.objects.using(db_alias).filter(
+            subject_query,
+            resource_type=resource_type,
+            action_code=action_code,
+        ).filter(Q(expired_at__isnull=True) | Q(expired_at__gt=now)).values(
+            "id",
+            "subject_type",
+            "subject_id",
+            "resource_type",
+            "resource_id",
+            "effect",
+            "data_scope",
+            "expired_at",
+        )
+        return [item async for item in queryset]
+

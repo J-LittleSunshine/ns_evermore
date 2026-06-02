@@ -341,6 +341,24 @@ CREATE INDEX idx_resource_acl_subject ON iam_resource_acl (subject_type, subject
 CREATE INDEX idx_resource_acl_effect ON iam_resource_acl (effect);
 CREATE INDEX idx_resource_acl_expired_at ON iam_resource_acl (expired_at);
 
+CREATE TABLE iam_resource_relation
+(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_type VARCHAR(128) NOT NULL,
+    resource_id VARCHAR(128) NOT NULL,
+    parent_resource_type VARCHAR(128) NOT NULL,
+    parent_resource_id VARCHAR(128) NOT NULL,
+    relation_type VARCHAR(32) NOT NULL DEFAULT 'PARENT',
+    created_by INTEGER NULL,
+    updated_by INTEGER NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_resource_relation_type CHECK (relation_type IN ('PARENT'))
+);
+CREATE UNIQUE INDEX uk_resource_relation_unique ON iam_resource_relation (resource_type, resource_id, parent_resource_type, parent_resource_id);
+CREATE INDEX idx_resource_relation_resource ON iam_resource_relation (resource_type, resource_id);
+CREATE INDEX idx_resource_relation_parent ON iam_resource_relation (parent_resource_type, parent_resource_id);
+
 CREATE TABLE iam_policy
 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -462,8 +480,10 @@ CREATE TABLE iam_audit_log
     action_code VARCHAR(64) NOT NULL,
     result VARCHAR(16) NOT NULL,
     reason VARCHAR(512) NOT NULL,
+    matched_acl_id INTEGER NULL,
     matched_policy_id INTEGER NULL,
     matched_rule_id INTEGER NULL,
+    matched_source VARCHAR(32) NULL,
     trace_id VARCHAR(64) NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_decision_audit_operator FOREIGN KEY (operator_id) REFERENCES iam_user (id),
@@ -473,6 +493,8 @@ CREATE TABLE iam_audit_log
 CREATE INDEX idx_decision_audit_subject ON iam_audit_log (subject_type, subject_id);
 CREATE INDEX idx_decision_audit_resource_action ON iam_audit_log (resource_type, resource_id, action_code);
 CREATE INDEX idx_decision_audit_result ON iam_audit_log (result);
+CREATE INDEX idx_decision_audit_matched_acl ON iam_audit_log (matched_acl_id);
+CREATE INDEX idx_decision_audit_matched_source ON iam_audit_log (matched_source);
 CREATE INDEX idx_decision_audit_trace_id ON iam_audit_log (trace_id);
 CREATE INDEX idx_decision_audit_created_at ON iam_audit_log (created_at);
 

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import re
+from typing import TYPE_CHECKING, Any
 
 from django.utils import timezone
 
@@ -12,6 +13,7 @@ from ns_backend.iam.registry.module import PermissionModuleRegistry
 from ns_backend.iam.registry.permission import PermissionRegistry
 from ns_backend.iam.repositories import PermissionSyncRepository
 from ns_backend.iam.schemas import PermissionSpec
+from ns_backend.iam.services.module_hook import ModuleRegistrationHookService
 from ns_common.error_codes import NsErrorCode
 
 if TYPE_CHECKING:
@@ -31,42 +33,7 @@ class PermissionSyncService:
     MAX_DEPENDENCY_ROUNDS = 20
     ALLOWED_PERMISSION_TYPES = {"MENU", "ACTION", "DATA"}
     ALLOWED_STATUS_VALUES = {0, 1}
-    ALLOWED_ACTION_CODES = {
-        "add",
-        "approve",
-        "batch_check",
-        "bind",
-        "check",
-        "create",
-        "current_user",
-        "data_scopes",
-        "delete",
-        "detail",
-        "disable",
-        "execute",
-        "grant",
-        "list",
-        "login",
-        "logout",
-        "manage",
-        "menus",
-        "permissions",
-        "profile",
-        "publish",
-        "read",
-        "refresh",
-        "register",
-        "remove",
-        "reset_password",
-        "revoke",
-        "share",
-        "sync",
-        "unbind",
-        "update",
-        "update_staff",
-        "update_superuser",
-        "write",
-    }
+    ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
     @classmethod
     def parse_action_code(cls, permission_code: str) -> str | None:
@@ -89,13 +56,19 @@ class PermissionSyncService:
         return await cls.sync_specs(specs, operator_id=operator_id)
 
     @classmethod
-    async def sync_registered_permissions(cls, operator_id: int | None = None) -> dict[str, int]:
+    async def sync_registered_permissions(cls, operator_id: int | None = None) -> dict[str, Any]:
         """Sync builtin provider and configured external providers."""
         PermissionModuleRegistry.clear()
         register_builtin_permission_providers()
         register_configured_permission_providers()
         specs = PermissionModuleRegistry.list_specs()
-        return await cls.sync_specs(specs, operator_id=operator_id)
+        result = await cls.sync_specs(specs, operator_id=operator_id)
+        hook_results = await ModuleRegistrationHookService.run_hooks(operator_id=operator_id)
+        return {
+            **result,
+            "hook_total": len(hook_results),
+            "hook_items": hook_results,
+        }
 
     @classmethod
     def validate_specs(cls, specs: list[PermissionSpec]) -> None:
@@ -136,7 +109,7 @@ class PermissionSyncService:
                 if action_code is None:
                     raise BusinessError(f"Invalid action permission code format: {spec.code}", NsErrorCode.PERMISSION_CODE_FORMAT_INVALID)
 
-                if action_code not in cls.ALLOWED_ACTION_CODES:
+                if cls.ACTION_CODE_PATTERN.fullmatch(action_code) is None:
                     raise BusinessError(f"Invalid permission action: {action_code}", NsErrorCode.PERMISSION_ACTION_INVALID)
 
             if spec.parent_code is None:

@@ -34,10 +34,10 @@ class KnowledgeRetrieverIamFacade:
 
     @staticmethod
     async def _invoke_retriever(
-        *,
-        retriever_callable: Callable[..., Any],
-        allowed_items: list[dict[str, Any]],
-        retriever_kwargs: dict[str, Any] | None,
+            *,
+            retriever_callable: Callable[..., Any],
+            allowed_items: list[dict[str, Any]],
+            retriever_kwargs: dict[str, Any] | None,
     ) -> Any:
         """Invoke retriever with IAM-allowed items only."""
         kwargs = _normalize_kwargs(value=retriever_kwargs, field_name="retriever_kwargs")
@@ -45,17 +45,17 @@ class KnowledgeRetrieverIamFacade:
 
     @classmethod
     async def recall_with_iam(
-        cls,
-        *,
-        user: Any,
-        candidates: list[dict[str, Any]],
-        retriever_callable: Callable[..., Any],
-        resource_type: str = KnowledgeAuthorizationFilter.DEFAULT_RESOURCE_TYPE,
-        action_code: str = KnowledgeAuthorizationFilter.DEFAULT_ACTION_CODE,
-        resource_id_field: str = "resource_id",
-        permission_code: str | None = None,
-        retriever_kwargs: dict[str, Any] | None = None,
-        trace_id: str | None = None,
+            cls,
+            *,
+            user: Any,
+            candidates: list[dict[str, Any]],
+            retriever_callable: Callable[..., Any],
+            resource_type: str = KnowledgeAuthorizationFilter.DEFAULT_RESOURCE_TYPE,
+            action_code: str = KnowledgeAuthorizationFilter.DEFAULT_ACTION_CODE,
+            resource_id_field: str = "resource_id",
+            permission_code: str | None = None,
+            retriever_kwargs: dict[str, Any] | None = None,
+            trace_id: str | None = None,
     ) -> dict[str, Any]:
         """Filter candidate items by IAM and run retriever on allowed candidates only."""
         if not callable(retriever_callable):
@@ -119,10 +119,10 @@ class AgentToolIamFacade:
 
     @staticmethod
     async def _invoke_tool(
-        *,
-        tool_callable: Callable[..., Any],
-        tool_args: list[Any] | tuple[Any, ...] | None,
-        tool_kwargs: dict[str, Any] | None,
+            *,
+            tool_callable: Callable[..., Any],
+            tool_args: list[Any] | tuple[Any, ...] | None,
+            tool_kwargs: dict[str, Any] | None,
     ) -> Any:
         """Invoke one tool callback after IAM authorization succeeds."""
         normalized_args = AgentToolIamFacade._normalize_tool_args(tool_args)
@@ -131,16 +131,16 @@ class AgentToolIamFacade:
 
     @classmethod
     async def execute_tool_with_iam(
-        cls,
-        *,
-        user: Any,
-        tool_name: str,
-        resource_id: str,
-        tool_callable: Callable[..., Any],
-        context: dict[str, Any] | None = None,
-        tool_args: list[Any] | tuple[Any, ...] | None = None,
-        tool_kwargs: dict[str, Any] | None = None,
-        trace_id: str | None = None,
+            cls,
+            *,
+            user: Any,
+            tool_name: str,
+            resource_id: str,
+            tool_callable: Callable[..., Any],
+            context: dict[str, Any] | None = None,
+            tool_args: list[Any] | tuple[Any, ...] | None = None,
+            tool_kwargs: dict[str, Any] | None = None,
+            trace_id: str | None = None,
     ) -> dict[str, Any]:
         """Authorize tool action first, then execute the tool callback."""
         if not callable(tool_callable):
@@ -163,4 +163,3 @@ class AgentToolIamFacade:
             "decision": decision,
             "tool_result": tool_result,
         }
-

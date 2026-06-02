@@ -46,6 +46,7 @@ Tool-action mapping source:
 Runtime extension:
 
 - `register_tool_action(...)`
+- mapping registration auto-provisions IAM `resource/action/permission` rows
 
 Each mapping defines:
 
