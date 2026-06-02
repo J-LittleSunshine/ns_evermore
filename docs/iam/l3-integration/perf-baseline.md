@@ -1,4 +1,4 @@
-# IAM Performance Baseline (P3)
+# L3 Integration: Performance Baseline
 
 ## 1. Core Metrics
 
@@ -8,7 +8,7 @@
 - policy rule match latency
 - decision audit write latency
 
-## 2. Suggested Baseline Targets
+## 2. Suggested Targets
 
 - Single check P95 <= 30ms (intra-VPC)
 - Batch check (100 items) <= 300ms
@@ -16,13 +16,13 @@
 
 ## 3. Benchmark Dimensions
 
-- Subject count: user + role + org + dept + subsidiary combinations
+- Subject bindings: USER + ROLE + DEPARTMENT + ORGANIZATION + SUBSIDIARY combinations
 - Policy rule count: 1k / 10k / 50k
 - ACL row count: 10k / 100k / 1M
 
 ## 4. Optimization Checklist
 
 - Ensure composite indexes for subject/resource/action and rule priority.
-- Keep policy-rule payload lightweight (`condition_json` only needed fields).
+- Keep policy-rule payload lightweight (`condition_json` uses only required fields).
 - Avoid synchronous external IO in authorization hot path.
 

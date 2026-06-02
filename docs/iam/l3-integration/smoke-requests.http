@@ -1,0 +1,90 @@
+@host = http://127.0.0.1:8000
+@json = application/json
+@access_token = REPLACE_WITH_ACCESS_TOKEN
+@refresh_token = REPLACE_WITH_REFRESH_TOKEN
+@session_id = REPLACE_WITH_SESSION_ID
+
+### 1) Login
+POST {{host}}/iam/auth/login
+Content-Type: {{json}}
+
+{
+  "username": "admin",
+  "password": "REPLACE_WITH_PASSWORD_PAYLOAD"
+}
+
+### 2) Refresh
+POST {{host}}/iam/auth/refresh
+Content-Type: {{json}}
+
+{
+  "refresh_token": "{{refresh_token}}"
+}
+
+### 3) Profile (requires iam:auth:profile)
+POST {{host}}/iam/auth/profile
+Authorization: Bearer {{access_token}}
+Content-Type: {{json}}
+
+{}
+
+### 4) Register resource
+POST {{host}}/iam/resource/register
+Authorization: Bearer {{access_token}}
+Content-Type: {{json}}
+
+{
+  "resource_type": "knowledge.document",
+  "resource_name": "Knowledge Document",
+  "module_code": "knowledge",
+  "status": 1
+}
+
+### 5) Register resource action
+POST {{host}}/iam/resource/action/register
+Authorization: Bearer {{access_token}}
+Content-Type: {{json}}
+
+{
+  "resource_type": "knowledge.document",
+  "action_code": "read",
+  "action_name": "Read document",
+  "status": 1
+}
+
+### 6) ACL grant
+POST {{host}}/iam/acl/grant
+Authorization: Bearer {{access_token}}
+Content-Type: {{json}}
+
+{
+  "subject_type": "USER",
+  "subject_id": 2,
+  "resource_type": "knowledge.document",
+  "resource_id": "doc_001",
+  "action_code": "read",
+  "effect": "ALLOW"
+}
+
+### 7) Authorize check
+POST {{host}}/iam/authorize/check
+Authorization: Bearer {{access_token}}
+Content-Type: {{json}}
+
+{
+  "resource_type": "knowledge.document",
+  "resource_id": "doc_001",
+  "action_code": "read",
+  "permission_code": "knowledge:document:read"
+}
+
+### 8) Decision audit list
+POST {{host}}/iam/audit/decision/list
+Authorization: Bearer {{access_token}}
+Content-Type: {{json}}
+
+{
+  "page": 1,
+  "page_size": 20
+}
+
