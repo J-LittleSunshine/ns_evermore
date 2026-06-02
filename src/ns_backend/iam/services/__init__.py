@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from ns_backend.iam.services.admin import AdminService
 from ns_backend.iam.services.audit import AuditService
+from ns_backend.iam.services.authorize import AuthorizeService
 from ns_backend.iam.services.auth import AuthLoginResult, AuthService
 from ns_backend.iam.services.auth_context import AuthContextService
 from ns_backend.iam.services.base import (
@@ -17,6 +18,7 @@ from ns_backend.iam.services.base import (
     UserService
 )
 from ns_backend.iam.services.data_scope import DataScopeService
+from ns_backend.iam.services.decision_audit import DecisionAuditService
 from ns_backend.iam.services.grant import (
     DepartmentPermissionGrantService,
     RolePermissionGrantService,
@@ -26,6 +28,10 @@ from ns_backend.iam.services.grant import (
 )
 from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.permission_sync import PermissionSyncService
+from ns_backend.iam.services.policy import PolicyService
+from ns_backend.iam.services.policy_engine import PolicyEngineService
+from ns_backend.iam.services.resource_acl import ResourceAclService
+from ns_backend.iam.services.resource_registry import ResourceRegistryService
 from ns_backend.iam.services.session import SessionService
 from ns_backend.iam.services.tenant import TenantService
 from ns_backend.iam.services.verify import VerifyService
@@ -36,17 +42,23 @@ if TYPE_CHECKING:
 __all__ = [
     "AdminService",
     "AuditService",
+    "AuthorizeService",
     "AuthContextService",
     "AuthLoginResult",
     "AuthService",
     "CompanyService",
     "DataScopeService",
+    "DecisionAuditService",
     "DepartmentPermissionGrantService",
     "DepartmentService",
     "IamBaseService",
     "PermissionBaseService",
     "PermissionService",
     "PermissionSyncService",
+    "PolicyEngineService",
+    "PolicyService",
+    "ResourceAclService",
+    "ResourceRegistryService",
     "RolePermissionGrantService",
     "RoleService",
     "SessionService",

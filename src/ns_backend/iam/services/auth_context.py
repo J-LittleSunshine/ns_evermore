@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ns_backend.iam.constants import normalize_data_scope
 from ns_backend.iam.policies import TenantPolicy
 from ns_backend.iam.schemas import DataScopeResult, TenantContext
 from ns_backend.iam.services.data_scope import DataScopeService
@@ -86,6 +87,7 @@ class AuthContextService:
             "permission_code": permission_code,
             "allowed": result.allowed,
             "scope": result.scope,
+            "normalized_scope": normalize_data_scope(result.scope),
             "company_id": result.company_id,
             "subsidiary_id": result.subsidiary_id,
             "department_id": result.department_id,

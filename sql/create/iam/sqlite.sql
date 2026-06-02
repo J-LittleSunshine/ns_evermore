@@ -265,6 +265,141 @@ CREATE INDEX idx_sp_exp_at ON iam_subsidiary_permission (expired_at);
 CREATE INDEX idx_sp_created_by ON iam_subsidiary_permission (created_by);
 CREATE INDEX idx_sp_updated_by ON iam_subsidiary_permission (updated_by);
 
+CREATE TABLE iam_resource
+(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_type VARCHAR(128) NOT NULL,
+    resource_name VARCHAR(128) NOT NULL,
+    module_code VARCHAR(64) NOT NULL,
+    status INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER NULL,
+    updated_by INTEGER NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_resource_status CHECK (status IN (0, 1))
+);
+CREATE UNIQUE INDEX uk_resource_type ON iam_resource (resource_type);
+CREATE INDEX idx_resource_module_code ON iam_resource (module_code);
+CREATE INDEX idx_resource_status ON iam_resource (status);
+CREATE INDEX idx_resource_created_by ON iam_resource (created_by);
+CREATE INDEX idx_resource_updated_by ON iam_resource (updated_by);
+
+CREATE TABLE iam_resource_action
+(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_id INTEGER NOT NULL,
+    action_code VARCHAR(64) NOT NULL,
+    action_name VARCHAR(128) NOT NULL,
+    status INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER NULL,
+    updated_by INTEGER NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_resource_action_resource FOREIGN KEY (resource_id) REFERENCES iam_resource (id),
+    CONSTRAINT chk_resource_action_status CHECK (status IN (0, 1))
+);
+CREATE UNIQUE INDEX uk_resource_action_unique ON iam_resource_action (resource_id, action_code);
+CREATE INDEX idx_resource_action_code ON iam_resource_action (action_code);
+CREATE INDEX idx_resource_action_status ON iam_resource_action (status);
+CREATE INDEX idx_resource_action_created_by ON iam_resource_action (created_by);
+CREATE INDEX idx_resource_action_updated_by ON iam_resource_action (updated_by);
+
+CREATE TABLE iam_resource_acl
+(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_type VARCHAR(32) NOT NULL,
+    subject_id INTEGER NOT NULL,
+    resource_type VARCHAR(128) NOT NULL,
+    resource_id VARCHAR(128) NOT NULL,
+    action_code VARCHAR(64) NOT NULL,
+    effect VARCHAR(16) NOT NULL DEFAULT 'ALLOW',
+    data_scope VARCHAR(32) NULL,
+    expired_at TEXT NULL,
+    created_by INTEGER NULL,
+    updated_by INTEGER NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_resource_acl_subject_type CHECK (subject_type IN ('USER', 'ROLE', 'DEPARTMENT', 'ORGANIZATION', 'SUBSIDIARY')),
+    CONSTRAINT chk_resource_acl_effect CHECK (effect IN ('ALLOW', 'DENY')),
+    CONSTRAINT chk_resource_acl_data_scope CHECK (
+        data_scope IS NULL
+            OR data_scope IN (
+                'SELF',
+                'DEPARTMENT',
+                'DEPARTMENT_TREE',
+                'DEPARTMENT_AND_CHILDREN',
+                'SUBSIDIARY',
+                'COMPANY',
+                'ORGANIZATION',
+                'ALL'
+            )
+        )
+);
+CREATE UNIQUE INDEX uk_resource_acl_unique ON iam_resource_acl (subject_type, subject_id, resource_type, resource_id, action_code);
+CREATE INDEX idx_resource_acl_resource_action ON iam_resource_acl (resource_type, resource_id, action_code);
+CREATE INDEX idx_resource_acl_subject ON iam_resource_acl (subject_type, subject_id);
+CREATE INDEX idx_resource_acl_effect ON iam_resource_acl (effect);
+CREATE INDEX idx_resource_acl_expired_at ON iam_resource_acl (expired_at);
+
+CREATE TABLE iam_policy
+(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    policy_code VARCHAR(128) NOT NULL,
+    policy_name VARCHAR(128) NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 0,
+    status INTEGER NOT NULL DEFAULT 1,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER NULL,
+    updated_by INTEGER NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_policy_status CHECK (status IN (0, 1))
+);
+CREATE UNIQUE INDEX uk_policy_code ON iam_policy (policy_code);
+CREATE INDEX idx_policy_status_priority ON iam_policy (status, priority);
+
+CREATE TABLE iam_policy_rule
+(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    policy_id INTEGER NOT NULL,
+    subject_type VARCHAR(32) NULL,
+    subject_id INTEGER NULL,
+    resource_type VARCHAR(128) NULL,
+    resource_id VARCHAR(128) NULL,
+    action_code VARCHAR(64) NOT NULL,
+    effect VARCHAR(16) NOT NULL,
+    data_scope VARCHAR(32) NULL,
+    condition_json TEXT NULL,
+    priority INTEGER NOT NULL DEFAULT 0,
+    status INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER NULL,
+    updated_by INTEGER NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_policy_rule_policy FOREIGN KEY (policy_id) REFERENCES iam_policy (id),
+    CONSTRAINT chk_policy_rule_subject_type CHECK (
+        subject_type IS NULL OR subject_type IN ('USER', 'ROLE', 'DEPARTMENT', 'ORGANIZATION', 'SUBSIDIARY')
+    ),
+    CONSTRAINT chk_policy_rule_effect CHECK (effect IN ('ALLOW', 'DENY')),
+    CONSTRAINT chk_policy_rule_data_scope CHECK (
+        data_scope IS NULL
+            OR data_scope IN (
+                'SELF',
+                'DEPARTMENT',
+                'DEPARTMENT_TREE',
+                'DEPARTMENT_AND_CHILDREN',
+                'SUBSIDIARY',
+                'COMPANY',
+                'ORGANIZATION',
+                'ALL'
+            )
+    ),
+    CONSTRAINT chk_policy_rule_status CHECK (status IN (0, 1))
+);
+CREATE INDEX idx_policy_rule_policy ON iam_policy_rule (policy_id);
+CREATE INDEX idx_policy_rule_status_priority ON iam_policy_rule (status, priority);
+CREATE INDEX idx_policy_rule_subject_resource_action ON iam_policy_rule (subject_type, subject_id, resource_type, resource_id, action_code);
+
 CREATE TABLE iam_login_failure_lock
 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -315,6 +450,31 @@ CREATE INDEX idx_audit_operation_type ON iam_operation_audit (operation_type);
 CREATE INDEX idx_audit_status ON iam_operation_audit (status);
 CREATE INDEX idx_audit_trace_id ON iam_operation_audit (trace_id);
 CREATE INDEX idx_audit_created_at ON iam_operation_audit (created_at);
+
+CREATE TABLE iam_audit_log
+(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operator_id INTEGER NULL,
+    subject_type VARCHAR(32) NOT NULL,
+    subject_id INTEGER NOT NULL,
+    resource_type VARCHAR(128) NOT NULL,
+    resource_id VARCHAR(128) NOT NULL,
+    action_code VARCHAR(64) NOT NULL,
+    result VARCHAR(16) NOT NULL,
+    reason VARCHAR(512) NOT NULL,
+    matched_policy_id INTEGER NULL,
+    matched_rule_id INTEGER NULL,
+    trace_id VARCHAR(64) NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_decision_audit_operator FOREIGN KEY (operator_id) REFERENCES iam_user (id),
+    CONSTRAINT chk_decision_audit_subject_type CHECK (subject_type IN ('USER', 'ROLE', 'DEPARTMENT', 'ORGANIZATION', 'SUBSIDIARY')),
+    CONSTRAINT chk_decision_audit_result CHECK (result IN ('ALLOW', 'DENY'))
+);
+CREATE INDEX idx_decision_audit_subject ON iam_audit_log (subject_type, subject_id);
+CREATE INDEX idx_decision_audit_resource_action ON iam_audit_log (resource_type, resource_id, action_code);
+CREATE INDEX idx_decision_audit_result ON iam_audit_log (result);
+CREATE INDEX idx_decision_audit_trace_id ON iam_audit_log (trace_id);
+CREATE INDEX idx_decision_audit_created_at ON iam_audit_log (created_at);
 
 CREATE TABLE iam_user_device
 (

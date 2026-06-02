@@ -53,6 +53,8 @@ IAM_BUILTIN_PERMISSIONS: tuple[PermissionSpec, ...] = (
     PermissionSpec(code="iam:user:update", name="Update user", permission_type="ACTION", parent_code="iam:user"),
     PermissionSpec(code="iam:user:delete", name="Delete user", permission_type="ACTION", parent_code="iam:user"),
     PermissionSpec(code="iam:user:reset_password", name="Reset user password", permission_type="ACTION", parent_code="iam:user"),
+    PermissionSpec(code="iam:user:update_staff", name="Update staff flag", permission_type="ACTION", parent_code="iam:user"),
+    PermissionSpec(code="iam:user:update_superuser", name="Update superuser flag", permission_type="ACTION", parent_code="iam:user"),
 
     PermissionSpec(code="iam:grant", name="IAM Grant", permission_type="MENU"),
     PermissionSpec(code="iam:grant:user_role:bind", name="Bind user role", permission_type="ACTION", parent_code="iam:grant"),
@@ -68,6 +70,7 @@ IAM_BUILTIN_PERMISSIONS: tuple[PermissionSpec, ...] = (
 
     PermissionSpec(code="iam:auth", name="IAM Auth", permission_type="MENU"),
     PermissionSpec(code="iam:auth:current_user", name="Get current user", permission_type="ACTION", parent_code="iam:auth"),
+    PermissionSpec(code="iam:auth:logout", name="Logout current user", permission_type="ACTION", parent_code="iam:auth"),
     PermissionSpec(code="iam:auth:profile", name="Get auth profile", permission_type="ACTION", parent_code="iam:auth"),
     PermissionSpec(code="iam:auth:permissions", name="Get auth permissions", permission_type="ACTION", parent_code="iam:auth"),
     PermissionSpec(code="iam:auth:menus", name="Get auth menus", permission_type="ACTION", parent_code="iam:auth"),
@@ -76,6 +79,42 @@ IAM_BUILTIN_PERMISSIONS: tuple[PermissionSpec, ...] = (
     PermissionSpec(code="iam:session", name="IAM Session", permission_type="MENU"),
     PermissionSpec(code="iam:session:list", name="List current user sessions", permission_type="ACTION", parent_code="iam:session"),
     PermissionSpec(code="iam:session:revoke", name="Revoke current user session", permission_type="ACTION", parent_code="iam:session"),
+
+    PermissionSpec(code="iam:resource", name="IAM Resource", permission_type="MENU"),
+    PermissionSpec(code="iam:resource:register", name="Register resource", permission_type="ACTION", parent_code="iam:resource"),
+    PermissionSpec(code="iam:resource:action:register", name="Register resource action", permission_type="ACTION", parent_code="iam:resource"),
+    PermissionSpec(code="iam:resource:list", name="List resources", permission_type="ACTION", parent_code="iam:resource"),
+
+    PermissionSpec(code="iam:acl", name="IAM Resource ACL", permission_type="MENU"),
+    PermissionSpec(code="iam:acl:grant", name="Grant resource ACL", permission_type="ACTION", parent_code="iam:acl"),
+    PermissionSpec(code="iam:acl:revoke", name="Revoke resource ACL", permission_type="ACTION", parent_code="iam:acl"),
+    PermissionSpec(code="iam:acl:list", name="List resource ACL", permission_type="ACTION", parent_code="iam:acl"),
+
+    PermissionSpec(code="iam:authorize", name="IAM Authorize", permission_type="MENU"),
+    PermissionSpec(code="iam:authorize:check", name="Authorize check", permission_type="ACTION", parent_code="iam:authorize"),
+    PermissionSpec(code="iam:authorize:batch_check", name="Authorize batch check", permission_type="ACTION", parent_code="iam:authorize"),
+
+    PermissionSpec(code="iam:policy", name="IAM Policy", permission_type="MENU"),
+    PermissionSpec(code="iam:policy:create", name="Create policy", permission_type="ACTION", parent_code="iam:policy"),
+    PermissionSpec(code="iam:policy:update", name="Update policy", permission_type="ACTION", parent_code="iam:policy"),
+    PermissionSpec(code="iam:policy:publish", name="Publish policy", permission_type="ACTION", parent_code="iam:policy"),
+    PermissionSpec(code="iam:policy:disable", name="Disable policy", permission_type="ACTION", parent_code="iam:policy"),
+    PermissionSpec(code="iam:policy:rule:add", name="Add policy rule", permission_type="ACTION", parent_code="iam:policy"),
+    PermissionSpec(code="iam:policy:rule:remove", name="Remove policy rule", permission_type="ACTION", parent_code="iam:policy"),
+    PermissionSpec(code="iam:policy:rule:list", name="List policy rules", permission_type="ACTION", parent_code="iam:policy"),
+
+    PermissionSpec(code="iam:audit", name="IAM Audit", permission_type="MENU"),
+    PermissionSpec(code="iam:audit:decision:list", name="List decision audit logs", permission_type="ACTION", parent_code="iam:audit"),
+
+    # Disabled examples used to align cross-module action taxonomy.
+    PermissionSpec(code="example:platform_resource", name="Example platform resource", permission_type="MENU", status=0),
+    PermissionSpec(code="example:platform_resource:read", name="Example action read", permission_type="ACTION", parent_code="example:platform_resource", status=0),
+    PermissionSpec(code="example:platform_resource:write", name="Example action write", permission_type="ACTION", parent_code="example:platform_resource", status=0),
+    PermissionSpec(code="example:platform_resource:delete", name="Example action delete", permission_type="ACTION", parent_code="example:platform_resource", status=0),
+    PermissionSpec(code="example:platform_resource:manage", name="Example action manage", permission_type="ACTION", parent_code="example:platform_resource", status=0),
+    PermissionSpec(code="example:platform_resource:execute", name="Example action execute", permission_type="ACTION", parent_code="example:platform_resource", status=0),
+    PermissionSpec(code="example:platform_resource:approve", name="Example action approve", permission_type="ACTION", parent_code="example:platform_resource", status=0),
+    PermissionSpec(code="example:platform_resource:share", name="Example action share", permission_type="ACTION", parent_code="example:platform_resource", status=0),
 )
 
 

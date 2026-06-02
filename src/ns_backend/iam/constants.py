@@ -10,37 +10,101 @@ INFRA_IAM_DOMAIN = "iam"
 
 DATA_SCOPE_SELF = "SELF"
 DATA_SCOPE_DEPARTMENT = "DEPARTMENT"
-DATA_SCOPE_DEPARTMENT_TREE = "DEPARTMENT_TREE"
+DATA_SCOPE_DEPARTMENT_AND_CHILDREN = "DEPARTMENT_AND_CHILDREN"
+DATA_SCOPE_ORGANIZATION = "ORGANIZATION"
 DATA_SCOPE_SUBSIDIARY = "SUBSIDIARY"
-DATA_SCOPE_COMPANY = "COMPANY"
 DATA_SCOPE_ALL = "ALL"
+
+# Legacy aliases kept for backward compatibility with stored grant values.
+DATA_SCOPE_DEPARTMENT_TREE = "DEPARTMENT_TREE"
+DATA_SCOPE_COMPANY = "COMPANY"
+
+DATA_SCOPE_ALIAS_TO_CANONICAL = {
+    DATA_SCOPE_SELF: DATA_SCOPE_SELF,
+    DATA_SCOPE_DEPARTMENT: DATA_SCOPE_DEPARTMENT,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN: DATA_SCOPE_DEPARTMENT_AND_CHILDREN,
+    DATA_SCOPE_ORGANIZATION: DATA_SCOPE_ORGANIZATION,
+    DATA_SCOPE_SUBSIDIARY: DATA_SCOPE_SUBSIDIARY,
+    DATA_SCOPE_ALL: DATA_SCOPE_ALL,
+    DATA_SCOPE_DEPARTMENT_TREE: DATA_SCOPE_DEPARTMENT_AND_CHILDREN,
+    DATA_SCOPE_COMPANY: DATA_SCOPE_ORGANIZATION,
+}
+
+DATA_SCOPE_CANONICAL_TO_STORAGE = {
+    DATA_SCOPE_SELF: DATA_SCOPE_SELF,
+    DATA_SCOPE_DEPARTMENT: DATA_SCOPE_DEPARTMENT,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN: DATA_SCOPE_DEPARTMENT_TREE,
+    DATA_SCOPE_ORGANIZATION: DATA_SCOPE_COMPANY,
+    DATA_SCOPE_SUBSIDIARY: DATA_SCOPE_SUBSIDIARY,
+    DATA_SCOPE_ALL: DATA_SCOPE_ALL,
+}
+
+DATA_SCOPE_CANONICAL_VALUES = (
+    DATA_SCOPE_SELF,
+    DATA_SCOPE_DEPARTMENT,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN,
+    DATA_SCOPE_ORGANIZATION,
+    DATA_SCOPE_SUBSIDIARY,
+    DATA_SCOPE_ALL,
+)
 
 DATA_SCOPE_VALUES = (
     DATA_SCOPE_SELF,
     DATA_SCOPE_DEPARTMENT,
-    DATA_SCOPE_DEPARTMENT_TREE,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN,
+    DATA_SCOPE_ORGANIZATION,
     DATA_SCOPE_SUBSIDIARY,
+    DATA_SCOPE_ALL,
+    DATA_SCOPE_DEPARTMENT_TREE,
     DATA_SCOPE_COMPANY,
-    DATA_SCOPE_ALL
 )
 
 DATA_SCOPE_CHOICES = (
     (DATA_SCOPE_SELF, "Self"),
     (DATA_SCOPE_DEPARTMENT, "Department"),
-    (DATA_SCOPE_DEPARTMENT_TREE, "Department and child departments"),
+    (DATA_SCOPE_DEPARTMENT_AND_CHILDREN, "Department and child departments"),
+    (DATA_SCOPE_ORGANIZATION, "Organization"),
     (DATA_SCOPE_SUBSIDIARY, "Subsidiary"),
-    (DATA_SCOPE_COMPANY, "Company"),
-    (DATA_SCOPE_ALL, "All")
+    (DATA_SCOPE_ALL, "All"),
+    (DATA_SCOPE_DEPARTMENT_TREE, "Department and child departments"),
+    (DATA_SCOPE_COMPANY, "Organization"),
 )
 
 DATA_SCOPE_LEVELS = {
     DATA_SCOPE_SELF: 10,
     DATA_SCOPE_DEPARTMENT: 20,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN: 30,
     DATA_SCOPE_DEPARTMENT_TREE: 30,
     DATA_SCOPE_SUBSIDIARY: 40,
+    DATA_SCOPE_ORGANIZATION: 50,
     DATA_SCOPE_COMPANY: 50,
-    DATA_SCOPE_ALL: 60
+    DATA_SCOPE_ALL: 60,
 }
+
+
+def normalize_data_scope(scope: str | None) -> str | None:
+    """Normalize legacy and canonical data-scope values to canonical names."""
+    if not isinstance(scope, str):
+        return None
+
+    normalized_scope = scope.strip().upper()
+    if not normalized_scope:
+        return None
+
+    return DATA_SCOPE_ALIAS_TO_CANONICAL.get(normalized_scope)
+
+
+def is_data_scope_value(scope: str | None) -> bool:
+    """Return whether one data-scope value is supported by IAM."""
+    return normalize_data_scope(scope) is not None
+
+
+def to_storage_data_scope(scope: str | None) -> str | None:
+    """Convert input scope to legacy storage value accepted by current grant tables."""
+    normalized_scope = normalize_data_scope(scope)
+    if not normalized_scope:
+        return None
+    return DATA_SCOPE_CANONICAL_TO_STORAGE.get(normalized_scope)
 
 USER_TYPE_PERSONAL = "PERSONAL"
 USER_TYPE_ENTERPRISE = "ENTERPRISE"

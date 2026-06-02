@@ -31,6 +31,54 @@ class PermissionSyncService:
     MAX_DEPENDENCY_ROUNDS = 20
     ALLOWED_PERMISSION_TYPES = {"MENU", "ACTION", "DATA"}
     ALLOWED_STATUS_VALUES = {0, 1}
+    ALLOWED_ACTION_CODES = {
+        "add",
+        "approve",
+        "batch_check",
+        "bind",
+        "check",
+        "create",
+        "current_user",
+        "data_scopes",
+        "delete",
+        "detail",
+        "disable",
+        "execute",
+        "grant",
+        "list",
+        "login",
+        "logout",
+        "manage",
+        "menus",
+        "permissions",
+        "profile",
+        "publish",
+        "read",
+        "refresh",
+        "register",
+        "remove",
+        "reset_password",
+        "revoke",
+        "share",
+        "sync",
+        "unbind",
+        "update",
+        "update_staff",
+        "update_superuser",
+        "write",
+    }
+
+    @classmethod
+    def parse_action_code(cls, permission_code: str) -> str | None:
+        """Extract action segment from permission code using module:resource:action shape."""
+        segments = [segment.strip() for segment in permission_code.split(":")]
+        if len(segments) < 3:
+            return None
+
+        if any(not segment for segment in segments):
+            return None
+
+        return segments[-1].lower()
 
     @classmethod
     async def sync_builtin_permissions(cls, operator_id: int | None = None) -> dict[str, int]:
@@ -82,6 +130,14 @@ class PermissionSyncService:
             if code_value in seen_codes:
                 raise BusinessError(f"Duplicate permission code: {spec.code}", NsErrorCode.PERMISSION_CODE_DUPLICATED)
             seen_codes.add(code_value)
+
+            if spec.permission_type == "ACTION":
+                action_code = cls.parse_action_code(code_value)
+                if action_code is None:
+                    raise BusinessError(f"Invalid action permission code format: {spec.code}", NsErrorCode.PERMISSION_CODE_FORMAT_INVALID)
+
+                if action_code not in cls.ALLOWED_ACTION_CODES:
+                    raise BusinessError(f"Invalid permission action: {action_code}", NsErrorCode.PERMISSION_ACTION_INVALID)
 
             if spec.parent_code is None:
                 continue

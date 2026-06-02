@@ -3,6 +3,7 @@
     "secret_key": "change-me-secret-key-at-least-32-chars",
     "jwt_secret_key": "change-me-jwt-secret-key-at-least-32-chars",
     "debug": true,
+    "iam_decision_audit_strict_mode": false,
     "allowed_hosts": [
       "127.0.0.1",
       "localhost"

@@ -116,6 +116,122 @@ class IamPermission(models.Model):
         db_table = "iam_permission"
 
 
+class IamResource(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    resource_type = models.CharField(max_length=128, unique=True)
+    resource_name = models.CharField(max_length=128)
+    module_code = models.CharField(max_length=64)
+    status = models.SmallIntegerField(default=1)
+    created_by = models.BigIntegerField(null=True, blank=True)
+    updated_by = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "iam_resource"
+
+
+class IamResourceAction(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    resource = models.ForeignKey(IamResource, on_delete=models.DO_NOTHING, db_column="resource_id", related_name="actions")
+    action_code = models.CharField(max_length=64)
+    action_name = models.CharField(max_length=128)
+    status = models.SmallIntegerField(default=1)
+    created_by = models.BigIntegerField(null=True, blank=True)
+    updated_by = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "iam_resource_action"
+        unique_together = (("resource", "action_code"),)
+
+
+class IamResourceAcl(models.Model):
+    SUBJECT_USER = "USER"
+    SUBJECT_ROLE = "ROLE"
+    SUBJECT_DEPARTMENT = "DEPARTMENT"
+    SUBJECT_ORGANIZATION = "ORGANIZATION"
+    SUBJECT_SUBSIDIARY = "SUBSIDIARY"
+
+    SUBJECT_TYPE_CHOICES = (
+        (SUBJECT_USER, "User"),
+        (SUBJECT_ROLE, "Role"),
+        (SUBJECT_DEPARTMENT, "Department"),
+        (SUBJECT_ORGANIZATION, "Organization"),
+        (SUBJECT_SUBSIDIARY, "Subsidiary"),
+    )
+
+    EFFECT_ALLOW = "ALLOW"
+    EFFECT_DENY = "DENY"
+    EFFECT_CHOICES = ((EFFECT_ALLOW, "Allow"), (EFFECT_DENY, "Deny"))
+
+    id = models.BigAutoField(primary_key=True)
+    subject_type = models.CharField(max_length=32, choices=SUBJECT_TYPE_CHOICES)
+    subject_id = models.BigIntegerField()
+    resource_type = models.CharField(max_length=128)
+    resource_id = models.CharField(max_length=128)
+    action_code = models.CharField(max_length=64)
+    effect = models.CharField(max_length=16, choices=EFFECT_CHOICES, default=EFFECT_ALLOW)
+    data_scope = models.CharField(max_length=32, choices=DATA_SCOPE_CHOICES, null=True, blank=True)
+    expired_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.BigIntegerField(null=True, blank=True)
+    updated_by = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "iam_resource_acl"
+        unique_together = (("subject_type", "subject_id", "resource_type", "resource_id", "action_code"),)
+
+
+class IamPolicy(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    policy_code = models.CharField(max_length=128, unique=True)
+    policy_name = models.CharField(max_length=128)
+    priority = models.IntegerField(default=0)
+    status = models.SmallIntegerField(default=1)
+    version = models.IntegerField(default=1)
+    created_by = models.BigIntegerField(null=True, blank=True)
+    updated_by = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "iam_policy"
+
+
+class IamPolicyRule(models.Model):
+    EFFECT_ALLOW = "ALLOW"
+    EFFECT_DENY = "DENY"
+    EFFECT_CHOICES = ((EFFECT_ALLOW, "Allow"), (EFFECT_DENY, "Deny"))
+
+    id = models.BigAutoField(primary_key=True)
+    policy = models.ForeignKey(IamPolicy, on_delete=models.DO_NOTHING, db_column="policy_id", related_name="rules")
+    subject_type = models.CharField(max_length=32, null=True, blank=True)
+    subject_id = models.BigIntegerField(null=True, blank=True)
+    resource_type = models.CharField(max_length=128, null=True, blank=True)
+    resource_id = models.CharField(max_length=128, null=True, blank=True)
+    action_code = models.CharField(max_length=64)
+    effect = models.CharField(max_length=16, choices=EFFECT_CHOICES)
+    data_scope = models.CharField(max_length=32, choices=DATA_SCOPE_CHOICES, null=True, blank=True)
+    condition_json = models.JSONField(null=True, blank=True)
+    priority = models.IntegerField(default=0)
+    status = models.SmallIntegerField(default=1)
+    created_by = models.BigIntegerField(null=True, blank=True)
+    updated_by = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "iam_policy_rule"
+
+
 class IamRole(models.Model):
     SCOPE_PERSONAL = "PERSONAL"
     SCOPE_ENTERPRISE = "ENTERPRISE"
@@ -345,3 +461,28 @@ class IamOperationAudit(models.Model):
     class Meta:
         managed = False
         db_table = "iam_operation_audit"
+
+
+class IamAuditLog(models.Model):
+    RESULT_ALLOW = "ALLOW"
+    RESULT_DENY = "DENY"
+    RESULT_CHOICES = ((RESULT_ALLOW, "Allow"), (RESULT_DENY, "Deny"))
+
+    id = models.BigAutoField(primary_key=True)
+    operator = models.ForeignKey(IamUser, on_delete=models.DO_NOTHING, db_column="operator_id", null=True, blank=True, related_name="decision_audits")
+    subject_type = models.CharField(max_length=32)
+    subject_id = models.BigIntegerField()
+    resource_type = models.CharField(max_length=128)
+    resource_id = models.CharField(max_length=128)
+    action_code = models.CharField(max_length=64)
+    result = models.CharField(max_length=16, choices=RESULT_CHOICES)
+    reason = models.CharField(max_length=512)
+    matched_policy_id = models.BigIntegerField(null=True, blank=True)
+    matched_rule_id = models.BigIntegerField(null=True, blank=True)
+    trace_id = models.CharField(max_length=64, null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "iam_audit_log"
+

@@ -4,15 +4,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ns_backend.backend.common.validators import AuthRequestValidator
-from ns_backend.backend.common.viewset import BaseRequestViewSet
-from ns_backend.iam import AuditRequestMixin
 from ns_backend.iam.services import AuthContextService, AuthService
+from ns_backend.iam.views import IamRequestViewSet
 
 if TYPE_CHECKING:
     pass
 
 
-class AuthViewSet(AuditRequestMixin, BaseRequestViewSet):
+class AuthViewSet(IamRequestViewSet):
     audit_resource_type = "iam_auth"
 
     async def login(self, request, *args, **kwargs):

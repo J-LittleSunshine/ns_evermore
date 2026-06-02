@@ -5,7 +5,15 @@ from typing import TYPE_CHECKING, Any
 
 from django.utils import timezone
 
-from ns_backend.iam.constants import USER_TYPE_ENTERPRISE, USER_TYPE_PERSONAL, DATA_SCOPE_DEPARTMENT_TREE, PERMISSION_EFFECT_DENY, ROLE_SCOPE_PERSONAL, ROLE_SCOPE_ENTERPRISE
+from ns_backend.iam.constants import (
+    USER_TYPE_ENTERPRISE,
+    USER_TYPE_PERSONAL,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN,
+    PERMISSION_EFFECT_DENY,
+    ROLE_SCOPE_PERSONAL,
+    ROLE_SCOPE_ENTERPRISE,
+    normalize_data_scope,
+)
 from ns_backend.iam.policies import DataScopePolicy
 from ns_backend.iam.repositories import DataScopeRepository
 from ns_backend.iam.schemas import DataScopeFieldMap, DataScopeFilterPlan, DataScopeResult
@@ -114,7 +122,7 @@ class DataScopeService:
         if not scope:
             return DataScopePolicy.denied_result()
 
-        if scope == DATA_SCOPE_DEPARTMENT_TREE:
+        if normalize_data_scope(scope) == DATA_SCOPE_DEPARTMENT_AND_CHILDREN:
             department_ids = await cls._get_descendant_department_ids(company_id=company_id, department_id=department_id)
             return DataScopePolicy.build_result_for_user(user=user, scope=scope, department_ids=department_ids)
 

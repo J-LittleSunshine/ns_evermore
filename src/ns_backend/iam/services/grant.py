@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ns_backend.backend.exceptions import BusinessError
+from ns_backend.iam.constants import to_storage_data_scope
 from ns_backend.iam.errors import IamDomainError
 from ns_backend.iam.policies import DataScopePolicy, GrantPolicy
 from ns_backend.iam.repositories import (
@@ -43,6 +44,11 @@ def _to_positive_int(value: Any, field_name: str) -> int:
 def _raise_business_from_domain_error(exc: IamDomainError) -> None:
     """Convert IAM domain error to BusinessError."""
     raise BusinessError(exc.message, exc.code, exc.data) from exc
+
+
+def _normalize_data_scope_for_storage(data_scope: str | None) -> str | None:
+    """Convert canonical data-scope values to storage-compatible aliases."""
+    return to_storage_data_scope(data_scope)
 
 
 class UserRoleGrantService:
@@ -96,7 +102,7 @@ class RolePermissionGrantService:
         validated_data = RolePermissionValidator.validate_create(data)
         role_id = _to_positive_int(validated_data.get("role_id"), "role_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
-        data_scope = validated_data.get("data_scope")
+        data_scope = _normalize_data_scope_for_storage(validated_data.get("data_scope"))
 
         if operator is not None:
             await GrantPolicy.ensure_can_operate_role(role_id=role_id, operator=operator)
@@ -153,7 +159,7 @@ class UserPermissionGrantService:
         user_id = _to_positive_int(validated_data.get("user_id"), "user_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
         effect = validated_data.get("effect")
-        data_scope = validated_data.get("data_scope")
+        data_scope = _normalize_data_scope_for_storage(validated_data.get("data_scope"))
 
         if operator is not None:
             await GrantPolicy.ensure_can_operate_user(user_id=user_id, operator=operator)
@@ -212,7 +218,7 @@ class DepartmentPermissionGrantService:
         department_id = _to_positive_int(validated_data.get("department_id"), "department_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
         effect = validated_data.get("effect")
-        data_scope = validated_data.get("data_scope")
+        data_scope = _normalize_data_scope_for_storage(validated_data.get("data_scope"))
 
         if operator is not None:
             await GrantPolicy.ensure_can_operate_department(department_id=department_id, operator=operator)
@@ -271,7 +277,7 @@ class SubsidiaryPermissionGrantService:
         subsidiary_id = _to_positive_int(validated_data.get("subsidiary_id"), "subsidiary_id")
         permission_id = _to_positive_int(validated_data.get("permission_id"), "permission_id")
         effect = validated_data.get("effect")
-        data_scope = validated_data.get("data_scope")
+        data_scope = _normalize_data_scope_for_storage(validated_data.get("data_scope"))
 
         if operator is not None:
             await GrantPolicy.ensure_can_operate_subsidiary(subsidiary_id=subsidiary_id, operator=operator)

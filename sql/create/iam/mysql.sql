@@ -402,6 +402,181 @@ CREATE TABLE iam_subsidiary_permission
   DEFAULT CHARSET = utf8mb4 COMMENT ='子公司权限表';
 
 
+CREATE TABLE iam_resource
+(
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '资源ID',
+    resource_type VARCHAR(128) NOT NULL COMMENT '资源类型编码',
+    resource_name VARCHAR(128) NOT NULL COMMENT '资源名称',
+    module_code VARCHAR(64) NOT NULL COMMENT '所属模块编码',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '状态',
+    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+
+    UNIQUE KEY uk_resource_type (resource_type),
+    KEY idx_resource_module_code (module_code),
+    KEY idx_resource_status (status),
+    KEY idx_resource_created_by (created_by),
+    KEY idx_resource_updated_by (updated_by),
+
+    CONSTRAINT chk_resource_status
+        CHECK (status IN (0, 1))
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='资源注册表';
+
+
+CREATE TABLE iam_resource_action
+(
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '资源动作ID',
+    resource_id BIGINT UNSIGNED NOT NULL COMMENT '资源ID',
+    action_code VARCHAR(64) NOT NULL COMMENT '动作编码',
+    action_name VARCHAR(128) NOT NULL COMMENT '动作名称',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '状态',
+    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+
+    UNIQUE KEY uk_resource_action_unique (resource_id, action_code),
+    KEY idx_resource_action_code (action_code),
+    KEY idx_resource_action_status (status),
+    KEY idx_resource_action_created_by (created_by),
+    KEY idx_resource_action_updated_by (updated_by),
+
+    CONSTRAINT fk_resource_action_resource
+        FOREIGN KEY (resource_id) REFERENCES iam_resource (id),
+
+    CONSTRAINT chk_resource_action_status
+        CHECK (status IN (0, 1))
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='资源动作注册表';
+
+
+CREATE TABLE iam_resource_acl
+(
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT 'ACL记录ID',
+    subject_type VARCHAR(32) NOT NULL COMMENT '主体类型',
+    subject_id BIGINT UNSIGNED NOT NULL COMMENT '主体ID',
+    resource_type VARCHAR(128) NOT NULL COMMENT '资源类型',
+    resource_id VARCHAR(128) NOT NULL COMMENT '资源实例ID',
+    action_code VARCHAR(64) NOT NULL COMMENT '动作编码',
+    effect VARCHAR(16) NOT NULL DEFAULT 'ALLOW' COMMENT '授权效果',
+    data_scope VARCHAR(32) NULL COMMENT '数据范围',
+    expired_at DATETIME NULL COMMENT '过期时间',
+    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+
+    UNIQUE KEY uk_resource_acl_unique (subject_type, subject_id, resource_type, resource_id, action_code),
+    KEY idx_resource_acl_resource_action (resource_type, resource_id, action_code),
+    KEY idx_resource_acl_subject (subject_type, subject_id),
+    KEY idx_resource_acl_effect (effect),
+    KEY idx_resource_acl_expired_at (expired_at),
+
+    CONSTRAINT chk_resource_acl_subject_type
+        CHECK (subject_type IN ('USER', 'ROLE', 'DEPARTMENT', 'ORGANIZATION', 'SUBSIDIARY')),
+
+    CONSTRAINT chk_resource_acl_effect
+        CHECK (effect IN ('ALLOW', 'DENY')),
+
+    CONSTRAINT chk_resource_acl_data_scope
+        CHECK (
+            data_scope IS NULL
+                OR data_scope IN (
+                    'SELF',
+                    'DEPARTMENT',
+                    'DEPARTMENT_TREE',
+                    'DEPARTMENT_AND_CHILDREN',
+                    'SUBSIDIARY',
+                    'COMPANY',
+                    'ORGANIZATION',
+                    'ALL'
+                )
+            )
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='资源实例ACL表';
+
+
+CREATE TABLE iam_policy
+(
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '策略ID',
+    policy_code VARCHAR(128) NOT NULL COMMENT '策略编码',
+    policy_name VARCHAR(128) NOT NULL COMMENT '策略名称',
+    priority INT NOT NULL DEFAULT 0 COMMENT '策略优先级',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '状态',
+    version INT NOT NULL DEFAULT 1 COMMENT '版本号',
+    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+
+    UNIQUE KEY uk_policy_code (policy_code),
+    KEY idx_policy_status_priority (status, priority),
+
+    CONSTRAINT chk_policy_status
+        CHECK (status IN (0, 1))
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='策略主表';
+
+
+CREATE TABLE iam_policy_rule
+(
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '策略规则ID',
+    policy_id BIGINT UNSIGNED NOT NULL COMMENT '策略ID',
+    subject_type VARCHAR(32) NULL COMMENT '主体类型',
+    subject_id BIGINT UNSIGNED NULL COMMENT '主体ID',
+    resource_type VARCHAR(128) NULL COMMENT '资源类型',
+    resource_id VARCHAR(128) NULL COMMENT '资源ID',
+    action_code VARCHAR(64) NOT NULL COMMENT '动作编码',
+    effect VARCHAR(16) NOT NULL COMMENT '策略效果',
+    data_scope VARCHAR(32) NULL COMMENT '数据范围',
+    condition_json JSON NULL COMMENT '动态条件JSON',
+    priority INT NOT NULL DEFAULT 0 COMMENT '规则优先级',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '状态',
+    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+
+    KEY idx_policy_rule_policy (policy_id),
+    KEY idx_policy_rule_status_priority (status, priority),
+    KEY idx_policy_rule_subject_resource_action (subject_type, subject_id, resource_type, resource_id, action_code),
+
+    CONSTRAINT fk_policy_rule_policy
+        FOREIGN KEY (policy_id) REFERENCES iam_policy (id),
+
+    CONSTRAINT chk_policy_rule_subject_type
+        CHECK (
+            subject_type IS NULL
+                OR subject_type IN ('USER', 'ROLE', 'DEPARTMENT', 'ORGANIZATION', 'SUBSIDIARY')
+            ),
+
+    CONSTRAINT chk_policy_rule_effect
+        CHECK (effect IN ('ALLOW', 'DENY')),
+
+    CONSTRAINT chk_policy_rule_data_scope
+        CHECK (
+            data_scope IS NULL
+                OR data_scope IN (
+                    'SELF',
+                    'DEPARTMENT',
+                    'DEPARTMENT_TREE',
+                    'DEPARTMENT_AND_CHILDREN',
+                    'SUBSIDIARY',
+                    'COMPANY',
+                    'ORGANIZATION',
+                    'ALL'
+                )
+            ),
+
+    CONSTRAINT chk_policy_rule_status
+        CHECK (status IN (0, 1))
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='策略规则表';
+
+
 CREATE TABLE iam_login_failure_lock
 (
     id              BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT 'ID',
@@ -465,6 +640,40 @@ CREATE TABLE iam_operation_audit
         CHECK (status IN ('SUCCESS', 'FAILED'))
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='操作审计表';
+
+
+CREATE TABLE iam_audit_log
+(
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '决策审计ID',
+    operator_id BIGINT UNSIGNED NULL COMMENT '操作人ID',
+    subject_type VARCHAR(32) NOT NULL COMMENT '主体类型',
+    subject_id BIGINT UNSIGNED NOT NULL COMMENT '主体ID',
+    resource_type VARCHAR(128) NOT NULL COMMENT '资源类型',
+    resource_id VARCHAR(128) NOT NULL COMMENT '资源ID',
+    action_code VARCHAR(64) NOT NULL COMMENT '动作编码',
+    result VARCHAR(16) NOT NULL COMMENT '判定结果',
+    reason VARCHAR(512) NOT NULL COMMENT '判定原因',
+    matched_policy_id BIGINT UNSIGNED NULL COMMENT '命中策略ID',
+    matched_rule_id BIGINT UNSIGNED NULL COMMENT '命中规则ID',
+    trace_id VARCHAR(64) NULL COMMENT '链路追踪ID',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+
+    KEY idx_decision_audit_subject (subject_type, subject_id),
+    KEY idx_decision_audit_resource_action (resource_type, resource_id, action_code),
+    KEY idx_decision_audit_result (result),
+    KEY idx_decision_audit_trace_id (trace_id),
+    KEY idx_decision_audit_created_at (created_at),
+
+    CONSTRAINT fk_decision_audit_operator
+        FOREIGN KEY (operator_id) REFERENCES iam_user (id),
+
+    CONSTRAINT chk_decision_audit_subject_type
+        CHECK (subject_type IN ('USER', 'ROLE', 'DEPARTMENT', 'ORGANIZATION', 'SUBSIDIARY')),
+
+    CONSTRAINT chk_decision_audit_result
+        CHECK (result IN ('ALLOW', 'DENY'))
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='授权决策审计表';
 
 
 CREATE TABLE iam_user_device

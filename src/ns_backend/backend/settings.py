@@ -138,6 +138,11 @@ IAM_AUDIT_EXTRA_SENSITIVE_KEYS = _merge_string_tuples(
     os.getenv("IAM_AUDIT_EXTRA_SENSITIVE_KEYS"),
 )
 
+IAM_DECISION_AUDIT_STRICT_MODE = _coerce_bool(
+    os.getenv("NS_IAM_DECISION_AUDIT_STRICT_MODE") or os.getenv("IAM_DECISION_AUDIT_STRICT_MODE"),
+    _coerce_bool(getattr(_BACKEND, "iam_decision_audit_strict_mode", False), False),
+)
+
 IAM_PERMISSION_PROVIDERS = _merge_string_tuples(
     _BACKEND.iam_permission_providers,
     os.getenv("NS_IAM_PERMISSION_PROVIDERS"),

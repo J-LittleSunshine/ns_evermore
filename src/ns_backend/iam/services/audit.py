@@ -24,6 +24,52 @@ class AuditService:
     4. Delegate persistence to AuditRepository.
     """
 
+    DECISION_REASON_KEY = "decision_reason"
+    MATCHED_PERMISSION_CODE_KEY = "matched_permission_code"
+    DECISION_SOURCE_KEY = "decision_source"
+
+    @classmethod
+    def normalize_decision_extra_data(
+        cls,
+        *,
+        extra_data: dict[str, Any] | None,
+        status: str,
+        error_code: int | None,
+        error_message: str | None,
+    ) -> dict[str, Any] | None:
+        """Ensure audit extra_data always carries normalized decision fields."""
+        if extra_data is None:
+            normalized_data: dict[str, Any] = {}
+        else:
+            normalized_data = dict(extra_data)
+
+        decision_source = normalized_data.get(cls.DECISION_SOURCE_KEY)
+        if decision_source is None or str(decision_source).strip() == "":
+            normalized_data[cls.DECISION_SOURCE_KEY] = "none"
+        else:
+            normalized_data[cls.DECISION_SOURCE_KEY] = str(decision_source).strip()
+
+        matched_permission_code = normalized_data.get(cls.MATCHED_PERMISSION_CODE_KEY)
+        normalized_data[cls.MATCHED_PERMISSION_CODE_KEY] = None if not matched_permission_code else str(matched_permission_code).strip()
+
+        decision_reason = normalized_data.get(cls.DECISION_REASON_KEY)
+        if decision_reason is None or str(decision_reason).strip() == "":
+            if status == "FAILED":
+                if error_code is not None and error_message:
+                    normalized_data[cls.DECISION_REASON_KEY] = f"REQUEST_FAILED_{error_code}: {error_message}"
+                elif error_code is not None:
+                    normalized_data[cls.DECISION_REASON_KEY] = f"REQUEST_FAILED_{error_code}"
+                elif error_message:
+                    normalized_data[cls.DECISION_REASON_KEY] = f"REQUEST_FAILED: {error_message}"
+                else:
+                    normalized_data[cls.DECISION_REASON_KEY] = "REQUEST_FAILED"
+            else:
+                normalized_data[cls.DECISION_REASON_KEY] = "REQUEST_ALLOWED"
+        else:
+            normalized_data[cls.DECISION_REASON_KEY] = str(decision_reason).strip()
+
+        return normalized_data
+
     @classmethod
     async def record_event(cls, event: AuditEvent) -> dict[str, int]:
         """Normalize and persist one audit event."""
@@ -84,6 +130,12 @@ class AuditService:
         client_ip = cls.get_client_ip(request_meta=request_meta, headers=headers)
         trace_id = cls.get_trace_id(headers=headers)
         user_agent = request_meta.get("HTTP_USER_AGENT") or headers.get("User-Agent")
+        normalized_extra_data = cls.normalize_decision_extra_data(
+            extra_data=extra_data,
+            status=status,
+            error_code=error_code,
+            error_message=error_message,
+        )
 
         return AuditEvent(
             operation_type=operation_type,
@@ -98,7 +150,7 @@ class AuditService:
             request_data=request_data,
             before_data=before_data,
             after_data=after_data,
-            extra_data=extra_data,
+            extra_data=normalized_extra_data,
             status=status,
             error_code=error_code,
             error_message=error_message,

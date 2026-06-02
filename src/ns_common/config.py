@@ -73,6 +73,7 @@ class _NsBackendConfig:
     # Audit and proxy settings aligned with backup backend.
     extra_sensitive_keys: list[str] = field(default_factory=list)
     audit_extra_sensitive_keys: list[str] = field(default_factory=list)
+    iam_decision_audit_strict_mode: bool = False
     trust_x_forwarded_for: bool = False
 
     # Permission provider settings aligned with backup backend.
