@@ -275,7 +275,7 @@ def _build_ns_common_cache_entry(*, location: str, key_prefix: str, timeout_seco
         options["ns_backend"] = backend
 
     return {
-        "BACKEND": "ns_common.cache.NsCacheBackend",
+        "BACKEND": "ns_backend.backend.cache.NsDjangoCacheBackend",
         "LOCATION": location,
         "TIMEOUT": timeout_seconds,
         "KEY_PREFIX": "",

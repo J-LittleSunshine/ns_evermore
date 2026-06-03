@@ -1,17 +1,15 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import hashlib
 import json
 import pickle
 import re
 import sqlite3
 import time
-from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
 from threading import RLock
-from typing import Any, ClassVar, Protocol, TYPE_CHECKING, Literal, cast
+from typing import Any, ClassVar, Protocol, TYPE_CHECKING
 
 from ns_common import DATA_DIR
 from ns_common.config import _NsCacheConfig
@@ -926,7 +924,12 @@ class NsCacheClient:
         return self._backend.delete_many(keys)
 
     def close(self) -> None:
-        """Close cache backend resources."""
+        """Close cache backend resources and remove singleton reference."""
+        with self.__class__._lock:
+            existing_client: NsCacheClient | None = self.__class__._instances.get(self.name)
+            if existing_client is self:
+                self.__class__._instances.pop(self.name, None)
+
         self._backend.close()
 
     @staticmethod
@@ -952,249 +955,3 @@ class NsCacheClient:
         if resolved_backend in {"redis", "valkey"}:
             return _RedisCompatibleCacheBackend(config)
         raise NsCacheConfigurationError(f"unsupported cache backend: {config.backend}")
-
-
-class NsCacheBackend:
-    """Django cache backend adapter for NsCacheClient.
-
-    Django is imported lazily in __init__, so importing ns_common.cache outside Django is safe.
-    """
-
-    def __init__(self, location: str, params: dict[str, Any]) -> None:
-        """Initialize Django cache backend lazily."""
-        try:
-            from django.core.cache.backends.base import BaseCache, DEFAULT_TIMEOUT
-        except ImportError as _error:
-            raise NsCacheConfigurationError("Django is required to use NsDjangoCacheBackend") from _error
-
-        self._django_default_timeout = DEFAULT_TIMEOUT
-        self._base_cache = BaseCache(params)
-
-        options = self._get_options(params)
-        base_config = self._load_config_from_ns_config()
-        config = self._build_config(base_config, location, options)
-        client_name = self._build_client_name(config, options)
-        self._client: NsCacheClient = NsCacheClient(client_name, config)
-
-    def get(self, key: str, default: object | None = None, version: int | None = None) -> object | None:
-        """Get value through NsCacheClient."""
-        cache_key = self.make_and_validate_key(key, version=version)
-        return self._client.get(cache_key, default)
-
-    def set(self, key: str, value: object, timeout: object = _DJANGO_DEFAULT_TIMEOUT, version: int | None = None) -> bool:
-        """Set value through NsCacheClient."""
-        cache_key = self.make_and_validate_key(key, version=version)
-        resolved_timeout = self._resolve_django_timeout(timeout)
-
-        if isinstance(resolved_timeout, int) and resolved_timeout <= 0:
-            self._client.delete(cache_key)
-            return False
-
-        return self._client.set(cache_key, value, resolved_timeout)
-
-    def add(self, key: str, value: object, timeout: object = _DJANGO_DEFAULT_TIMEOUT, version: int | None = None) -> bool:
-        """Add value through NsCacheClient."""
-        cache_key = self.make_and_validate_key(key, version=version)
-        resolved_timeout = self._resolve_django_timeout(timeout)
-
-        if isinstance(resolved_timeout, int) and resolved_timeout <= 0:
-            return False
-
-        return self._client.add(cache_key, value, resolved_timeout)
-
-    def delete(self, key: str, version: int | None = None) -> bool:
-        """Delete value through NsCacheClient."""
-        cache_key = self.make_and_validate_key(key, version=version)
-        return self._client.delete(cache_key)
-
-    def clear(self) -> bool:
-        """Clear cache through NsCacheClient."""
-        return self._client.clear()
-
-    def get_many(self, keys: list[str], version: int | None = None) -> dict[str, object]:
-        """Batch get values."""
-        if not keys:
-            return {}
-
-        cache_key_map: dict[str, str] = {}
-        for key in keys:
-            cache_key_map[self.make_and_validate_key(key, version=version)] = key
-
-        raw_result = self._client.get_many(list(cache_key_map.keys()))
-        result: dict[str, object] = {}
-        for cache_key, value in raw_result.items():
-            original_key = cache_key_map.get(cache_key)
-            if original_key is not None:
-                result[original_key] = value
-
-        return result
-
-    def set_many(self, data: dict[str, object], timeout: object = _DJANGO_DEFAULT_TIMEOUT, version: int | None = None) -> list[str]:
-        """Batch set values."""
-        if not data:
-            return []
-
-        resolved_timeout = self._resolve_django_timeout(timeout)
-
-        cache_key_map: dict[str, str] = {}
-        cache_data: dict[str, object] = {}
-        for key, value in data.items():
-            cache_key = self.make_and_validate_key(key, version=version)
-            cache_key_map[cache_key] = key
-            cache_data[cache_key] = value
-
-        if isinstance(resolved_timeout, int) and resolved_timeout <= 0:
-            self._client.delete_many(list(cache_data.keys()))
-            return list(data.keys())
-
-        failed_cache_keys = self._client.set_many(cache_data, resolved_timeout)
-        return [cache_key_map[cache_key] for cache_key in failed_cache_keys if cache_key in cache_key_map]
-
-    def delete_many(self, keys: list[str], version: int | None = None) -> int:
-        """Batch delete values."""
-        if not keys:
-            return 0
-
-        cache_keys = [self.make_and_validate_key(key, version=version) for key in keys]
-        return self._client.delete_many(cache_keys)
-
-    def has_key(self, key: str, version: int | None = None) -> bool:
-        """Check whether cache key exists."""
-        cache_key = self.make_and_validate_key(key, version=version)
-        return self._client.exists(cache_key)
-
-    def touch(self, key: str, timeout: object = _DJANGO_DEFAULT_TIMEOUT, version: int | None = None) -> bool:
-        """Update cache key timeout."""
-        cache_key = self.make_and_validate_key(key, version=version)
-        resolved_timeout = self._resolve_django_timeout(timeout)
-
-        selected_timeout: int | None
-        if isinstance(resolved_timeout, _DefaultCacheTimeout):
-            selected_timeout = self._client.config.default_timeout_seconds
-        else:
-            selected_timeout = resolved_timeout
-
-        if selected_timeout is None:
-            return self._client.persist(cache_key)
-
-        if selected_timeout <= 0:
-            return self._client.delete(cache_key)
-
-        return self._client.expire(cache_key, selected_timeout)
-
-    def close(self) -> None:
-        """Close Django cache backend."""
-        self._client.close()
-
-    def make_key(self, key: str, version: int | None = None) -> str:
-        """Delegate Django-compatible key generation to BaseCache."""
-        return self._base_cache.make_key(key, version=version)
-
-    def validate_key(self, key: str) -> None:
-        """Delegate Django-compatible key validation to BaseCache."""
-        self._base_cache.validate_key(key)
-
-    def make_and_validate_key(self, key: str, version: int | None = None) -> str:
-        """Delegate Django-compatible key generation and validation to BaseCache."""
-        return self._base_cache.make_and_validate_key(key, version=version)
-
-    def _resolve_django_timeout(self, timeout: object) -> int | None | _DefaultCacheTimeout:
-        """Resolve Django cache timeout semantics."""
-        if timeout is _DJANGO_DEFAULT_TIMEOUT:
-            return NS_CACHE_DEFAULT_TIMEOUT
-
-        if hasattr(self, "_django_default_timeout") and timeout is self._django_default_timeout:
-            return NS_CACHE_DEFAULT_TIMEOUT
-
-        if timeout is None:
-            return None
-
-        if isinstance(timeout, bool):
-            raise NsCacheConfigurationError("django cache timeout must be int or None")
-
-        try:
-            return int(str(timeout))
-        except (TypeError, ValueError) as _error:
-            raise NsCacheConfigurationError("django cache timeout must be int or None") from _error
-
-    def _build_config(self, base_config: _NsCacheConfig, location: str, options: dict[str, Any]) -> _NsCacheConfig:
-        """Build Django cache config from ns_config.cache_config with narrow OPTIONS overrides."""
-        selected_location = str(location or base_config.location or "").strip()
-        selected_key_prefix = self._get_str_option(options, "ns_key_prefix", "NS_KEY_PREFIX", default=base_config.key_prefix)
-        selected_timeout = self._resolve_base_cache_default_timeout(base_config.default_timeout_seconds)
-        selected_backend = cast(
-            Literal["default", "sql_wal", "redis", "valkey"],
-            self._get_str_option(options, "ns_backend", "NS_BACKEND", default=base_config.backend),
-        )
-        selected_serializer = cast(
-            Literal["pickle", "json", "raw"],
-            self._get_str_option(options, "ns_serializer", "NS_SERIALIZER", default=base_config.serializer),
-        )
-
-        return replace(
-            base_config,
-            backend=selected_backend,
-            location=selected_location,
-            key_prefix=selected_key_prefix,
-            default_timeout_seconds=selected_timeout,
-            serializer=selected_serializer,
-        )
-
-    def _resolve_base_cache_default_timeout(self, default: int | None) -> int | None:
-        """Use Django CACHES TIMEOUT as client default timeout."""
-        value = getattr(self._base_cache, "default_timeout", default)
-        if value is None:
-            return None
-        if isinstance(value, bool):
-            raise NsCacheConfigurationError("django cache TIMEOUT must be int or None")
-        try:
-            parsed_value = int(value)
-        except (TypeError, ValueError) as _error:
-            raise NsCacheConfigurationError("django cache TIMEOUT must be int or None") from _error
-        if parsed_value < 0:
-            raise NsCacheConfigurationError("django cache TIMEOUT must be >= 0 or None")
-        return parsed_value
-
-    @classmethod
-    def _build_client_name(cls, config: _NsCacheConfig, options: dict[str, Any]) -> str:
-        """Build stable Django cache client name."""
-        explicit_name = str(options.get("client_name") or options.get("CLIENT_NAME") or "").strip()
-        if explicit_name:
-            return explicit_name
-
-        fingerprint_source = (
-            f"{config.backend}|{config.location}|{config.key_prefix}|{config.serializer}|"
-            f"{config.default_timeout_seconds}|{config.sql_table}|{config.socket_timeout}|"
-            f"{config.socket_connect_timeout}|{config.max_connections}|{config.health_check_interval}"
-        )
-        fingerprint = hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest()[:16]
-        return f"django-cache-{fingerprint}"
-
-    @staticmethod
-    def _load_config_from_ns_config() -> _NsCacheConfig:
-        """Load cache config from ns_config."""
-        from ns_common.config import ns_config
-
-        return ns_config.cache_config
-
-    @staticmethod
-    def _get_options(params: dict[str, Any]) -> dict[str, Any]:
-        """Get Django cache OPTIONS."""
-        raw_options = params.get("OPTIONS", {})
-        if raw_options is None:
-            return {}
-        if not isinstance(raw_options, dict):
-            raise NsCacheConfigurationError("django cache OPTIONS must be a dict")
-        return dict(raw_options)
-
-    @staticmethod
-    def _get_str_option(options: dict[str, Any], *keys: str, default: str) -> str:
-        """Get string option."""
-        for key in keys:
-            value = options.get(key)
-            if value is None:
-                continue
-            text = str(value).strip()
-            if text:
-                return text
-        return str(default or "").strip()
