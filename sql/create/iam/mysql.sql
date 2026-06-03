@@ -172,19 +172,19 @@ CREATE TABLE iam_permission
 
 CREATE TABLE iam_role
 (
-    id         BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '角色ID',
-    role_code  VARCHAR(64)     NOT NULL COMMENT '角色编码',
-    role_name  VARCHAR(128)    NOT NULL COMMENT '角色名称',
-    role_scope VARCHAR(32)     NOT NULL COMMENT '角色范围',
-    company_id BIGINT UNSIGNED NULL COMMENT '所属公司ID',
+    id                    BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '角色ID',
+    role_code             VARCHAR(64)     NOT NULL COMMENT '角色编码',
+    role_name             VARCHAR(128)    NOT NULL COMMENT '角色名称',
+    role_scope            VARCHAR(32)     NOT NULL COMMENT '角色范围',
+    company_id            BIGINT UNSIGNED NULL COMMENT '所属公司ID',
     role_scope_company_id BIGINT UNSIGNED
         GENERATED ALWAYS AS (IFNULL(company_id, 0)) STORED
         COMMENT '角色唯一性作用域公司ID，PERSONAL使用0',
-    status     TINYINT         NOT NULL DEFAULT 1 COMMENT '状态',
-    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
-    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
-    created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    status                TINYINT         NOT NULL DEFAULT 1 COMMENT '状态',
+    created_by            BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by            BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at            DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at            DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
 
     UNIQUE KEY uk_role_scope_company_code (role_scope, role_scope_company_id, role_code),
     KEY idx_role_scope (role_scope),
@@ -404,16 +404,16 @@ CREATE TABLE iam_subsidiary_permission
 
 CREATE TABLE iam_resource
 (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '资源ID',
-    resource_type VARCHAR(128) NOT NULL COMMENT '资源类型编码',
-    resource_name VARCHAR(128) NOT NULL COMMENT '资源名称',
-    module_code VARCHAR(64) NOT NULL COMMENT '所属模块编码',
-    access_mode VARCHAR(32) NOT NULL DEFAULT 'RBAC_DEFAULT_ALLOW' COMMENT '资源访问模式',
-    status TINYINT NOT NULL DEFAULT 1 COMMENT '状态',
-    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
-    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    id            BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '资源ID',
+    resource_type VARCHAR(128)    NOT NULL COMMENT '资源类型编码',
+    resource_name VARCHAR(128)    NOT NULL COMMENT '资源名称',
+    module_code   VARCHAR(64)     NOT NULL COMMENT '所属模块编码',
+    access_mode   VARCHAR(32)     NOT NULL DEFAULT 'RBAC_DEFAULT_ALLOW' COMMENT '资源访问模式',
+    status        TINYINT         NOT NULL DEFAULT 1 COMMENT '状态',
+    created_by    BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by    BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
 
     UNIQUE KEY uk_resource_type (resource_type),
     KEY idx_resource_module_code (module_code),
@@ -430,15 +430,15 @@ CREATE TABLE iam_resource
 
 CREATE TABLE iam_resource_action
 (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '资源动作ID',
+    id          BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '资源动作ID',
     resource_id BIGINT UNSIGNED NOT NULL COMMENT '资源ID',
-    action_code VARCHAR(64) NOT NULL COMMENT '动作编码',
-    action_name VARCHAR(128) NOT NULL COMMENT '动作名称',
-    status TINYINT NOT NULL DEFAULT 1 COMMENT '状态',
-    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
-    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    action_code VARCHAR(64)     NOT NULL COMMENT '动作编码',
+    action_name VARCHAR(128)    NOT NULL COMMENT '动作名称',
+    status      TINYINT         NOT NULL DEFAULT 1 COMMENT '状态',
+    created_by  BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by  BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
 
     UNIQUE KEY uk_resource_action_unique (resource_id, action_code),
     KEY idx_resource_action_code (action_code),
@@ -457,19 +457,19 @@ CREATE TABLE iam_resource_action
 
 CREATE TABLE iam_resource_acl
 (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT 'ACL记录ID',
-    subject_type VARCHAR(32) NOT NULL COMMENT '主体类型',
-    subject_id BIGINT UNSIGNED NOT NULL COMMENT '主体ID',
-    resource_type VARCHAR(128) NOT NULL COMMENT '资源类型',
-    resource_id VARCHAR(128) NOT NULL COMMENT '资源实例ID',
-    action_code VARCHAR(64) NOT NULL COMMENT '动作编码',
-    effect VARCHAR(16) NOT NULL DEFAULT 'ALLOW' COMMENT '授权效果',
-    data_scope VARCHAR(32) NULL COMMENT '数据范围',
-    expired_at DATETIME NULL COMMENT '过期时间',
-    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
-    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    id            BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT 'ACL记录ID',
+    subject_type  VARCHAR(32)     NOT NULL COMMENT '主体类型',
+    subject_id    BIGINT UNSIGNED NOT NULL COMMENT '主体ID',
+    resource_type VARCHAR(128)    NOT NULL COMMENT '资源类型',
+    resource_id   VARCHAR(128)    NOT NULL COMMENT '资源实例ID',
+    action_code   VARCHAR(64)     NOT NULL COMMENT '动作编码',
+    effect        VARCHAR(16)     NOT NULL DEFAULT 'ALLOW' COMMENT '授权效果',
+    data_scope    VARCHAR(32)     NULL COMMENT '数据范围',
+    expired_at    DATETIME        NULL COMMENT '过期时间',
+    created_by    BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by    BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
 
     UNIQUE KEY uk_resource_acl_unique (subject_type, subject_id, resource_type, resource_id, action_code),
     KEY idx_resource_acl_resource_action (resource_type, resource_id, action_code),
@@ -487,14 +487,14 @@ CREATE TABLE iam_resource_acl
         CHECK (
             data_scope IS NULL
                 OR data_scope IN (
-                    'SELF',
-                    'DEPARTMENT',
-                    'DEPARTMENT_TREE',
-                    'DEPARTMENT_AND_CHILDREN',
-                    'SUBSIDIARY',
-                    'COMPANY',
-                    'ORGANIZATION',
-                    'ALL'
+                                  'SELF',
+                                  'DEPARTMENT',
+                                  'DEPARTMENT_TREE',
+                                  'DEPARTMENT_AND_CHILDREN',
+                                  'SUBSIDIARY',
+                                  'COMPANY',
+                                  'ORGANIZATION',
+                                  'ALL'
                 )
             )
 ) ENGINE = InnoDB
@@ -503,16 +503,16 @@ CREATE TABLE iam_resource_acl
 
 CREATE TABLE iam_resource_relation
 (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '资源关系ID',
-    resource_type VARCHAR(128) NOT NULL COMMENT '子资源类型',
-    resource_id VARCHAR(128) NOT NULL COMMENT '子资源实例ID',
-    parent_resource_type VARCHAR(128) NOT NULL COMMENT '父资源类型',
-    parent_resource_id VARCHAR(128) NOT NULL COMMENT '父资源实例ID',
-    relation_type VARCHAR(32) NOT NULL DEFAULT 'PARENT' COMMENT '关系类型',
-    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
-    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    id                   BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '资源关系ID',
+    resource_type        VARCHAR(128)    NOT NULL COMMENT '子资源类型',
+    resource_id          VARCHAR(128)    NOT NULL COMMENT '子资源实例ID',
+    parent_resource_type VARCHAR(128)    NOT NULL COMMENT '父资源类型',
+    parent_resource_id   VARCHAR(128)    NOT NULL COMMENT '父资源实例ID',
+    relation_type        VARCHAR(32)     NOT NULL DEFAULT 'PARENT' COMMENT '关系类型',
+    created_by           BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by           BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at           DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at           DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
 
     UNIQUE KEY uk_resource_relation_unique (resource_type, resource_id, parent_resource_type, parent_resource_id),
     KEY idx_resource_relation_resource (resource_type, resource_id),
@@ -526,16 +526,16 @@ CREATE TABLE iam_resource_relation
 
 CREATE TABLE iam_policy
 (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '策略ID',
-    policy_code VARCHAR(128) NOT NULL COMMENT '策略编码',
-    policy_name VARCHAR(128) NOT NULL COMMENT '策略名称',
-    priority INT NOT NULL DEFAULT 0 COMMENT '策略优先级',
-    status TINYINT NOT NULL DEFAULT 1 COMMENT '状态',
-    version INT NOT NULL DEFAULT 1 COMMENT '版本号',
-    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
-    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    id          BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '策略ID',
+    policy_code VARCHAR(128)    NOT NULL COMMENT '策略编码',
+    policy_name VARCHAR(128)    NOT NULL COMMENT '策略名称',
+    priority    INT             NOT NULL DEFAULT 0 COMMENT '策略优先级',
+    status      TINYINT         NOT NULL DEFAULT 1 COMMENT '状态',
+    version     INT             NOT NULL DEFAULT 1 COMMENT '版本号',
+    created_by  BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by  BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
 
     UNIQUE KEY uk_policy_code (policy_code),
     KEY idx_policy_status_priority (status, priority),
@@ -548,22 +548,22 @@ CREATE TABLE iam_policy
 
 CREATE TABLE iam_policy_rule
 (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '策略规则ID',
-    policy_id BIGINT UNSIGNED NOT NULL COMMENT '策略ID',
-    subject_type VARCHAR(32) NULL COMMENT '主体类型',
-    subject_id BIGINT UNSIGNED NULL COMMENT '主体ID',
-    resource_type VARCHAR(128) NULL COMMENT '资源类型',
-    resource_id VARCHAR(128) NULL COMMENT '资源ID',
-    action_code VARCHAR(64) NOT NULL COMMENT '动作编码',
-    effect VARCHAR(16) NOT NULL COMMENT '策略效果',
-    data_scope VARCHAR(32) NULL COMMENT '数据范围',
-    condition_json JSON NULL COMMENT '动态条件JSON',
-    priority INT NOT NULL DEFAULT 0 COMMENT '规则优先级',
-    status TINYINT NOT NULL DEFAULT 1 COMMENT '状态',
-    created_by BIGINT UNSIGNED NULL COMMENT '创建人ID',
-    updated_by BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    id             BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '策略规则ID',
+    policy_id      BIGINT UNSIGNED NOT NULL COMMENT '策略ID',
+    subject_type   VARCHAR(32)     NULL COMMENT '主体类型',
+    subject_id     BIGINT UNSIGNED NULL COMMENT '主体ID',
+    resource_type  VARCHAR(128)    NULL COMMENT '资源类型',
+    resource_id    VARCHAR(128)    NULL COMMENT '资源ID',
+    action_code    VARCHAR(64)     NOT NULL COMMENT '动作编码',
+    effect         VARCHAR(16)     NOT NULL COMMENT '策略效果',
+    data_scope     VARCHAR(32)     NULL COMMENT '数据范围',
+    condition_json JSON            NULL COMMENT '动态条件JSON',
+    priority       INT             NOT NULL DEFAULT 0 COMMENT '规则优先级',
+    status         TINYINT         NOT NULL DEFAULT 1 COMMENT '状态',
+    created_by     BIGINT UNSIGNED NULL COMMENT '创建人ID',
+    updated_by     BIGINT UNSIGNED NULL COMMENT '最后更新人ID',
+    created_at     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
 
     KEY idx_policy_rule_policy (policy_id),
     KEY idx_policy_rule_status_priority (status, priority),
@@ -585,14 +585,14 @@ CREATE TABLE iam_policy_rule
         CHECK (
             data_scope IS NULL
                 OR data_scope IN (
-                    'SELF',
-                    'DEPARTMENT',
-                    'DEPARTMENT_TREE',
-                    'DEPARTMENT_AND_CHILDREN',
-                    'SUBSIDIARY',
-                    'COMPANY',
-                    'ORGANIZATION',
-                    'ALL'
+                                  'SELF',
+                                  'DEPARTMENT',
+                                  'DEPARTMENT_TREE',
+                                  'DEPARTMENT_AND_CHILDREN',
+                                  'SUBSIDIARY',
+                                  'COMPANY',
+                                  'ORGANIZATION',
+                                  'ALL'
                 )
             ),
 
@@ -669,21 +669,21 @@ CREATE TABLE iam_operation_audit
 
 CREATE TABLE iam_audit_log
 (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '决策审计ID',
-    operator_id BIGINT UNSIGNED NULL COMMENT '操作人ID',
-    subject_type VARCHAR(32) NOT NULL COMMENT '主体类型',
-    subject_id BIGINT UNSIGNED NOT NULL COMMENT '主体ID',
-    resource_type VARCHAR(128) NOT NULL COMMENT '资源类型',
-    resource_id VARCHAR(128) NOT NULL COMMENT '资源ID',
-    action_code VARCHAR(64) NOT NULL COMMENT '动作编码',
-    result VARCHAR(16) NOT NULL COMMENT '判定结果',
-    reason VARCHAR(512) NOT NULL COMMENT '判定原因',
-    matched_acl_id BIGINT UNSIGNED NULL COMMENT '命中ACL ID',
+    id                BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT '决策审计ID',
+    operator_id       BIGINT UNSIGNED NULL COMMENT '操作人ID',
+    subject_type      VARCHAR(32)     NOT NULL COMMENT '主体类型',
+    subject_id        BIGINT UNSIGNED NOT NULL COMMENT '主体ID',
+    resource_type     VARCHAR(128)    NOT NULL COMMENT '资源类型',
+    resource_id       VARCHAR(128)    NOT NULL COMMENT '资源ID',
+    action_code       VARCHAR(64)     NOT NULL COMMENT '动作编码',
+    result            VARCHAR(16)     NOT NULL COMMENT '判定结果',
+    reason            VARCHAR(512)    NOT NULL COMMENT '判定原因',
+    matched_acl_id    BIGINT UNSIGNED NULL COMMENT '命中ACL ID',
     matched_policy_id BIGINT UNSIGNED NULL COMMENT '命中策略ID',
-    matched_rule_id BIGINT UNSIGNED NULL COMMENT '命中规则ID',
-    matched_source VARCHAR(32) NULL COMMENT '命中来源',
-    trace_id VARCHAR(64) NULL COMMENT '链路追踪ID',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    matched_rule_id   BIGINT UNSIGNED NULL COMMENT '命中规则ID',
+    matched_source    VARCHAR(32)     NULL COMMENT '命中来源',
+    trace_id          VARCHAR(64)     NULL COMMENT '链路追踪ID',
+    created_at        DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
 
     KEY idx_decision_audit_subject (subject_type, subject_id),
     KEY idx_decision_audit_resource_action (resource_type, resource_id, action_code),
@@ -772,17 +772,17 @@ CREATE TABLE iam_user_session
 
 CREATE TABLE iam_user_token
 (
-    id            BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT 'ID',
-    user_id       BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
-    session_id    BIGINT UNSIGNED NULL COMMENT '会话ID',
-    refresh_token_hash CHAR(64)   NOT NULL COMMENT '刷新Token SHA-256 Hash',
-    access_jti    VARCHAR(64)     NULL COMMENT 'Access Token唯一ID',
-    refresh_jti   VARCHAR(64)     NOT NULL COMMENT 'Refresh Token唯一ID',
-    client_ip     VARCHAR(64)     NULL COMMENT '客户端IP',
-    user_agent    VARCHAR(512)    NULL COMMENT '用户代理',
-    expired_at    DATETIME        NOT NULL COMMENT '过期时间',
-    revoked_at    DATETIME        NULL COMMENT '吊销时间',
-    created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    id                 BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT COMMENT 'ID',
+    user_id            BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
+    session_id         BIGINT UNSIGNED NULL COMMENT '会话ID',
+    refresh_token_hash CHAR(64)        NOT NULL COMMENT '刷新Token SHA-256 Hash',
+    access_jti         VARCHAR(64)     NULL COMMENT 'Access Token唯一ID',
+    refresh_jti        VARCHAR(64)     NOT NULL COMMENT 'Refresh Token唯一ID',
+    client_ip          VARCHAR(64)     NULL COMMENT '客户端IP',
+    user_agent         VARCHAR(512)    NULL COMMENT '用户代理',
+    expired_at         DATETIME        NOT NULL COMMENT '过期时间',
+    revoked_at         DATETIME        NULL COMMENT '吊销时间',
+    created_at         DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
 
     UNIQUE KEY uk_ut_refresh_jti (refresh_jti),
     UNIQUE KEY uk_ut_refresh_token_hash (refresh_token_hash),
