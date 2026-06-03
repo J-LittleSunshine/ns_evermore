@@ -22,12 +22,10 @@ class _DefaultCacheTimeout:
     """Sentinel for using configured default timeout."""
 
 
-class _DjangoDefaultTimeout:
-    """Local sentinel for Django-compatible method signatures without importing Django."""
 
 
 NS_CACHE_DEFAULT_TIMEOUT = _DefaultCacheTimeout()
-_DJANGO_DEFAULT_TIMEOUT = _DjangoDefaultTimeout()
+
 _MISSING = object()
 
 
