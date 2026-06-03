@@ -4,8 +4,7 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING, Any, Mapping, Literal
 
-from django.core.cache import BaseCache
-from django.core.cache.backends.base import DEFAULT_TIMEOUT
+from django.core.cache.backends.base import BaseCache, DEFAULT_TIMEOUT
 
 from ns_common.cache import NsCacheConfig, NsCacheClient, NsCacheConfigurationError, NsCacheConnectionError
 from ns_common.cache.backends import RedisCacheBackend

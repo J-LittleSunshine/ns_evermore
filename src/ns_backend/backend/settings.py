@@ -251,6 +251,116 @@ IAM_AUTH_SINGLE_FLIGHT_ENABLED = _coerce_bool(
     _coerce_bool(getattr(_BACKEND, "iam_auth_single_flight_enabled", True), True),
 )
 
+def _resolve_cache_backend(value: Any, url: str) -> str:
+    """Resolve redis-compatible cache backend type."""
+    backend = str(value or "").strip().lower()
+    if not backend:
+        return "valkey" if url.strip().lower().startswith("valkey://") else "redis"
+
+    if backend not in {"redis", "valkey"}:
+        raise RuntimeError("cache_backend must be one of: redis, valkey")
+
+    return backend
+
+
+def _resolve_cache_serializer(value: Any, default: str = "pickle") -> str:
+    """Resolve ns_common cache serializer name."""
+    serializer = str(value or default).strip().lower()
+    if serializer not in {"pickle", "json", "raw"}:
+        raise RuntimeError("cache_serializer must be one of: pickle, json, raw")
+
+    return serializer
+
+
+def _build_ns_common_cache_config(
+    *,
+    url: str,
+    key_prefix: str,
+    timeout_seconds: int,
+    backend: str,
+    serializer: str,
+    socket_timeout: float,
+    socket_connect_timeout: float,
+    max_connections: int,
+    health_check_interval: int,
+) -> dict[str, Any]:
+    """Build Django CACHES entry for NsCommonCacheBackend."""
+    return {
+        "BACKEND": "ns_backend.backend.cache.django_backend.NsCommonCacheBackend",
+        "LOCATION": url,
+        "TIMEOUT": timeout_seconds,
+        "KEY_PREFIX": key_prefix,
+        "OPTIONS": {
+            "backend": backend,
+            "ns_key_prefix": key_prefix,
+            "serializer": serializer,
+            "socket_timeout": socket_timeout,
+            "socket_connect_timeout": socket_connect_timeout,
+            "max_connections": max_connections,
+            "health_check_interval": health_check_interval,
+        },
+    }
+
+
+_COMMON_CACHE_URL = str(
+    os.getenv("NS_CACHE_URL")
+    or os.getenv("CACHE_URL")
+    or getattr(_BACKEND, "cache_url", "")
+    or ""
+).strip()
+
+_COMMON_CACHE_BACKEND = _resolve_cache_backend(
+    os.getenv("NS_CACHE_BACKEND")
+    or os.getenv("CACHE_BACKEND")
+    or getattr(_BACKEND, "cache_backend", ""),
+    _COMMON_CACHE_URL,
+)
+
+_COMMON_CACHE_KEY_PREFIX = str(
+    os.getenv("NS_CACHE_KEY_PREFIX")
+    or os.getenv("CACHE_KEY_PREFIX")
+    or getattr(_BACKEND, "cache_key_prefix", "ns")
+    or "ns"
+).strip().strip(":") or "ns"
+
+_COMMON_CACHE_TIMEOUT_SECONDS = _coerce_positive_int(
+    os.getenv("NS_CACHE_TIMEOUT_SECONDS")
+    or os.getenv("CACHE_TIMEOUT_SECONDS")
+    or getattr(_BACKEND, "cache_timeout_seconds", 300),
+    300,
+)
+
+_COMMON_CACHE_SERIALIZER = _resolve_cache_serializer(
+    os.getenv("NS_CACHE_SERIALIZER")
+    or os.getenv("CACHE_SERIALIZER")
+    or getattr(_BACKEND, "cache_serializer", "pickle"),
+    "pickle",
+)
+
+_COMMON_CACHE_SOCKET_TIMEOUT = _coerce_float_in_range(
+    os.getenv("NS_CACHE_SOCKET_TIMEOUT") or getattr(_BACKEND, "cache_socket_timeout", 3.0),
+    3.0,
+    min_value=0.001,
+    max_value=60.0,
+)
+
+_COMMON_CACHE_SOCKET_CONNECT_TIMEOUT = _coerce_float_in_range(
+    os.getenv("NS_CACHE_SOCKET_CONNECT_TIMEOUT") or getattr(_BACKEND, "cache_socket_connect_timeout", 3.0),
+    3.0,
+    min_value=0.001,
+    max_value=60.0,
+)
+
+_COMMON_CACHE_MAX_CONNECTIONS = _coerce_positive_int(
+    os.getenv("NS_CACHE_MAX_CONNECTIONS") or getattr(_BACKEND, "cache_max_connections", 64),
+    64,
+)
+
+_COMMON_CACHE_HEALTH_CHECK_INTERVAL = _coerce_positive_int(
+    os.getenv("NS_CACHE_HEALTH_CHECK_INTERVAL") or getattr(_BACKEND, "cache_health_check_interval", 30),
+    30,
+)
+
 _IAM_AUTH_CONTEXT_REDIS_URL = str(
     os.getenv("NS_IAM_AUTH_CONTEXT_REDIS_URL")
     or os.getenv("IAM_AUTH_CONTEXT_REDIS_URL")
@@ -265,20 +375,39 @@ _IAM_AUTH_CONTEXT_CACHE_ALIAS = str(
     or ""
 ).strip()
 
-CACHES = {
-    "default": {
+CACHES: dict[str, dict[str, Any]] = {}
+
+if _COMMON_CACHE_URL:
+    CACHES["default"] = _build_ns_common_cache_config(
+        url=_COMMON_CACHE_URL,
+        key_prefix=_COMMON_CACHE_KEY_PREFIX,
+        timeout_seconds=_COMMON_CACHE_TIMEOUT_SECONDS,
+        backend=_COMMON_CACHE_BACKEND,
+        serializer=_COMMON_CACHE_SERIALIZER,
+        socket_timeout=_COMMON_CACHE_SOCKET_TIMEOUT,
+        socket_connect_timeout=_COMMON_CACHE_SOCKET_CONNECT_TIMEOUT,
+        max_connections=_COMMON_CACHE_MAX_CONNECTIONS,
+        health_check_interval=_COMMON_CACHE_HEALTH_CHECK_INTERVAL,
+    )
+else:
+    CACHES["default"] = {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
         "LOCATION": "ns_evermore_default_cache",
         "TIMEOUT": IAM_AUTH_CONTEXT_TTL_SECONDS,
     }
-}
 
 if _IAM_AUTH_CONTEXT_REDIS_URL:
-    CACHES["iam_auth"] = {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": _IAM_AUTH_CONTEXT_REDIS_URL,
-        "TIMEOUT": IAM_AUTH_CONTEXT_TTL_SECONDS,
-    }
+    CACHES["iam_auth"] = _build_ns_common_cache_config(
+        url=_IAM_AUTH_CONTEXT_REDIS_URL,
+        key_prefix=f"{_COMMON_CACHE_KEY_PREFIX}:iam_auth",
+        timeout_seconds=IAM_AUTH_CONTEXT_TTL_SECONDS,
+        backend=_resolve_cache_backend("", _IAM_AUTH_CONTEXT_REDIS_URL),
+        serializer=_COMMON_CACHE_SERIALIZER,
+        socket_timeout=_COMMON_CACHE_SOCKET_TIMEOUT,
+        socket_connect_timeout=_COMMON_CACHE_SOCKET_CONNECT_TIMEOUT,
+        max_connections=_COMMON_CACHE_MAX_CONNECTIONS,
+        health_check_interval=_COMMON_CACHE_HEALTH_CHECK_INTERVAL,
+    )
 
 IAM_AUTH_CONTEXT_CACHE_ALIAS = _IAM_AUTH_CONTEXT_CACHE_ALIAS or ("iam_auth" if _IAM_AUTH_CONTEXT_REDIS_URL else "default")
 if IAM_AUTH_CONTEXT_CACHE_ALIAS not in CACHES:
