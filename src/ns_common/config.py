@@ -156,8 +156,18 @@ class NsConfig:
                 if not isinstance(log_config_raw, dict):
                     raise ValueError("log_config must be a JSON object")
 
+                cache_config_raw: Any = raw_config.get("cache_config")
+                if cache_config_raw is None:
+                    cache_config_raw = raw_config.get("cache", {})
+                if not isinstance(cache_config_raw, dict):
+                    raise ValueError("cache_config/cache must be a JSON object")
+
                 normalized_backend_config = cls._normalize_backend_config(dict(backend_config_raw))
-                config: NsConfig = cls(backend_config=_NsBackendConfig(**normalized_backend_config), log_config=_NsLogConfig(**log_config_raw))
+                config: NsConfig = cls(
+                    backend_config=_NsBackendConfig(**normalized_backend_config),
+                    cache_config=_NsCacheConfig(**cache_config_raw),
+                    log_config=_NsLogConfig(**log_config_raw)
+                )
                 config._validate()
                 return config
 

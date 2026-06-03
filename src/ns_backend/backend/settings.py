@@ -266,16 +266,20 @@ _IAM_AUTH_CONTEXT_CACHE_ALIAS = str(
 ).strip()
 
 
-def _build_ns_common_cache_entry(*, location: str, key_prefix: str, timeout_seconds: int | None) -> dict[str, Any]:
+def _build_ns_common_cache_entry(*, location: str, key_prefix: str, timeout_seconds: int | None, backend: str | None = None, ) -> dict[str, Any]:
     """Build Django cache entry backed by ns_common cache."""
+    options: dict[str, Any] = {
+        "ns_key_prefix": key_prefix,
+    }
+    if backend:
+        options["ns_backend"] = backend
+
     return {
-        "BACKEND": "ns_common.cache.NsDjangoCacheBackend",
+        "BACKEND": "ns_common.cache.NsCacheBackend",
         "LOCATION": location,
         "TIMEOUT": timeout_seconds,
         "KEY_PREFIX": "",
-        "OPTIONS": {
-            "ns_key_prefix": key_prefix,
-        },
+        "OPTIONS": options,
     }
 
 
@@ -287,16 +291,24 @@ CACHES: dict[str, dict[str, Any]] = {
     )
 }
 
-_IAM_AUTH_CONTEXT_CACHE_ALIAS = str(getattr(_BACKEND, "iam_auth_context_cache_alias", "default") or "default").strip() or "default"
+if _IAM_AUTH_CONTEXT_REDIS_URL:
+    if not _IAM_AUTH_CONTEXT_CACHE_ALIAS or _IAM_AUTH_CONTEXT_CACHE_ALIAS == "default":
+        _IAM_AUTH_CONTEXT_CACHE_ALIAS = "iam_auth_context"
 
-if _IAM_AUTH_CONTEXT_CACHE_ALIAS != "default":
+    CACHES[_IAM_AUTH_CONTEXT_CACHE_ALIAS] = _build_ns_common_cache_entry(
+        backend="redis",
+        location=_IAM_AUTH_CONTEXT_REDIS_URL,
+        key_prefix=f"{_CACHE.key_prefix}:iam_auth",
+        timeout_seconds=IAM_AUTH_CONTEXT_TTL_SECONDS,
+    )
+elif _IAM_AUTH_CONTEXT_CACHE_ALIAS != "default":
     CACHES[_IAM_AUTH_CONTEXT_CACHE_ALIAS] = _build_ns_common_cache_entry(
         location=_CACHE.location,
         key_prefix=f"{_CACHE.key_prefix}:iam_auth",
         timeout_seconds=IAM_AUTH_CONTEXT_TTL_SECONDS,
     )
 
-IAM_AUTH_CONTEXT_CACHE_ALIAS = _IAM_AUTH_CONTEXT_CACHE_ALIAS
+IAM_AUTH_CONTEXT_CACHE_ALIAS = _IAM_AUTH_CONTEXT_CACHE_ALIAS or "default"
 if IAM_AUTH_CONTEXT_CACHE_ALIAS not in CACHES:
     IAM_AUTH_CONTEXT_CACHE_ALIAS = "default"
 

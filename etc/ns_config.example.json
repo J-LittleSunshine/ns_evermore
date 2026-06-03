@@ -34,6 +34,21 @@
       "iam": "iam"
     },
     "database_router_map": {}
+  },
+  "cache_config": {
+    "backend": "sql_wal",
+    "location": "ns_cache.sqlite3",
+    "key_prefix": "ns",
+    "default_timeout_seconds": 300,
+    "serializer": "pickle",
+    "sql_table": "ns_cache",
+    "sql_timeout_seconds": 5.0,
+    "sql_max_entries": 10000,
+    "sql_cull_frequency": 3,
+    "socket_timeout": 3.0,
+    "socket_connect_timeout": 3.0,
+    "max_connections": 64,
+    "health_check_interval": 30
   }
 }
 

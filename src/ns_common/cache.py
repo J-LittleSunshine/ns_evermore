@@ -11,7 +11,7 @@ from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
 from threading import RLock
-from typing import Any, ClassVar, Protocol, TYPE_CHECKING
+from typing import Any, ClassVar, Protocol, TYPE_CHECKING, Literal, cast
 
 from ns_common import DATA_DIR
 from ns_common.config import _NsCacheConfig
@@ -62,14 +62,16 @@ class _CacheSerializer(Protocol):
 class _PickleCacheSerializer:
     """Pickle cache serializer."""
 
-    def dumps(self, value: object) -> bytes:
+    @staticmethod
+    def dumps(value: object) -> bytes:
         """Serialize object by pickle."""
         try:
             return pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
         except Exception as _error:
             raise NsCacheSerializationError("pickle cache serialization failed") from _error
 
-    def loads(self, payload: bytes) -> object:
+    @staticmethod
+    def loads(payload: bytes) -> object:
         """Deserialize object by pickle."""
         try:
             return pickle.loads(payload)
@@ -80,14 +82,16 @@ class _PickleCacheSerializer:
 class _JsonCacheSerializer:
     """JSON cache serializer."""
 
-    def dumps(self, value: object) -> bytes:
+    @staticmethod
+    def dumps(value: object) -> bytes:
         """Serialize JSON-compatible value."""
         try:
             return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         except Exception as _error:
             raise NsCacheSerializationError("json cache serialization failed") from _error
 
-    def loads(self, payload: bytes) -> object:
+    @staticmethod
+    def loads(payload: bytes) -> object:
         """Deserialize JSON-compatible value."""
         try:
             return json.loads(payload.decode("utf-8"))
@@ -98,7 +102,8 @@ class _JsonCacheSerializer:
 class _RawCacheSerializer:
     """Raw cache serializer."""
 
-    def dumps(self, value: object) -> bytes:
+    @staticmethod
+    def dumps(value: object) -> bytes:
         """Serialize primitive value to bytes."""
         if isinstance(value, bytes):
             return value
@@ -110,7 +115,8 @@ class _RawCacheSerializer:
             return b""
         raise NsCacheSerializationError("raw cache serializer only supports bytes, str, int, float, bool, or None")
 
-    def loads(self, payload: bytes) -> object:
+    @staticmethod
+    def loads(payload: bytes) -> object:
         """Return raw bytes."""
         return payload
 
@@ -447,7 +453,7 @@ class _SqlWalCacheBackend(_BaseCacheBackend):
         with self._lock:
             try:
                 self._connection.close()
-            except Exception:
+            except Exception:  # noqa
                 pass
 
     def _open_connection(self) -> sqlite3.Connection:
@@ -745,7 +751,7 @@ class _RedisCompatibleCacheBackend(_BaseCacheBackend):
             close_method = getattr(self._client, "close", None)
             if callable(close_method):
                 close_method()
-        except Exception:
+        except Exception:  # noqa
             pass
 
         try:
@@ -753,7 +759,7 @@ class _RedisCompatibleCacheBackend(_BaseCacheBackend):
             disconnect_method = getattr(connection_pool, "disconnect", None)
             if callable(disconnect_method):
                 disconnect_method()
-        except Exception:
+        except Exception:  # noqa
             pass
 
     def _import_backend_module(self) -> Any:
@@ -811,6 +817,10 @@ class NsCacheClient:
     Different config under the same client name is rejected.
     """
 
+    name: str
+    config: _NsCacheConfig
+    _backend: _CacheBackend
+
     _lock: ClassVar[RLock] = RLock()
     _instances: ClassVar[dict[str, "NsCacheClient"]] = {}
     _default_config: ClassVar[_NsCacheConfig | None] = None
@@ -836,7 +846,7 @@ class NsCacheClient:
 
     def __init__(self, name: str = "default", config: _NsCacheConfig | None = None) -> None:
         """Keep __init__ idempotent because singleton construction is handled in __new__."""
-        pass
+        _ = (name, config)
 
     @classmethod
     def configure_default(cls, config: _NsCacheConfig) -> None:
@@ -944,7 +954,7 @@ class NsCacheClient:
         raise NsCacheConfigurationError(f"unsupported cache backend: {config.backend}")
 
 
-class NsDjangoCacheBackend:
+class NsCacheBackend:
     """Django cache backend adapter for NsCacheClient.
 
     Django is imported lazily in __init__, so importing ns_common.cache outside Django is safe.
@@ -1103,7 +1113,7 @@ class NsDjangoCacheBackend:
             raise NsCacheConfigurationError("django cache timeout must be int or None")
 
         try:
-            return int(timeout)
+            return int(str(timeout))
         except (TypeError, ValueError) as _error:
             raise NsCacheConfigurationError("django cache timeout must be int or None") from _error
 
@@ -1112,12 +1122,22 @@ class NsDjangoCacheBackend:
         selected_location = str(location or base_config.location or "").strip()
         selected_key_prefix = self._get_str_option(options, "ns_key_prefix", "NS_KEY_PREFIX", default=base_config.key_prefix)
         selected_timeout = self._resolve_base_cache_default_timeout(base_config.default_timeout_seconds)
+        selected_backend = cast(
+            Literal["default", "sql_wal", "redis", "valkey"],
+            self._get_str_option(options, "ns_backend", "NS_BACKEND", default=base_config.backend),
+        )
+        selected_serializer = cast(
+            Literal["pickle", "json", "raw"],
+            self._get_str_option(options, "ns_serializer", "NS_SERIALIZER", default=base_config.serializer),
+        )
 
         return replace(
             base_config,
+            backend=selected_backend,
             location=selected_location,
             key_prefix=selected_key_prefix,
             default_timeout_seconds=selected_timeout,
+            serializer=selected_serializer,
         )
 
     def _resolve_base_cache_default_timeout(self, default: int | None) -> int | None:
