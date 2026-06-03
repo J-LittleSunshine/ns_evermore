@@ -21,7 +21,7 @@ from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.policy_engine import PolicyEngineService
 from ns_backend.iam.services.resource_acl import ResourceAclService
 from ns_common.error_codes import NsErrorCode
-from ns_common.logging.logger import get_ns_logger
+from ns_common.logger import get_ns_logger
 
 if TYPE_CHECKING:
     pass

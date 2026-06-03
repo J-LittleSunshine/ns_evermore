@@ -7,12 +7,38 @@ import tempfile
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from threading import RLock
-from typing import Any, ClassVar, Dict
+from typing import Any, ClassVar, Dict, Literal
 
 import portalocker
 
 from ns_common import NS_CONFIG_FILE_PATH, TMP_DIR, NS_ENV
 
+
+@dataclass(slots=True, kw_only=True)
+class _NsCacheConfig:
+    """Unified cache configuration loaded through ns_config."""
+
+    backend: Literal["default", "sql_wal", "redis", "valkey"] = "default"
+    location: str = ""
+    key_prefix: str = "ns"
+    default_timeout_seconds: int | None = 300
+    serializer: Literal["pickle", "json", "raw"] = "pickle"
+
+    sql_table: str = "ns_cache"
+    sql_timeout_seconds: float = 5.0
+    sql_max_entries: int = 10000
+    sql_cull_frequency: int = 3
+
+    socket_timeout: float = 3.0
+    socket_connect_timeout: float = 3.0
+    max_connections: int = 64
+    health_check_interval: int = 30
+
+    def resolved_backend(self) -> Literal["sql_wal", "redis", "valkey"]:
+        """Resolve default backend to sql_wal without probing external services."""
+        if self.backend in {"default", "sql_wal"}:
+            return "sql_wal"
+        return self.backend
 
 @dataclass(slots=True, kw_only=True)
 class _NsLogConfig:
@@ -110,6 +136,7 @@ class _NsExecutorConfig:
 @dataclass(slots=True, kw_only=True)
 class NsConfig:
     backend_config: _NsBackendConfig = field(default_factory=_NsBackendConfig)
+    cache_config: _NsCacheConfig = field(default_factory=_NsCacheConfig)
     log_config: _NsLogConfig = field(default_factory=_NsLogConfig)
     _lock: ClassVar[RLock] = RLock()
 

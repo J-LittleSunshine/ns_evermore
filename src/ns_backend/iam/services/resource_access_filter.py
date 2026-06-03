@@ -17,7 +17,7 @@ from ns_backend.iam.services.backoff import retry_with_backoff
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.permission import PermissionService
 from ns_common.error_codes import NsErrorCode
-from ns_common.logging.logger import get_ns_logger
+from ns_common.logger import get_ns_logger
 
 if TYPE_CHECKING:
     pass

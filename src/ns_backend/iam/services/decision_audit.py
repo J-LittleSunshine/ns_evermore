@@ -8,7 +8,7 @@ from django.conf import settings
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.repositories import DecisionAuditRepository
 from ns_common.error_codes import NsErrorCode
-from ns_common.logging.logger import get_ns_logger
+from ns_common.logger import get_ns_logger
 
 if TYPE_CHECKING:
     pass

@@ -15,7 +15,7 @@ from ns_backend.iam.repositories import AuthorizeRepository
 from ns_backend.iam.schemas import UserAuthorizationContext
 from ns_backend.iam.services.backoff import retry_with_backoff
 from ns_backend.iam.services.resource_access_filter import ResourceAccessFilterService
-from ns_common.logging.logger import get_ns_logger
+from ns_common.logger import get_ns_logger
 
 if TYPE_CHECKING:
     pass

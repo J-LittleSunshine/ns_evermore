@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ns_common.logging.logger import get_ns_logger
+from ns_common.logger import get_ns_logger
 
 if TYPE_CHECKING:
     pass

@@ -14,7 +14,7 @@ from ns_common.config import ns_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 _BACKEND = ns_config.backend_config
-
+_CACHE = ns_config.cache_config
 
 def _coerce_positive_int(value: Any, default: int) -> int:
     """Resolve integer config from JSON/env while rejecting bool and non-positive values."""
@@ -265,22 +265,38 @@ _IAM_AUTH_CONTEXT_CACHE_ALIAS = str(
     or ""
 ).strip()
 
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "ns_evermore_default_cache",
-        "TIMEOUT": IAM_AUTH_CONTEXT_TTL_SECONDS,
+
+def _build_ns_common_cache_entry(*, location: str, key_prefix: str, timeout_seconds: int | None) -> dict[str, Any]:
+    """Build Django cache entry backed by ns_common cache."""
+    return {
+        "BACKEND": "ns_common.cache.NsDjangoCacheBackend",
+        "LOCATION": location,
+        "TIMEOUT": timeout_seconds,
+        "KEY_PREFIX": "",
+        "OPTIONS": {
+            "ns_key_prefix": key_prefix,
+        },
     }
+
+
+CACHES: dict[str, dict[str, Any]] = {
+    "default": _build_ns_common_cache_entry(
+        location=_CACHE.location,
+        key_prefix=_CACHE.key_prefix,
+        timeout_seconds=_CACHE.default_timeout_seconds,
+    )
 }
 
-if _IAM_AUTH_CONTEXT_REDIS_URL:
-    CACHES["iam_auth"] = {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": _IAM_AUTH_CONTEXT_REDIS_URL,
-        "TIMEOUT": IAM_AUTH_CONTEXT_TTL_SECONDS,
-    }
+_IAM_AUTH_CONTEXT_CACHE_ALIAS = str(getattr(_BACKEND, "iam_auth_context_cache_alias", "default") or "default").strip() or "default"
 
-IAM_AUTH_CONTEXT_CACHE_ALIAS = _IAM_AUTH_CONTEXT_CACHE_ALIAS or ("iam_auth" if _IAM_AUTH_CONTEXT_REDIS_URL else "default")
+if _IAM_AUTH_CONTEXT_CACHE_ALIAS != "default":
+    CACHES[_IAM_AUTH_CONTEXT_CACHE_ALIAS] = _build_ns_common_cache_entry(
+        location=_CACHE.location,
+        key_prefix=f"{_CACHE.key_prefix}:iam_auth",
+        timeout_seconds=IAM_AUTH_CONTEXT_TTL_SECONDS,
+    )
+
+IAM_AUTH_CONTEXT_CACHE_ALIAS = _IAM_AUTH_CONTEXT_CACHE_ALIAS
 if IAM_AUTH_CONTEXT_CACHE_ALIAS not in CACHES:
     IAM_AUTH_CONTEXT_CACHE_ALIAS = "default"
 
