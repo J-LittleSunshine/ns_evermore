@@ -51,17 +51,6 @@ class _NsBackendConfig:
     use_tz: bool = True
     static_url: str = "static/"
 
-    # Common cache settings.
-    cache_url: str = ""
-    cache_backend: str = ""
-    cache_key_prefix: str = "ns"
-    cache_timeout_seconds: int = 300
-    cache_serializer: str = "pickle"
-    cache_socket_timeout: float = 3.0
-    cache_socket_connect_timeout: float = 3.0
-    cache_max_connections: int = 64
-    cache_health_check_interval: int = 30
-
     # JWT / auth settings aligned with backup backend.
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 14
