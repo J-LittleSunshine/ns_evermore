@@ -15,7 +15,7 @@ from ns_common import NS_CONFIG_FILE_PATH, TMP_DIR, NS_ENV
 
 
 @dataclass(slots=True, kw_only=True)
-class _NsCacheConfig:
+class NsCacheConfig:
     """Unified cache configuration loaded through ns_config."""
 
     backend: Literal["default", "sql_wal", "redis", "valkey"] = "default"
@@ -39,6 +39,7 @@ class _NsCacheConfig:
         if self.backend in {"default", "sql_wal"}:
             return "sql_wal"
         return self.backend
+
 
 @dataclass(slots=True, kw_only=True)
 class _NsLogConfig:
@@ -139,7 +140,7 @@ class _NsExecutorConfig:
 @dataclass(slots=True, kw_only=True)
 class NsConfig:
     backend_config: _NsBackendConfig = field(default_factory=_NsBackendConfig)
-    cache_config: _NsCacheConfig = field(default_factory=_NsCacheConfig)
+    cache_config: NsCacheConfig = field(default_factory=NsCacheConfig)
     log_config: _NsLogConfig = field(default_factory=_NsLogConfig)
     _lock: ClassVar[RLock] = RLock()
 
@@ -168,7 +169,7 @@ class NsConfig:
                 normalized_backend_config = cls._normalize_backend_config(dict(backend_config_raw))
                 config: NsConfig = cls(
                     backend_config=_NsBackendConfig(**normalized_backend_config),
-                    cache_config=_NsCacheConfig(**cache_config_raw),
+                    cache_config=NsCacheConfig(**cache_config_raw),
                     log_config=_NsLogConfig(**log_config_raw)
                 )
                 config._validate()

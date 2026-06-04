@@ -8,7 +8,7 @@ from typing import Any, Literal, cast
 from django.core.cache.backends.base import BaseCache, DEFAULT_TIMEOUT
 
 from ns_common.cache import NS_CACHE_DEFAULT_TIMEOUT, NsCacheClient, NsCacheConfigurationError, _DefaultCacheTimeout
-from ns_common.config import _NsCacheConfig, ns_config
+from ns_common.config import NsCacheConfig, ns_config
 
 
 class NsDjangoCacheBackend(BaseCache):
@@ -19,8 +19,8 @@ class NsDjangoCacheBackend(BaseCache):
         super().__init__(params)
 
         options: dict[str, Any] = self._get_options(params)
-        base_config: _NsCacheConfig = ns_config.cache_config
-        config: _NsCacheConfig = self._build_config(base_config, location, options)
+        base_config: NsCacheConfig = ns_config.cache_config
+        config: NsCacheConfig = self._build_config(base_config, location, options)
         client_name: str = self._build_client_name(config, options)
 
         self._client: NsCacheClient = NsCacheClient(client_name, config)
@@ -154,7 +154,7 @@ class NsDjangoCacheBackend(BaseCache):
         except (TypeError, ValueError) as _error:
             raise NsCacheConfigurationError("django cache timeout must be int or None") from _error
 
-    def _build_config(self, base_config: _NsCacheConfig, location: str, options: dict[str, Any]) -> _NsCacheConfig:
+    def _build_config(self, base_config: NsCacheConfig, location: str, options: dict[str, Any]) -> NsCacheConfig:
         """Build NsCacheClient config from Django cache settings."""
         selected_location: str = str(location or base_config.location or "").strip()
         selected_key_prefix: str = self._get_str_option(options, "ns_key_prefix", "NS_KEY_PREFIX", default=base_config.key_prefix)
@@ -199,7 +199,7 @@ class NsDjangoCacheBackend(BaseCache):
         return parsed_value
 
     @classmethod
-    def _build_client_name(cls, config: _NsCacheConfig, options: dict[str, Any]) -> str:
+    def _build_client_name(cls, config: NsCacheConfig, options: dict[str, Any]) -> str:
         """Build stable process-local cache client name."""
         explicit_name: str = str(options.get("client_name") or options.get("CLIENT_NAME") or "").strip()
         if explicit_name:

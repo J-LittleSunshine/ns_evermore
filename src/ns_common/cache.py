@@ -12,7 +12,7 @@ from threading import RLock
 from typing import Any, ClassVar, Protocol, TYPE_CHECKING
 
 from ns_common import DATA_DIR
-from ns_common.config import _NsCacheConfig
+from ns_common.config import NsCacheConfig
 
 if TYPE_CHECKING:
     pass
@@ -175,9 +175,9 @@ class _CacheBackend(Protocol):
 class _BaseCacheBackend:
     """Base cache backend."""
 
-    def __init__(self, config: _NsCacheConfig) -> None:
+    def __init__(self, config: NsCacheConfig) -> None:
         """Initialize base backend."""
-        self._config: _NsCacheConfig = config
+        self._config: NsCacheConfig = config
         self._key_prefix: str = config.key_prefix
         self._serializer: _CacheSerializer = _build_serializer(config.serializer)
 
@@ -222,7 +222,7 @@ class _SqlWalCacheBackend(_BaseCacheBackend):
 
     _TABLE_NAME_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-    def __init__(self, config: _NsCacheConfig) -> None:
+    def __init__(self, config: NsCacheConfig) -> None:
         """Initialize SQLite WAL backend."""
         super().__init__(config)
         self._lock: RLock = RLock()
@@ -545,7 +545,7 @@ class _SqlWalCacheBackend(_BaseCacheBackend):
 class _RedisCompatibleCacheBackend(_BaseCacheBackend):
     """Redis / Valkey cache backend selected by explicit config."""
 
-    def __init__(self, config: _NsCacheConfig) -> None:
+    def __init__(self, config: NsCacheConfig) -> None:
         """Initialize Redis-compatible backend."""
         super().__init__(config)
         self._backend_name = config.resolved_backend()
@@ -664,11 +664,14 @@ class _RedisCompatibleCacheBackend(_BaseCacheBackend):
         if not self._key_prefix:
             raise NsCacheConfigurationError("cache key_prefix is required when clearing redis-compatible cache")
 
+        direct_key = self._key_prefix
         pattern = f"{self._key_prefix}:*"
         batch_size = 1000
         batch: list[Any] = []
 
         try:
+            self._client.delete(direct_key)
+
             for cache_key in self._client.scan_iter(match=pattern, count=batch_size):
                 batch.append(cache_key)
                 if len(batch) >= batch_size:
@@ -814,14 +817,14 @@ class NsCacheClient:
     """
 
     name: str
-    config: _NsCacheConfig
+    config: NsCacheConfig
     _backend: _CacheBackend
 
     _lock: ClassVar[RLock] = RLock()
     _instances: ClassVar[dict[str, "NsCacheClient"]] = {}
-    _default_config: ClassVar[_NsCacheConfig | None] = None
+    _default_config: ClassVar[NsCacheConfig | None] = None
 
-    def __new__(cls, name: str = "default", config: _NsCacheConfig | None = None) -> "NsCacheClient":
+    def __new__(cls, name: str = "default", config: NsCacheConfig | None = None) -> "NsCacheClient":
         """Create or return named singleton instance."""
         normalized_name = cls._normalize_client_name(name)
 
@@ -840,14 +843,14 @@ class NsCacheClient:
             cls._instances[normalized_name] = instance
             return instance
 
-    def __init__(self, name: str = "default", config: _NsCacheConfig | None = None) -> None:
+    def __init__(self, name: str = "default", config: NsCacheConfig | None = None) -> None:
         """Keep __init__ idempotent because singleton construction is handled in __new__."""
         _ = (name, config)
 
     @classmethod
-    def configure_default(cls, config: _NsCacheConfig) -> None:
+    def configure_default(cls, config: NsCacheConfig) -> None:
         """Configure default cache config for later default client creation."""
-        if not isinstance(config, _NsCacheConfig):
+        if not isinstance(config, NsCacheConfig):
             raise NsCacheConfigurationError("default cache config must be NsCacheConfig")
 
         with cls._lock:
@@ -859,7 +862,7 @@ class NsCacheClient:
         return cls("default")
 
     @classmethod
-    def get_or_create(cls, name: str = "default", config: _NsCacheConfig | None = None) -> "NsCacheClient":
+    def get_or_create(cls, name: str = "default", config: NsCacheConfig | None = None) -> "NsCacheClient":
         """Compatibility helper for named singleton access."""
         return cls(name, config)
 
@@ -938,14 +941,14 @@ class NsCacheClient:
         return name.strip()
 
     @staticmethod
-    def _load_config_from_ns_config() -> _NsCacheConfig:
+    def _load_config_from_ns_config() -> NsCacheConfig:
         """Load default cache config from ns_config."""
         from ns_common.config import ns_config
 
         return ns_config.cache_config
 
     @staticmethod
-    def _build_backend(config: _NsCacheConfig) -> _CacheBackend:
+    def _build_backend(config: NsCacheConfig) -> _CacheBackend:
         """Build backend by explicit configuration."""
         resolved_backend = config.resolved_backend()
         if resolved_backend == "sql_wal":
