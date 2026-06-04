@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ns_common.storage.client import NsObjectStorageClient
+from ns_common.storage.client import NsObjectStorageClient, AsyncNsObjectStorageClient
 from ns_common.storage.errors import (
     NsObjectStorageError,
     NsObjectStorageConfigurationError,
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "NsObjectStorageClient",
+    "AsyncNsObjectStorageClient",
     "NsObjectInfo",
     "NsPresignedUrl",
     "NsPutObjectResult",
