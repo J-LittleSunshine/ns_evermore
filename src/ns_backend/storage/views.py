@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from django.http import JsonResponse
 
-from iam.views import IamRequestViewSet
+from ns_backend.iam.views import IamRequestViewSet
 from ns_backend.storage.services import StorageObjectService
 
 if TYPE_CHECKING:
