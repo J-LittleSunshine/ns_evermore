@@ -7,15 +7,12 @@ from adrf.viewsets import ViewSet
 from django.http import JsonResponse
 from rest_framework.views import APIView
 
-from ns_backend.backend.common.logger import IAM_LOGGER
+from ns_backend.backend.common.logger import iam_logger, logger
 from ns_backend.backend.exceptions import BusinessError
 from ns_common.error_codes import NsErrorCode
-from ns_common.logger import get_ns_logger
 
 if TYPE_CHECKING:
     pass
-
-_REQUEST_LOGGER = get_ns_logger("backend", True)
 
 
 class BaseRequestViewSet(ViewSet):
@@ -41,7 +38,7 @@ class BaseRequestViewSet(ViewSet):
             current_user = getattr(request, "current_user", None)
             user_id = getattr(current_user, "id", None)
 
-            _REQUEST_LOGGER.error(
+            logger.error(
                 "unhandled request exception | view=%s method=%s path=%s user_id=%s trace_id=%s request_id=%s exception=%s",
                 self.__class__.__name__,
                 getattr(request, "method", None),
@@ -203,7 +200,7 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
                     decision_source=self.DECISION_SOURCE_NONE,
                     matched_permission_code=permission_code,
                 )
-                IAM_LOGGER.error(
+                iam_logger.error(
                     "authorize service check failed | view=%s path=%s user_id=%s permission_code=%s exception=%s",
                     self.__class__.__name__,
                     getattr(request, "path", None),

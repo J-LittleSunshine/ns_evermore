@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.http import JsonResponse
 
-from ns_backend.backend.common.logger import IAM_LOGGER
+from ns_backend.backend.common.logger import iam_logger
 from ns_backend.backend.common.viewset import AuthenticatedRequestViewSet
 from ns_backend.iam.services import TenantService, VerifyService, PermissionService
 from ns_backend.iam.services.authorize import AuthorizeService
@@ -320,7 +320,7 @@ class AuditRequestMixin:
             current_user = getattr(request, "current_user", None)
             user_id = getattr(current_user, "id", None)
 
-            IAM_LOGGER.error(
+            iam_logger.error(
                 "audit record failed | view=%s method=%s path=%s user_id=%s trace_id=%s request_id=%s response_code=%s exception=%s",
                 self.__class__.__name__,
                 getattr(request, "method", None),

@@ -8,4 +8,5 @@ from ns_common.logger import get_ns_logger
 if TYPE_CHECKING:
     pass
 
-IAM_LOGGER = get_ns_logger("iam", True)
+logger = get_ns_logger("backend", True)
+iam_logger = get_ns_logger("iam", True)

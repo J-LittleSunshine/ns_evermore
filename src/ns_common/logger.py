@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
+import traceback
 from dataclasses import asdict
 from datetime import datetime, time, timezone
 from logging.handlers import TimedRotatingFileHandler
@@ -37,6 +39,71 @@ class _ExactLevelFilter(logging.Filter):
     def filter(self, _record: logging.LogRecord) -> bool:
         return _record.levelno == self._levelno
 
+class _JsonLogFormatter(logging.Formatter):
+    """Format log records as one-line JSON."""
+
+    _RESERVED_KEYS: set[str] = {
+        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+        "created", "msecs", "relativeCreated", "thread", "threadName",
+        "processName", "process", "message", "asctime",
+    }
+
+    def __init__(self, datefmt: str | None = None, utc_enabled: bool = False) -> None:
+        super().__init__(datefmt=datefmt)
+        self._utc_enabled: bool = utc_enabled
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        converter = datetime.fromtimestamp
+        if self._utc_enabled:
+            dt = datetime.fromtimestamp(record.created, timezone.utc)
+        else:
+            dt = converter(record.created)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.isoformat(timespec="milliseconds")
+
+    def format(self, record: logging.LogRecord) -> str:
+        record.message = record.getMessage()
+
+        payload: dict[str, object] = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.message,
+            "module": record.module,
+            "filename": record.filename,
+            "lineno": record.lineno,
+            "func_name": record.funcName,
+            "process": record.process,
+            "process_name": record.processName,
+            "thread": record.thread,
+            "thread_name": record.threadName,
+        }
+
+        for key, value in record.__dict__.items():
+            if key in self._RESERVED_KEYS or key.startswith("_"):
+                continue
+            payload[key] = self._normalize_value(value)
+
+        if record.exc_info:
+            payload["exception"] = "".join(traceback.format_exception(*record.exc_info)).rstrip()
+
+        if record.stack_info:
+            payload["stack"] = record.stack_info
+
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+
+    @staticmethod
+    def _normalize_value(value: object) -> object:
+        """Normalize extra value for JSON serialization."""
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, (list, tuple, set)):
+            return list(value)
+        if isinstance(value, dict):
+            return value
+        return str(value)
 
 class _BackupTimedRotatingFileHandler(TimedRotatingFileHandler):
 
@@ -148,8 +215,18 @@ class NsLogger(logging.Logger):
 
         self._reset_handlers()
 
-        formatter: logging.Formatter = logging.Formatter(fmt=str(config.get("format", "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s")), datefmt=str(config.get("datefmt", "%Y-%m-%d %H:%M:%S")))
+        format_type: str = str(config.get("format_type", "json") or "json").strip().lower()
+        datefmt: str = str(config.get("datefmt", "%Y-%m-%d %H:%M:%S"))
 
+        if format_type == "json":
+            formatter: logging.Formatter = _JsonLogFormatter(datefmt=datefmt, utc_enabled=utc_enabled)
+        elif format_type == "text":
+            formatter = logging.Formatter(
+                fmt=str(config.get("format", "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s")),
+                datefmt=datefmt,
+            )
+        else:
+            raise ValueError("log_config.format_type must be json or text")
         main_level: int = self._resolve_level(config.get("file_level", config.get("level", "DEBUG")), logging.DEBUG)
         console_level: int = self._resolve_level(config.get("console_level", config.get("level", "DEBUG")), logging.DEBUG)
         level_files: tuple[str, ...] = self._resolve_level_files(config.get("level_files", _DEFAULT_LEVEL_FILES))
