@@ -47,6 +47,8 @@ class _NsLogConfig:
     console_level: str = "DEBUG"
     console: bool = True
     format_type: Literal["json", "text"] = "json"
+    console_format_type: Literal["json", "text"] | None = None
+    file_format_type: Literal["json", "text"] | None = None
     format: str = "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s"
     datefmt: str = "%Y-%m-%d %H:%M:%S"
     when: str = "midnight"

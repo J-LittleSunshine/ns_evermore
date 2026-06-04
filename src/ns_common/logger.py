@@ -217,18 +217,25 @@ class NsLogger(logging.Logger):
 
         self._reset_handlers()
 
-        format_type: str = str(config.get("format_type", "json") or "json").strip().lower()
+        default_format_type: str = str(config.get("format_type", "json") or "json").strip().lower()
+        console_format_type: str = str(config.get("console_format_type") or default_format_type).strip().lower()
+        file_format_type: str = str(config.get("file_format_type") or default_format_type).strip().lower()
         datefmt: str = str(config.get("datefmt", "%Y-%m-%d %H:%M:%S"))
+        text_format: str = str(config.get("format", "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s"))
 
-        if format_type == "json":
-            formatter: logging.Formatter = _JsonLogFormatter(datefmt=datefmt, utc_enabled=utc_enabled)
-        elif format_type == "text":
-            formatter = logging.Formatter(
-                fmt=str(config.get("format", "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s")),
-                datefmt=datefmt,
-            )
-        else:
-            raise ValueError("log_config.format_type must be json or text")
+        def _build_formatter(_format_type: str) -> logging.Formatter:
+            """Build formatter by configured format type."""
+            if _format_type == "json":
+                return _JsonLogFormatter(datefmt=datefmt, utc_enabled=utc_enabled)
+
+            if _format_type == "text":
+                return logging.Formatter(fmt=text_format, datefmt=datefmt)
+
+            raise ValueError("log format type must be json or text")
+
+        console_formatter: logging.Formatter = _build_formatter(console_format_type)
+        file_formatter: logging.Formatter = _build_formatter(file_format_type)
+
         main_level: int = self._resolve_level(config.get("file_level", config.get("level", "DEBUG")), logging.DEBUG)
         console_level: int = self._resolve_level(config.get("console_level", config.get("level", "DEBUG")), logging.DEBUG)
         level_files: tuple[str, ...] = self._resolve_level_files(config.get("level_files", _DEFAULT_LEVEL_FILES))
@@ -242,12 +249,12 @@ class NsLogger(logging.Logger):
         if bool(config.get("console", True)):
             console_handler: logging.StreamHandler = logging.StreamHandler(stream=sys.stdout)
             console_handler.setLevel(console_level)
-            console_handler.setFormatter(formatter)
+            console_handler.setFormatter(console_formatter)
             self.addHandler(console_handler)
 
         main_handler: logging.Handler = self._build_file_handler(active_dir / f"{self.name}.log", backup_dir, config)
         main_handler.setLevel(main_level)
-        main_handler.setFormatter(formatter)
+        main_handler.setFormatter(file_formatter)
         self.addHandler(main_handler)
 
         for level_name in level_files:
@@ -255,7 +262,7 @@ class NsLogger(logging.Logger):
             level_handler: logging.Handler = self._build_file_handler(active_dir / f"{self.name}.{level_name.lower()}.log", backup_dir, config)
             level_handler.setLevel(level_no)
             level_handler.addFilter(_ExactLevelFilter(level_no))
-            level_handler.setFormatter(formatter)
+            level_handler.setFormatter(file_formatter)
             self.addHandler(level_handler)
 
         self._owner_pid = os.getpid()

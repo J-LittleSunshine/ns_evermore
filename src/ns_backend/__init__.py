@@ -5,3 +5,5 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
+
+__version__ = "0.0.0.1"
