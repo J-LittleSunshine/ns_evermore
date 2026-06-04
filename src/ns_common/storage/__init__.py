@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ns_common.storage.client import NsObjectStorageClient, AsyncNsObjectStorageClient
+from ns_common.storage.contracts import NsStorageResource, NsObjectUploadContext, NsObjectRefRepository
 from ns_common.storage.errors import (
     NsObjectStorageError,
     NsObjectStorageConfigurationError,
@@ -66,4 +67,7 @@ __all__ = [
     "build_object_ref",
     "build_standard_metadata",
     "NsObjectUploadResult",
+    "NsStorageResource",
+    "NsObjectUploadContext",
+    "NsObjectRefRepository",
 ]

@@ -6,21 +6,17 @@ from threading import RLock
 from typing import TYPE_CHECKING, BinaryIO, ClassVar
 
 from ns_common.config import NsObjectStorageConfig
-from ns_common.storage import (
-    calculate_sha256_bytes,
-    build_standard_metadata,
-    build_object_name,
-    build_object_ref,
-    calculate_sha256_stream,
-    calculate_sha256_file
-)
 from ns_common.storage.backends.async_local_fs import AsyncLocalFileObjectStorageBackend
 from ns_common.storage.backends.async_minio_backend import AsyncMinioObjectStorageBackend
 from ns_common.storage.backends.base import AsyncObjectStorageBackend, ObjectStorageBackend
 from ns_common.storage.backends.local_fs import LocalFileObjectStorageBackend
 from ns_common.storage.backends.minio_backend import MinioObjectStorageBackend
+from ns_common.storage.contracts import NsObjectUploadContext
 from ns_common.storage.errors import NsObjectStorageConfigurationError
+from ns_common.storage.hashing import calculate_sha256_bytes, calculate_sha256_file, calculate_sha256_stream
 from ns_common.storage.models import NsObjectInfo, NsObjectUploadResult
+from ns_common.storage.naming import build_object_name
+from ns_common.storage.refs import build_object_ref, build_standard_metadata
 
 if TYPE_CHECKING:
     pass
@@ -88,6 +84,62 @@ class NsObjectStorageClient:
 
         for client in clients:
             client.close()
+
+    def put_bytes_with_context(self, *, data: bytes, context: NsObjectUploadContext) -> NsObjectUploadResult:
+        """Upload bytes by standard upload context."""
+        normalized_context = context.normalized()
+
+        return self.put_bytes_with_ref(
+            data=data,
+            module_code=normalized_context.module_code,
+            resource_type=normalized_context.resource_type,
+            resource_id=normalized_context.resource_id,
+            original_filename=normalized_context.original_filename,
+            object_name=normalized_context.object_name,
+            bucket=normalized_context.bucket,
+            content_type=normalized_context.content_type,
+            uploaded_by=normalized_context.uploaded_by,
+            trace_id=normalized_context.trace_id,
+            extra_metadata=normalized_context.extra_metadata,
+        )
+
+    def put_file_with_context(self, *, file_path: str | Path, context: NsObjectUploadContext) -> NsObjectUploadResult:
+        """Upload file by standard upload context."""
+        normalized_context = context.normalized()
+
+        return self.put_file_with_ref(
+            file_path=file_path,
+            module_code=normalized_context.module_code,
+            resource_type=normalized_context.resource_type,
+            resource_id=normalized_context.resource_id,
+            original_filename=normalized_context.original_filename,
+            object_name=normalized_context.object_name,
+            bucket=normalized_context.bucket,
+            content_type=normalized_context.content_type,
+            uploaded_by=normalized_context.uploaded_by,
+            trace_id=normalized_context.trace_id,
+            extra_metadata=normalized_context.extra_metadata,
+        )
+
+    def put_stream_with_context(self, *, stream: BinaryIO, length: int, context: NsObjectUploadContext, sha256: str | None = None) -> NsObjectUploadResult:
+        """Upload stream by standard upload context."""
+        normalized_context = context.normalized()
+
+        return self.put_stream_with_ref(
+            stream=stream,
+            length=length,
+            module_code=normalized_context.module_code,
+            resource_type=normalized_context.resource_type,
+            resource_id=normalized_context.resource_id,
+            original_filename=normalized_context.original_filename,
+            object_name=normalized_context.object_name,
+            bucket=normalized_context.bucket,
+            content_type=normalized_context.content_type,
+            uploaded_by=normalized_context.uploaded_by,
+            trace_id=normalized_context.trace_id,
+            extra_metadata=normalized_context.extra_metadata,
+            sha256=sha256,
+        )
 
     def put_bytes_with_ref(
             self,
@@ -221,11 +273,14 @@ class NsObjectStorageClient:
         If sha256 is not provided, this method calculates it by reading the stream.
         The stream must be seekable so it can be rewound before upload.
         """
-        selected_sha256: str = sha256 or calculate_sha256_stream(stream)
-        try:
-            stream.seek(0)
-        except Exception as exc:  # noqa
-            raise NsObjectStorageConfigurationError("object storage stream must be seekable when sha256 is not provided") from exc
+        if sha256 is None:
+            selected_sha256: str = calculate_sha256_stream(stream)
+            try:
+                stream.seek(0)
+            except Exception as exc:  # noqa
+                raise NsObjectStorageConfigurationError("object storage stream must be seekable when sha256 is not provided") from exc
+        else:
+            selected_sha256 = str(sha256).strip().lower()
 
         selected_object_name: str = object_name or build_object_name(
             module_code=module_code,
@@ -441,6 +496,62 @@ class AsyncNsObjectStorageClient:
         for client in clients:
             await client.close()
 
+    async def put_bytes_with_context(self, *, data: bytes, context: NsObjectUploadContext) -> NsObjectUploadResult:
+        """Upload bytes by standard upload context."""
+        normalized_context = context.normalized()
+
+        return await self.put_bytes_with_ref(
+            data=data,
+            module_code=normalized_context.module_code,
+            resource_type=normalized_context.resource_type,
+            resource_id=normalized_context.resource_id,
+            original_filename=normalized_context.original_filename,
+            object_name=normalized_context.object_name,
+            bucket=normalized_context.bucket,
+            content_type=normalized_context.content_type,
+            uploaded_by=normalized_context.uploaded_by,
+            trace_id=normalized_context.trace_id,
+            extra_metadata=normalized_context.extra_metadata,
+        )
+
+    async def put_file_with_context(self, *, file_path: str | Path, context: NsObjectUploadContext) -> NsObjectUploadResult:
+        """Upload file by standard upload context."""
+        normalized_context = context.normalized()
+
+        return await self.put_file_with_ref(
+            file_path=file_path,
+            module_code=normalized_context.module_code,
+            resource_type=normalized_context.resource_type,
+            resource_id=normalized_context.resource_id,
+            original_filename=normalized_context.original_filename,
+            object_name=normalized_context.object_name,
+            bucket=normalized_context.bucket,
+            content_type=normalized_context.content_type,
+            uploaded_by=normalized_context.uploaded_by,
+            trace_id=normalized_context.trace_id,
+            extra_metadata=normalized_context.extra_metadata,
+        )
+
+    async def put_stream_with_context(self, *, stream: BinaryIO, length: int, context: NsObjectUploadContext, sha256: str | None = None) -> NsObjectUploadResult:
+        """Upload stream by standard upload context."""
+        normalized_context = context.normalized()
+
+        return await self.put_stream_with_ref(
+            stream=stream,
+            length=length,
+            module_code=normalized_context.module_code,
+            resource_type=normalized_context.resource_type,
+            resource_id=normalized_context.resource_id,
+            original_filename=normalized_context.original_filename,
+            object_name=normalized_context.object_name,
+            bucket=normalized_context.bucket,
+            content_type=normalized_context.content_type,
+            uploaded_by=normalized_context.uploaded_by,
+            trace_id=normalized_context.trace_id,
+            extra_metadata=normalized_context.extra_metadata,
+            sha256=sha256,
+        )
+
     async def put_bytes_with_ref(
             self,
             *,
@@ -573,11 +684,14 @@ class AsyncNsObjectStorageClient:
         If sha256 is not provided, this method calculates it by reading the stream.
         The stream must be seekable so it can be rewound before upload.
         """
-        selected_sha256: str = sha256 or calculate_sha256_stream(stream)
-        try:
-            stream.seek(0)
-        except Exception as exc:  # noqa
-            raise NsObjectStorageConfigurationError("async object storage stream must be seekable when sha256 is not provided") from exc
+        if sha256 is None:
+            selected_sha256: str = calculate_sha256_stream(stream)
+            try:
+                stream.seek(0)
+            except Exception as exc:  # noqa
+                raise NsObjectStorageConfigurationError("async object storage stream must be seekable when sha256 is not provided") from exc
+        else:
+            selected_sha256 = str(sha256).strip().lower()
 
         selected_object_name: str = object_name or build_object_name(
             module_code=module_code,
