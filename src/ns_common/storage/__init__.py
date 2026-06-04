@@ -41,7 +41,18 @@ from ns_common.storage.naming import (
     normalize_resource_type
 )
 from ns_common.storage.refs import build_object_ref, build_standard_metadata
-from ns_common.storage.repositories import NsInMemoryObjectRefRepository, AsyncNsInMemoryObjectRefRepository
+from ns_common.storage.repositories import (
+    AsyncNsInMemoryObjectRefRepository,
+    NsInMemoryObjectRefRepository,
+    NsObjectRefRepositoryRegistry,
+    clear_object_ref_repository_registry,
+    get_async_object_ref_repository,
+    get_object_ref_repository,
+    register_async_object_ref_repository,
+    register_object_ref_repository,
+    unregister_async_object_ref_repository,
+    unregister_object_ref_repository,
+)
 
 if TYPE_CHECKING:
     pass
@@ -79,4 +90,12 @@ __all__ = [
     "AsyncNsObjectRefRepository",
     "NsInMemoryObjectRefRepository",
     "AsyncNsInMemoryObjectRefRepository",
+    "NsObjectRefRepositoryRegistry",
+    "register_object_ref_repository",
+    "get_object_ref_repository",
+    "unregister_object_ref_repository",
+    "register_async_object_ref_repository",
+    "get_async_object_ref_repository",
+    "unregister_async_object_ref_repository",
+    "clear_object_ref_repository_registry",
 ]
