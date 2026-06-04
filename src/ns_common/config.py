@@ -42,6 +42,42 @@ class NsCacheConfig:
 
 
 @dataclass(slots=True, kw_only=True)
+class NsObjectStorageConfig:
+    """Unified object storage configuration loaded through ns_config."""
+
+    backend: Literal["minio", "local_fs", "s3", "oss", "cos", "obs", "azure_blob"] = "local_fs"
+
+    endpoint: str = ""
+    access_key: str = ""
+    secret_key: str = ""
+    secure: bool = False
+    region: str | None = None
+
+    default_bucket: str = "ns-default"
+    auto_create_bucket: bool = False
+    key_prefix: str = "ns"
+
+    presigned_get_expires_seconds: int = 3600
+    presigned_put_expires_seconds: int = 900
+
+    connect_timeout_seconds: float = 3.0
+    read_timeout_seconds: float = 30.0
+    max_pool_connections: int = 64
+
+    local_root_path: str = "object_storage"
+
+    multipart_threshold_size: int = 100 * 1024 * 1024
+    multipart_part_size: int = 64 * 1024 * 1024
+    max_object_size: int | None = None
+
+    extra_headers: dict[str, str] = field(default_factory=dict)
+
+    def resolved_backend(self) -> Literal["minio", "local_fs", "s3", "oss", "cos", "obs", "azure_blob"]:
+        """Resolve configured object storage backend without runtime probing."""
+        return self.backend
+
+
+@dataclass(slots=True, kw_only=True)
 class _NsLogConfig:
     level: str = "DEBUG"
     file_level: str = "DEBUG"
@@ -141,6 +177,7 @@ class _NsExecutorConfig:
 class NsConfig:
     backend_config: _NsBackendConfig = field(default_factory=_NsBackendConfig)
     cache_config: NsCacheConfig = field(default_factory=NsCacheConfig)
+    object_storage_config: NsObjectStorageConfig = field(default_factory=NsObjectStorageConfig)
     log_config: _NsLogConfig = field(default_factory=_NsLogConfig)
     _lock: ClassVar[RLock] = RLock()
 
@@ -166,10 +203,17 @@ class NsConfig:
                 if not isinstance(cache_config_raw, dict):
                     raise ValueError("cache_config/cache must be a JSON object")
 
+                object_storage_config_raw: Any = raw_config.get("object_storage_config")
+                if object_storage_config_raw is None:
+                    object_storage_config_raw = raw_config.get("object_storage", {})
+                if not isinstance(object_storage_config_raw, dict):
+                    raise ValueError("object_storage_config/object_storage must be a JSON object")
+
                 normalized_backend_config = cls._normalize_backend_config(dict(backend_config_raw))
                 config: NsConfig = cls(
                     backend_config=_NsBackendConfig(**normalized_backend_config),
                     cache_config=NsCacheConfig(**cache_config_raw),
+                    object_storage_config=NsObjectStorageConfig(**object_storage_config_raw),
                     log_config=_NsLogConfig(**log_config_raw)
                 )
                 config._validate()

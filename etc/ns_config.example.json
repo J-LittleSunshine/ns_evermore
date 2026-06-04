@@ -49,6 +49,40 @@
     "socket_connect_timeout": 3.0,
     "max_connections": 64,
     "health_check_interval": 30
+  },
+  "log_config": {
+    "level": "INFO",
+    "file_level": "INFO",
+    "console_level": "INFO",
+    "console": true,
+    "format_type": "json",
+    "console_format_type": "text",
+    "file_format_type": "json",
+    "datefmt": "%Y-%m-%d %H:%M:%S",
+    "when": "midnight",
+    "interval": 1,
+    "backup_count": 30,
+    "encoding": "utf-8",
+    "delay": true,
+    "utc": false,
+    "at_time": null,
+    "max_bytes": 0,
+    "use_gzip": false,
+    "lock_file_directory": null,
+    "level_files": [
+      "INFO",
+      "WARNING",
+      "ERROR",
+      "CRITICAL"
+    ]
+  },
+  "object_storage_config": {
+    "backend": "local_fs",
+    "default_bucket": "ns-local",
+    "auto_create_bucket": true,
+    "key_prefix": "ns",
+    "local_root_path": "object_storage",
+    "max_object_size": null
   }
 }
 

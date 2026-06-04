@@ -3,133 +3,25 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
-import pickle
 import re
 import sqlite3
 import time
 from importlib import import_module
 from pathlib import Path
 from threading import RLock
-from typing import Any, ClassVar, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, ClassVar, Any
 
 from ns_common import DATA_DIR
+from ns_common.cache.constants import DefaultCacheTimeout, NS_CACHE_DEFAULT_TIMEOUT
+from ns_common.cache.errors import NsCacheConfigurationError, NsCacheConnectionError
+from ns_common.cache.serializer import CacheSerializer, build_serializer
 from ns_common.config import NsCacheConfig
 
 if TYPE_CHECKING:
     pass
 
 
-class DefaultCacheTimeout:
-    """Sentinel for using configured default timeout."""
-
-
-NS_CACHE_DEFAULT_TIMEOUT = DefaultCacheTimeout()
-
-_MISSING = object()
-
-
-class NsCacheError(Exception):
-    """Base exception for ns_common cache."""
-
-
-class NsCacheConfigurationError(NsCacheError):
-    """Raised when cache configuration is invalid."""
-
-
-class NsCacheConnectionError(NsCacheError):
-    """Raised when cache backend operation fails."""
-
-
-class NsCacheSerializationError(NsCacheError):
-    """Raised when cache serialization or deserialization fails."""
-
-
-class _CacheSerializer(Protocol):
-    """Cache serializer protocol."""
-
-    def dumps(self, value: object) -> bytes:
-        """Serialize Python value to bytes."""
-
-    def loads(self, payload: bytes) -> object:
-        """Deserialize bytes to Python value."""
-
-
-class _PickleCacheSerializer:
-    """Pickle cache serializer."""
-
-    @staticmethod
-    def dumps(value: object) -> bytes:
-        """Serialize object by pickle."""
-        try:
-            return pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-        except Exception as _error:
-            raise NsCacheSerializationError("pickle cache serialization failed") from _error
-
-    @staticmethod
-    def loads(payload: bytes) -> object:
-        """Deserialize object by pickle."""
-        try:
-            return pickle.loads(payload)
-        except Exception as _error:
-            raise NsCacheSerializationError("pickle cache deserialization failed") from _error
-
-
-class _JsonCacheSerializer:
-    """JSON cache serializer."""
-
-    @staticmethod
-    def dumps(value: object) -> bytes:
-        """Serialize JSON-compatible value."""
-        try:
-            return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        except Exception as _error:
-            raise NsCacheSerializationError("json cache serialization failed") from _error
-
-    @staticmethod
-    def loads(payload: bytes) -> object:
-        """Deserialize JSON-compatible value."""
-        try:
-            return json.loads(payload.decode("utf-8"))
-        except Exception as _error:
-            raise NsCacheSerializationError("json cache deserialization failed") from _error
-
-
-class _RawCacheSerializer:
-    """Raw cache serializer."""
-
-    @staticmethod
-    def dumps(value: object) -> bytes:
-        """Serialize primitive value to bytes."""
-        if isinstance(value, bytes):
-            return value
-        if isinstance(value, str):
-            return value.encode("utf-8")
-        if isinstance(value, (int, float, bool)):
-            return str(value).encode("utf-8")
-        if value is None:
-            return b""
-        raise NsCacheSerializationError("raw cache serializer only supports bytes, str, int, float, bool, or None")
-
-    @staticmethod
-    def loads(payload: bytes) -> object:
-        """Return raw bytes."""
-        return payload
-
-
-def _build_serializer(name: str) -> _CacheSerializer:
-    """Build cache serializer by name."""
-    serializer_name = str(name or "pickle").strip().lower()
-    if serializer_name == "pickle":
-        return _PickleCacheSerializer()
-    if serializer_name == "json":
-        return _JsonCacheSerializer()
-    if serializer_name == "raw":
-        return _RawCacheSerializer()
-    raise NsCacheConfigurationError(f"unsupported cache serializer: {name}")
-
-
-class _CacheBackend(Protocol):
+class CacheBackend(Protocol):
     """Internal cache backend protocol."""
 
     def get(self, key: str, default: object | None = None) -> object | None:
@@ -172,7 +64,7 @@ class _CacheBackend(Protocol):
         """Close backend resources."""
 
 
-class _AsyncCacheBackend(Protocol):
+class AsyncCacheBackend(Protocol):
     """Internal async cache backend protocol."""
 
     async def get(self, key: str, default: object | None = None) -> object | None:
@@ -215,14 +107,14 @@ class _AsyncCacheBackend(Protocol):
         """Close backend resources."""
 
 
-class _BaseCacheBackend:
+class BaseCacheBackend:
     """Base cache backend."""
 
     def __init__(self, config: NsCacheConfig) -> None:
         """Initialize base backend."""
         self._config: NsCacheConfig = config
         self._key_prefix: str = config.key_prefix
-        self._serializer: _CacheSerializer = _build_serializer(config.serializer)
+        self._serializer: CacheSerializer = build_serializer(config.serializer)
 
     def _make_key(self, key: str) -> str:
         """Build storage key with namespace prefix."""
@@ -260,7 +152,7 @@ class _BaseCacheBackend:
         return time.time()
 
 
-class _SqlWalCacheBackend(_BaseCacheBackend):
+class SqlWalCacheBackend(BaseCacheBackend):
     """SQLite WAL cache backend with automatic table creation."""
 
     _TABLE_NAME_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -692,7 +584,7 @@ class _SqlWalCacheBackend(_BaseCacheBackend):
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-class _RedisCompatibleCacheBackend(_BaseCacheBackend):
+class RedisCompatibleCacheBackend(BaseCacheBackend):
     """Redis / Valkey cache backend selected by explicit config."""
 
     def __init__(self, config: NsCacheConfig) -> None:
@@ -983,7 +875,7 @@ class _RedisCompatibleCacheBackend(_BaseCacheBackend):
         return NsCacheConnectionError(f"{self._backend_name} cache backend operation failed")
 
 
-class _AsyncSqlWalCacheBackend:
+class AsyncSqlWalCacheBackend:
     """Async wrapper for SQLite WAL backend.
 
     SQLite backend is file-based and guarded by RLock, so async support is provided
@@ -992,7 +884,7 @@ class _AsyncSqlWalCacheBackend:
 
     def __init__(self, config: NsCacheConfig) -> None:
         """Initialize threaded SQLite WAL async backend."""
-        self._backend: _SqlWalCacheBackend = _SqlWalCacheBackend(config)
+        self._backend: SqlWalCacheBackend = SqlWalCacheBackend(config)
 
     async def get(self, key: str, default: object | None = None) -> object | None:
         """Get cache value."""
@@ -1047,7 +939,7 @@ class _AsyncSqlWalCacheBackend:
         await asyncio.to_thread(self._backend.close)
 
 
-class _AsyncRedisCompatibleCacheBackend(_BaseCacheBackend):
+class AsyncRedisCompatibleCacheBackend(BaseCacheBackend):
     """Async Redis / Valkey cache backend selected by explicit config."""
 
     def __init__(self, config: NsCacheConfig) -> None:
@@ -1355,301 +1247,3 @@ class _AsyncRedisCompatibleCacheBackend(_BaseCacheBackend):
                     await result
         except Exception:  # noqa
             pass
-
-
-class NsCacheClient:
-    """Thread-safe process-local singleton cache client.
-
-    Singleton identity is controlled by client name.
-    Different config under the same client name is rejected.
-    """
-
-    name: str
-    config: NsCacheConfig
-    _backend: _CacheBackend
-
-    _lock: ClassVar[RLock] = RLock()
-    _instances: ClassVar[dict[str, "NsCacheClient"]] = {}
-    _default_config: ClassVar[NsCacheConfig | None] = None
-
-    def __new__(cls, name: str = "default", config: NsCacheConfig | None = None) -> "NsCacheClient":
-        """Create or return named singleton instance."""
-        normalized_name = cls._normalize_client_name(name)
-
-        with cls._lock:
-            existing_client = cls._instances.get(normalized_name)
-            if existing_client is not None:
-                if config is not None and config != existing_client.config:
-                    raise NsCacheConfigurationError(f"cache client already exists with different config: {normalized_name}")
-                return existing_client
-
-            selected_config = config or cls._default_config or cls._load_config_from_ns_config()
-            instance = super().__new__(cls)
-            instance.name = normalized_name
-            instance.config = selected_config
-            instance._backend = cls._build_backend(selected_config)
-            cls._instances[normalized_name] = instance
-            return instance
-
-    def __init__(self, name: str = "default", config: NsCacheConfig | None = None) -> None:
-        """Keep __init__ idempotent because singleton construction is handled in __new__."""
-        _ = (name, config)
-
-    @classmethod
-    def configure_default(cls, config: NsCacheConfig) -> None:
-        """Configure default cache config for later default client creation."""
-        if not isinstance(config, NsCacheConfig):
-            raise NsCacheConfigurationError("default cache config must be NsCacheConfig")
-
-        with cls._lock:
-            cls._default_config = config
-
-    @classmethod
-    def get_default(cls) -> "NsCacheClient":
-        """Get default cache client."""
-        return cls("default")
-
-    @classmethod
-    def get_or_create(cls, name: str = "default", config: NsCacheConfig | None = None) -> "NsCacheClient":
-        """Compatibility helper for named singleton access."""
-        return cls(name, config)
-
-    @classmethod
-    def close_all(cls) -> None:
-        """Close all process-local cache clients."""
-        with cls._lock:
-            clients = list(cls._instances.values())
-            cls._instances.clear()
-
-        for client in clients:
-            client.close()
-
-    def get(self, key: str, default: object | None = None) -> object | None:
-        """Get cache value."""
-        return self._backend.get(key, default)
-
-    def set(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
-        """Set cache value."""
-        return self._backend.set(key, value, timeout)
-
-    def add(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
-        """Set cache value only when key does not exist."""
-        return self._backend.add(key, value, timeout)
-
-    def delete(self, key: str) -> bool:
-        """Delete cache key."""
-        return self._backend.delete(key)
-
-    def exists(self, key: str) -> bool:
-        """Check whether key exists."""
-        return self._backend.exists(key)
-
-    def expire(self, key: str, timeout: int) -> bool:
-        """Update key expiration."""
-        return self._backend.expire(key, timeout)
-
-    def persist(self, key: str) -> bool:
-        """Remove key expiration."""
-        return self._backend.persist(key)
-
-    def ttl(self, key: str) -> int:
-        """Return Redis-compatible TTL."""
-        return self._backend.ttl(key)
-
-    def clear(self) -> bool:
-        """Clear cache keys under current prefix."""
-        return self._backend.clear()
-
-    def get_many(self, keys: list[str]) -> dict[str, object]:
-        """Batch get cache values."""
-        return self._backend.get_many(keys)
-
-    def set_many(self, data: dict[str, object], timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
-        """Batch set cache values."""
-        return self._backend.set_many(data, timeout)
-
-    def delete_many(self, keys: list[str]) -> int:
-        """Batch delete cache keys."""
-        return self._backend.delete_many(keys)
-
-    def close(self) -> None:
-        """Close cache backend resources and remove singleton reference."""
-        with self.__class__._lock:
-            existing_client: NsCacheClient | None = self.__class__._instances.get(self.name)
-            if existing_client is self:
-                self.__class__._instances.pop(self.name, None)
-
-        self._backend.close()
-
-    @staticmethod
-    def _normalize_client_name(name: str) -> str:
-        """Normalize singleton client name."""
-        if not isinstance(name, str) or not name.strip():
-            raise NsCacheConfigurationError("cache client name must be a non-empty str")
-        return name.strip()
-
-    @staticmethod
-    def _load_config_from_ns_config() -> NsCacheConfig:
-        """Load default cache config from ns_config."""
-        from ns_common.config import ns_config
-
-        return ns_config.cache_config
-
-    @staticmethod
-    def _build_backend(config: NsCacheConfig) -> _CacheBackend:
-        """Build backend by explicit configuration."""
-        resolved_backend = config.resolved_backend()
-        if resolved_backend == "sql_wal":
-            return _SqlWalCacheBackend(config)
-        if resolved_backend in {"redis", "valkey"}:
-            return _RedisCompatibleCacheBackend(config)
-        raise NsCacheConfigurationError(f"unsupported cache backend: {config.backend}")
-
-
-class AsyncNsCacheClient:
-    """Thread-safe process-local singleton async cache client.
-
-    Singleton identity is controlled by client name.
-    Different config under the same client name is rejected.
-    """
-
-    name: str
-    config: NsCacheConfig
-    _backend: _AsyncCacheBackend
-
-    _lock: ClassVar[RLock] = RLock()
-    _instances: ClassVar[dict[str, "AsyncNsCacheClient"]] = {}
-    _default_config: ClassVar[NsCacheConfig | None] = None
-
-    def __new__(cls, name: str = "default", config: NsCacheConfig | None = None) -> "AsyncNsCacheClient":
-        """Create or return named singleton instance."""
-        normalized_name = cls._normalize_client_name(name)
-
-        with cls._lock:
-            existing_client = cls._instances.get(normalized_name)
-            if existing_client is not None:
-                if config is not None and config != existing_client.config:
-                    raise NsCacheConfigurationError(f"async cache client already exists with different config: {normalized_name}")
-                return existing_client
-
-            selected_config = config or cls._default_config or cls._load_config_from_ns_config()
-            instance = super().__new__(cls)
-            instance.name = normalized_name
-            instance.config = selected_config
-            instance._backend = cls._build_backend(selected_config)
-            cls._instances[normalized_name] = instance
-            return instance
-
-    def __init__(self, name: str = "default", config: NsCacheConfig | None = None) -> None:
-        """Keep __init__ idempotent because singleton construction is handled in __new__."""
-        _ = (name, config)
-
-    @classmethod
-    def configure_default(cls, config: NsCacheConfig) -> None:
-        """Configure default async cache config for later default client creation."""
-        if not isinstance(config, NsCacheConfig):
-            raise NsCacheConfigurationError("default async cache config must be NsCacheConfig")
-
-        with cls._lock:
-            cls._default_config = config
-
-    @classmethod
-    def get_default(cls) -> "AsyncNsCacheClient":
-        """Get default async cache client."""
-        return cls("default")
-
-    @classmethod
-    def get_or_create(cls, name: str = "default", config: NsCacheConfig | None = None) -> "AsyncNsCacheClient":
-        """Compatibility helper for named singleton access."""
-        return cls(name, config)
-
-    @classmethod
-    async def close_all(cls) -> None:
-        """Close all process-local async cache clients."""
-        with cls._lock:
-            clients = list(cls._instances.values())
-            cls._instances.clear()
-
-        for client in clients:
-            await client.close()
-
-    async def get(self, key: str, default: object | None = None) -> object | None:
-        """Get cache value."""
-        return await self._backend.get(key, default)
-
-    async def set(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
-        """Set cache value."""
-        return await self._backend.set(key, value, timeout)
-
-    async def add(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
-        """Set cache value only when key does not exist."""
-        return await self._backend.add(key, value, timeout)
-
-    async def delete(self, key: str) -> bool:
-        """Delete cache key."""
-        return await self._backend.delete(key)
-
-    async def exists(self, key: str) -> bool:
-        """Check whether key exists."""
-        return await self._backend.exists(key)
-
-    async def expire(self, key: str, timeout: int) -> bool:
-        """Update key expiration."""
-        return await self._backend.expire(key, timeout)
-
-    async def persist(self, key: str) -> bool:
-        """Remove key expiration."""
-        return await self._backend.persist(key)
-
-    async def ttl(self, key: str) -> int:
-        """Return Redis-compatible TTL."""
-        return await self._backend.ttl(key)
-
-    async def clear(self) -> bool:
-        """Clear cache keys under current prefix."""
-        return await self._backend.clear()
-
-    async def get_many(self, keys: list[str]) -> dict[str, object]:
-        """Batch get cache values."""
-        return await self._backend.get_many(keys)
-
-    async def set_many(self, data: dict[str, object], timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
-        """Batch set cache values."""
-        return await self._backend.set_many(data, timeout)
-
-    async def delete_many(self, keys: list[str]) -> int:
-        """Batch delete cache keys."""
-        return await self._backend.delete_many(keys)
-
-    async def close(self) -> None:
-        """Close cache backend resources and remove singleton reference."""
-        with self.__class__._lock:
-            existing_client: AsyncNsCacheClient | None = self.__class__._instances.get(self.name)
-            if existing_client is self:
-                self.__class__._instances.pop(self.name, None)
-
-        await self._backend.close()
-
-    @staticmethod
-    def _normalize_client_name(name: str) -> str:
-        """Normalize singleton client name."""
-        if not isinstance(name, str) or not name.strip():
-            raise NsCacheConfigurationError("async cache client name must be a non-empty str")
-        return name.strip()
-
-    @staticmethod
-    def _load_config_from_ns_config() -> NsCacheConfig:
-        """Load default cache config from ns_config."""
-        from ns_common.config import ns_config
-
-        return ns_config.cache_config
-
-    @staticmethod
-    def _build_backend(config: NsCacheConfig) -> _AsyncCacheBackend:
-        """Build async backend by explicit configuration."""
-        resolved_backend = config.resolved_backend()
-        if resolved_backend == "sql_wal":
-            return _AsyncSqlWalCacheBackend(config)
-        if resolved_backend in {"redis", "valkey"}:
-            return _AsyncRedisCompatibleCacheBackend(config)
-        raise NsCacheConfigurationError(f"unsupported async cache backend: {config.backend}")
