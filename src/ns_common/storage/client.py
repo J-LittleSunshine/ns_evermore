@@ -6,13 +6,21 @@ from threading import RLock
 from typing import TYPE_CHECKING, BinaryIO, ClassVar
 
 from ns_common.config import NsObjectStorageConfig
+from ns_common.storage import (
+    calculate_sha256_bytes,
+    build_standard_metadata,
+    build_object_name,
+    build_object_ref,
+    calculate_sha256_stream,
+    calculate_sha256_file
+)
 from ns_common.storage.backends.async_local_fs import AsyncLocalFileObjectStorageBackend
 from ns_common.storage.backends.async_minio_backend import AsyncMinioObjectStorageBackend
 from ns_common.storage.backends.base import AsyncObjectStorageBackend, ObjectStorageBackend
 from ns_common.storage.backends.local_fs import LocalFileObjectStorageBackend
 from ns_common.storage.backends.minio_backend import MinioObjectStorageBackend
 from ns_common.storage.errors import NsObjectStorageConfigurationError
-from ns_common.storage.models import NsObjectInfo
+from ns_common.storage.models import NsObjectInfo, NsObjectUploadResult
 
 if TYPE_CHECKING:
     pass
@@ -80,6 +88,182 @@ class NsObjectStorageClient:
 
         for client in clients:
             client.close()
+
+    def put_bytes_with_ref(
+            self,
+            *,
+            data: bytes,
+            module_code: str,
+            resource_type: str,
+            resource_id: str | int | None = None,
+            original_filename: str | None = None,
+            object_name: str | None = None,
+            bucket: str | None = None,
+            content_type: str | None = None,
+            uploaded_by: str | int | None = None,
+            trace_id: str | None = None,
+            extra_metadata: dict[str, str] | None = None,
+    ) -> NsObjectUploadResult:
+        """Upload bytes and build standard object reference."""
+        sha256: str = calculate_sha256_bytes(data)
+        selected_object_name: str = object_name or build_object_name(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+        )
+        metadata: dict[str, str] = build_standard_metadata(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+            uploaded_by=uploaded_by,
+            trace_id=trace_id,
+            sha256=sha256,
+            extra_metadata=extra_metadata,
+        )
+
+        object_info = self.put_bytes(
+            bucket=bucket,
+            object_name=selected_object_name,
+            data=data,
+            content_type=content_type,
+            metadata=metadata,
+        )
+        object_ref = build_object_ref(
+            config=self.config,
+            object_info=object_info,
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+            sha256=sha256,
+            extra_metadata=metadata,
+        )
+
+        return NsObjectUploadResult(object_info=object_info, object_ref=object_ref)
+
+    def put_file_with_ref(
+            self,
+            *,
+            file_path: str | Path,
+            module_code: str,
+            resource_type: str,
+            resource_id: str | int | None = None,
+            original_filename: str | None = None,
+            object_name: str | None = None,
+            bucket: str | None = None,
+            content_type: str | None = None,
+            uploaded_by: str | int | None = None,
+            trace_id: str | None = None,
+            extra_metadata: dict[str, str] | None = None,
+    ) -> NsObjectUploadResult:
+        """Upload file and build standard object reference."""
+        source_path: Path = Path(file_path)
+        selected_original_filename: str | None = original_filename or source_path.name
+        sha256: str = calculate_sha256_file(source_path)
+        selected_object_name: str = object_name or build_object_name(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=selected_original_filename,
+        )
+        metadata: dict[str, str] = build_standard_metadata(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=selected_original_filename,
+            uploaded_by=uploaded_by,
+            trace_id=trace_id,
+            sha256=sha256,
+            extra_metadata=extra_metadata,
+        )
+
+        object_info = self.put_file(
+            bucket=bucket,
+            object_name=selected_object_name,
+            file_path=source_path,
+            content_type=content_type,
+            metadata=metadata,
+        )
+        object_ref = build_object_ref(
+            config=self.config,
+            object_info=object_info,
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=selected_original_filename,
+            sha256=sha256,
+            extra_metadata=metadata,
+        )
+
+        return NsObjectUploadResult(object_info=object_info, object_ref=object_ref)
+
+    def put_stream_with_ref(
+            self,
+            *,
+            stream: BinaryIO,
+            length: int,
+            module_code: str,
+            resource_type: str,
+            resource_id: str | int | None = None,
+            original_filename: str | None = None,
+            object_name: str | None = None,
+            bucket: str | None = None,
+            content_type: str | None = None,
+            uploaded_by: str | int | None = None,
+            trace_id: str | None = None,
+            extra_metadata: dict[str, str] | None = None,
+            sha256: str | None = None,
+    ) -> NsObjectUploadResult:
+        """Upload stream and build standard object reference.
+
+        If sha256 is not provided, this method calculates it by reading the stream.
+        The stream must be seekable so it can be rewound before upload.
+        """
+        selected_sha256: str = sha256 or calculate_sha256_stream(stream)
+        try:
+            stream.seek(0)
+        except Exception as exc:  # noqa
+            raise NsObjectStorageConfigurationError("object storage stream must be seekable when sha256 is not provided") from exc
+
+        selected_object_name: str = object_name or build_object_name(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+        )
+        metadata: dict[str, str] = build_standard_metadata(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+            uploaded_by=uploaded_by,
+            trace_id=trace_id,
+            sha256=selected_sha256,
+            extra_metadata=extra_metadata,
+        )
+
+        object_info = self.put_stream(
+            bucket=bucket,
+            object_name=selected_object_name,
+            stream=stream,
+            length=length,
+            content_type=content_type,
+            metadata=metadata,
+        )
+        object_ref = build_object_ref(
+            config=self.config,
+            object_info=object_info,
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+            sha256=selected_sha256,
+            extra_metadata=metadata,
+        )
+
+        return NsObjectUploadResult(object_info=object_info, object_ref=object_ref)
 
     def bucket_exists(self, bucket: str | None = None) -> bool:
         """Return whether bucket exists."""
@@ -256,6 +440,182 @@ class AsyncNsObjectStorageClient:
 
         for client in clients:
             await client.close()
+
+    async def put_bytes_with_ref(
+            self,
+            *,
+            data: bytes,
+            module_code: str,
+            resource_type: str,
+            resource_id: str | int | None = None,
+            original_filename: str | None = None,
+            object_name: str | None = None,
+            bucket: str | None = None,
+            content_type: str | None = None,
+            uploaded_by: str | int | None = None,
+            trace_id: str | None = None,
+            extra_metadata: dict[str, str] | None = None,
+    ) -> NsObjectUploadResult:
+        """Upload bytes and build standard object reference."""
+        sha256: str = calculate_sha256_bytes(data)
+        selected_object_name: str = object_name or build_object_name(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+        )
+        metadata: dict[str, str] = build_standard_metadata(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+            uploaded_by=uploaded_by,
+            trace_id=trace_id,
+            sha256=sha256,
+            extra_metadata=extra_metadata,
+        )
+
+        object_info = await self.put_bytes(
+            bucket=bucket,
+            object_name=selected_object_name,
+            data=data,
+            content_type=content_type,
+            metadata=metadata,
+        )
+        object_ref = build_object_ref(
+            config=self.config,
+            object_info=object_info,
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+            sha256=sha256,
+            extra_metadata=metadata,
+        )
+
+        return NsObjectUploadResult(object_info=object_info, object_ref=object_ref)
+
+    async def put_file_with_ref(
+            self,
+            *,
+            file_path: str | Path,
+            module_code: str,
+            resource_type: str,
+            resource_id: str | int | None = None,
+            original_filename: str | None = None,
+            object_name: str | None = None,
+            bucket: str | None = None,
+            content_type: str | None = None,
+            uploaded_by: str | int | None = None,
+            trace_id: str | None = None,
+            extra_metadata: dict[str, str] | None = None,
+    ) -> NsObjectUploadResult:
+        """Upload file and build standard object reference."""
+        source_path: Path = Path(file_path)
+        selected_original_filename: str | None = original_filename or source_path.name
+        sha256: str = calculate_sha256_file(source_path)
+        selected_object_name: str = object_name or build_object_name(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=selected_original_filename,
+        )
+        metadata: dict[str, str] = build_standard_metadata(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=selected_original_filename,
+            uploaded_by=uploaded_by,
+            trace_id=trace_id,
+            sha256=sha256,
+            extra_metadata=extra_metadata,
+        )
+
+        object_info = await self.put_file(
+            bucket=bucket,
+            object_name=selected_object_name,
+            file_path=source_path,
+            content_type=content_type,
+            metadata=metadata,
+        )
+        object_ref = build_object_ref(
+            config=self.config,
+            object_info=object_info,
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=selected_original_filename,
+            sha256=sha256,
+            extra_metadata=metadata,
+        )
+
+        return NsObjectUploadResult(object_info=object_info, object_ref=object_ref)
+
+    async def put_stream_with_ref(
+            self,
+            *,
+            stream: BinaryIO,
+            length: int,
+            module_code: str,
+            resource_type: str,
+            resource_id: str | int | None = None,
+            original_filename: str | None = None,
+            object_name: str | None = None,
+            bucket: str | None = None,
+            content_type: str | None = None,
+            uploaded_by: str | int | None = None,
+            trace_id: str | None = None,
+            extra_metadata: dict[str, str] | None = None,
+            sha256: str | None = None,
+    ) -> NsObjectUploadResult:
+        """Upload stream and build standard object reference.
+
+        If sha256 is not provided, this method calculates it by reading the stream.
+        The stream must be seekable so it can be rewound before upload.
+        """
+        selected_sha256: str = sha256 or calculate_sha256_stream(stream)
+        try:
+            stream.seek(0)
+        except Exception as exc:  # noqa
+            raise NsObjectStorageConfigurationError("async object storage stream must be seekable when sha256 is not provided") from exc
+
+        selected_object_name: str = object_name or build_object_name(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+        )
+        metadata: dict[str, str] = build_standard_metadata(
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+            uploaded_by=uploaded_by,
+            trace_id=trace_id,
+            sha256=selected_sha256,
+            extra_metadata=extra_metadata,
+        )
+
+        object_info = await self.put_stream(
+            bucket=bucket,
+            object_name=selected_object_name,
+            stream=stream,
+            length=length,
+            content_type=content_type,
+            metadata=metadata,
+        )
+        object_ref = build_object_ref(
+            config=self.config,
+            object_info=object_info,
+            module_code=module_code,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            original_filename=original_filename,
+            sha256=selected_sha256,
+            extra_metadata=metadata,
+        )
+
+        return NsObjectUploadResult(object_info=object_info, object_ref=object_ref)
 
     async def bucket_exists(self, bucket: str | None = None) -> bool:
         """Return whether bucket exists."""

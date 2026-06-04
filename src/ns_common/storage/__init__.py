@@ -13,8 +13,18 @@ from ns_common.storage.errors import (
     NsObjectStoragePermissionError,
     NsObjectStorageValidationError
 )
-from ns_common.storage.hashing import calculate_sha256_bytes, calculate_sha256_file, calculate_sha256_stream
-from ns_common.storage.models import NsObjectInfo, NsPresignedUrl, NsPutObjectResult, NsObjectRef
+from ns_common.storage.hashing import (
+    calculate_sha256_bytes,
+    calculate_sha256_file,
+    calculate_sha256_stream
+)
+from ns_common.storage.models import (
+    NsObjectInfo,
+    NsPresignedUrl,
+    NsPutObjectResult,
+    NsObjectRef,
+    NsObjectUploadResult
+)
 from ns_common.storage.naming import (
     build_object_name,
     extract_extension_from_filename,
@@ -55,4 +65,5 @@ __all__ = [
     "normalize_resource_type",
     "build_object_ref",
     "build_standard_metadata",
+    "NsObjectUploadResult",
 ]

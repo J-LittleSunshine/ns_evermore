@@ -65,3 +65,11 @@ class NsObjectRef:
     sha256: str | None = None
     version_id: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class NsObjectUploadResult:
+    """Normalized standard upload result with object info and business object reference."""
+
+    object_info: NsObjectInfo
+    object_ref: NsObjectRef
