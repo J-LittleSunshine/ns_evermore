@@ -110,3 +110,19 @@ class NsObjectRefRepository(Protocol):
 
     def delete_object_ref(self, *, bucket: str, object_name: str) -> bool:
         """Delete object reference metadata, not necessarily the physical object."""
+
+
+class AsyncNsObjectRefRepository(Protocol):
+    """Async protocol business modules can implement to persist object references."""
+
+    async def save_object_ref(self, object_ref: NsObjectRef) -> NsObjectRef:
+        """Persist object reference and return saved reference."""
+
+    async def get_object_ref(self, *, bucket: str, object_name: str) -> NsObjectRef | None:
+        """Get one object reference by bucket and object name."""
+
+    async def list_object_refs(self, *, module_code: str, resource_type: str, resource_id: str | int | None = None) -> list[NsObjectRef]:
+        """List object references by business resource identity."""
+
+    async def delete_object_ref(self, *, bucket: str, object_name: str) -> bool:
+        """Delete object reference metadata, not necessarily the physical object."""

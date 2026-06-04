@@ -4,7 +4,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ns_common.storage.client import NsObjectStorageClient, AsyncNsObjectStorageClient
-from ns_common.storage.contracts import NsStorageResource, NsObjectUploadContext, NsObjectRefRepository
+from ns_common.storage.contracts import (
+    AsyncNsObjectRefRepository,
+    NsObjectRefRepository,
+    NsObjectUploadContext,
+    NsStorageResource,
+)
 from ns_common.storage.errors import (
     NsObjectStorageError,
     NsObjectStorageConfigurationError,
@@ -36,6 +41,7 @@ from ns_common.storage.naming import (
     normalize_resource_type
 )
 from ns_common.storage.refs import build_object_ref, build_standard_metadata
+from ns_common.storage.repositories import NsInMemoryObjectRefRepository, AsyncNsInMemoryObjectRefRepository
 
 if TYPE_CHECKING:
     pass
@@ -70,4 +76,7 @@ __all__ = [
     "NsStorageResource",
     "NsObjectUploadContext",
     "NsObjectRefRepository",
+    "AsyncNsObjectRefRepository",
+    "NsInMemoryObjectRefRepository",
+    "AsyncNsInMemoryObjectRefRepository",
 ]
