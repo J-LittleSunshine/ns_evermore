@@ -4,8 +4,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ns_common.config import NsObjectStorageConfig
-from ns_common.storage.backends import MinioObjectStorageBackend
 from ns_common.storage.backends.base import AsyncObjectStorageBackendWrapper
+from ns_common.storage.backends.minio_backend import MinioObjectStorageBackend
 
 if TYPE_CHECKING:
     pass
