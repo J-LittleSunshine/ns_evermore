@@ -7,7 +7,7 @@ from typing import Any, Literal, cast
 
 from django.core.cache.backends.base import BaseCache, DEFAULT_TIMEOUT
 
-from ns_common.cache import NS_CACHE_DEFAULT_TIMEOUT, NsCacheClient, NsCacheConfigurationError, _DefaultCacheTimeout
+from ns_common.cache import NS_CACHE_DEFAULT_TIMEOUT, NsCacheClient, NsCacheConfigurationError, DefaultCacheTimeout, AsyncNsCacheClient
 from ns_common.config import NsCacheConfig, ns_config
 
 
@@ -24,6 +24,7 @@ class NsDjangoCacheBackend(BaseCache):
         client_name: str = self._build_client_name(config, options)
 
         self._client: NsCacheClient = NsCacheClient(client_name, config)
+        self._async_client: AsyncNsCacheClient = AsyncNsCacheClient(f"async-{client_name}", config)
 
     def get(self, key: str, default: object | None = None, version: int | None = None) -> object | None:
         """Get value from NsCacheClient."""
@@ -33,7 +34,7 @@ class NsDjangoCacheBackend(BaseCache):
     def set(self, key: str, value: object, timeout: object = DEFAULT_TIMEOUT, version: int | None = None) -> bool:
         """Set value through NsCacheClient."""
         cache_key: str = self.make_and_validate_key(key, version=version)
-        resolved_timeout: int | None | _DefaultCacheTimeout = self._resolve_django_timeout(timeout)
+        resolved_timeout: int | None | DefaultCacheTimeout = self._resolve_django_timeout(timeout)
 
         if isinstance(resolved_timeout, int) and resolved_timeout <= 0:
             self._client.delete(cache_key)
@@ -44,7 +45,7 @@ class NsDjangoCacheBackend(BaseCache):
     def add(self, key: str, value: object, timeout: object = DEFAULT_TIMEOUT, version: int | None = None) -> bool:
         """Add value only when key does not exist."""
         cache_key: str = self.make_and_validate_key(key, version=version)
-        resolved_timeout: int | None | _DefaultCacheTimeout = self._resolve_django_timeout(timeout)
+        resolved_timeout: int | None | DefaultCacheTimeout = self._resolve_django_timeout(timeout)
 
         if isinstance(resolved_timeout, int) and resolved_timeout <= 0:
             return False
@@ -84,7 +85,7 @@ class NsDjangoCacheBackend(BaseCache):
         if not data:
             return []
 
-        resolved_timeout: int | None | _DefaultCacheTimeout = self._resolve_django_timeout(timeout)
+        resolved_timeout: int | None | DefaultCacheTimeout = self._resolve_django_timeout(timeout)
 
         cache_key_map: dict[str, str] = {}
         cache_data: dict[str, object] = {}
@@ -117,10 +118,10 @@ class NsDjangoCacheBackend(BaseCache):
     def touch(self, key: str, timeout: object = DEFAULT_TIMEOUT, version: int | None = None) -> bool:
         """Update key timeout."""
         cache_key: str = self.make_and_validate_key(key, version=version)
-        resolved_timeout: int | None | _DefaultCacheTimeout = self._resolve_django_timeout(timeout)
+        resolved_timeout: int | None | DefaultCacheTimeout = self._resolve_django_timeout(timeout)
 
         selected_timeout: int | None
-        if isinstance(resolved_timeout, _DefaultCacheTimeout):
+        if isinstance(resolved_timeout, DefaultCacheTimeout):
             selected_timeout = self._client.config.default_timeout_seconds
         else:
             selected_timeout = resolved_timeout
@@ -138,7 +139,7 @@ class NsDjangoCacheBackend(BaseCache):
         self._client.close()
 
     @staticmethod
-    def _resolve_django_timeout(timeout: object) -> int | None | _DefaultCacheTimeout:
+    def _resolve_django_timeout(timeout: object) -> int | None | DefaultCacheTimeout:
         """Resolve Django timeout semantics."""
         if timeout is DEFAULT_TIMEOUT:
             return NS_CACHE_DEFAULT_TIMEOUT
@@ -236,3 +237,111 @@ class NsDjangoCacheBackend(BaseCache):
                 return text
 
         return str(default or "").strip()
+
+    async def aget(self, key: str, default: object | None = None, version: int | None = None) -> object | None:
+        """Async get value from AsyncNsCacheClient."""
+        cache_key: str = self.make_and_validate_key(key, version=version)
+        return await self._async_client.get(cache_key, default)
+
+    async def aset(self, key: str, value: object, timeout: object = DEFAULT_TIMEOUT, version: int | None = None) -> bool:
+        """Async set value through AsyncNsCacheClient."""
+        cache_key: str = self.make_and_validate_key(key, version=version)
+        resolved_timeout: int | None | DefaultCacheTimeout = self._resolve_django_timeout(timeout)
+
+        if isinstance(resolved_timeout, int) and resolved_timeout <= 0:
+            await self._async_client.delete(cache_key)
+            return False
+
+        return await self._async_client.set(cache_key, value, resolved_timeout)
+
+    async def aadd(self, key: str, value: object, timeout: object = DEFAULT_TIMEOUT, version: int | None = None) -> bool:
+        """Async add value only when key does not exist."""
+        cache_key: str = self.make_and_validate_key(key, version=version)
+        resolved_timeout: int | None | DefaultCacheTimeout = self._resolve_django_timeout(timeout)
+
+        if isinstance(resolved_timeout, int) and resolved_timeout <= 0:
+            return False
+
+        return await self._async_client.add(cache_key, value, resolved_timeout)
+
+    async def adelete(self, key: str, version: int | None = None) -> bool:
+        """Async delete value."""
+        cache_key: str = self.make_and_validate_key(key, version=version)
+        return await self._async_client.delete(cache_key)
+
+    async def aclear(self) -> bool:
+        """Async clear cache entries under current ns key prefix."""
+        return await self._async_client.clear()
+
+    async def aget_many(self, keys: list[str], version: int | None = None) -> dict[str, object]:
+        """Async get many values."""
+        if not keys:
+            return {}
+
+        cache_key_map: dict[str, str] = {}
+        for key in keys:
+            cache_key_map[self.make_and_validate_key(key, version=version)] = key
+
+        raw_result: dict[str, object] = await self._async_client.get_many(list(cache_key_map.keys()))
+
+        result: dict[str, object] = {}
+        for cache_key, value in raw_result.items():
+            original_key: str | None = cache_key_map.get(cache_key)
+            if original_key is not None:
+                result[original_key] = value
+
+        return result
+
+    async def aset_many(self, data: dict[str, object], timeout: object = DEFAULT_TIMEOUT, version: int | None = None) -> list[str]:
+        """Async set many values."""
+        if not data:
+            return []
+
+        resolved_timeout: int | None | DefaultCacheTimeout = self._resolve_django_timeout(timeout)
+
+        cache_key_map: dict[str, str] = {}
+        cache_data: dict[str, object] = {}
+
+        for key, value in data.items():
+            cache_key: str = self.make_and_validate_key(key, version=version)
+            cache_key_map[cache_key] = key
+            cache_data[cache_key] = value
+
+        if isinstance(resolved_timeout, int) and resolved_timeout <= 0:
+            await self._async_client.delete_many(list(cache_data.keys()))
+            return list(data.keys())
+
+        failed_cache_keys: list[str] = await self._async_client.set_many(cache_data, resolved_timeout)
+        return [cache_key_map[cache_key] for cache_key in failed_cache_keys if cache_key in cache_key_map]
+
+    async def adelete_many(self, keys: list[str], version: int | None = None) -> int:
+        """Async delete many values."""
+        if not keys:
+            return 0
+
+        cache_keys: list[str] = [self.make_and_validate_key(key, version=version) for key in keys]
+        return await self._async_client.delete_many(cache_keys)
+
+    async def ahas_key(self, key: str, version: int | None = None) -> bool:
+        """Async check whether key exists."""
+        cache_key: str = self.make_and_validate_key(key, version=version)
+        return await self._async_client.exists(cache_key)
+
+    async def atouch(self, key: str, timeout: object = DEFAULT_TIMEOUT, version: int | None = None) -> bool:
+        """Async update key timeout."""
+        cache_key: str = self.make_and_validate_key(key, version=version)
+        resolved_timeout: int | None | DefaultCacheTimeout = self._resolve_django_timeout(timeout)
+
+        selected_timeout: int | None
+        if isinstance(resolved_timeout, DefaultCacheTimeout):
+            selected_timeout = self._async_client.config.default_timeout_seconds
+        else:
+            selected_timeout = resolved_timeout
+
+        if selected_timeout is None:
+            return await self._async_client.persist(cache_key)
+
+        if selected_timeout <= 0:
+            return await self._async_client.delete(cache_key)
+
+        return await self._async_client.expire(cache_key, selected_timeout)

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import pickle
 import re
@@ -18,13 +20,11 @@ if TYPE_CHECKING:
     pass
 
 
-class _DefaultCacheTimeout:
+class DefaultCacheTimeout:
     """Sentinel for using configured default timeout."""
 
 
-
-
-NS_CACHE_DEFAULT_TIMEOUT = _DefaultCacheTimeout()
+NS_CACHE_DEFAULT_TIMEOUT = DefaultCacheTimeout()
 
 _MISSING = object()
 
@@ -135,10 +135,10 @@ class _CacheBackend(Protocol):
     def get(self, key: str, default: object | None = None) -> object | None:
         """Get cache value."""
 
-    def set(self, key: str, value: object, timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+    def set(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
         """Set cache value."""
 
-    def add(self, key: str, value: object, timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+    def add(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
         """Add cache value if key does not exist."""
 
     def delete(self, key: str) -> bool:
@@ -162,13 +162,56 @@ class _CacheBackend(Protocol):
     def get_many(self, keys: list[str]) -> dict[str, object]:
         """Batch get cache values."""
 
-    def set_many(self, data: dict[str, object], timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
+    def set_many(self, data: dict[str, object], timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
         """Batch set cache values."""
 
     def delete_many(self, keys: list[str]) -> int:
         """Batch delete cache keys."""
 
     def close(self) -> None:
+        """Close backend resources."""
+
+
+class _AsyncCacheBackend(Protocol):
+    """Internal async cache backend protocol."""
+
+    async def get(self, key: str, default: object | None = None) -> object | None:
+        """Get cache value."""
+
+    async def set(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+        """Set cache value."""
+
+    async def add(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+        """Add cache value if key does not exist."""
+
+    async def delete(self, key: str) -> bool:
+        """Delete cache key."""
+
+    async def exists(self, key: str) -> bool:
+        """Check whether key exists."""
+
+    async def expire(self, key: str, timeout: int) -> bool:
+        """Update key expiration."""
+
+    async def persist(self, key: str) -> bool:
+        """Remove key expiration."""
+
+    async def ttl(self, key: str) -> int:
+        """Return Redis-compatible TTL."""
+
+    async def clear(self) -> bool:
+        """Clear cache keys."""
+
+    async def get_many(self, keys: list[str]) -> dict[str, object]:
+        """Batch get cache values."""
+
+    async def set_many(self, data: dict[str, object], timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
+        """Batch set cache values."""
+
+    async def delete_many(self, keys: list[str]) -> int:
+        """Batch delete cache keys."""
+
+    async def close(self) -> None:
         """Close backend resources."""
 
 
@@ -195,10 +238,10 @@ class _BaseCacheBackend:
 
         return f"{self._key_prefix}:{normalized_key}"
 
-    def _resolve_timeout(self, timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> int | None:
+    def _resolve_timeout(self, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> int | None:
         """Resolve timeout value."""
         selected_timeout: int | None
-        if isinstance(timeout, _DefaultCacheTimeout):
+        if isinstance(timeout, DefaultCacheTimeout):
             selected_timeout = self._config.default_timeout_seconds
         else:
             selected_timeout = timeout
@@ -252,7 +295,7 @@ class _SqlWalCacheBackend(_BaseCacheBackend):
 
         return self._serializer.loads(bytes(payload))
 
-    def set(self, key: str, value: object, timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+    def set(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
         """Set cache value."""
         cache_key = self._make_key(key)
         normalized_timeout = self._resolve_timeout(timeout)
@@ -286,7 +329,7 @@ class _SqlWalCacheBackend(_BaseCacheBackend):
 
         return True
 
-    def add(self, key: str, value: object, timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+    def add(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
         """Set value only if key does not exist."""
         cache_key = self._make_key(key)
         normalized_timeout = self._resolve_timeout(timeout)
@@ -396,6 +439,7 @@ class _SqlWalCacheBackend(_BaseCacheBackend):
         """Clear cache entries under current key prefix."""
         with self._lock:
             if not self._key_prefix:
+                # noinspection SqlWithoutWhere
                 self._connection.execute(f"DELETE FROM {self._table}")
             else:
                 escaped_prefix = self._escape_sql_like(self._key_prefix)
@@ -412,23 +456,114 @@ class _SqlWalCacheBackend(_BaseCacheBackend):
         if not keys:
             return {}
 
-        result: dict[str, object] = {}
+        key_map: dict[str, str] = {}
+        cache_keys: list[str] = []
         for key in keys:
-            value = self.get(key, _MISSING)
-            if value is not _MISSING:
-                result[key] = value
+            cache_key = self._make_key(key)
+            if cache_key in key_map:
+                continue
+            key_map[cache_key] = key
+            cache_keys.append(cache_key)
+
+        if not cache_keys:
+            return {}
+
+        placeholders = ",".join("?" for _ in cache_keys)
+        now = self._now()
+
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT cache_key, value, expire_at FROM {self._table} WHERE cache_key IN ({placeholders})",
+                tuple(cache_keys),
+            ).fetchall()
+
+            expired_cache_keys: list[str] = []
+            active_rows: list[tuple[str, bytes]] = []
+
+            for cache_key, payload, expire_at in rows:
+                if expire_at is not None and float(expire_at) <= now:
+                    expired_cache_keys.append(str(cache_key))
+                    continue
+                active_rows.append((str(cache_key), bytes(payload)))
+
+            if expired_cache_keys:
+                expired_placeholders = ",".join("?" for _ in expired_cache_keys)
+                self._connection.execute(
+                    f"DELETE FROM {self._table} WHERE cache_key IN ({expired_placeholders})",
+                    tuple(expired_cache_keys),
+                )
+
+            if active_rows:
+                active_cache_keys = [cache_key for cache_key, _ in active_rows]
+                active_placeholders = ",".join("?" for _ in active_cache_keys)
+                self._connection.execute(
+                    f"UPDATE {self._table} SET accessed_at = ? WHERE cache_key IN ({active_placeholders})",
+                    (now, *active_cache_keys),
+                )
+
+            self._connection.commit()
+
+        result: dict[str, object] = {}
+        for cache_key, payload in active_rows:
+            original_key = key_map.get(cache_key)
+            if original_key is not None:
+                result[original_key] = self._serializer.loads(payload)
 
         return result
 
-    def set_many(self, data: dict[str, object], timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
+    def set_many(self, data: dict[str, object], timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
         """Batch set cache values."""
         if not data:
             return []
 
+        normalized_timeout = self._resolve_timeout(timeout)
+
+        if normalized_timeout == 0:
+            self.delete_many(list(data.keys()))
+            return list(data.keys())
+
+        if normalized_timeout is not None and normalized_timeout < 0:
+            self.delete_many(list(data.keys()))
+            return list(data.keys())
+
+        now = self._now()
+        expire_at = None if normalized_timeout is None else now + normalized_timeout
+
+        rows: list[tuple[str, sqlite3.Binary, float | None, float, float, float]] = []
         failed_keys: list[str] = []
+
         for key, value in data.items():
-            if not self.set(key, value, timeout):
+            try:
+                cache_key = self._make_key(key)
+                payload = sqlite3.Binary(self._serializer.dumps(value))
+            except Exception:  # noqa
                 failed_keys.append(key)
+                continue
+
+            rows.append((cache_key, payload, expire_at, now, now, now))
+
+        if not rows:
+            return list(data.keys())
+
+        with self._lock:
+            try:
+                self._connection.executemany(
+                    f"""
+                    INSERT INTO {self._table} (cache_key, value, expire_at, created_at, updated_at, accessed_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(cache_key) DO UPDATE SET
+                        value = excluded.value,
+                        expire_at = excluded.expire_at,
+                        updated_at = excluded.updated_at,
+                        accessed_at = excluded.accessed_at
+                    """,
+                    rows,
+                )
+                self._cull_if_needed_locked(now)
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
 
         return failed_keys
 
@@ -437,12 +572,27 @@ class _SqlWalCacheBackend(_BaseCacheBackend):
         if not keys:
             return 0
 
-        deleted_count = 0
+        cache_keys: list[str] = []
+        seen: set[str] = set()
         for key in keys:
-            if self.delete(key):
-                deleted_count += 1
+            cache_key = self._make_key(key)
+            if cache_key in seen:
+                continue
+            seen.add(cache_key)
+            cache_keys.append(cache_key)
 
-        return deleted_count
+        if not cache_keys:
+            return 0
+
+        placeholders = ",".join("?" for _ in cache_keys)
+
+        with self._lock:
+            cursor = self._connection.execute(
+                f"DELETE FROM {self._table} WHERE cache_key IN ({placeholders})",
+                tuple(cache_keys),
+            )
+            self._connection.commit()
+            return int(cursor.rowcount or 0)
 
     def close(self) -> None:
         """Close SQLite connection."""
@@ -509,7 +659,7 @@ class _SqlWalCacheBackend(_BaseCacheBackend):
             WHERE cache_key IN (
                 SELECT cache_key
                 FROM {self._table}
-                ORDER BY accessed_at ASC
+                ORDER BY accessed_at 
                 LIMIT ?
             )
             """,
@@ -569,7 +719,7 @@ class _RedisCompatibleCacheBackend(_BaseCacheBackend):
 
         return self._serializer.loads(payload)
 
-    def set(self, key: str, value: object, timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+    def set(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
         """Set cache value."""
         cache_key = self._make_key(key)
         normalized_timeout = self._resolve_timeout(timeout)
@@ -588,7 +738,7 @@ class _RedisCompatibleCacheBackend(_BaseCacheBackend):
         except self._connection_error_types() as _error:
             raise self._build_connection_error(_error) from _error
 
-    def add(self, key: str, value: object, timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+    def add(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
         """Set cache value only if key does not exist."""
         cache_key = self._make_key(key)
         normalized_timeout = self._resolve_timeout(timeout)
@@ -690,22 +840,27 @@ class _RedisCompatibleCacheBackend(_BaseCacheBackend):
         if not keys:
             return {}
 
-        cache_keys = [self._make_key(key) for key in keys]
+        entries: list[tuple[str, str]] = []
+        for key in keys:
+            entries.append((key, self._make_key(key)))
 
         try:
-            payloads = self._client.mget(cache_keys)
+            pipeline = self._client.pipeline(transaction=False)
+            for _, cache_key in entries:
+                pipeline.get(cache_key)
+            payloads = pipeline.execute()
         except self._connection_error_types() as _error:
             raise self._build_connection_error(_error) from _error
 
         result: dict[str, object] = {}
-        for key, payload in zip(keys, payloads):
+        for (key, _), payload in zip(entries, payloads):
             if payload is None:
                 continue
             result[key] = self._serializer.loads(payload)
 
         return result
 
-    def set_many(self, data: dict[str, object], timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
+    def set_many(self, data: dict[str, object], timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
         """Batch set cache values."""
         if not data:
             return []
@@ -737,12 +892,31 @@ class _RedisCompatibleCacheBackend(_BaseCacheBackend):
         if not keys:
             return 0
 
-        cache_keys = [self._make_key(key) for key in keys]
+        cache_keys: list[str] = []
+        seen: set[str] = set()
+        for key in keys:
+            cache_key = self._make_key(key)
+            if cache_key in seen:
+                continue
+            seen.add(cache_key)
+            cache_keys.append(cache_key)
+
+        if not cache_keys:
+            return 0
 
         try:
-            return int(self._client.delete(*cache_keys) or 0)
+            pipeline = self._client.pipeline(transaction=False)
+            for cache_key in cache_keys:
+                pipeline.delete(cache_key)
+            results = pipeline.execute()
         except self._connection_error_types() as _error:
             raise self._build_connection_error(_error) from _error
+
+        deleted_count = 0
+        for result in results:
+            deleted_count += int(result or 0)
+
+        return deleted_count
 
     def close(self) -> None:
         """Close Redis / Valkey client resources."""
@@ -807,6 +981,380 @@ class _RedisCompatibleCacheBackend(_BaseCacheBackend):
     def _build_connection_error(self, _error: BaseException) -> NsCacheConnectionError:
         """Build normalized cache connection error."""
         return NsCacheConnectionError(f"{self._backend_name} cache backend operation failed")
+
+
+class _AsyncSqlWalCacheBackend:
+    """Async wrapper for SQLite WAL backend.
+
+    SQLite backend is file-based and guarded by RLock, so async support is provided
+    by running the existing synchronous backend operations in a worker thread.
+    """
+
+    def __init__(self, config: NsCacheConfig) -> None:
+        """Initialize threaded SQLite WAL async backend."""
+        self._backend: _SqlWalCacheBackend = _SqlWalCacheBackend(config)
+
+    async def get(self, key: str, default: object | None = None) -> object | None:
+        """Get cache value."""
+        return await asyncio.to_thread(self._backend.get, key, default)
+
+    async def set(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+        """Set cache value."""
+        return await asyncio.to_thread(self._backend.set, key, value, timeout)
+
+    async def add(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+        """Add cache value if key does not exist."""
+        return await asyncio.to_thread(self._backend.add, key, value, timeout)
+
+    async def delete(self, key: str) -> bool:
+        """Delete cache key."""
+        return await asyncio.to_thread(self._backend.delete, key)
+
+    async def exists(self, key: str) -> bool:
+        """Check whether key exists."""
+        return await asyncio.to_thread(self._backend.exists, key)
+
+    async def expire(self, key: str, timeout: int) -> bool:
+        """Update key expiration."""
+        return await asyncio.to_thread(self._backend.expire, key, timeout)
+
+    async def persist(self, key: str) -> bool:
+        """Remove key expiration."""
+        return await asyncio.to_thread(self._backend.persist, key)
+
+    async def ttl(self, key: str) -> int:
+        """Return Redis-compatible TTL."""
+        return await asyncio.to_thread(self._backend.ttl, key)
+
+    async def clear(self) -> bool:
+        """Clear cache keys."""
+        return await asyncio.to_thread(self._backend.clear)
+
+    async def get_many(self, keys: list[str]) -> dict[str, object]:
+        """Batch get cache values."""
+        return await asyncio.to_thread(self._backend.get_many, keys)
+
+    async def set_many(self, data: dict[str, object], timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
+        """Batch set cache values."""
+        return await asyncio.to_thread(self._backend.set_many, data, timeout)
+
+    async def delete_many(self, keys: list[str]) -> int:
+        """Batch delete cache keys."""
+        return await asyncio.to_thread(self._backend.delete_many, keys)
+
+    async def close(self) -> None:
+        """Close backend resources."""
+        await asyncio.to_thread(self._backend.close)
+
+
+class _AsyncRedisCompatibleCacheBackend(_BaseCacheBackend):
+    """Async Redis / Valkey cache backend selected by explicit config."""
+
+    def __init__(self, config: NsCacheConfig) -> None:
+        """Initialize async Redis-compatible backend."""
+        super().__init__(config)
+        self._backend_name = config.resolved_backend()
+        if self._backend_name not in {"redis", "valkey"}:
+            raise NsCacheConfigurationError("async redis-compatible backend requires redis or valkey")
+
+        self._module: Any = self._import_backend_module()
+        self._client: Any = self._build_client()
+
+    def _import_backend_module(self) -> Any:
+        """Import explicitly configured async backend client module."""
+        if self._backend_name == "redis":
+            module_name = "redis.asyncio"
+        else:
+            module_name = "valkey.asyncio"
+
+        try:
+            return import_module(module_name)
+        except ImportError as _error:
+            raise NsCacheConfigurationError(f"{module_name} client is not installed") from _error
+
+    def _build_client(self) -> Any:
+        """Build async Redis / Valkey client without runtime fallback."""
+        if not self._config.location:
+            raise NsCacheConfigurationError(f"{self._backend_name} cache location is required")
+
+        try:
+            return self._module.from_url(
+                self._config.location,
+                socket_timeout=self._config.socket_timeout,
+                socket_connect_timeout=self._config.socket_connect_timeout,
+                max_connections=self._config.max_connections,
+                health_check_interval=self._config.health_check_interval,
+                decode_responses=False,
+            )
+        except (TypeError, ValueError) as _error:
+            raise NsCacheConfigurationError("invalid async redis-compatible cache configuration") from _error
+
+    def _connection_error_types(self) -> tuple[type[BaseException], ...]:
+        """Return backend-specific connection error types."""
+        error_types: list[type[BaseException]] = [OSError, ConnectionError, TimeoutError]
+
+        for attr_name in ("RedisError", "ValkeyError"):
+            error_type = getattr(self._module, attr_name, None)
+            if isinstance(error_type, type) and issubclass(error_type, BaseException):
+                error_types.append(error_type)
+
+        exceptions_module = getattr(self._module, "exceptions", None)
+        for attr_name in ("RedisError", "ValkeyError", "ConnectionError", "TimeoutError"):
+            error_type = getattr(exceptions_module, attr_name, None)
+            if isinstance(error_type, type) and issubclass(error_type, BaseException):
+                error_types.append(error_type)
+
+        return tuple(dict.fromkeys(error_types))
+
+    def _build_connection_error(self, _error: BaseException) -> NsCacheConnectionError:
+        """Build normalized cache connection error."""
+        return NsCacheConnectionError(f"async {self._backend_name} cache backend operation failed")
+
+    @staticmethod
+    async def _maybe_await(value: Any) -> Any:
+        """Await value only when backend client returns an awaitable."""
+        if inspect.isawaitable(value):
+            return await value
+        return value
+
+    async def get(self, key: str, default: object | None = None) -> object | None:
+        """Get cache value."""
+        cache_key = self._make_key(key)
+
+        try:
+            payload = await self._client.get(cache_key)
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+        if payload is None:
+            return default
+
+        return self._serializer.loads(payload)
+
+    async def set(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+        """Set cache value."""
+        cache_key = self._make_key(key)
+        normalized_timeout = self._resolve_timeout(timeout)
+
+        if normalized_timeout == 0:
+            await self.delete(key)
+            return False
+        if normalized_timeout is not None and normalized_timeout < 0:
+            await self.delete(key)
+            return False
+
+        payload = self._serializer.dumps(value)
+
+        try:
+            return bool(await self._client.set(name=cache_key, value=payload, ex=normalized_timeout))
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+    async def add(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+        """Set cache value only if key does not exist."""
+        cache_key = self._make_key(key)
+        normalized_timeout = self._resolve_timeout(timeout)
+
+        if normalized_timeout == 0:
+            return False
+        if normalized_timeout is not None and normalized_timeout < 0:
+            await self.delete(key)
+            return False
+
+        payload = self._serializer.dumps(value)
+
+        try:
+            return bool(await self._client.set(name=cache_key, value=payload, ex=normalized_timeout, nx=True))
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+    async def delete(self, key: str) -> bool:
+        """Delete cache key."""
+        cache_key = self._make_key(key)
+
+        try:
+            return int(await self._client.delete(cache_key) or 0) > 0
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+    async def exists(self, key: str) -> bool:
+        """Check whether key exists."""
+        cache_key = self._make_key(key)
+
+        try:
+            return int(await self._client.exists(cache_key) or 0) > 0
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+    async def expire(self, key: str, timeout: int) -> bool:
+        """Update key expiration."""
+        if isinstance(timeout, bool) or not isinstance(timeout, int):
+            raise NsCacheConfigurationError("cache expire timeout must be int")
+
+        if timeout <= 0:
+            return await self.delete(key)
+
+        cache_key = self._make_key(key)
+
+        try:
+            return bool(await self._client.expire(cache_key, timeout))
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+    async def persist(self, key: str) -> bool:
+        """Remove key expiration."""
+        cache_key = self._make_key(key)
+
+        try:
+            if int(await self._client.exists(cache_key) or 0) <= 0:
+                return False
+            return bool(await self._client.persist(cache_key))
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+    async def ttl(self, key: str) -> int:
+        """Return Redis-compatible TTL."""
+        cache_key = self._make_key(key)
+
+        try:
+            return int(await self._client.ttl(cache_key))
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+    async def clear(self) -> bool:
+        """Clear cache keys under current key prefix."""
+        if not self._key_prefix:
+            raise NsCacheConfigurationError("cache key_prefix is required when clearing async redis-compatible cache")
+
+        direct_key = self._key_prefix
+        pattern = f"{self._key_prefix}:*"
+        batch_size = 1000
+        batch: list[Any] = []
+
+        try:
+            await self._client.delete(direct_key)
+
+            async for cache_key in self._client.scan_iter(match=pattern, count=batch_size):
+                batch.append(cache_key)
+                if len(batch) >= batch_size:
+                    await self._client.delete(*batch)
+                    batch.clear()
+
+            if batch:
+                await self._client.delete(*batch)
+
+            return True
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+    async def get_many(self, keys: list[str]) -> dict[str, object]:
+        """Batch get cache values."""
+        if not keys:
+            return {}
+
+        cache_key_map: dict[str, str] = {}
+        cache_keys: list[str] = []
+        for key in keys:
+            cache_key = self._make_key(key)
+            if cache_key in cache_key_map:
+                continue
+            cache_key_map[cache_key] = key
+            cache_keys.append(cache_key)
+
+        try:
+            payloads = await self._client.mget(cache_keys)
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+        result: dict[str, object] = {}
+        for cache_key, payload in zip(cache_keys, payloads):
+            if payload is None:
+                continue
+            original_key = cache_key_map.get(cache_key)
+            if original_key is not None:
+                result[original_key] = self._serializer.loads(payload)
+
+        return result
+
+    async def set_many(self, data: dict[str, object], timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
+        """Batch set cache values."""
+        if not data:
+            return []
+
+        normalized_timeout = self._resolve_timeout(timeout)
+
+        if normalized_timeout == 0:
+            await self.delete_many(list(data.keys()))
+            return list(data.keys())
+        if normalized_timeout is not None and normalized_timeout < 0:
+            await self.delete_many(list(data.keys()))
+            return list(data.keys())
+
+        entries: list[tuple[str, str, bytes]] = []
+        for key, value in data.items():
+            entries.append((key, self._make_key(key), self._serializer.dumps(value)))
+
+        try:
+            pipeline = self._client.pipeline(transaction=False)
+            for _, cache_key, payload in entries:
+                pipeline.set(name=cache_key, value=payload, ex=normalized_timeout)
+            results = await self._maybe_await(pipeline.execute())
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+        return [key for (key, _, _), result in zip(entries, results) if not bool(result)]
+
+    async def delete_many(self, keys: list[str]) -> int:
+        """Batch delete cache keys."""
+        if not keys:
+            return 0
+
+        cache_keys: list[str] = []
+        seen: set[str] = set()
+        for key in keys:
+            cache_key = self._make_key(key)
+            if cache_key in seen:
+                continue
+            seen.add(cache_key)
+            cache_keys.append(cache_key)
+
+        if not cache_keys:
+            return 0
+
+        try:
+            return int(await self._client.delete(*cache_keys) or 0)
+        except self._connection_error_types() as _error:
+            raise self._build_connection_error(_error) from _error
+
+    async def close(self) -> None:
+        """Close Redis / Valkey async client resources."""
+        try:
+            close_method = getattr(self._client, "close", None)
+            if callable(close_method):
+                result = close_method()
+                if inspect.isawaitable(result):
+                    await result
+        except Exception:  # noqa
+            pass
+
+        try:
+            aclose_method = getattr(self._client, "aclose", None)
+            if callable(aclose_method):
+                result = aclose_method()
+                if inspect.isawaitable(result):
+                    await result
+        except Exception:  # noqa
+            pass
+
+        try:
+            connection_pool = getattr(self._client, "connection_pool", None)
+            disconnect_method = getattr(connection_pool, "disconnect", None)
+            if callable(disconnect_method):
+                result = disconnect_method()
+                if inspect.isawaitable(result):
+                    await result
+        except Exception:  # noqa
+            pass
 
 
 class NsCacheClient:
@@ -880,11 +1428,11 @@ class NsCacheClient:
         """Get cache value."""
         return self._backend.get(key, default)
 
-    def set(self, key: str, value: object, timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+    def set(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
         """Set cache value."""
         return self._backend.set(key, value, timeout)
 
-    def add(self, key: str, value: object, timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+    def add(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
         """Set cache value only when key does not exist."""
         return self._backend.add(key, value, timeout)
 
@@ -916,7 +1464,7 @@ class NsCacheClient:
         """Batch get cache values."""
         return self._backend.get_many(keys)
 
-    def set_many(self, data: dict[str, object], timeout: int | None | _DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
+    def set_many(self, data: dict[str, object], timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
         """Batch set cache values."""
         return self._backend.set_many(data, timeout)
 
@@ -956,3 +1504,152 @@ class NsCacheClient:
         if resolved_backend in {"redis", "valkey"}:
             return _RedisCompatibleCacheBackend(config)
         raise NsCacheConfigurationError(f"unsupported cache backend: {config.backend}")
+
+
+class AsyncNsCacheClient:
+    """Thread-safe process-local singleton async cache client.
+
+    Singleton identity is controlled by client name.
+    Different config under the same client name is rejected.
+    """
+
+    name: str
+    config: NsCacheConfig
+    _backend: _AsyncCacheBackend
+
+    _lock: ClassVar[RLock] = RLock()
+    _instances: ClassVar[dict[str, "AsyncNsCacheClient"]] = {}
+    _default_config: ClassVar[NsCacheConfig | None] = None
+
+    def __new__(cls, name: str = "default", config: NsCacheConfig | None = None) -> "AsyncNsCacheClient":
+        """Create or return named singleton instance."""
+        normalized_name = cls._normalize_client_name(name)
+
+        with cls._lock:
+            existing_client = cls._instances.get(normalized_name)
+            if existing_client is not None:
+                if config is not None and config != existing_client.config:
+                    raise NsCacheConfigurationError(f"async cache client already exists with different config: {normalized_name}")
+                return existing_client
+
+            selected_config = config or cls._default_config or cls._load_config_from_ns_config()
+            instance = super().__new__(cls)
+            instance.name = normalized_name
+            instance.config = selected_config
+            instance._backend = cls._build_backend(selected_config)
+            cls._instances[normalized_name] = instance
+            return instance
+
+    def __init__(self, name: str = "default", config: NsCacheConfig | None = None) -> None:
+        """Keep __init__ idempotent because singleton construction is handled in __new__."""
+        _ = (name, config)
+
+    @classmethod
+    def configure_default(cls, config: NsCacheConfig) -> None:
+        """Configure default async cache config for later default client creation."""
+        if not isinstance(config, NsCacheConfig):
+            raise NsCacheConfigurationError("default async cache config must be NsCacheConfig")
+
+        with cls._lock:
+            cls._default_config = config
+
+    @classmethod
+    def get_default(cls) -> "AsyncNsCacheClient":
+        """Get default async cache client."""
+        return cls("default")
+
+    @classmethod
+    def get_or_create(cls, name: str = "default", config: NsCacheConfig | None = None) -> "AsyncNsCacheClient":
+        """Compatibility helper for named singleton access."""
+        return cls(name, config)
+
+    @classmethod
+    async def close_all(cls) -> None:
+        """Close all process-local async cache clients."""
+        with cls._lock:
+            clients = list(cls._instances.values())
+            cls._instances.clear()
+
+        for client in clients:
+            await client.close()
+
+    async def get(self, key: str, default: object | None = None) -> object | None:
+        """Get cache value."""
+        return await self._backend.get(key, default)
+
+    async def set(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+        """Set cache value."""
+        return await self._backend.set(key, value, timeout)
+
+    async def add(self, key: str, value: object, timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> bool:
+        """Set cache value only when key does not exist."""
+        return await self._backend.add(key, value, timeout)
+
+    async def delete(self, key: str) -> bool:
+        """Delete cache key."""
+        return await self._backend.delete(key)
+
+    async def exists(self, key: str) -> bool:
+        """Check whether key exists."""
+        return await self._backend.exists(key)
+
+    async def expire(self, key: str, timeout: int) -> bool:
+        """Update key expiration."""
+        return await self._backend.expire(key, timeout)
+
+    async def persist(self, key: str) -> bool:
+        """Remove key expiration."""
+        return await self._backend.persist(key)
+
+    async def ttl(self, key: str) -> int:
+        """Return Redis-compatible TTL."""
+        return await self._backend.ttl(key)
+
+    async def clear(self) -> bool:
+        """Clear cache keys under current prefix."""
+        return await self._backend.clear()
+
+    async def get_many(self, keys: list[str]) -> dict[str, object]:
+        """Batch get cache values."""
+        return await self._backend.get_many(keys)
+
+    async def set_many(self, data: dict[str, object], timeout: int | None | DefaultCacheTimeout = NS_CACHE_DEFAULT_TIMEOUT) -> list[str]:
+        """Batch set cache values."""
+        return await self._backend.set_many(data, timeout)
+
+    async def delete_many(self, keys: list[str]) -> int:
+        """Batch delete cache keys."""
+        return await self._backend.delete_many(keys)
+
+    async def close(self) -> None:
+        """Close cache backend resources and remove singleton reference."""
+        with self.__class__._lock:
+            existing_client: AsyncNsCacheClient | None = self.__class__._instances.get(self.name)
+            if existing_client is self:
+                self.__class__._instances.pop(self.name, None)
+
+        await self._backend.close()
+
+    @staticmethod
+    def _normalize_client_name(name: str) -> str:
+        """Normalize singleton client name."""
+        if not isinstance(name, str) or not name.strip():
+            raise NsCacheConfigurationError("async cache client name must be a non-empty str")
+        return name.strip()
+
+    @staticmethod
+    def _load_config_from_ns_config() -> NsCacheConfig:
+        """Load default cache config from ns_config."""
+        from ns_common.config import ns_config
+
+        return ns_config.cache_config
+
+    @staticmethod
+    def _build_backend(config: NsCacheConfig) -> _AsyncCacheBackend:
+        """Build async backend by explicit configuration."""
+        resolved_backend = config.resolved_backend()
+        if resolved_backend == "sql_wal":
+            return _AsyncSqlWalCacheBackend(config)
+        if resolved_backend in {"redis", "valkey"}:
+            return _AsyncRedisCompatibleCacheBackend(config)
+        raise NsCacheConfigurationError(f"unsupported async cache backend: {config.backend}")
