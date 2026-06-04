@@ -222,7 +222,7 @@ class LocalFileObjectStorageBackend(BaseObjectStorageBackend):
         if not bucket_path.is_dir():
             raise NsObjectStorageNotFoundError(f"object storage bucket does not exist: {bucket_name}")
 
-        storage_prefix: str = self._normalize_object_name(prefix) if prefix else self._key_prefix.strip().strip("/")
+        storage_prefix: str = self._normalize_prefix(prefix)
         pattern: str = "**/*" if recursive else "*"
         result: list[NsObjectInfo] = []
 

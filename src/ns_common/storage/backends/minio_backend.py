@@ -238,12 +238,7 @@ class MinioObjectStorageBackend(BaseObjectStorageBackend):
     def list_objects(self, *, bucket: str, prefix: str = "", recursive: bool = True) -> list[NsObjectInfo]:
         """List objects."""
         bucket_name = self._normalize_bucket(bucket)
-        storage_prefix = self._normalize_object_name(prefix) if prefix else self._normalize_object_name(".")
-
-        if storage_prefix == f"{self._key_prefix}/.":
-            storage_prefix = f"{self._key_prefix}/"
-        elif storage_prefix == ".":
-            storage_prefix = ""
+        storage_prefix = self._normalize_prefix(prefix)
 
         try:
             raw_objects = self._client.list_objects(bucket_name, prefix=storage_prefix, recursive=recursive)
@@ -310,16 +305,28 @@ class MinioObjectStorageBackend(BaseObjectStorageBackend):
 
         try:
             from minio import Minio
+            from urllib3 import PoolManager, Timeout
+            from urllib3.util.retry import Retry
         except ImportError as _error:
             raise NsObjectStorageConfigurationError("minio client is not installed") from _error
 
         try:
+            http_client = PoolManager(
+                timeout=Timeout(
+                    connect=self._config.connect_timeout_seconds,
+                    read=self._config.read_timeout_seconds,
+                ),
+                maxsize=self._config.max_pool_connections,
+                retries=Retry(total=0),
+            )
+
             return Minio(
                 endpoint=self._config.endpoint,
                 access_key=self._config.access_key,
                 secret_key=self._config.secret_key,
                 secure=bool(self._config.secure),
                 region=self._config.region,
+                http_client=http_client,
             )
         except Exception as _error:  # noqa
             raise NsObjectStorageConfigurationError("invalid minio object storage configuration") from _error

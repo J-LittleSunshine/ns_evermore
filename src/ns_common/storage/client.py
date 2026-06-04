@@ -6,7 +6,7 @@ from threading import RLock
 from typing import TYPE_CHECKING, ClassVar, BinaryIO
 
 from ns_common.config import NsObjectStorageConfig
-from ns_common.storage.backends import MinioObjectStorageBackend, LocalFileObjectStorageBackend
+from ns_common.storage.backends.local_fs import LocalFileObjectStorageBackend
 from ns_common.storage.backends.base import ObjectStorageBackend
 from ns_common.storage.backends.minio_backend import MinioObjectStorageBackend
 from ns_common.storage.errors import NsObjectStorageConfigurationError
@@ -14,7 +14,6 @@ from ns_common.storage.models import NsObjectInfo
 
 if TYPE_CHECKING:
     pass
-
 
 class NsObjectStorageClient:
     """Thread-safe process-local singleton object storage client.
