@@ -42,3 +42,26 @@ class NsPutObjectResult:
     object_name: str
     etag: str | None = None
     version_id: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class NsObjectRef:
+    """Stable object reference payload for business metadata persistence.
+
+    This dataclass is not a database model.
+    Business modules may persist these fields in their own tables later.
+    """
+
+    bucket: str
+    object_name: str
+    backend: str
+    module_code: str
+    resource_type: str
+    resource_id: str | None = None
+    original_filename: str | None = None
+    content_type: str | None = None
+    size: int | None = None
+    etag: str | None = None
+    sha256: str | None = None
+    version_id: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
