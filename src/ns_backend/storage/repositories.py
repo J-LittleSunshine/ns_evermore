@@ -42,19 +42,24 @@ class DjangoObjectRefRepository:
             "deleted_at": None,
         }
 
-        item, created = self.model_class.objects.update_or_create(
+        item = self.model_class.objects.filter(
             bucket=normalized_ref.bucket,
             object_name=normalized_ref.object_name,
-            defaults={
+        ).first()
+
+        if item is None:
+            item = self.model_class.objects.create(
+                bucket=normalized_ref.bucket,
+                object_name=normalized_ref.object_name,
+                created_at=now,
                 **defaults,
-                "created_at": now,
-            },
-        )
+            )
+            return self._to_object_ref(item)
 
-        if not created and item.created_at is None:
-            item.created_at = now
-            item.save(update_fields=["created_at"])
+        for field_name, field_value in defaults.items():
+            setattr(item, field_name, field_value)
 
+        item.save(update_fields=[*defaults.keys()])
         return self._to_object_ref(item)
 
     def get_object_ref(self, *, bucket: str, object_name: str) -> NsObjectRef | None:

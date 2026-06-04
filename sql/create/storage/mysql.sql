@@ -16,12 +16,13 @@ CREATE TABLE storage_object_ref
     metadata_json     JSON          NOT NULL,
     created_by        BIGINT        NULL,
     updated_by        BIGINT        NULL,
-    created_at        DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6
-) ,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     deleted_at DATETIME(6) NULL,
     PRIMARY KEY (id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci;
 
 CREATE UNIQUE INDEX uk_storage_obj_ref_bucket_name ON storage_object_ref (bucket, object_name(512));
 CREATE INDEX idx_storage_obj_ref_res ON storage_object_ref (module_code, resource_type, resource_id);
