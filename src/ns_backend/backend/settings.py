@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ns_backend.backend.db.alias import DEFAULT_DB_ALIAS, IAM_DB_ALIAS_NAME
+from ns_backend.backend.db.alias import DEFAULT_DB_ALIAS, IAM_DB_ALIAS_NAME, STORAGE_DB_ALIAS_NAME
 from ns_backend.backend.db.sql import build_infra_create_sql_path
 from ns_backend.backend.db.vendor import detect_db_vendor, DB_VENDOR_UNKNOWN
 from ns_common import DATA_DIR, SQL_DIR
@@ -187,7 +187,10 @@ IAM_DECISION_AUDIT_STRICT_MODE = _coerce_bool(
     _coerce_bool(getattr(_BACKEND, "iam_decision_audit_strict_mode", False), False),
 )
 
+_STORAGE_PERMISSION_PROVIDER_PATH = "ns_backend.storage.permissions.StoragePermissionProvider"
+
 IAM_PERMISSION_PROVIDERS = _merge_string_tuples(
+    (_STORAGE_PERMISSION_PROVIDER_PATH,),
     _BACKEND.iam_permission_providers,
     os.getenv("NS_IAM_PERMISSION_PROVIDERS"),
     os.getenv("IAM_PERMISSION_PROVIDERS"),
@@ -322,7 +325,8 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.staticfiles",
     "adrf",
-    "ns_backend.iam.apps.IamConfig"
+    "ns_backend.iam.apps.IamConfig",
+    "ns_backend.storage.apps.StorageConfig",
 ]
 
 for _app_name, _enabled in _BACKEND.loaded_apps.items():
@@ -381,6 +385,9 @@ if DEFAULT_DB_ALIAS not in DATABASES:
 
 if IAM_DB_ALIAS_NAME not in INFRA_DB_ROUTER_MAP:
     INFRA_DB_ROUTER_MAP[IAM_DB_ALIAS_NAME] = IAM_DB_ALIAS_NAME if IAM_DB_ALIAS_NAME in DATABASES else DEFAULT_DB_ALIAS
+
+if STORAGE_DB_ALIAS_NAME not in INFRA_DB_ROUTER_MAP:
+    INFRA_DB_ROUTER_MAP[STORAGE_DB_ALIAS_NAME] = STORAGE_DB_ALIAS_NAME if STORAGE_DB_ALIAS_NAME in DATABASES else DEFAULT_DB_ALIAS
 
 for _infra_domain, _db_alias in INFRA_DB_ROUTER_MAP.items():
     if not isinstance(_infra_domain, str) or not _infra_domain.strip():
