@@ -54,8 +54,8 @@ class NsObjectRefRepositoryRegistry:
     def get(cls, name: str = "default") -> NsObjectRefRepository:
         """Get sync object reference repository.
 
-        If repository is not registered, a named in-memory repository is created
-        and cached as the default fallback.
+        If repository is not registered, a named in-memory repository is returned
+        as the default fallback without marking it as explicitly registered.
         """
         normalized_name: str = cls._normalize_name(name)
 
@@ -64,9 +64,7 @@ class NsObjectRefRepositoryRegistry:
             if repository is not None:
                 return repository
 
-            default_repository: NsObjectRefRepository = NsInMemoryObjectRefRepository.get_default(normalized_name)
-            cls._repositories[normalized_name] = default_repository
-            return default_repository
+        return NsInMemoryObjectRefRepository.get_default(normalized_name)
 
     @classmethod
     def unregister(cls, name: str = "default") -> bool:
@@ -107,7 +105,7 @@ class NsObjectRefRepositoryRegistry:
         """Get async object reference repository.
 
         If repository is not registered, a named async in-memory repository is
-        created and cached as the default fallback.
+        returned as the default fallback without marking it as explicitly registered.
         """
         normalized_name: str = cls._normalize_name(name)
 
@@ -116,9 +114,7 @@ class NsObjectRefRepositoryRegistry:
             if repository is not None:
                 return repository
 
-            default_repository: AsyncNsObjectRefRepository = AsyncNsInMemoryObjectRefRepository.get_default(normalized_name)
-            cls._async_repositories[normalized_name] = default_repository
-            return default_repository
+        return AsyncNsInMemoryObjectRefRepository.get_default(normalized_name)
 
     @classmethod
     def unregister_async(cls, name: str = "default") -> bool:
@@ -144,10 +140,13 @@ class NsObjectRefRepositoryRegistry:
 
     @classmethod
     def clear_all(cls) -> None:
-        """Clear all sync and async registered repositories."""
+        """Clear all sync and async registered repositories and default fallback repositories."""
         with cls._lock:
             cls._repositories.clear()
             cls._async_repositories.clear()
+
+        NsInMemoryObjectRefRepository.clear_defaults()
+        AsyncNsInMemoryObjectRefRepository.clear_defaults()
 
     @staticmethod
     def _normalize_name(name: str) -> str:
