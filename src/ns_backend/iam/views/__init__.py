@@ -321,16 +321,18 @@ class AuditRequestMixin:
             user_id = getattr(current_user, "id", None)
 
             iam_logger.error(
-                "audit record failed | view=%s method=%s path=%s user_id=%s trace_id=%s request_id=%s response_code=%s exception=%s",
-                self.__class__.__name__,
-                getattr(request, "method", None),
-                getattr(request, "path", None),
-                user_id,
-                trace_id,
-                request_id,
-                response_code,
-                exc.__class__.__name__,
+                "audit record failed",
                 exc_info=True,
+                extra={
+                    "view": self.__class__.__name__,
+                    "method": getattr(request, "method", None),
+                    "path": getattr(request, "path", None),
+                    "user_id": user_id,
+                    "trace_id": trace_id,
+                    "request_id": request_id,
+                    "response_code": response_code,
+                    "exception_class": exc.__class__.__name__,
+                },
             )
 
 

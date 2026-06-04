@@ -5,15 +5,13 @@ from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 
+from ns_backend.backend.common.logger import iam_logger
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.repositories import DecisionAuditRepository
 from ns_common.error_codes import NsErrorCode
-from ns_common.logger import get_ns_logger
 
 if TYPE_CHECKING:
     pass
-
-IAM_LOGGER = get_ns_logger("iam", True)
 
 
 class DecisionAuditService:
@@ -108,22 +106,22 @@ class DecisionAuditService:
 
     @classmethod
     def _build_record_payload(
-        cls,
-        *,
-        operator_id: int | None,
-        subject_type: str,
-        subject_id: int,
-        resource_type: str,
-        resource_id: str,
-        action_code: str,
-        result: str,
-        reason: str,
-        matched_acl_id: int | None,
-        matched_policy_id: int | None,
-        matched_rule_id: int | None,
-        matched_source: str | None,
-        decision_chain: list[dict[str, Any]] | None,
-        trace_id: str | None,
+            cls,
+            *,
+            operator_id: int | None,
+            subject_type: str,
+            subject_id: int,
+            resource_type: str,
+            resource_id: str,
+            action_code: str,
+            result: str,
+            reason: str,
+            matched_acl_id: int | None,
+            matched_policy_id: int | None,
+            matched_rule_id: int | None,
+            matched_source: str | None,
+            decision_chain: list[dict[str, Any]] | None,
+            trace_id: str | None,
     ) -> dict[str, Any]:
         """Build normalized audit-log payload for repository write."""
         return {
@@ -155,22 +153,22 @@ class DecisionAuditService:
 
     @classmethod
     async def record_decision(
-        cls,
-        *,
-        operator_id: int | None,
-        subject_type: str,
-        subject_id: int,
-        resource_type: str,
-        resource_id: str,
-        action_code: str,
-        result: str,
-        reason: str,
-        matched_acl_id: int | None = None,
-        matched_policy_id: int | None = None,
-        matched_rule_id: int | None = None,
-        matched_source: str | None = None,
-        decision_chain: list[dict[str, Any]] | None = None,
-        trace_id: str | None = None,
+            cls,
+            *,
+            operator_id: int | None,
+            subject_type: str,
+            subject_id: int,
+            resource_type: str,
+            resource_id: str,
+            action_code: str,
+            result: str,
+            reason: str,
+            matched_acl_id: int | None = None,
+            matched_policy_id: int | None = None,
+            matched_rule_id: int | None = None,
+            matched_source: str | None = None,
+            decision_chain: list[dict[str, Any]] | None = None,
+            trace_id: str | None = None,
     ) -> dict[str, Any]:
         """Record one authorization decision audit row."""
         return await DecisionAuditRepository.create_log(
@@ -198,15 +196,17 @@ class DecisionAuditService:
         try:
             await cls.record_decision(**kwargs)
         except Exception as exc:  # noqa
-            IAM_LOGGER.error(
-                "decision audit write failed | subject_type=%s subject_id=%s resource_type=%s resource_id=%s action_code=%s exception=%s",
-                kwargs.get("subject_type"),
-                kwargs.get("subject_id"),
-                kwargs.get("resource_type"),
-                kwargs.get("resource_id"),
-                kwargs.get("action_code"),
-                exc.__class__.__name__,
+            iam_logger.error(
+                "decision audit write failed",
                 exc_info=True,
+                extra={
+                    "subject_type": kwargs.get("subject_type"),
+                    "subject_id": kwargs.get("subject_id"),
+                    "resource_type": kwargs.get("resource_type"),
+                    "resource_id": kwargs.get("resource_id"),
+                    "action_code": kwargs.get("action_code"),
+                    "exception_class": exc.__class__.__name__,
+                },
             )
 
             if cls.is_strict_mode_enabled():
@@ -256,4 +256,3 @@ class DecisionAuditService:
                 filters["matched_source"] = matched_source
 
         return await DecisionAuditRepository.list_logs(page=page, page_size=page_size, filters=filters or None)
-

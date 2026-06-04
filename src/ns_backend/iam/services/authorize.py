@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from django.conf import settings
 from django.db.utils import DatabaseError
 
+from ns_backend.backend.common.logger import iam_logger
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.constants import (
     RESOURCE_ACCESS_MODE_ACL_REQUIRED,
@@ -21,12 +22,10 @@ from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.policy_engine import PolicyEngineService
 from ns_backend.iam.services.resource_acl import ResourceAclService
 from ns_common.error_codes import NsErrorCode
-from ns_common.logger import get_ns_logger
 
 if TYPE_CHECKING:
     pass
 
-IAM_LOGGER = get_ns_logger("iam", True)
 _RETRY_WITH_BACKOFF = retry_with_backoff
 _RETRYABLE_DB_ERROR = DatabaseError
 
@@ -231,19 +230,19 @@ class AuthorizeService:
 
     @classmethod
     def _build_decision(
-        cls,
-        *,
-        allowed: bool,
-        reason: str,
-        matched_source: str,
-        access_mode: str | None = None,
-        filters: dict[str, Any] | None = None,
-        matched_acl_id: int | None = None,
-        matched_policy_id: int | None = None,
-        matched_rule_id: int | None = None,
-        matched_rbac_permission_code: str | None = None,
-        hit_details: dict[str, Any] | None = None,
-        decision_chain: list[dict[str, Any]] | None = None,
+            cls,
+            *,
+            allowed: bool,
+            reason: str,
+            matched_source: str,
+            access_mode: str | None = None,
+            filters: dict[str, Any] | None = None,
+            matched_acl_id: int | None = None,
+            matched_policy_id: int | None = None,
+            matched_rule_id: int | None = None,
+            matched_rbac_permission_code: str | None = None,
+            hit_details: dict[str, Any] | None = None,
+            decision_chain: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Build one normalized authorization decision payload."""
         return {
@@ -277,12 +276,12 @@ class AuthorizeService:
 
     @classmethod
     def _build_authorization_failed_decision(
-        cls,
-        *,
-        permission_code: str | None,
-        retry_count: int,
-        error: Exception,
-        access_mode: str | None,
+            cls,
+            *,
+            permission_code: str | None,
+            retry_count: int,
+            error: Exception,
+            access_mode: str | None,
     ) -> dict[str, Any]:
         decision_chain: list[dict[str, Any]] = []
         cls._append_chain(
@@ -311,13 +310,13 @@ class AuthorizeService:
 
     @classmethod
     async def _run_with_backoff(
-        cls,
-        *,
-        operation,
-        operation_name: str,
-        user_id: int | None,
-        resource_type: str,
-        action_code: str,
+            cls,
+            *,
+            operation,
+            operation_name: str,
+            user_id: int | None,
+            resource_type: str,
+            action_code: str,
     ) -> Any:
         attempt_count = 0
         retryable_exceptions: tuple[type[Exception], ...] = (
@@ -348,14 +347,17 @@ class AuthorizeService:
             return await _operation_wrapper()
         except retryable_exceptions as exc:
             setattr(exc, "_iam_retry_count", max(attempt_count - 1, 0))
-            IAM_LOGGER.error(
-                "authorization operation failed after retries | operation_name=%s resource_type=%s action_code=%s user_id=%s retry_count=%s exception_class=%s",
-                operation_name,
-                resource_type,
-                action_code,
-                user_id,
-                max(attempt_count - 1, 0),
-                exc.__class__.__name__,
+            iam_logger.error(
+                "authorization operation failed after retries",
+                exc_info=True,
+                extra={
+                    "operation_name": operation_name,
+                    "resource_type": resource_type,
+                    "action_code": action_code,
+                    "user_id": user_id,
+                    "retry_count": max(attempt_count - 1, 0),
+                    "exception_class": exc.__class__.__name__,
+                },
             )
             raise
 
@@ -384,14 +386,14 @@ class AuthorizeService:
 
     @classmethod
     async def _record_decision_audit(
-        cls,
-        *,
-        user: Any,
-        resource_type: str,
-        resource_id: str,
-        action_code: str,
-        decision: dict[str, Any],
-        trace_id: str | None,
+            cls,
+            *,
+            user: Any,
+            resource_type: str,
+            resource_id: str,
+            action_code: str,
+            decision: dict[str, Any],
+            trace_id: str | None,
     ) -> None:
         """Persist one decision audit row without affecting authorization response."""
         user_id = getattr(user, "id", None)
@@ -422,14 +424,14 @@ class AuthorizeService:
 
     @classmethod
     async def _finalize_decision(
-        cls,
-        *,
-        user: Any,
-        resource_type: str,
-        resource_id: str,
-        action_code: str,
-        decision: dict[str, Any],
-        trace_id: str | None,
+            cls,
+            *,
+            user: Any,
+            resource_type: str,
+            resource_id: str,
+            action_code: str,
+            decision: dict[str, Any],
+            trace_id: str | None,
     ) -> dict[str, Any]:
         """Record decision audit and return the final decision payload."""
         await cls._record_decision_audit(
@@ -893,15 +895,17 @@ class AuthorizeService:
             raise
         except Exception as exc:  # noqa
             retry_count = int(getattr(exc, "_iam_retry_count", 0) or 0)
-            IAM_LOGGER.error(
-                "authorization check failed | resource_type=%s resource_id=%s action_code=%s user_id=%s retry_count=%s exception_class=%s",
-                resource_type,
-                resource_id,
-                action_code,
-                user_id,
-                retry_count,
-                exc.__class__.__name__,
+            iam_logger.error(
+                "authorization check failed",
                 exc_info=True,
+                extra={
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "action_code": action_code,
+                    "user_id": user_id,
+                    "retry_count": retry_count,
+                    "exception_class": exc.__class__.__name__,
+                },
             )
             decision = cls._build_authorization_failed_decision(
                 permission_code=permission_code,
@@ -938,4 +942,3 @@ class AuthorizeService:
             "items": decisions,
             "total": len(decisions),
         }
-

@@ -39,15 +39,17 @@ class BaseRequestViewSet(ViewSet):
             user_id = getattr(current_user, "id", None)
 
             logger.error(
-                "unhandled request exception | view=%s method=%s path=%s user_id=%s trace_id=%s request_id=%s exception=%s",
-                self.__class__.__name__,
-                getattr(request, "method", None),
-                getattr(request, "path", None),
-                user_id,
-                trace_id,
-                request_id,
-                exc.__class__.__name__,
+                "unhandled request exception",
                 exc_info=True,
+                extra={
+                    "view": self.__class__.__name__,
+                    "method": getattr(request, "method", None),
+                    "path": getattr(request, "path", None),
+                    "user_id": user_id,
+                    "trace_id": trace_id,
+                    "request_id": request_id,
+                    "exception_class": exc.__class__.__name__,
+                },
             )
             return self.failed_response(msg="System error", code=50000)
 
@@ -201,13 +203,16 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
                     matched_permission_code=permission_code,
                 )
                 iam_logger.error(
-                    "authorize service check failed | view=%s path=%s user_id=%s permission_code=%s exception=%s",
-                    self.__class__.__name__,
-                    getattr(request, "path", None),
-                    getattr(user, "id", None),
-                    permission_code,
-                    exc.__class__.__name__,
+                    "authorize service check failed",
                     exc_info=True,
+                    extra={
+                        "view": self.__class__.__name__,
+                        "path": getattr(request, "path", None),
+                        "user_id": getattr(user, "id", None),
+                        "permission_code": permission_code,
+                        "trace_id": self._resolve_trace_id(request),
+                        "exception_class": exc.__class__.__name__,
+                    },
                 )
                 self._raise_permission_denied(permission_code)
             else:

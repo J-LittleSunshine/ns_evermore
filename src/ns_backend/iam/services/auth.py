@@ -11,10 +11,10 @@ from django.conf import settings
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
 
+from ns_backend.backend.common.logger import iam_logger
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.backend.utils.jwt import JwtService
 from ns_backend.backend.utils.password_transport import PasswordTransportService
-from ns_backend.iam import IAM_LOGGER
 from ns_backend.iam.repositories import (
     AuthLoginBundleRepository,
     AuthUserRepository,
@@ -119,8 +119,14 @@ class AuthService:
         try:
             await LoginFailureRepository.clear_by_username(username)
         except Exception as exc:
-            IAM_LOGGER.warning(
-                f"login failure clear failed | username={username} user_id={user_id} exception={exc.__class__.__name__}", exc_info=True,
+            iam_logger.warning(
+                "login failure clear failed",
+                exc_info=True,
+                extra={
+                    "username": username,
+                    "user_id": user_id,
+                    "exception_class": exc.__class__.__name__,
+                },
             )
 
     @staticmethod

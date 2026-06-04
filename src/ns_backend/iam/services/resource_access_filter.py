@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from django.conf import settings
 from django.utils import timezone
 
+from ns_backend.backend.common.logger import iam_logger
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.constants import (
     RESOURCE_ACCESS_MODE_ACL_REQUIRED,
@@ -17,12 +18,9 @@ from ns_backend.iam.services.backoff import retry_with_backoff
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.permission import PermissionService
 from ns_common.error_codes import NsErrorCode
-from ns_common.logger import get_ns_logger
 
 if TYPE_CHECKING:
     pass
-
-IAM_LOGGER = get_ns_logger("iam", True)
 
 
 class ResourceAccessFilterService:
@@ -196,14 +194,14 @@ class ResourceAccessFilterService:
 
     @classmethod
     async def _collect_direct_acl_ids(
-        cls,
-        *,
-        subject_bindings: list[tuple[str, int]],
-        resource_type: str,
-        action_code: str,
-        now,
-        allow_ids: set[str],
-        deny_ids: set[str],
+            cls,
+            *,
+            subject_bindings: list[tuple[str, int]],
+            resource_type: str,
+            action_code: str,
+            now,
+            allow_ids: set[str],
+            deny_ids: set[str],
     ) -> None:
         rows = await ResourceAclRepository.list_active_effects_for_resource_type_action(
             subject_bindings=subject_bindings,
@@ -215,14 +213,14 @@ class ResourceAccessFilterService:
 
     @classmethod
     async def _collect_inherited_acl_ids(
-        cls,
-        *,
-        subject_bindings: list[tuple[str, int]],
-        resource_type: str,
-        action_code: str,
-        now,
-        allow_ids: set[str],
-        deny_ids: set[str],
+            cls,
+            *,
+            subject_bindings: list[tuple[str, int]],
+            resource_type: str,
+            action_code: str,
+            now,
+            allow_ids: set[str],
+            deny_ids: set[str],
     ) -> None:
         ancestor_types = await ResourceRelationRepository.list_ancestor_resource_types(resource_type=resource_type)
         if not ancestor_types:
@@ -261,13 +259,13 @@ class ResourceAccessFilterService:
 
     @classmethod
     async def _resolve_retrieval_filter_once(
-        cls,
-        *,
-        user: Any,
-        normalized_resource_type: str,
-        normalized_action_code: str,
-        permission_code: str | None,
-        field_map: dict[str, Any] | None,
+            cls,
+            *,
+            user: Any,
+            normalized_resource_type: str,
+            normalized_action_code: str,
+            permission_code: str | None,
+            field_map: dict[str, Any] | None,
     ) -> dict[str, Any]:
         if user is None or not bool(getattr(user, "is_active", False)):
             return cls._build_deny_all_filter(reason="USER_INACTIVE")
@@ -435,13 +433,13 @@ class ResourceAccessFilterService:
 
     @classmethod
     async def resolve_retrieval_filter(
-        cls,
-        user: Any,
-        resource_type: str,
-        action_code: str,
-        *,
-        permission_code: str | None = None,
-        field_map: dict[str, Any] | None = None,
+            cls,
+            user: Any,
+            resource_type: str,
+            action_code: str,
+            *,
+            permission_code: str | None = None,
+            field_map: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Resolve resource-level allow/deny ids and query-level filters for retrievers."""
         normalized_resource_type = cls._normalize_resource_type(resource_type)
@@ -469,7 +467,6 @@ class ResourceAccessFilterService:
                     max_delay_ms=cls._backoff_max_delay_ms(),
                     jitter_ratio=cls._backoff_jitter_ratio(),
                     retryable_exceptions=(Exception,),
-                    logger_name="iam",
                     operation_name="resource_access_filter_resolve",
                 )
             else:
@@ -482,17 +479,18 @@ class ResourceAccessFilterService:
             return result
         except Exception as exc:  # noqa
             retry_count = max(attempt_count - 1, 0)
-            IAM_LOGGER.error(
-                "resource access filter build failed | resource_type=%s action_code=%s user_id=%s retry_count=%s exception_class=%s",
-                normalized_resource_type,
-                normalized_action_code,
-                getattr(user, "id", None),
-                retry_count,
-                exc.__class__.__name__,
+            iam_logger.error(
+                "resource access filter build failed",
                 exc_info=True,
+                extra={
+                    "resource_type": normalized_resource_type,
+                    "action_code": normalized_action_code,
+                    "user_id": getattr(user, "id", None),
+                    "retry_count": retry_count,
+                    "exception_class": exc.__class__.__name__,
+                },
             )
             return cls._build_deny_all_filter(
                 reason="AUTH_FILTER_BUILD_FAILED",
                 retry_count=retry_count,
             )
-

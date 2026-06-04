@@ -10,17 +10,15 @@ from typing import TYPE_CHECKING, Any
 from django.conf import settings
 from django.core.cache import caches
 
+from ns_backend.backend.common.logger import iam_logger
 from ns_backend.iam.constants import RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW
 from ns_backend.iam.repositories import AuthorizeRepository
 from ns_backend.iam.schemas import UserAuthorizationContext
 from ns_backend.iam.services.backoff import retry_with_backoff
 from ns_backend.iam.services.resource_access_filter import ResourceAccessFilterService
-from ns_common.logger import get_ns_logger
 
 if TYPE_CHECKING:
     pass
-
-IAM_LOGGER = get_ns_logger("iam", True)
 
 
 class AuthorizationContextService:
@@ -148,10 +146,13 @@ class AuthorizationContextService:
         try:
             return cls._cache().get(key, default)
         except Exception as exc:  # noqa
-            IAM_LOGGER.warning(
-                "authorization context cache get failed | cache_key=%s exception_class=%s",
-                key,
-                exc.__class__.__name__,
+            iam_logger.warning(
+                "authorization context cache get failed",
+                exc_info=True,
+                extra={
+                    "cache_key": key,
+                    "exception_class": exc.__class__.__name__,
+                },
             )
             return default
 
@@ -161,10 +162,13 @@ class AuthorizationContextService:
             cls._cache().set(key, value, timeout=timeout)
             return True
         except Exception as exc:  # noqa
-            IAM_LOGGER.warning(
-                "authorization context cache set failed | cache_key=%s exception_class=%s",
-                key,
-                exc.__class__.__name__,
+            iam_logger.warning(
+                "authorization context cache set failed",
+                exc_info=True,
+                extra={
+                    "cache_key": key,
+                    "exception_class": exc.__class__.__name__,
+                },
             )
             return False
 
@@ -174,10 +178,13 @@ class AuthorizationContextService:
             cls._cache().delete(key)
             return True
         except Exception as exc:  # noqa
-            IAM_LOGGER.warning(
-                "authorization context cache delete failed | cache_key=%s exception_class=%s",
-                key,
-                exc.__class__.__name__,
+            iam_logger.warning(
+                "authorization context cache delete failed",
+                exc_info=True,
+                extra={
+                    "cache_key": key,
+                    "exception_class": exc.__class__.__name__,
+                },
             )
             return False
 
@@ -222,7 +229,10 @@ class AuthorizationContextService:
 
             cls._LOCAL_CONTEXT_CACHE.move_to_end(cache_key)
 
-        IAM_LOGGER.debug("authorization context local cache hit | cache_key=%s", cache_key)
+        iam_logger.debug("authorization context local cache hit",
+                         extra={
+                             "cache_key": cache_key,
+                         }, )
         return dict(payload)
 
     @classmethod
@@ -264,7 +274,11 @@ class AuthorizationContextService:
                 cls._INFLIGHT_TASKS[cache_key] = inflight
                 owner = True
             else:
-                IAM_LOGGER.debug("authorization context single-flight wait | cache_key=%s", cache_key)
+                iam_logger.debug("authorization context single-flight wait",
+                                 extra={
+                                     "cache_key": cache_key,
+                                 }
+                                 )
 
         try:
             return await inflight
@@ -275,13 +289,13 @@ class AuthorizationContextService:
 
     @classmethod
     async def _build_context_with_backoff(
-        cls,
-        *,
-        user: Any,
-        resource_type: str,
-        action_code: str,
-        permission_code: str | None,
-        version: int,
+            cls,
+            *,
+            user: Any,
+            resource_type: str,
+            action_code: str,
+            permission_code: str | None,
+            version: int,
     ) -> tuple[UserAuthorizationContext, int]:
         attempt_count = 0
 
@@ -304,7 +318,6 @@ class AuthorizationContextService:
                 max_delay_ms=cls._backoff_max_delay_ms(),
                 jitter_ratio=cls._backoff_jitter_ratio(),
                 retryable_exceptions=(Exception,),
-                logger_name="iam",
                 operation_name="authorization_context_build",
             )
         else:
@@ -384,13 +397,13 @@ class AuthorizationContextService:
 
     @classmethod
     async def _build_context_once(
-        cls,
-        *,
-        user: Any,
-        resource_type: str,
-        action_code: str,
-        permission_code: str | None,
-        version: int,
+            cls,
+            *,
+            user: Any,
+            resource_type: str,
+            action_code: str,
+            permission_code: str | None,
+            version: int,
     ) -> UserAuthorizationContext:
         """Build one fresh authorization context from repository/service sources."""
         user_id = int(getattr(user, "id"))
@@ -413,13 +426,13 @@ class AuthorizationContextService:
 
     @classmethod
     async def build_context(
-        cls,
-        *,
-        user: Any,
-        resource_type: str,
-        action_code: str,
-        permission_code: str | None,
-        version: int,
+            cls,
+            *,
+            user: Any,
+            resource_type: str,
+            action_code: str,
+            permission_code: str | None,
+            version: int,
     ) -> UserAuthorizationContext:
         """Build one fresh authorization context from repository/service sources."""
         return await cls._build_context_once(
@@ -432,12 +445,12 @@ class AuthorizationContextService:
 
     @classmethod
     async def get_or_build(
-        cls,
-        *,
-        user: Any,
-        resource_type: str,
-        action_code: str,
-        permission_code: str | None = None,
+            cls,
+            *,
+            user: Any,
+            resource_type: str,
+            action_code: str,
+            permission_code: str | None = None,
     ) -> UserAuthorizationContext:
         """Get authorization context from cache, or build and cache it."""
         if user is None or not bool(getattr(user, "is_active", False)):
@@ -458,15 +471,40 @@ class AuthorizationContextService:
         if isinstance(cached_payload, dict):
             try:
                 return cls._deserialize(cached_payload)
-            except Exception:  # noqa
+            except Exception as exc:  # noqa
+                iam_logger.warning(
+                    "authorization context cache payload deserialize failed",
+                    exc_info=True,
+                    extra={
+                        "cache_layer": "distributed",
+                        "cache_key": cache_key,
+                        "user_id": user_id,
+                        "resource_type": resource_type,
+                        "action_code": action_code,
+                        "permission_code": permission_code,
+                        "exception_class": exc.__class__.__name__,
+                    },
+                )
                 cls._safe_cache_delete(cache_key)
 
         local_payload = cls._get_local_cache_payload(cache_key)
         if isinstance(local_payload, dict):
             try:
                 return cls._deserialize(local_payload)
-            except Exception:  # noqa
-                pass
+            except Exception as exc:  # noqa
+                iam_logger.warning(
+                    "authorization context local payload deserialize failed",
+                    exc_info=True,
+                    extra={
+                        "cache_layer": "local",
+                        "cache_key": cache_key,
+                        "user_id": user_id,
+                        "resource_type": resource_type,
+                        "action_code": action_code,
+                        "permission_code": permission_code,
+                        "exception_class": exc.__class__.__name__,
+                    },
+                )
 
         async def _build_and_cache() -> UserAuthorizationContext:
             context, retry_count = await cls._build_context_with_backoff(
@@ -480,25 +518,34 @@ class AuthorizationContextService:
             cls._safe_cache_set(cache_key, serialized, timeout=cls._ttl())
             cls._set_local_cache_payload(cache_key, serialized)
             if retry_count > 0:
-                IAM_LOGGER.debug(
-                    "authorization context build retried | user_id=%s resource_type=%s action_code=%s retry_count=%s",
-                    user_id,
-                    resource_type,
-                    action_code,
-                    retry_count,
+                iam_logger.debug(
+                    "authorization context build retried",
+                    extra={
+                        "cache_key": cache_key,
+                        "user_id": user_id,
+                        "resource_type": resource_type,
+                        "action_code": action_code,
+                        "permission_code": permission_code,
+                        "retry_count": retry_count,
+                    },
                 )
             return context
 
         try:
             return await cls._run_with_single_flight(cache_key=cache_key, operation=_build_and_cache)
         except Exception as exc:  # noqa
-            IAM_LOGGER.error(
-                "authorization context build failed | user_id=%s resource_type=%s action_code=%s exception_class=%s",
-                user_id,
-                resource_type,
-                action_code,
-                exc.__class__.__name__,
+            iam_logger.error(
+                "authorization context build failed",
                 exc_info=True,
+                extra={
+                    "cache_key": cache_key,
+                    "user_id": user_id,
+                    "resource_type": resource_type,
+                    "action_code": action_code,
+                    "permission_code": permission_code,
+                    "version": version,
+                    "exception_class": exc.__class__.__name__,
+                },
             )
             deny_context = cls._build_deny_context(user_id=user_id, version=version, reason="AUTH_CONTEXT_BUILD_FAILED")
             cls._set_local_cache_payload(cache_key, cls._serialize(deny_context))
@@ -522,4 +569,3 @@ class AuthorizationContextService:
         cls._safe_cache_set(cls.GLOBAL_VERSION_KEY, next_version, None)
         cls._clear_local_cache_all()
         return next_version
-

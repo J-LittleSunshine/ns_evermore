@@ -39,6 +39,7 @@ class _ExactLevelFilter(logging.Filter):
     def filter(self, _record: logging.LogRecord) -> bool:
         return _record.levelno == self._levelno
 
+
 class _JsonLogFormatter(logging.Formatter):
     """Format log records as one-line JSON."""
 
@@ -104,6 +105,7 @@ class _JsonLogFormatter(logging.Formatter):
         if isinstance(value, dict):
             return value
         return str(value)
+
 
 class _BackupTimedRotatingFileHandler(TimedRotatingFileHandler):
 
