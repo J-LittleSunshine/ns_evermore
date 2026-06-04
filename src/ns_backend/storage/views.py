@@ -5,14 +5,14 @@ from typing import TYPE_CHECKING
 
 from django.http import JsonResponse
 
-from backend.common.viewset import AuthenticatedRequestViewSet
+from iam.views import IamRequestViewSet
 from ns_backend.storage.services import StorageObjectService
 
 if TYPE_CHECKING:
     pass
 
 
-class StorageRequestViewSet(AuthenticatedRequestViewSet):
+class StorageRequestViewSet(IamRequestViewSet):
     """Base storage API viewset with IAM route-level authorization."""
 
     authorize_resource_type = "storage.object"

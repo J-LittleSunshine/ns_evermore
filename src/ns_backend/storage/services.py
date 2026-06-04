@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -84,7 +85,12 @@ class StorageObjectService:
             )
 
             repository = get_async_object_ref_repository()
-            saved_ref = await repository.save_object_ref(upload_result.object_ref)
+
+            try:
+                saved_ref = await repository.save_object_ref(upload_result.object_ref)
+            except Exception:
+                await cls._cleanup_uploaded_object(upload_result=upload_result)
+                raise
 
             return cls._serialize_upload_result(
                 NsObjectUploadResult(
@@ -223,10 +229,23 @@ class StorageObjectService:
 
     @staticmethod
     def _ensure_request_data(data: Any) -> dict[str, Any]:
-        """Validate request data is dict-like."""
-        if not isinstance(data, dict):
-            raise BusinessError("request data must be an object", NsErrorCode.INVALID_VALUE)
-        return data
+        """Validate and normalize request data as dict."""
+        if isinstance(data, dict):
+            return data
+
+        if isinstance(data, Mapping):
+            return {
+                str(key): value
+                for key, value in data.items()
+            }
+
+        dict_method = getattr(data, "dict", None)
+        if callable(dict_method):
+            payload = dict_method()
+            if isinstance(payload, dict):
+                return payload
+
+        raise BusinessError("request data must be an object", NsErrorCode.INVALID_VALUE)
 
     @staticmethod
     def _get_uploaded_file(request):
@@ -452,3 +471,15 @@ class StorageObjectService:
             "version_id": object_ref.version_id,
             "metadata": dict(object_ref.metadata),
         }
+
+    @staticmethod
+    async def _cleanup_uploaded_object(*, upload_result: NsObjectUploadResult) -> None:
+        """Best-effort cleanup for uploaded object when object ref persistence fails."""
+        try:
+            storage_client = AsyncNsObjectStorageClient.get_default()
+            await storage_client.remove_object(
+                bucket=upload_result.object_ref.bucket,
+                object_name=upload_result.object_ref.object_name,
+            )
+        except Exception:  # noqa
+            return
