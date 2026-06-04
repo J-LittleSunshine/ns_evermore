@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from adrf.viewsets import ViewSet
 from django.http import JsonResponse
-from rest_framework.views import APIView
 
 from ns_backend.backend.common.logger import iam_logger, logger
 from ns_backend.backend.exceptions import BusinessError
@@ -17,7 +16,7 @@ if TYPE_CHECKING:
 
 class BaseRequestViewSet(ViewSet):
     @classmethod
-    def as_view(cls, actions: dict[str, str] | None = None, **initkwargs: Any) -> APIView:
+    def as_view(cls, actions: dict[str, str] | None = None, **initkwargs: Any):
         if not actions:
             raise NotImplementedError(f"{cls.__name__} must declare as_view(actions)")
         return super().as_view(actions=actions, **initkwargs)

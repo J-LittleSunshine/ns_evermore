@@ -189,6 +189,8 @@ IAM_DECISION_AUDIT_STRICT_MODE = _coerce_bool(
 
 _STORAGE_PERMISSION_PROVIDER_PATH = "ns_backend.storage.permissions.StoragePermissionProvider"
 
+_STORAGE_MODULE_REGISTRATION_HOOK_PATH = "ns_backend.storage.iam_hooks.register_storage_iam_resources"
+
 IAM_PERMISSION_PROVIDERS = _merge_string_tuples(
     (_STORAGE_PERMISSION_PROVIDER_PATH,),
     _BACKEND.iam_permission_providers,
@@ -197,6 +199,7 @@ IAM_PERMISSION_PROVIDERS = _merge_string_tuples(
 )
 
 IAM_MODULE_REGISTRATION_HOOKS = _merge_string_tuples(
+    (_STORAGE_MODULE_REGISTRATION_HOOK_PATH,),
     getattr(_BACKEND, "iam_module_registration_hooks", ()),
     os.getenv("NS_IAM_MODULE_REGISTRATION_HOOKS"),
     os.getenv("IAM_MODULE_REGISTRATION_HOOKS"),
