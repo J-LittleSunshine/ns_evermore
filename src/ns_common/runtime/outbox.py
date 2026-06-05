@@ -348,6 +348,26 @@ class SqlWalRuntimeOutbox:
             ).fetchone()
             return int(row["total"] if row is not None else 0)
 
+    def get_status(self, message_id: str) -> str | None:
+        """Return one message status by message id."""
+        normalized_message_id: str = self._normalize_message_id(message_id)
+
+        with self._lock:
+            row = self._connection.execute(
+                f"""
+                SELECT status
+                FROM {self._TABLE_NAME}
+                WHERE message_id = ?
+                LIMIT 1
+                """,
+                (normalized_message_id,),
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return str(row["status"] or "").strip().upper() or None
+
     def close(self) -> None:
         """Close SQLite connection."""
         with self._lock:
@@ -573,6 +593,10 @@ class AsyncSqlWalRuntimeOutbox:
     async def mark_dead(self, *, message_id: str, reason: str) -> None:
         """Mark one message as permanently failed."""
         await asyncio.to_thread(self._outbox.mark_dead, message_id=message_id, reason=reason)
+
+    async def get_status(self, message_id: str) -> str | None:
+        """Return one message status by message id."""
+        return await asyncio.to_thread(self._outbox.get_status, message_id)
 
     async def close(self) -> None:
         """Close SQLite connection."""

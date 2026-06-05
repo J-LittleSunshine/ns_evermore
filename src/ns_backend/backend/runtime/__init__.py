@@ -3,6 +3,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ns_backend.backend.runtime.ack_wait import (
+    NsBackendRuntimeAckTimeoutError,
+    NsBackendRuntimeAckWaitError,
+    NsBackendRuntimeAckWaitResult,
+)
 from ns_backend.backend.runtime.client import NsBackendRuntimeClient
 from ns_backend.backend.runtime.connector import (
     NsBackendRuntimeConnector,
@@ -58,4 +63,7 @@ __all__ = [
     "NsBackendRuntimeRequestReplyError",
     "NsBackendRuntimeRequestReplyResult",
     "NsBackendRuntimeRequestTimeoutError",
+    "NsBackendRuntimeAckTimeoutError",
+    "NsBackendRuntimeAckWaitError",
+    "NsBackendRuntimeAckWaitResult",
 ]

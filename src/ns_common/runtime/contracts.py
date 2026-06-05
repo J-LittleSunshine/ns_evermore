@@ -27,6 +27,8 @@ class NsRuntimeOutbox(Protocol):
     def mark_dead(self, *, message_id: str, reason: str) -> None:
         """Mark one message as permanently failed."""
 
+    def get_status(self, message_id: str) -> str | None:
+        """Return one message status by message id."""
 
 class AsyncNsRuntimeOutbox(Protocol):
     """Async durable outbox protocol used by async runtime components."""
@@ -46,6 +48,8 @@ class AsyncNsRuntimeOutbox(Protocol):
     async def mark_dead(self, *, message_id: str, reason: str) -> None:
         """Mark one message as permanently failed."""
 
+    async def get_status(self, message_id: str) -> str | None:
+        """Return one message status by message id."""
 
 class NsRuntimeBroker(Protocol):
     """Runtime broker protocol for cluster event distribution."""

@@ -7,12 +7,18 @@ from dataclasses import replace
 from threading import RLock
 from typing import TYPE_CHECKING, ClassVar
 
+from ns_backend.backend.runtime.ack_wait import NsBackendRuntimeAckWaitResult
 from ns_backend.backend.runtime.inbox import SqliteBackendRuntimeInbox, build_backend_runtime_inbox
 from ns_backend.backend.runtime.ipc import NsRuntimeIpcClient
 from ns_backend.backend.runtime.request_reply import NsBackendRuntimeRequestReplyResult
 from ns_common.config import ns_config
 from ns_common.runtime.config import NsRuntimeConfig
-from ns_common.runtime.constants import RUNTIME_PRODUCER_BACKEND
+from ns_common.runtime.constants import (
+    RUNTIME_MESSAGE_STATUS_ACKED,
+    RUNTIME_MESSAGE_STATUS_DEAD,
+    RUNTIME_MESSAGE_STATUS_RETRY,
+    RUNTIME_PRODUCER_BACKEND,
+)
 from ns_common.runtime.contracts import NsRuntimeOutbox
 from ns_common.runtime.errors import NsRuntimePublishError
 from ns_common.runtime.messages import NsRuntimeMessage, RuntimeTargetType
@@ -115,6 +121,117 @@ class NsBackendRuntimeClient:
             headers=headers or {},
         )
         return self.publish(message, require_enabled=require_enabled, notify_connector=notify_connector)
+
+    def publish_and_wait_ack(
+            self,
+            message: NsRuntimeMessage,
+            *,
+            timeout_seconds: float = 5.0,
+            poll_interval_seconds: float = 0.05,
+            require_enabled: bool = True,
+            notify_connector: bool = True,
+    ) -> NsBackendRuntimeAckWaitResult:
+        """Publish one message and wait briefly for runtime-level outbox ack.
+
+        This waits for the backend runtime connector to send the message to
+        ns_runtime and update the local outbox status. It does not wait for
+        frontend ACK, business handling, or request/reply result.
+        """
+        started_monotonic = time.monotonic()
+        message_id = self.publish(
+            message,
+            require_enabled=require_enabled,
+            notify_connector=notify_connector,
+        )
+        result = self.wait_for_runtime_ack(
+            message_id,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
+        return NsBackendRuntimeAckWaitResult(
+            message_id=message_id,
+            status=result.status,
+            timeout_seconds=float(timeout_seconds),
+            elapsed_seconds=time.monotonic() - started_monotonic,
+        )
+
+    def publish_event_and_wait_ack(
+            self,
+            *,
+            topic: str,
+            event: str,
+            payload: dict | None = None,
+            target_type: RuntimeTargetType = "user",
+            target_id: str | int | None = None,
+            trace_id: str | None = None,
+            idempotency_key: str | None = None,
+            ttl_seconds: int | None = 300,
+            require_ack: bool = True,
+            headers: dict[str, str] | None = None,
+            timeout_seconds: float = 5.0,
+            poll_interval_seconds: float = 0.05,
+            require_enabled: bool = True,
+            notify_connector: bool = True,
+    ) -> NsBackendRuntimeAckWaitResult:
+        """Build, publish, and wait briefly for runtime-level outbox ack."""
+        message = NsRuntimeMessage.new(
+            topic=topic,
+            event=event,
+            payload=payload or {},
+            target_type=target_type,
+            target_id=target_id,
+            producer_type=RUNTIME_PRODUCER_BACKEND,  # type: ignore[arg-type]
+            producer_id=self._config.node_id,
+            trace_id=trace_id,
+            idempotency_key=idempotency_key,
+            ttl_seconds=ttl_seconds,
+            require_ack=require_ack,
+            headers=headers or {},
+        )
+
+        return self.publish_and_wait_ack(
+            message,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            require_enabled=require_enabled,
+            notify_connector=notify_connector,
+        )
+
+    def wait_for_runtime_ack(self, message_id: str, *, timeout_seconds: float = 5.0, poll_interval_seconds: float = 0.05) -> NsBackendRuntimeAckWaitResult:
+        """Wait until one outbox message reaches ACKED, RETRY, or DEAD."""
+        normalized_message_id = str(message_id or "").strip()
+        if not normalized_message_id:
+            raise NsRuntimePublishError("runtime outbox message_id is required")
+
+        normalized_timeout = max(float(timeout_seconds), 0.0)
+        normalized_poll_interval = max(float(poll_interval_seconds), 0.01)
+        started_monotonic = time.monotonic()
+        deadline = started_monotonic + normalized_timeout
+
+        while True:
+            status = self.get_outbox_status(normalized_message_id)
+            if status in {
+                RUNTIME_MESSAGE_STATUS_ACKED,
+                RUNTIME_MESSAGE_STATUS_RETRY,
+                RUNTIME_MESSAGE_STATUS_DEAD,
+            }:
+                return NsBackendRuntimeAckWaitResult(
+                    message_id=normalized_message_id,
+                    status=status,
+                    timeout_seconds=normalized_timeout,
+                    elapsed_seconds=time.monotonic() - started_monotonic,
+                )
+
+            if time.monotonic() >= deadline:
+                return NsBackendRuntimeAckWaitResult(
+                    message_id=normalized_message_id,
+                    status=None,
+                    timeout_seconds=normalized_timeout,
+                    elapsed_seconds=time.monotonic() - started_monotonic,
+                )
+
+            time.sleep(normalized_poll_interval)
 
     def request_reply(
             self,
@@ -273,6 +390,13 @@ class NsBackendRuntimeClient:
             require_enabled=require_enabled,
             notify_connector=notify_connector,
         )
+
+    def get_outbox_status(self, message_id: str) -> str | None:
+        """Return local outbox status by message id."""
+        getter = getattr(self._outbox, "get_status", None)
+        if getter is None:
+            raise NsRuntimePublishError("runtime outbox does not support get_status")
+        return getter(message_id)
 
     def count_outbox_status(self, status: str) -> int:
         """Return local outbox count by status when the backend supports it."""
