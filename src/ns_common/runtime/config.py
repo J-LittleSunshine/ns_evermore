@@ -13,10 +13,10 @@ from ns_common.runtime.constants import (
     RUNTIME_CONNECTOR_IPC_MEMORY,
     RUNTIME_CONNECTOR_IPC_TCP,
     RUNTIME_CONNECTOR_IPC_UNIX_SOCKET,
-    RUNTIME_MASTER_FORWARD_SUB_FIRST,
     RUNTIME_NODE_ROLE_MASTER,
     RUNTIME_NODE_ROLE_STANDALONE,
     RUNTIME_NODE_ROLE_SUB,
+    RUNTIME_MASTER_FORWARD_SUB_FIRST, RUNTIME_MASTER_FORWARD_LOCAL_FIRST, RUNTIME_MASTER_FORWARD_SUB_REQUIRED,
 )
 from ns_common.runtime.errors import NsRuntimeConfigurationError
 
@@ -152,3 +152,10 @@ class NsRuntimeConfig:
 
         if isinstance(self.outbox_max_storage_mb, bool) or self.outbox_max_storage_mb <= 0:
             raise NsRuntimeConfigurationError("runtime outbox_max_storage_mb must be positive")
+
+        if self.master_forward_policy not in {
+            RUNTIME_MASTER_FORWARD_LOCAL_FIRST,
+            RUNTIME_MASTER_FORWARD_SUB_FIRST,
+            RUNTIME_MASTER_FORWARD_SUB_REQUIRED,
+        }:
+            raise NsRuntimeConfigurationError(f"runtime master_forward_policy is invalid: {self.master_forward_policy}")

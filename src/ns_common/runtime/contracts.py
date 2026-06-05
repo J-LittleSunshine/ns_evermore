@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, AsyncIterator
 
-from ns_common.runtime import NsRuntimeMessage, NsRuntimeAck
+from ns_common.runtime.messages import NsRuntimeAck, NsRuntimeMessage
 
 if TYPE_CHECKING:
     pass

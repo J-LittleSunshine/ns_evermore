@@ -12,8 +12,8 @@ from typing import Any, ClassVar, Dict, Literal
 import portalocker
 
 from ns_common import NS_CONFIG_FILE_PATH, TMP_DIR, NS_ENV
-from ns_common.cache import NsCacheConfig
-from ns_common.runtime import NsRuntimeConfig
+from ns_common.cache.config import NsCacheConfig
+from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.storage.config import NsObjectStorageConfig
 
 
