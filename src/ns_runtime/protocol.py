@@ -14,6 +14,8 @@ RuntimeWireFrameType = Literal[
     "backend.register",
     "backend.heartbeat",
     "backend.publish",
+    "backend.deliver",
+    "backend.reply",
     "runtime.register",
     "runtime.heartbeat",
     "runtime.forward",

@@ -25,22 +25,20 @@ class NsBackendRuntimeInboundMessage:
     """Inbound runtime message delivered to backend connector."""
 
     message_id: str
-    correlation_id: str | None = None
-    reply_to_message_id: str | None = None
-
     topic: str
     event: str
     payload: dict[str, Any]
-
     target_type: str
-    target_id: str | None = None
     producer_type: str
-    producer_id: str | None = None
-
-    trace_id: str | None = None
     headers: dict[str, str]
     created_at_epoch_ms: int
     received_at_epoch_ms: int
+
+    correlation_id: str | None = None
+    reply_to_message_id: str | None = None
+    target_id: str | None = None
+    producer_id: str | None = None
+    trace_id: str | None = None
 
     def to_runtime_message(self) -> NsRuntimeMessage:
         """Convert inbound record back to NsRuntimeMessage."""
