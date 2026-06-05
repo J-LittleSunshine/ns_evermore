@@ -27,6 +27,7 @@ class NsBackendRuntimeRequestReplyResult:
 
     request_message_id: str
     correlation_id: str
+    reply_to_backend_id: str
     timeout_seconds: float
     elapsed_seconds: float
     reply: NsBackendRuntimeInboundMessage | None = None
@@ -51,6 +52,4 @@ class NsBackendRuntimeRequestReplyResult:
     def raise_for_timeout(self) -> None:
         """Raise timeout error when no reply was received."""
         if self.reply is None:
-            raise NsBackendRuntimeRequestTimeoutError(
-                f"runtime request/reply timed out: correlation_id={self.correlation_id}"
-            )
+            raise NsBackendRuntimeRequestTimeoutError(f"runtime request/reply timed out: correlation_id={self.correlation_id}, reply_to_backend_id={self.reply_to_backend_id}")

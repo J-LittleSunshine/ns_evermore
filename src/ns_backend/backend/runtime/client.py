@@ -116,7 +116,17 @@ class NsBackendRuntimeClient:
         )
         return self.publish(message, require_enabled=require_enabled, notify_connector=notify_connector)
 
-    def request_reply(self, message: NsRuntimeMessage, *, correlation_id: str | None = None, timeout_seconds: float = 5.0, poll_interval_seconds: float = 0.05, require_enabled: bool = True, notify_connector: bool = True) -> NsBackendRuntimeRequestReplyResult:
+    def request_reply(
+            self,
+            message: NsRuntimeMessage,
+            *,
+            correlation_id: str | None = None,
+            reply_to_backend_id: str | None = None,
+            timeout_seconds: float = 5.0,
+            poll_interval_seconds: float = 0.05,
+            require_enabled: bool = True,
+            notify_connector: bool = True,
+    ) -> NsBackendRuntimeRequestReplyResult:
         """Publish one request message and wait briefly for a correlated reply.
 
         This is a short-timeout request/reply helper for Django/ADRF views.
@@ -128,8 +138,13 @@ class NsBackendRuntimeClient:
 
         started_monotonic = time.monotonic()
         min_received_at_epoch_ms = int(time.time() * 1000)
-        prepared_message = self._prepare_request_reply_message(message, correlation_id=correlation_id)
+        prepared_message = self._prepare_request_reply_message(
+            message,
+            correlation_id=correlation_id,
+            reply_to_backend_id=reply_to_backend_id,
+        )
         normalized_correlation_id = str(prepared_message.headers["correlation_id"])
+        normalized_reply_to_backend_id = str(prepared_message.headers["reply_to_backend_id"])
 
         self.publish(
             prepared_message,
@@ -148,6 +163,7 @@ class NsBackendRuntimeClient:
         return NsBackendRuntimeRequestReplyResult(
             request_message_id=str(prepared_message.message_id),
             correlation_id=normalized_correlation_id,
+            reply_to_backend_id=normalized_reply_to_backend_id,
             timeout_seconds=float(timeout_seconds),
             elapsed_seconds=elapsed_seconds,
             reply=reply,
@@ -162,6 +178,7 @@ class NsBackendRuntimeClient:
             target_type: RuntimeTargetType = "user",
             target_id: str | int | None = None,
             correlation_id: str | None = None,
+            reply_to_backend_id: str | None = None,
             trace_id: str | None = None,
             idempotency_key: str | None = None,
             ttl_seconds: int | None = 300,
@@ -188,9 +205,10 @@ class NsBackendRuntimeClient:
             headers=headers or {},
         )
 
-        return self.request_reply(
+        self.request_reply(
             message,
             correlation_id=correlation_id,
+            reply_to_backend_id=reply_to_backend_id,
             timeout_seconds=timeout_seconds,
             poll_interval_seconds=poll_interval_seconds,
             require_enabled=require_enabled,
@@ -287,7 +305,7 @@ class NsBackendRuntimeClient:
             producer_id=producer_id,
         ).normalized()
 
-    def _prepare_request_reply_message(self, message: NsRuntimeMessage, *, correlation_id: str | None = None) -> NsRuntimeMessage:
+    def _prepare_request_reply_message(self, message: NsRuntimeMessage, *, correlation_id: str | None = None, reply_to_backend_id: str | None = None) -> NsRuntimeMessage:
         """Prepare runtime message as request/reply request."""
         normalized_message = self._prepare_message(message)
 
@@ -301,10 +319,19 @@ class NsBackendRuntimeClient:
         if not normalized_correlation_id:
             normalized_correlation_id = uuid.uuid4().hex
 
+        normalized_reply_to_backend_id = str(
+            reply_to_backend_id
+            or normalized_message.headers.get("reply_to_backend_id")
+            or self._config.node_id
+        ).strip()
+
+        if not normalized_reply_to_backend_id:
+            normalized_reply_to_backend_id = self._config.node_id
+
         headers = dict(normalized_message.headers)
         headers["runtime_pattern"] = "request_reply"
         headers["correlation_id"] = normalized_correlation_id
-        headers["reply_to_backend_id"] = self._config.node_id
+        headers["reply_to_backend_id"] = normalized_reply_to_backend_id
         headers["reply_to_message_id"] = str(normalized_message.message_id)
 
         trace_id = normalized_message.trace_id or normalized_correlation_id
