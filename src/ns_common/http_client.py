@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-import weakref
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 from urllib.parse import urljoin
@@ -154,11 +153,8 @@ class NsHttpClient:
             self._sync_sessions_lock = threading.RLock()
             self._sync_sessions: set[requests.Session] = set()
 
-            self._async_lock = asyncio.Lock()
-            self._async_sessions: weakref.WeakKeyDictionary[
-                asyncio.AbstractEventLoop,
-                aiohttp.ClientSession,
-            ] = weakref.WeakKeyDictionary()
+            self._async_sessions_lock = threading.RLock()
+            self._async_sessions: dict[asyncio.AbstractEventLoop, aiohttp.ClientSession] = {}
 
             self._initialized = True
 
@@ -341,14 +337,19 @@ class NsHttpClient:
             delattr(self._thread_local, "session")
 
     async def aclose(self) -> None:
-        """Close all asynchronous aiohttp sessions."""
-        async with self._async_lock:
-            sessions = list(self._async_sessions.values())
-            self._async_sessions.clear()
+        """Close current event loop's aiohttp session.
 
-        for session in sessions:
-            if not session.closed:
-                await session.close()
+        aiohttp.ClientSession is bound to its owner event loop. Closing sessions
+        from a different event loop is unsafe, so this method only closes the
+        session owned by the currently running loop.
+        """
+        loop = asyncio.get_running_loop()
+
+        with self._async_sessions_lock:
+            session = self._async_sessions.pop(loop, None)
+
+        if session is not None and not session.closed:
+            await session.close()
 
     @classmethod
     async def reset_instance(cls) -> None:
@@ -394,7 +395,7 @@ class NsHttpClient:
         """Return current event loop's aiohttp session with TCPConnector pool."""
         loop = asyncio.get_running_loop()
 
-        async with self._async_lock:
+        with self._async_sessions_lock:
             session = self._async_sessions.get(loop)
             if session is not None and not session.closed:
                 return session
