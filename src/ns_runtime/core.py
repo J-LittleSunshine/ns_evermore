@@ -31,10 +31,10 @@ from ns_common.runtime.permissions import (
     build_runtime_frontend_resource_id,
 )
 from ns_common.runtime.security import NsRuntimeAuthorizationRequest, NsRuntimePrincipal
-from ns_runtime import NsRuntimePresenceStore, build_runtime_presence_store
 from ns_runtime.auth_provider import NsRuntimeAuthProviderError, build_runtime_auth_provider
 from ns_runtime.connection import NsRuntimeConnection
 from ns_runtime.dispatcher import NsRuntimeDispatcher
+from ns_runtime.presence import NsRuntimePresenceStore, build_runtime_presence_store
 from ns_runtime.protocol import (
     RUNTIME_FRAME_ACK,
     RUNTIME_FRAME_BACKEND_HEARTBEAT,
@@ -53,8 +53,9 @@ from ns_runtime.protocol import (
     build_backend_deliver_frame,
     build_runtime_heartbeat_frame,
     build_runtime_register_frame,
+    parse_ack_frame,
     runtime_message_from_forward_payload,
-    runtime_message_from_payload, parse_ack_frame,
+    runtime_message_from_payload,
 )
 from ns_runtime.registry import NsRuntimeConnectionRegistry
 
