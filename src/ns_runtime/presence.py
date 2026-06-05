@@ -82,13 +82,7 @@ class NsRuntimePresenceStore(Protocol):
     def upsert_connection(self, connection: NsRuntimeConnection, *, node_id: str) -> NsRuntimePresenceRecord:
         """Insert or update one online connection presence record."""
 
-    def refresh_connection(
-            self,
-            connection_id: str,
-            *,
-            last_seen_epoch_ms: int | None = None,
-            health: dict[str, Any] | None = None,
-    ) -> NsRuntimePresenceRecord | None:
+    def refresh_connection(self, connection_id: str, *, last_seen_epoch_ms: int | None = None, health: dict[str, Any] | None = None) -> NsRuntimePresenceRecord | None:
         """Refresh last_seen / health for one online connection."""
 
     def remove_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
@@ -100,6 +94,12 @@ class NsRuntimePresenceStore(Protocol):
     def list_online_frontends(self) -> list[NsRuntimePresenceRecord]:
         """Return online frontend presence records."""
 
+    def list_online_backends(self) -> list[NsRuntimePresenceRecord]:
+        """Return online backend presence records."""
+
+    def list_online_runtime_sub_nodes(self) -> list[NsRuntimePresenceRecord]:
+        """Return online runtime sub-node presence records."""
+
     def list_online_by_user(self, user_id: str) -> list[NsRuntimePresenceRecord]:
         """Return online frontend presence records for one user."""
 
@@ -108,6 +108,9 @@ class NsRuntimePresenceStore(Protocol):
 
     def list_online_by_client(self, client_id: str) -> list[NsRuntimePresenceRecord]:
         """Return online frontend presence records for one client."""
+
+    def list_online_by_room(self, room_id: str) -> list[NsRuntimePresenceRecord]:
+        """Return online frontend presence records for one room."""
 
     def count_online(self) -> int:
         """Return online connection count."""
@@ -140,6 +143,7 @@ class MemoryRuntimePresenceStore:
         self._frontend_by_user_id: dict[str, set[str]] = {}
         self._frontend_by_session_id: dict[str, set[str]] = {}
         self._frontend_by_client_id: dict[str, set[str]] = {}
+        self._frontend_by_room_id: dict[str, set[str]] = {}
 
     def upsert_connection(self, connection: NsRuntimeConnection, *, node_id: str) -> NsRuntimePresenceRecord:
         """Insert or update one online connection presence record."""
@@ -161,13 +165,7 @@ class MemoryRuntimePresenceStore:
             self._add_indexes(record)
             return record
 
-    def refresh_connection(
-            self,
-            connection_id: str,
-            *,
-            last_seen_epoch_ms: int | None = None,
-            health: dict[str, Any] | None = None,
-    ) -> NsRuntimePresenceRecord | None:
+    def refresh_connection(self, connection_id: str, *, last_seen_epoch_ms: int | None = None, health: dict[str, Any] | None = None) -> NsRuntimePresenceRecord | None:
         """Refresh last_seen / health for one online connection."""
         normalized_connection_id = str(connection_id or "").strip()
         if not normalized_connection_id:
@@ -218,6 +216,16 @@ class MemoryRuntimePresenceStore:
         with self._lock:
             return self._records_by_connection_ids(self._frontend_connections)
 
+    def list_online_backends(self) -> list[NsRuntimePresenceRecord]:
+        """Return online backend presence records."""
+        with self._lock:
+            return self._records_by_connection_ids(self._backend_connections)
+
+    def list_online_runtime_sub_nodes(self) -> list[NsRuntimePresenceRecord]:
+        """Return online runtime sub-node presence records."""
+        with self._lock:
+            return self._records_by_connection_ids(self._runtime_sub_connections)
+
     def list_online_by_user(self, user_id: str) -> list[NsRuntimePresenceRecord]:
         """Return online frontend presence records for one user."""
         normalized_user_id = self._normalize_optional(user_id)
@@ -244,6 +252,15 @@ class MemoryRuntimePresenceStore:
 
         with self._lock:
             return self._records_by_connection_ids(self._frontend_by_client_id.get(normalized_client_id, set()))
+
+    def list_online_by_room(self, room_id: str) -> list[NsRuntimePresenceRecord]:
+        """Return online frontend presence records for one room."""
+        normalized_room_id = self._normalize_optional(room_id)
+        if normalized_room_id is None:
+            return []
+
+        with self._lock:
+            return self._records_by_connection_ids(self._frontend_by_room_id.get(normalized_room_id, set()))
 
     def count_online(self) -> int:
         """Return online connection count."""
@@ -279,6 +296,10 @@ class MemoryRuntimePresenceStore:
 
             if record.client_id is not None:
                 self._add_index(self._frontend_by_client_id, record.client_id, record.connection_id)
+
+            for room_id in record.rooms:
+                self._add_index(self._frontend_by_room_id, room_id, record.connection_id)
+
             return
 
         if record.connection_type == "backend":
@@ -303,6 +324,9 @@ class MemoryRuntimePresenceStore:
         if record.client_id is not None:
             self._remove_index(self._frontend_by_client_id, record.client_id, record.connection_id)
 
+        for room_id in record.rooms:
+            self._remove_index(self._frontend_by_room_id, room_id, record.connection_id)
+
     def _records_by_connection_ids(self, connection_ids: set[str]) -> list[NsRuntimePresenceRecord]:
         """Return online records by connection ids."""
         result: list[NsRuntimePresenceRecord] = []
@@ -313,13 +337,7 @@ class MemoryRuntimePresenceStore:
         return result
 
     @classmethod
-    def _record_from_connection(
-            cls,
-            connection: NsRuntimeConnection,
-            *,
-            node_id: str,
-            connected_at_epoch_ms: int,
-    ) -> NsRuntimePresenceRecord:
+    def _record_from_connection(cls, connection: NsRuntimeConnection, *, node_id: str, connected_at_epoch_ms: int) -> NsRuntimePresenceRecord:
         """Build presence record from runtime connection state."""
         principal = connection.principal
 

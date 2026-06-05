@@ -34,7 +34,7 @@ from ns_common.runtime.security import NsRuntimeAuthorizationRequest, NsRuntimeP
 from ns_runtime.auth_provider import NsRuntimeAuthProviderError, build_runtime_auth_provider
 from ns_runtime.connection import NsRuntimeConnection
 from ns_runtime.dispatcher import NsRuntimeDispatcher
-from ns_runtime.presence import NsRuntimePresenceStore, build_runtime_presence_store
+from ns_runtime.presence import NsRuntimePresenceRecord, NsRuntimePresenceStore, build_runtime_presence_store
 from ns_runtime.protocol import (
     RUNTIME_FRAME_ACK,
     RUNTIME_FRAME_BACKEND_HEARTBEAT,
@@ -138,6 +138,47 @@ class NsRuntimeNode:
         """Return runtime node stats snapshot."""
         with self._stats_lock:
             return self._stats
+
+    def presence_counts(self) -> dict[str, int]:
+        """Return local runtime presence counters.
+
+        This is an in-process read-only helper for runtime internals and future
+        diagnostics. It does not expose HTTP API and does not imply distributed
+        presence consistency.
+        """
+        return self._presence.snapshot_counts()
+
+    def get_presence_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
+        """Return one local online presence record by connection id."""
+        return self._presence.get_connection(connection_id)
+
+    def list_presence_frontends(self) -> list[NsRuntimePresenceRecord]:
+        """Return local online frontend presence records."""
+        return self._presence.list_online_frontends()
+
+    def list_presence_backends(self) -> list[NsRuntimePresenceRecord]:
+        """Return local online backend presence records."""
+        return self._presence.list_online_backends()
+
+    def list_presence_runtime_sub_nodes(self) -> list[NsRuntimePresenceRecord]:
+        """Return local online runtime sub-node presence records."""
+        return self._presence.list_online_runtime_sub_nodes()
+
+    def list_presence_by_user(self, user_id: str) -> list[NsRuntimePresenceRecord]:
+        """Return local online frontend presence records for one user."""
+        return self._presence.list_online_by_user(user_id)
+
+    def list_presence_by_session(self, session_id: str) -> list[NsRuntimePresenceRecord]:
+        """Return local online frontend presence records for one session."""
+        return self._presence.list_online_by_session(session_id)
+
+    def list_presence_by_client(self, client_id: str) -> list[NsRuntimePresenceRecord]:
+        """Return local online frontend presence records for one client."""
+        return self._presence.list_online_by_client(client_id)
+
+    def list_presence_by_room(self, room_id: str) -> list[NsRuntimePresenceRecord]:
+        """Return local online frontend presence records for one room."""
+        return self._presence.list_online_by_room(room_id)
 
     def run_forever(self) -> None:
         """Run runtime node until stop() is called."""
