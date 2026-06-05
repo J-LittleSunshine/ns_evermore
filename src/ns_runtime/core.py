@@ -27,6 +27,9 @@ from ns_runtime.protocol import (
     RUNTIME_FRAME_BACKEND_HEARTBEAT,
     RUNTIME_FRAME_BACKEND_PUBLISH,
     RUNTIME_FRAME_BACKEND_REGISTER,
+    RUNTIME_FRAME_FRONTEND_ACK,
+    RUNTIME_FRAME_FRONTEND_HEARTBEAT,
+    RUNTIME_FRAME_FRONTEND_REGISTER,
     RUNTIME_FRAME_RUNTIME_FORWARD,
     RUNTIME_FRAME_RUNTIME_HEARTBEAT,
     RUNTIME_FRAME_RUNTIME_REGISTER,
@@ -55,6 +58,10 @@ class NsRuntimeNodeStats:
     sub_heartbeat_count: int = 0
     runtime_forward_count: int = 0
 
+    frontend_register_count: int = 0
+    frontend_heartbeat_count: int = 0
+    frontend_ack_count: int = 0
+
     accepted_count: int = 0
     rejected_count: int = 0
     forwarded_count: int = 0
@@ -66,19 +73,28 @@ class NsRuntimeNodeStats:
 class NsRuntimeNode:
     """Standalone ns_runtime core node.
 
-    P7 supports:
-    - standalone runtime node: handle backend.publish locally
+    P8 supports:
+    - standalone runtime node: handle backend.publish and deliver to local frontend
     - master runtime node: forward backend.publish to healthy sub nodes first
     - sub runtime node: connect to master and handle runtime.forward locally
+    - frontend WebSocket register / heartbeat / best-effort local delivery
 
-    Frontend connection management, presence, broker, IAM service token auth,
-    and business routing are intentionally deferred.
+    Presence, broker, IAM service token auth, and business routing are deferred.
     """
 
-    def __init__(self, *, config: NsRuntimeConfig | None = None, host: str | None = None, port: int | None = None, path: str | None = None) -> None:
+    def __init__(
+            self,
+            *,
+            config: NsRuntimeConfig | None = None,
+            host: str | None = None,
+            port: int | None = None,
+            path: str | None = None,
+            serve_inbound: bool | None = None,
+    ) -> None:
         """Initialize runtime node from ns_common config and optional bind overrides."""
         self._config: NsRuntimeConfig = config or ns_config.runtime_config
         self._host, self._port, self._path = self._resolve_bind_options(host=host, port=port, path=path)
+        self._serve_inbound: bool = True if serve_inbound is None else bool(serve_inbound)
 
         self._stop_event = Event()
         self._stats_lock = RLock()
@@ -102,6 +118,11 @@ class NsRuntimeNode:
         return self._path
 
     @property
+    def serve_inbound(self) -> bool:
+        """Return whether this node starts inbound WebSocket server."""
+        return self._serve_inbound
+
+    @property
     def stats(self) -> NsRuntimeNodeStats:
         """Return runtime node stats snapshot."""
         with self._stats_lock:
@@ -115,7 +136,7 @@ class NsRuntimeNode:
 
         try:
             if self._config.node_role == RUNTIME_NODE_ROLE_SUB:
-                asyncio.run(self._run_sub_client())
+                asyncio.run(self._run_sub_node())
                 return
 
             asyncio.run(self._run_server())
@@ -126,8 +147,32 @@ class NsRuntimeNode:
         """Stop runtime node."""
         self._stop_event.set()
 
+    async def _run_sub_node(self) -> None:
+        """Run sub node client and optional inbound frontend server."""
+        if not self._serve_inbound:
+            await self._run_sub_client()
+            return
+
+        server_task = asyncio.create_task(self._run_server())
+        client_task = asyncio.create_task(self._run_sub_client())
+
+        done, pending = await asyncio.wait(
+            {server_task, client_task},
+            return_when=asyncio.FIRST_EXCEPTION,
+        )
+
+        for task in pending:
+            task.cancel()
+
+        for task in pending:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        for task in done:
+            task.result()
+
     async def _run_server(self) -> None:
-        """Run WebSocket server lifecycle for standalone/master node."""
+        """Run WebSocket server lifecycle for standalone/master node or sub inbound frontend server."""
         try:
             import websockets
         except ImportError as exc:
@@ -225,13 +270,14 @@ class NsRuntimeNode:
                     node_role=RUNTIME_NODE_ROLE_SUB,
                     health={
                         "active_connections": self._registry.count_active(),
+                        "frontend_connections": self._registry.count_frontend(),
                         "handled_messages": self._stats.local_handled_count,
                     },
                 )
             )
 
     async def _handle_connection(self, websocket: Any, *args: Any) -> None:
-        """Handle one inbound WebSocket connection on standalone/master node."""
+        """Handle one inbound WebSocket connection."""
         request_path: str | None = self._extract_request_path(websocket, args)
         if request_path and self._path and request_path != self._path:
             await websocket.close(code=1008, reason="unsupported runtime websocket path")
@@ -263,6 +309,27 @@ class NsRuntimeNode:
             handled: bool = connection.resolve_ack(frame)
             if not handled:
                 self._add_stats(last_error=f"runtime ack has no pending waiter: {frame.message_id}")
+            return
+
+        if frame.frame_type == RUNTIME_FRAME_FRONTEND_REGISTER:
+            await self._handle_frontend_register(connection, frame)
+            return
+
+        if frame.frame_type == RUNTIME_FRAME_FRONTEND_HEARTBEAT:
+            await self._handle_frontend_heartbeat(connection, frame)
+            return
+
+        if frame.frame_type == RUNTIME_FRAME_FRONTEND_ACK:
+            await self._handle_frontend_ack(connection, frame)
+            return
+
+        if self._config.node_role == RUNTIME_NODE_ROLE_SUB and frame.frame_type in {
+            RUNTIME_FRAME_BACKEND_REGISTER,
+            RUNTIME_FRAME_BACKEND_HEARTBEAT,
+            RUNTIME_FRAME_BACKEND_PUBLISH,
+        }:
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason="sub runtime node does not accept backend frames")
+            self._add_stats(rejected_count=1)
             return
 
         if frame.frame_type == RUNTIME_FRAME_BACKEND_REGISTER:
@@ -387,7 +454,7 @@ class NsRuntimeNode:
 
         try:
             message: NsRuntimeMessage = runtime_message_from_forward_payload(frame.payload)
-            ack: NsRuntimeAck = self._dispatcher.local_handle(message)
+            ack: NsRuntimeAck = await self._dispatcher.local_handle(message)
         except Exception as exc:
             await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=str(exc))
             self._add_stats(runtime_forward_count=1, rejected_count=1, last_error=str(exc))
@@ -395,6 +462,46 @@ class NsRuntimeNode:
 
         await connection.send_frame(build_ack_frame(ack))
         self._add_stats(runtime_forward_count=1, accepted_count=1, local_handled_count=1)
+
+    async def _handle_frontend_register(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
+        """Register one frontend WebSocket connection."""
+        try:
+            self._registry.register_frontend(
+                connection.connection_id,
+                payload=dict(frame.payload),
+                remote_address=connection.remote_address,
+            )
+        except Exception as exc:
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=str(exc))
+            self._add_stats(rejected_count=1, last_error=str(exc))
+            return
+
+        self._add_stats(frontend_register_count=1, accepted_count=1)
+        await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_ACCEPTED)
+
+    async def _handle_frontend_heartbeat(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
+        """Update frontend heartbeat state."""
+        payload: dict[str, Any] = dict(frame.payload)
+        frontend = self._registry.refresh_frontend(connection.connection_id, health=dict(payload.get("health") or {}))
+
+        if frontend is None:
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason="frontend connection is not registered")
+            self._add_stats(rejected_count=1)
+            return
+
+        self._add_stats(frontend_heartbeat_count=1, accepted_count=1)
+        await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_ACCEPTED)
+
+    async def _handle_frontend_ack(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
+        """Accept frontend ack frame without waiting on it in P8."""
+        frontend = self._registry.refresh_frontend(connection.connection_id)
+
+        if frontend is None:
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason="frontend connection is not registered")
+            self._add_stats(rejected_count=1)
+            return
+
+        self._add_stats(frontend_ack_count=1, accepted_count=1)
 
     async def _send_ack(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, *, status: str, reason: str | None = None) -> None:
         """Send one ack frame through a runtime connection."""
@@ -457,6 +564,9 @@ class NsRuntimeNode:
             sub_register_count: int = 0,
             sub_heartbeat_count: int = 0,
             runtime_forward_count: int = 0,
+            frontend_register_count: int = 0,
+            frontend_heartbeat_count: int = 0,
+            frontend_ack_count: int = 0,
             accepted_count: int = 0,
             rejected_count: int = 0,
             forwarded_count: int = 0,
@@ -475,6 +585,9 @@ class NsRuntimeNode:
                 sub_register_count=self._stats.sub_register_count + sub_register_count,
                 sub_heartbeat_count=self._stats.sub_heartbeat_count + sub_heartbeat_count,
                 runtime_forward_count=self._stats.runtime_forward_count + runtime_forward_count,
+                frontend_register_count=self._stats.frontend_register_count + frontend_register_count,
+                frontend_heartbeat_count=self._stats.frontend_heartbeat_count + frontend_heartbeat_count,
+                frontend_ack_count=self._stats.frontend_ack_count + frontend_ack_count,
                 accepted_count=self._stats.accepted_count + accepted_count,
                 rejected_count=self._stats.rejected_count + rejected_count,
                 forwarded_count=self._stats.forwarded_count + forwarded_count,

@@ -10,7 +10,7 @@ from typing import Any, Literal
 from ns_common.runtime.messages import NsRuntimeAck
 from ns_runtime.protocol import NsRuntimeWireFrame, parse_ack_frame
 
-RuntimeConnectionType = Literal["unknown", "backend", "runtime_sub"]
+RuntimeConnectionType = Literal["unknown", "backend", "runtime_sub", "frontend"]
 RuntimeConnectionStatus = Literal["healthy", "unhealthy", "closed"]
 
 
@@ -34,6 +34,12 @@ class NsRuntimeConnection:
     version: str = ""
     environment: str = ""
     remote_address: str = ""
+
+    client_id: str | None = None
+    session_id: str | None = None
+    user_id: str | None = None
+    rooms: set[str] = field(default_factory=set)
+    device: str = ""
 
     registered_at_epoch_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     last_seen_epoch_ms: int = field(default_factory=lambda: int(time.time() * 1000))

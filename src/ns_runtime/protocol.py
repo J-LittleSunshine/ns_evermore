@@ -17,21 +17,32 @@ RuntimeWireFrameType = Literal[
     "runtime.register",
     "runtime.heartbeat",
     "runtime.forward",
+    "frontend.register",
+    "frontend.heartbeat",
+    "frontend.message",
+    "frontend.ack",
     "ack",
 ]
 
 RUNTIME_FRAME_BACKEND_REGISTER = "backend.register"
 RUNTIME_FRAME_BACKEND_HEARTBEAT = "backend.heartbeat"
 RUNTIME_FRAME_BACKEND_PUBLISH = "backend.publish"
+
 RUNTIME_FRAME_RUNTIME_REGISTER = "runtime.register"
 RUNTIME_FRAME_RUNTIME_HEARTBEAT = "runtime.heartbeat"
 RUNTIME_FRAME_RUNTIME_FORWARD = "runtime.forward"
+
+RUNTIME_FRAME_FRONTEND_REGISTER = "frontend.register"
+RUNTIME_FRAME_FRONTEND_HEARTBEAT = "frontend.heartbeat"
+RUNTIME_FRAME_FRONTEND_MESSAGE = "frontend.message"
+RUNTIME_FRAME_FRONTEND_ACK = "frontend.ack"
+
 RUNTIME_FRAME_ACK = "ack"
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class NsRuntimeWireFrame:
-    """Wire frame exchanged by backend connectors and runtime nodes."""
+    """Wire frame exchanged by backend connectors, runtime nodes and frontend clients."""
 
     frame_type: str
     message_id: str = field(default_factory=lambda: uuid.uuid4().hex)
@@ -139,6 +150,7 @@ def build_runtime_register_frame(*, node_id: str, node_role: str, parent_node_id
             "parent_node_id": str(parent_node_id).strip() if parent_node_id is not None and str(parent_node_id).strip() else None,
             "capabilities": [
                 "backend_publish_forward",
+                "frontend_local_delivery",
             ],
         },
     )
@@ -167,6 +179,20 @@ def build_runtime_forward_frame(*, source_node_id: str, message: NsRuntimeMessag
         created_at_epoch_ms=int(normalized_message.created_at_epoch_ms or int(time.time() * 1000)),
         payload={
             "source_node_id": str(source_node_id or "").strip(),
+            "message": normalized_message.to_dict(),
+        },
+    )
+
+
+def build_frontend_message_frame(message: NsRuntimeMessage) -> NsRuntimeWireFrame:
+    """Build frontend.message frame for local frontend delivery."""
+    normalized_message: NsRuntimeMessage = message.normalized()
+    return NsRuntimeWireFrame(
+        frame_type=RUNTIME_FRAME_FRONTEND_MESSAGE,
+        message_id=str(normalized_message.message_id),
+        trace_id=normalized_message.trace_id,
+        created_at_epoch_ms=int(normalized_message.created_at_epoch_ms or int(time.time() * 1000)),
+        payload={
             "message": normalized_message.to_dict(),
         },
     )

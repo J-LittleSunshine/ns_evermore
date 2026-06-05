@@ -77,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Override runtime node WebSocket path. Defaults to runtime.master_url path.",
     )
+    parser.add_argument(
+        "--serve-inbound",
+        action="store_true",
+        help="For sub nodes, also start inbound WebSocket server for local frontend connections.",
+    )
     return parser
 
 
@@ -102,16 +107,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     if master_url:
         config = replace(config, master_url=master_url)
 
+    sub_serve_inbound = bool(args.serve_inbound)
+    if config.node_role == RUNTIME_NODE_ROLE_SUB and int(args.port or 0) > 0:
+        sub_serve_inbound = True
+
+    serve_inbound = True
+    if config.node_role == RUNTIME_NODE_ROLE_SUB:
+        serve_inbound = sub_serve_inbound
+
     try:
         node = NsRuntimeNode(
             config=config,
             host=str(args.host or "").strip() or None,
             port=int(args.port) if int(args.port or 0) > 0 else None,
             path=str(args.path or "").strip() or None,
+            serve_inbound=serve_inbound,
         )
 
         if config.node_role == RUNTIME_NODE_ROLE_SUB:
-            print(f"runtime node started: role={config.node_role}, node_id={config.node_id}, master_url={config.master_url}")
+            if node.serve_inbound:
+                print(f"runtime node started: role={config.node_role}, node_id={config.node_id}, master_url={config.master_url}, bind=ws://{node.host}:{node.port}{node.path}")
+            else:
+                print(f"runtime node started: role={config.node_role}, node_id={config.node_id}, master_url={config.master_url}")
         else:
             print(f"runtime node started: role={config.node_role}, node_id={config.node_id}, bind=ws://{node.host}:{node.port}{node.path}")
 

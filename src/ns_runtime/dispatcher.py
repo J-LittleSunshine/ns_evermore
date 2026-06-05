@@ -16,6 +16,7 @@ from ns_common.runtime.constants import (
 )
 from ns_common.runtime.messages import NsRuntimeAck, NsRuntimeMessage
 from ns_runtime.connection import NsRuntimeConnection
+from ns_runtime.delivery import NsRuntimeLocalDelivery
 from ns_runtime.protocol import build_runtime_forward_frame
 from ns_runtime.registry import NsRuntimeConnectionRegistry
 
@@ -23,16 +24,23 @@ from ns_runtime.registry import NsRuntimeConnectionRegistry
 class NsRuntimeDispatcher:
     """Runtime message dispatcher.
 
-    P7 implements only backend.publish dispatching:
-    - standalone: local accept
+    P8 implements backend.publish dispatching plus local frontend delivery:
+    - standalone: local delivery
     - master: sub-first forwarding with local fallback
-    - sub: local accept for runtime.forward
+    - sub: local delivery for runtime.forward
     """
 
-    def __init__(self, *, config: NsRuntimeConfig, registry: NsRuntimeConnectionRegistry) -> None:
+    def __init__(
+            self,
+            *,
+            config: NsRuntimeConfig,
+            registry: NsRuntimeConnectionRegistry,
+            delivery: NsRuntimeLocalDelivery | None = None,
+    ) -> None:
         """Initialize dispatcher."""
         self._config = config
         self._registry = registry
+        self._delivery = delivery or NsRuntimeLocalDelivery(registry=registry)
         self._round_robin_counter = count()
 
     async def dispatch_backend_publish(self, message: NsRuntimeMessage) -> NsRuntimeAck:
@@ -40,7 +48,7 @@ class NsRuntimeDispatcher:
         normalized_message = message.normalized()
 
         if self._config.node_role == RUNTIME_NODE_ROLE_STANDALONE:
-            return self.local_handle(normalized_message)
+            return await self.local_handle(normalized_message)
 
         if self._config.node_role == RUNTIME_NODE_ROLE_SUB:
             return NsRuntimeAck(
@@ -61,7 +69,7 @@ class NsRuntimeDispatcher:
             ).normalized()
 
         if self._config.master_forward_policy == RUNTIME_MASTER_FORWARD_LOCAL_FIRST:
-            return self.local_handle(normalized_message)
+            return await self.local_handle(normalized_message)
 
         sub_nodes: list[NsRuntimeConnection] = self._ordered_sub_nodes()
         if sub_nodes:
@@ -96,14 +104,18 @@ class NsRuntimeDispatcher:
                 trace_id=normalized_message.trace_id,
             ).normalized()
 
-        return self.local_handle(normalized_message)
+        return await self.local_handle(normalized_message)
 
-    def local_handle(self, message: NsRuntimeMessage) -> NsRuntimeAck:
-        """Accept message locally.
+    async def local_handle(self, message: NsRuntimeMessage) -> NsRuntimeAck:
+        """Accept and locally deliver message.
 
-        P7 does not perform frontend fanout or broker publish yet.
+        P8 local delivery is best-effort frontend fanout. No matched frontend
+        connection is still accepted because offline/presence semantics are not
+        part of this stage.
         """
         normalized_message = message.normalized()
+        await self._delivery.deliver(normalized_message)
+
         return NsRuntimeAck(
             message_id=str(normalized_message.message_id),
             status=RUNTIME_ACK_STATUS_ACCEPTED,  # type: ignore[arg-type]

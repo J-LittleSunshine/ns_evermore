@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from ns_runtime.connection import NsRuntimeConnection
 from ns_runtime.core import NsRuntimeNode, NsRuntimeNodeStats
+from ns_runtime.delivery import NsRuntimeDeliveryResult, NsRuntimeLocalDelivery
 from ns_runtime.dispatcher import NsRuntimeDispatcher
 from ns_runtime.protocol import NsRuntimeWireFrame
 from ns_runtime.registry import NsRuntimeConnectionRegistry
@@ -15,7 +16,9 @@ if TYPE_CHECKING:
 __all__ = [
     "NsRuntimeConnection",
     "NsRuntimeConnectionRegistry",
+    "NsRuntimeDeliveryResult",
     "NsRuntimeDispatcher",
+    "NsRuntimeLocalDelivery",
     "NsRuntimeNode",
     "NsRuntimeNodeStats",
     "NsRuntimeWireFrame",
