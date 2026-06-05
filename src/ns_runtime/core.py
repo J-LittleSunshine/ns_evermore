@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import signal
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from threading import Event, RLock
 from typing import Any
 from urllib.parse import urlparse
@@ -138,6 +138,37 @@ class NsRuntimeNode:
         """Return runtime node stats snapshot."""
         with self._stats_lock:
             return self._stats
+
+    def stats_dict(self) -> dict[str, Any]:
+        """Return runtime node stats as a JSON-compatible dict."""
+        with self._stats_lock:
+            return asdict(self._stats)
+
+    def health_report(self) -> dict[str, Any]:
+        """Return local runtime node health report.
+
+        This report is used by runtime sub-node heartbeat and future diagnostics.
+        It is local-process health only; it does not imply distributed cluster
+        health or global presence consistency.
+        """
+        return {
+            "node_id": self._config.node_id,
+            "node_role": self._config.node_role,
+            "bind": {
+                "host": self._host,
+                "port": self._port,
+                "path": self._path,
+                "serve_inbound": self._serve_inbound,
+            },
+            "connections": {
+                "active": self._registry.count_active(),
+                "backend": self._registry.count_backend(),
+                "frontend": self._registry.count_frontend(),
+                "runtime_sub_nodes": self._registry.count_sub_nodes(),
+            },
+            "presence": self.presence_counts(),
+            "stats": self.stats_dict(),
+        }
 
     def presence_counts(self) -> dict[str, int]:
         """Return local runtime presence counters.
@@ -327,11 +358,7 @@ class NsRuntimeNode:
                 build_runtime_heartbeat_frame(
                     node_id=self._config.node_id,
                     node_role=RUNTIME_NODE_ROLE_SUB,
-                    health={
-                        "active_connections": self._registry.count_active(),
-                        "frontend_connections": self._registry.count_frontend(),
-                        "handled_messages": self._stats.local_handled_count,
-                    },
+                    health=self.health_report(),
                 )
             )
 
