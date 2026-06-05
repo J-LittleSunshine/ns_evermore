@@ -5,6 +5,7 @@ from dataclasses import replace
 from threading import RLock
 from typing import TYPE_CHECKING, ClassVar
 
+from ns_backend.backend.runtime.ipc import NsRuntimeIpcClient
 from ns_common.config import ns_config
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.constants import RUNTIME_PRODUCER_BACKEND
@@ -31,10 +32,11 @@ class NsBackendRuntimeClient:
     _instances: ClassVar[dict[str, "NsBackendRuntimeClient"]] = {}
     _instances_lock: ClassVar[RLock] = RLock()
 
-    def __init__(self, *, config: NsRuntimeConfig | None = None, outbox: NsRuntimeOutbox | None = None) -> None:
+    def __init__(self,*,config: NsRuntimeConfig | None = None,outbox: NsRuntimeOutbox | None = None,ipc_client: NsRuntimeIpcClient | None = None) -> None:
         """Initialize backend runtime client."""
         self._config: NsRuntimeConfig = config or ns_config.runtime_config
         self._outbox: NsRuntimeOutbox = outbox or build_runtime_outbox(self._config)
+        self._ipc_client: NsRuntimeIpcClient = ipc_client or NsRuntimeIpcClient(self._config)
 
     @classmethod
     def get_default(cls) -> "NsBackendRuntimeClient":
@@ -62,13 +64,20 @@ class NsBackendRuntimeClient:
                 instance.close()
             cls._instances.clear()
 
-    def publish(self, message: NsRuntimeMessage, *, require_enabled: bool = True) -> str:
+    def publish(self, message: NsRuntimeMessage, *, require_enabled: bool = True, notify_connector: bool = True) -> str:
         """Publish one runtime message into local durable outbox."""
         if require_enabled:
             self._ensure_enabled()
 
         normalized_message: NsRuntimeMessage = self._prepare_message(message)
-        return self._outbox.enqueue(normalized_message)
+        message_id: str = self._outbox.enqueue(normalized_message)
+
+        # IPC 只负责唤醒 connector，不承担可靠性。
+        # connector 不在线时不能影响业务消息落盘结果。
+        if notify_connector:
+            self._ipc_client.wakeup_best_effort(message_id=message_id)
+
+        return message_id
 
     def publish_event(
             self,
@@ -84,6 +93,7 @@ class NsBackendRuntimeClient:
             require_ack: bool = True,
             headers: dict[str, str] | None = None,
             require_enabled: bool = True,
+            notify_connector: bool = True,
     ) -> str:
         """Build and publish one backend runtime event."""
         message = NsRuntimeMessage.new(
@@ -100,9 +110,9 @@ class NsBackendRuntimeClient:
             require_ack=require_ack,
             headers=headers or {},
         )
-        return self.publish(message, require_enabled=require_enabled)
+        return self.publish(message, require_enabled=require_enabled, notify_connector=notify_connector)
 
-    def publish_on_commit(self, message: NsRuntimeMessage, *, require_enabled: bool = True) -> str:
+    def publish_on_commit(self, message: NsRuntimeMessage, *, require_enabled: bool = True, notify_connector: bool = True) -> str:
         """Publish one runtime message after current Django transaction commits."""
         if require_enabled:
             self._ensure_enabled()
@@ -115,7 +125,13 @@ class NsBackendRuntimeClient:
         except Exception as exc:  # noqa
             raise NsRuntimePublishError("django transaction support is required for publish_on_commit") from exc
 
-        transaction.on_commit(lambda: self.publish(normalized_message, require_enabled=require_enabled))
+        transaction.on_commit(
+            lambda: self.publish(
+                normalized_message,
+                require_enabled=require_enabled,
+                notify_connector=notify_connector,
+            )
+        )
         return message_id
 
     def publish_event_on_commit(
@@ -132,6 +148,7 @@ class NsBackendRuntimeClient:
             require_ack: bool = True,
             headers: dict[str, str] | None = None,
             require_enabled: bool = True,
+            notify_connector: bool = True,
     ) -> str:
         """Build and publish one backend runtime event after current transaction commits."""
         message = NsRuntimeMessage.new(
@@ -148,7 +165,11 @@ class NsBackendRuntimeClient:
             require_ack=require_ack,
             headers=headers or {},
         )
-        return self.publish_on_commit(message, require_enabled=require_enabled)
+        return self.publish_on_commit(
+            message,
+            require_enabled=require_enabled,
+            notify_connector=notify_connector,
+        )
 
     def count_outbox_status(self, status: str) -> int:
         """Return local outbox count by status when the backend supports it."""

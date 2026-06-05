@@ -17,7 +17,7 @@ from ns_common.runtime.errors import (
     NsRuntimeError,
     NsRuntimeOutboxError,
     NsRuntimePublishError,
-    NsRuntimeValidationError,
+    NsRuntimeValidationError, NsRuntimeIpcError,
 )
 from ns_common.runtime.messages import (
     NsRuntimeAck,
@@ -41,6 +41,7 @@ __all__ = [
     "NsRuntimeBroker",
     "NsRuntimeBrokerError",
     "NsRuntimeConfigurationError",
+"NsRuntimeIpcError",
     "NsRuntimeConfig",
     "NsRuntimeError",
     "NsRuntimeMessage",

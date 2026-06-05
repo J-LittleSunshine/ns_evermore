@@ -21,6 +21,8 @@ class NsRuntimeValidationError(NsRuntimeError):
 class NsRuntimePublishError(NsRuntimeError):
     """Raised when runtime message publishing fails."""
 
+class NsRuntimeIpcError(NsRuntimeError):
+    """Raised when runtime IPC operation fails."""
 
 class NsRuntimeOutboxError(NsRuntimeError):
     """Raised when runtime outbox operation fails."""
