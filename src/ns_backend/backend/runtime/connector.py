@@ -82,12 +82,16 @@ class NsBackendRuntimeConnector:
         with self._stats_lock:
             return self._stats
 
-    def run_forever(self) -> None:
-        """Run connector until stop() is called."""
+    def start(self) -> None:
+        """Start connector lifecycle resources."""
         self._ensure_enabled()
-        self._install_signal_handlers()
         self._start_sender()
         self._start_ipc_server()
+
+    def run_forever(self) -> None:
+        """Run connector until stop() is called."""
+        self._install_signal_handlers()
+        self.start()
 
         try:
             self._drain_loop()
@@ -102,11 +106,11 @@ class NsBackendRuntimeConnector:
         if sender_close is not None:
             try:
                 sender_close()
-            except Exception: # noqa
+            except Exception:  # noqa
                 pass
         try:
             self._ipc_server.stop()
-        except Exception: # noqa
+        except Exception:  # noqa
             pass
 
         if self._ipc_thread is not None and self._ipc_thread.is_alive():
@@ -176,6 +180,9 @@ class NsBackendRuntimeConnector:
 
     def _start_ipc_server(self) -> None:
         """Start local IPC server in background thread."""
+        if self._ipc_thread is not None and self._ipc_thread.is_alive():
+            return
+
         self._ipc_thread = threading.Thread(
             target=self._ipc_server.serve_forever,
             name="ns-backend-runtime-ipc",
@@ -221,6 +228,7 @@ class NsBackendRuntimeConnector:
                 dead_count=self._stats.dead_count + dead_count,
                 last_error=last_error if last_error is not None else self._stats.last_error,
             )
+
 
 class NsBackendRuntimeSender(Protocol):
     """Runtime sender protocol used by backend runtime connector."""

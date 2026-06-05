@@ -6,9 +6,9 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from django.core.management.base import BaseCommand, CommandError
+
 from ns_backend.backend.runtime.connector import NsBackendRuntimeConnector, NsBackendRuntimeStubSender
 from ns_backend.backend.runtime.sender import NsBackendRuntimeWebSocketSender
-
 from ns_common.config import ns_config
 from ns_common.runtime.errors import NsRuntimeError
 
@@ -78,8 +78,12 @@ class Command(BaseCommand):
 
             connector = NsBackendRuntimeConnector(config=config, sender=sender)
             if once:
-                drained = connector.drain_once()
-                connector.stop()
+                connector.start()
+                try:
+                    drained = connector.drain_once()
+                finally:
+                    connector.stop()
+
                 self.stdout.write(self.style.SUCCESS(f"runtime connector drained one batch: {drained}"))
                 return
 
