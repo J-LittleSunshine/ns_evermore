@@ -684,7 +684,8 @@ class NsRuntimeNode:
         """Merge authenticated principal identity into frontend register payload.
 
         This prevents a frontend client from registering an arbitrary user_id
-        that differs from the IAM-introspected principal.
+        that differs from the IAM-introspected principal. Anonymous frontend
+        connections must not be indexed as authenticated user connections.
         """
         merged_payload = dict(payload)
 
@@ -696,6 +697,11 @@ class NsRuntimeNode:
 
         if principal.user_id is not None:
             merged_payload["user_id"] = principal.user_id
+        else:
+            # Anonymous or non-user principals must not inherit user_id from
+            # untrusted frontend payload; otherwise target_type=user delivery
+            # could reach an unauthenticated connection.
+            merged_payload.pop("user_id", None)
 
         merged_payload["runtime_principal"] = principal.to_dict()
         return merged_payload
