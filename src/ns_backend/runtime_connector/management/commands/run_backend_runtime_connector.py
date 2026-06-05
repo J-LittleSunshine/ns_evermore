@@ -6,7 +6,8 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from django.core.management.base import BaseCommand, CommandError
-from ns_backend.backend.runtime.connector import NsBackendRuntimeConnector
+from ns_backend.backend.runtime.connector import NsBackendRuntimeConnector, NsBackendRuntimeStubSender
+from ns_backend.backend.runtime.sender import NsBackendRuntimeWebSocketSender
 
 from ns_common.config import ns_config
 from ns_common.runtime.errors import NsRuntimeError
@@ -42,11 +43,19 @@ class Command(BaseCommand):
             help="Override runtime node id.",
         )
 
+        parser.add_argument(
+            "--sender",
+            type=str,
+            default="stub",
+            help="Runtime sender type: stub or websocket.",
+        )
+
     def handle(self, *args: object, **options: object) -> None:
         once = bool(options.get("once", False))
         force_enable = bool(options.get("enable", False))
         ipc_mode = str(options.get("ipc_mode") or "").strip()
         node_id = str(options.get("node_id") or "").strip()
+        sender_type = str(options.get("sender") or "stub").strip().lower()
 
         config = ns_config.runtime_config
 
@@ -60,7 +69,14 @@ class Command(BaseCommand):
             config = replace(config, node_id=node_id)
 
         try:
-            connector = NsBackendRuntimeConnector(config=config)
+            if sender_type == "stub":
+                sender = NsBackendRuntimeStubSender()
+            elif sender_type == "websocket":
+                sender = NsBackendRuntimeWebSocketSender(config)
+            else:
+                raise CommandError(f"unsupported runtime sender type: {sender_type}")
+
+            connector = NsBackendRuntimeConnector(config=config, sender=sender)
             if once:
                 drained = connector.drain_once()
                 connector.stop()

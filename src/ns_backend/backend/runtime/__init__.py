@@ -15,6 +15,8 @@ from ns_backend.backend.runtime.ipc import (
     NsRuntimeIpcResponse,
     NsRuntimeIpcServer,
 )
+from ns_backend.backend.runtime.protocol import NsBackendRuntimeFrame, build_backend_heartbeat_frame, build_backend_publish_frame, build_backend_register_frame, parse_ack_frame
+from ns_backend.backend.runtime.sender import NsBackendRuntimeWebSocketSender
 
 if TYPE_CHECKING:
     pass
@@ -28,4 +30,10 @@ __all__ = [
     "NsBackendRuntimeConnector",
     "NsBackendRuntimeConnectorStats",
     "NsBackendRuntimeStubSender",
+    "NsBackendRuntimeFrame",
+    "NsBackendRuntimeWebSocketSender",
+    "build_backend_heartbeat_frame",
+    "build_backend_publish_frame",
+    "build_backend_register_frame",
+    "parse_ack_frame",
 ]

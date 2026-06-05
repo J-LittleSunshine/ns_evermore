@@ -4,7 +4,7 @@ from __future__ import annotations
 import signal
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from ns_backend.backend.runtime.ipc import NsRuntimeIpcRequest, NsRuntimeIpcServer
 from ns_common.config import ns_config
@@ -58,7 +58,7 @@ class NsBackendRuntimeConnector:
             self,
             *,
             config: NsRuntimeConfig | None = None,
-            sender: NsBackendRuntimeStubSender | None = None,
+            sender: NsBackendRuntimeSender | None = None,
     ) -> None:
         """Initialize backend runtime connector."""
         self._config: NsRuntimeConfig = config or ns_config.runtime_config
@@ -86,6 +86,7 @@ class NsBackendRuntimeConnector:
         """Run connector until stop() is called."""
         self._ensure_enabled()
         self._install_signal_handlers()
+        self._start_sender()
         self._start_ipc_server()
 
         try:
@@ -97,10 +98,15 @@ class NsBackendRuntimeConnector:
         """Stop connector resources."""
         self._stop_event.set()
         self._wakeup_event.set()
-
+        sender_close = getattr(self._sender, "close", None)
+        if sender_close is not None:
+            try:
+                sender_close()
+            except Exception: # noqa
+                pass
         try:
             self._ipc_server.stop()
-        except Exception:
+        except Exception: # noqa
             pass
 
         if self._ipc_thread is not None and self._ipc_thread.is_alive():
@@ -177,6 +183,12 @@ class NsBackendRuntimeConnector:
         )
         self._ipc_thread.start()
 
+    def _start_sender(self) -> None:
+        """Start sender if it has lifecycle hook."""
+        sender_start = getattr(self._sender, "start", None)
+        if sender_start is not None:
+            sender_start()
+
     def _ensure_enabled(self) -> None:
         """Ensure runtime connector is enabled."""
         if not self._config.enabled:
@@ -209,3 +221,9 @@ class NsBackendRuntimeConnector:
                 dead_count=self._stats.dead_count + dead_count,
                 last_error=last_error if last_error is not None else self._stats.last_error,
             )
+
+class NsBackendRuntimeSender(Protocol):
+    """Runtime sender protocol used by backend runtime connector."""
+
+    def send(self, message: NsRuntimeMessage) -> NsRuntimeAck:
+        """Send one runtime message and return runtime ack."""
