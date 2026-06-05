@@ -331,7 +331,6 @@ INSTALLED_APPS = [
     "adrf",
     "ns_backend.iam.apps.IamConfig",
     "ns_backend.storage.apps.StorageConfig",
-    "ns_backend.runtime_connector.apps.RuntimeConnectorConfig",
 ]
 
 for _app_name, _enabled in _BACKEND.loaded_apps.items():
