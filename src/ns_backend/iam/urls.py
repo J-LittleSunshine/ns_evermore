@@ -26,6 +26,7 @@ from ns_backend.iam.views.grant_views import (
 )
 from ns_backend.iam.views.policy_views import PolicyViewSet
 from ns_backend.iam.views.resource_views import ResourceViewSet
+from ns_backend.iam.views.runtime_auth_views import RuntimeIamInternalViewSet
 from ns_backend.iam.views.session_views import SessionViewSet
 
 if TYPE_CHECKING:
@@ -101,6 +102,10 @@ urlpatterns = [
     path("acl/grant", ResourceAclViewSet.as_view({"post": "grant_acl"}, required_permissions=("iam:acl:grant",))),
     path("acl/revoke", ResourceAclViewSet.as_view({"post": "revoke_acl"}, required_permissions=("iam:acl:revoke",))),
     path("acl/list", ResourceAclViewSet.as_view({"post": "list_acl"}, required_permissions=("iam:acl:list",))),
+
+    path("runtime/introspect-token", RuntimeIamInternalViewSet.as_view({"post": "introspect_token"})),
+    path("runtime/authorize", RuntimeIamInternalViewSet.as_view({"post": "authorize"})),
+    path("runtime/batch-authorize", RuntimeIamInternalViewSet.as_view({"post": "batch_authorize"})),
 
     path("authorize/check", AuthorizeViewSet.as_view({"post": "check"}, required_permissions=("iam:authorize:check",))),
     path("authorize/batch-check", AuthorizeViewSet.as_view({"post": "batch_check"}, required_permissions=("iam:authorize:batch_check",))),

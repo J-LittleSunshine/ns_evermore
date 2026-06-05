@@ -82,6 +82,8 @@ class NsRuntimeConfig:
     frontend_static_token: str = ""
     allow_anonymous_frontend: bool = True
 
+    iam_internal_service_token: str = ""
+
     def resolved_backend_outbox_backend(self) -> RuntimeOutboxBackend:
         """Resolve backend outbox backend."""
         return self.backend_outbox_backend
@@ -172,3 +174,6 @@ class NsRuntimeConfig:
 
         if self.frontend_auth_enabled and not self.allow_anonymous_frontend and not str(self.frontend_static_token or "").strip():
             raise NsRuntimeConfigurationError("runtime frontend_static_token is required when frontend_auth_enabled is true and anonymous frontend is disabled")
+
+        if self.auth_enabled and not str(self.iam_internal_service_token or self.service_token or "").strip():
+            raise NsRuntimeConfigurationError("runtime iam_internal_service_token or service_token is required when auth_enabled is true")
