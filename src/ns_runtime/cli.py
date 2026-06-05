@@ -54,6 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override runtime node role: standalone, master, or sub.",
     )
     parser.add_argument(
+        "--master-url",
+        type=str,
+        default="",
+        help="Override runtime master WebSocket URL. Sub nodes connect to this URL; master/standalone nodes derive bind defaults from it.",
+    )
+    parser.add_argument(
         "--host",
         type=str,
         default="",
@@ -92,6 +98,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if node_role:
         config = replace(config, node_role=node_role)  # type: ignore[arg-type]
 
+    master_url: str = str(args.master_url or "").strip()
+    if master_url:
+        config = replace(config, master_url=master_url)
+
     try:
         node = NsRuntimeNode(
             config=config,
@@ -99,7 +109,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             port=int(args.port) if int(args.port or 0) > 0 else None,
             path=str(args.path or "").strip() or None,
         )
-        print(f"runtime node started: role={config.node_role}, bind=ws://{node.host}:{node.port}{node.path}")
+
+        if config.node_role == RUNTIME_NODE_ROLE_SUB:
+            print(f"runtime node started: role={config.node_role}, node_id={config.node_id}, master_url={config.master_url}")
+        else:
+            print(f"runtime node started: role={config.node_role}, node_id={config.node_id}, bind=ws://{node.host}:{node.port}{node.path}")
+
         node.run_forever()
         return 0
     except NsRuntimeError as exc:
