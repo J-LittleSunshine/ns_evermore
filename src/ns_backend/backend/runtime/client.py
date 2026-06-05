@@ -205,7 +205,7 @@ class NsBackendRuntimeClient:
             headers=headers or {},
         )
 
-        self.request_reply(
+        return self.request_reply(
             message,
             correlation_id=correlation_id,
             reply_to_backend_id=reply_to_backend_id,
