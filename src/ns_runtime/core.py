@@ -199,6 +199,9 @@ class NsRuntimeNode:
                 reconnect_delay = min(reconnect_delay * 2, max_delay)
                 continue
 
+            if connection is not None:
+                self._registry.remove(connection.connection_id)
+
             reconnect_delay = max(float(self._config.retry_base_delay_seconds), 1.0)
 
     async def _sub_receive_loop(self, connection: NsRuntimeConnection) -> None:
