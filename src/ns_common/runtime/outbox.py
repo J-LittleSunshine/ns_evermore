@@ -128,7 +128,7 @@ class SqlWalRuntimeOutbox:
         return message_id
 
     def claim_batch(self, *, consumer_id: str, limit: int) -> list[NsRuntimeMessage]:
-        """Claim pending messages for one connector consumer."""
+        """Claim pending messages for one connector consumer atomically."""
         normalized_consumer_id: str = self._normalize_consumer_id(consumer_id)
         normalized_limit: int = self._normalize_limit(limit)
         now: float = self._now()
@@ -136,6 +136,10 @@ class SqlWalRuntimeOutbox:
 
         with self._lock:
             try:
+                # 使用 BEGIN IMMEDIATE 获取写锁，确保 SELECT + UPDATE 是一个原子 claim。
+                # 这可以避免多 connector 误启动时重复领取同一批消息。
+                self._connection.execute("BEGIN IMMEDIATE")
+
                 rows = self._connection.execute(
                     f"""
                     SELECT *
@@ -150,7 +154,7 @@ class SqlWalRuntimeOutbox:
                             AND locked_until IS NOT NULL
                             AND locked_until <= ?
                         )
-                    ORDER BY priority , id 
+                    ORDER BY priority ASC, id ASC
                     LIMIT ?
                     """,
                     (
@@ -164,6 +168,7 @@ class SqlWalRuntimeOutbox:
                 ).fetchall()
 
                 if not rows:
+                    self._connection.commit()
                     return []
 
                 messages: list[NsRuntimeMessage] = []
