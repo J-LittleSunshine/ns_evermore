@@ -159,21 +159,32 @@ class SqliteBackendRuntimeInbox:
 
         return str(normalized_message.message_id)
 
-    def get_by_correlation_id(self, correlation_id: str) -> NsBackendRuntimeInboundMessage | None:
+    def get_by_correlation_id(self, correlation_id: str, *, min_received_at_epoch_ms: int | None = None) -> NsBackendRuntimeInboundMessage | None:
         """Return the latest inbound message for one correlation id."""
         normalized_correlation_id = self._normalize_required(correlation_id, "correlation_id")
 
-        with self._lock:
-            row = self._connection.execute(
-                f"""
+        if min_received_at_epoch_ms is None:
+            query = f"""
                 SELECT *
                 FROM {self._TABLE_NAME}
                 WHERE correlation_id = ?
                 ORDER BY received_at_epoch_ms DESC, id DESC
                 LIMIT 1
-                """,
-                (normalized_correlation_id,),
-            ).fetchone()
+                """
+            params = (normalized_correlation_id,)
+        else:
+            query = f"""
+                SELECT *
+                FROM {self._TABLE_NAME}
+                WHERE correlation_id = ?
+                  AND received_at_epoch_ms >= ?
+                ORDER BY received_at_epoch_ms DESC, id DESC
+                LIMIT 1
+                """
+            params = (normalized_correlation_id, int(min_received_at_epoch_ms))
+
+        with self._lock:
+            row = self._connection.execute(query, params).fetchone()
 
         if row is None:
             return None
@@ -200,24 +211,21 @@ class SqliteBackendRuntimeInbox:
 
         return self._row_to_inbound_message(row)
 
-    def wait_for_correlation_id(
-            self,
-            correlation_id: str,
-            *,
-            timeout_seconds: float = 5.0,
-            poll_interval_seconds: float = 0.05,
-    ) -> NsBackendRuntimeInboundMessage | None:
+    def wait_for_correlation_id(self, correlation_id: str, *, timeout_seconds: float = 5.0, poll_interval_seconds: float = 0.05, min_received_at_epoch_ms: int | None = None, ) -> NsBackendRuntimeInboundMessage | None:
         """Poll inbox for one correlation id within timeout.
 
-        This is only a low-level building block for later request/reply APIs.
-        It should be used with short timeouts in HTTP views.
+        This is a low-level building block for request/reply APIs.
+        Use short timeouts in HTTP views.
         """
         normalized_timeout = max(float(timeout_seconds), 0.0)
         normalized_poll_interval = max(float(poll_interval_seconds), 0.01)
         deadline = time.monotonic() + normalized_timeout
 
         while True:
-            message = self.get_by_correlation_id(correlation_id)
+            message = self.get_by_correlation_id(
+                correlation_id,
+                min_received_at_epoch_ms=min_received_at_epoch_ms,
+            )
             if message is not None:
                 return message
 

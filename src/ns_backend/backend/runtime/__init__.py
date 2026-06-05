@@ -27,6 +27,11 @@ from ns_backend.backend.runtime.protocol import (
     build_backend_register_frame,
     parse_ack_frame
 )
+from ns_backend.backend.runtime.request_reply import (
+    NsBackendRuntimeRequestReplyError,
+    NsBackendRuntimeRequestReplyResult,
+    NsBackendRuntimeRequestTimeoutError,
+)
 from ns_backend.backend.runtime.sender import NsBackendRuntimeWebSocketSender
 
 if TYPE_CHECKING:
@@ -50,4 +55,7 @@ __all__ = [
     "NsBackendRuntimeInboundMessage",
     "SqliteBackendRuntimeInbox",
     "build_backend_runtime_inbox",
+    "NsBackendRuntimeRequestReplyError",
+    "NsBackendRuntimeRequestReplyResult",
+    "NsBackendRuntimeRequestTimeoutError",
 ]
