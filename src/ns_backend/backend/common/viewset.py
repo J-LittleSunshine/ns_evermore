@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, NoReturn
-
+from asgiref.sync import async_to_sync
 from adrf.viewsets import ViewSet
 from django.http import JsonResponse
 
@@ -83,6 +83,10 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
     permission_service = None
     authorize_service = None
 
+    authentication_classes = ()
+    permission_classes = ()
+    throttle_classes = ()
+
     DECISION_SOURCE_ANONYMOUS = "anonymous"
     DECISION_SOURCE_AUTHENTICATION = "authentication"
     DECISION_SOURCE_RBAC = "rbac"
@@ -143,9 +147,13 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
         )
         self._iam_decision_context = decision_context
 
-    async def initial(self, request, *args, **kwargs):
-        """Run authentication and authorization checks before action dispatch."""
-        await super().initial(request, *args, **kwargs)  # noqa
+    def initial(self, request, *args, **kwargs) -> None:
+        """Run authentication and authorization checks before action dispatch.
+
+        ADRF calls initial() through sync_to_async(), so this method must remain
+        synchronous. Async IAM services are invoked through async_to_sync().
+        """
+        super().initial(request, *args, **kwargs)
         self._iam_decision_context = None
 
         if not self.authentication_required:
@@ -156,7 +164,7 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
             )
             return
 
-        user = await self.get_current_user(request)
+        user = async_to_sync(self.get_current_user)(request)
         if not user:
             self.set_decision_context(
                 allowed=False,
@@ -189,7 +197,7 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
 
         for permission_code in self.required_permissions:
             try:
-                decision = await self.check_permission_by_authorize_service(
+                decision = async_to_sync(self.check_permission_by_authorize_service)(
                     request=request,
                     user=user,
                     permission_code=permission_code,
@@ -339,3 +347,20 @@ class AuthenticatedRequestViewSet(BaseRequestViewSet):
 
         token = authorization.removeprefix("Bearer ").strip()
         return token or None
+
+    def perform_authentication(self, request) -> None:
+        """Disable DRF default authentication.
+
+        ns_backend uses IAM token verification instead of django.contrib.auth.
+        DRF's default unauthenticated-user path imports django.contrib.auth
+        models, which are intentionally not installed in this project.
+        """
+        _ = request
+
+    def check_permissions(self, request) -> None:
+        """Disable DRF permission classes; IAM handles permission decisions."""
+        _ = request
+
+    def check_throttles(self, request) -> None:
+        """Disable DRF throttle classes by default."""
+        _ = request
