@@ -222,14 +222,18 @@ class NsRuntimeNode:
                     )
                     self._registry.add_unknown(connection)
 
-                    await connection.send_frame(
-                        build_runtime_register_frame(
-                            node_id=self._config.node_id,
-                            node_role=RUNTIME_NODE_ROLE_SUB,
-                            parent_node_id=None,
-                            auth_token=self._config.service_token,
-                        )
+                    register_frame = build_runtime_register_frame(
+                        node_id=self._config.node_id,
+                        node_role=RUNTIME_NODE_ROLE_SUB,
+                        parent_node_id=None,
+                        auth_token=self._config.service_token,
                     )
+                    await connection.send_frame(register_frame)
+
+                    # P11.8-B: runtime.forward is protected by registered runtime_sub
+                    # state. The sub client must wait until master accepts
+                    # runtime.register before it starts heartbeat / receive loops.
+                    await self._await_sub_registration_ack(connection, register_frame)
 
                     heartbeat_task = asyncio.create_task(self._sub_heartbeat_loop(connection))
                     receive_task = asyncio.create_task(self._sub_receive_loop(connection))
@@ -340,17 +344,17 @@ class NsRuntimeNode:
             await self._handle_frontend_ack(connection, frame)
             return
 
-        if frame.frame_type == RUNTIME_FRAME_BACKEND_REPLY:
-            await self._handle_backend_reply(connection, frame)
-            return
-
         if self._config.node_role == RUNTIME_NODE_ROLE_SUB and frame.frame_type in {
             RUNTIME_FRAME_BACKEND_REGISTER,
             RUNTIME_FRAME_BACKEND_HEARTBEAT,
             RUNTIME_FRAME_BACKEND_PUBLISH,
+            RUNTIME_FRAME_BACKEND_REPLY,
+            RUNTIME_FRAME_RUNTIME_REGISTER,
+            RUNTIME_FRAME_RUNTIME_HEARTBEAT,
         }:
-            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason="sub runtime node does not accept backend frames")
-            self._add_stats(rejected_count=1)
+            reason = "sub runtime node does not accept backend or runtime service frames"
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=reason)
+            self._add_stats(rejected_count=1, last_error=reason)
             return
 
         if frame.frame_type == RUNTIME_FRAME_BACKEND_REGISTER:
@@ -363,6 +367,10 @@ class NsRuntimeNode:
 
         if frame.frame_type == RUNTIME_FRAME_BACKEND_PUBLISH:
             await self._handle_backend_publish(connection, frame)
+            return
+
+        if frame.frame_type == RUNTIME_FRAME_BACKEND_REPLY:
+            await self._handle_backend_reply(connection, frame)
             return
 
         if frame.frame_type == RUNTIME_FRAME_RUNTIME_REGISTER:
@@ -386,8 +394,15 @@ class NsRuntimeNode:
             await self._handle_runtime_forward(connection, frame)
             return
 
-        if frame.frame_type in {RUNTIME_FRAME_BACKEND_REGISTER, RUNTIME_FRAME_BACKEND_HEARTBEAT, RUNTIME_FRAME_BACKEND_PUBLISH}:
-            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason="sub runtime node does not accept backend frames")
+        if frame.frame_type in {
+            RUNTIME_FRAME_BACKEND_REGISTER,
+            RUNTIME_FRAME_BACKEND_HEARTBEAT,
+            RUNTIME_FRAME_BACKEND_PUBLISH,
+            RUNTIME_FRAME_BACKEND_REPLY,
+        }:
+            reason = "sub runtime node does not accept backend frames"
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=reason)
+            self._add_stats(rejected_count=1, last_error=reason)
             return
 
         await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=f"unsupported sub runtime frame type: {frame.frame_type}")
@@ -422,12 +437,19 @@ class NsRuntimeNode:
     async def _handle_backend_heartbeat(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
         """Update backend connector heartbeat state."""
         payload: dict[str, Any] = dict(frame.payload)
-        self._registry.refresh_backend(connection.connection_id, health=dict(payload.get("health") or {}))
+        health = dict(payload.get("health") or {})
+
+        if not await self._ensure_registered_backend_connection(connection, frame, health=health):
+            return
+
         self._add_stats(backend_heartbeat_count=1, accepted_count=1)
         await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_ACCEPTED)
 
     async def _handle_backend_publish(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
         """Dispatch backend.publish through standalone/master policy."""
+        if not await self._ensure_registered_backend_connection(connection, frame):
+            return
+
         self._add_stats(backend_publish_count=1)
 
         try:
@@ -455,6 +477,9 @@ class NsRuntimeNode:
         P9 only provides the inbound reply channel skeleton. It does not
         implement a high-level backend request_reply API yet.
         """
+        if not await self._ensure_registered_backend_connection(connection, frame):
+            return
+
         try:
             message, target_backend_id, correlation_id, reply_to_message_id = backend_reply_message_from_payload(frame.payload)
             backend_connection = self._registry.select_backend_for_reply(target_backend_id)
@@ -468,7 +493,6 @@ class NsRuntimeNode:
                 )
                 self._add_stats(rejected_count=1, last_error="target backend connection is not available")
                 return
-
             deliver_frame = build_backend_deliver_frame(
                 source_node_id=self._config.node_id,
                 message=message,
@@ -551,7 +575,11 @@ class NsRuntimeNode:
             return
 
         payload: dict[str, Any] = dict(frame.payload)
-        self._registry.refresh_sub_node(connection.connection_id, health=dict(payload.get("health") or {}))
+        health = dict(payload.get("health") or {})
+
+        if not await self._ensure_registered_runtime_sub_connection(connection, frame, health=health):
+            return
+
         self._add_stats(sub_heartbeat_count=1, accepted_count=1)
         await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_ACCEPTED)
 
@@ -560,6 +588,9 @@ class NsRuntimeNode:
         if self._config.node_role != RUNTIME_NODE_ROLE_SUB:
             await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason="runtime.forward is only accepted by sub runtime node")
             self._add_stats(rejected_count=1)
+            return
+
+        if not await self._ensure_registered_runtime_sub_connection(connection, frame):
             return
 
         try:
@@ -611,11 +642,9 @@ class NsRuntimeNode:
     async def _handle_frontend_heartbeat(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
         """Update frontend heartbeat state."""
         payload: dict[str, Any] = dict(frame.payload)
-        frontend = self._registry.refresh_frontend(connection.connection_id, health=dict(payload.get("health") or {}))
+        health = dict(payload.get("health") or {})
 
-        if frontend is None:
-            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason="frontend connection is not registered")
-            self._add_stats(rejected_count=1)
+        if not await self._ensure_registered_frontend_connection(connection, frame, health=health):
             return
 
         self._add_stats(frontend_heartbeat_count=1, accepted_count=1)
@@ -623,11 +652,7 @@ class NsRuntimeNode:
 
     async def _handle_frontend_ack(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
         """Accept frontend ack frame without waiting on it in P8."""
-        frontend = self._registry.refresh_frontend(connection.connection_id)
-
-        if frontend is None:
-            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason="frontend connection is not registered")
-            self._add_stats(rejected_count=1)
+        if not await self._ensure_registered_frontend_connection(connection, frame):
             return
 
         self._add_stats(frontend_ack_count=1, accepted_count=1)
@@ -705,6 +730,152 @@ class NsRuntimeNode:
 
         merged_payload["runtime_principal"] = principal.to_dict()
         return merged_payload
+
+    async def _await_sub_registration_ack(self, connection: NsRuntimeConnection, register_frame: NsRuntimeWireFrame) -> None:
+        """Wait for master ack after sub node runtime.register.
+
+        P11.8-B protects runtime.forward with registered runtime_sub state. A sub
+        node must therefore not start processing master frames until master has
+        accepted runtime.register.
+        """
+        raw_message = await asyncio.wait_for(
+            connection.websocket.recv(),
+            timeout=float(self._config.ack_timeout_seconds),
+        )
+        ack_frame = NsRuntimeWireFrame.from_json(raw_message)
+
+        if ack_frame.frame_type != RUNTIME_FRAME_ACK:
+            raise NsRuntimeAuthProviderError(f"runtime sub registration expected ack, got: {ack_frame.frame_type}")
+
+        ack = parse_ack_frame(ack_frame)
+        if ack.message_id != register_frame.message_id:
+            raise NsRuntimeAuthProviderError("runtime sub registration ack message_id mismatch")
+
+        if ack.status != RUNTIME_ACK_STATUS_ACCEPTED:
+            raise NsRuntimeAuthProviderError(ack.reason or "runtime sub registration rejected")
+
+        self._mark_sub_master_connection_registered(connection)
+
+    def _mark_sub_master_connection_registered(self, connection: NsRuntimeConnection) -> None:
+        """Mark the sub node's upstream master connection as locally registered.
+
+        The master performs real service authentication. This local principal only
+        represents the accepted upstream registration result so runtime.forward
+        can enforce registered connection state on the sub node side.
+        """
+        node_id = str(self._config.node_id or "").strip()
+        connection.principal = NsRuntimePrincipal(
+            principal_type=RUNTIME_PRINCIPAL_RUNTIME_NODE,
+            principal_id=node_id,
+            authenticated=bool(self._config.auth_enabled),
+            display_name=node_id,
+            node_id=node_id,
+            claims={
+                "runtime_sub_upstream_registered": True,
+            },
+        )
+        self._registry.register_sub_node(
+            connection.connection_id,
+            payload={
+                "node_id": node_id,
+                "node_role": RUNTIME_NODE_ROLE_SUB,
+            },
+            remote_address=connection.remote_address,
+        )
+
+    async def _ensure_registered_backend_connection(
+            self,
+            connection: NsRuntimeConnection,
+            frame: NsRuntimeWireFrame,
+            *,
+            health: dict[str, Any] | None = None,
+    ) -> bool:
+        """Return whether current connection is a registered backend connection."""
+        reason = "backend connection is not registered"
+
+        if (
+                connection.connection_type != "backend"
+                or connection.principal is None
+                or connection.principal.principal_type != RUNTIME_PRINCIPAL_BACKEND_SERVICE
+        ):
+            await self._reject_unregistered_connection(connection, frame, reason=reason)
+            return False
+
+        backend = self._registry.refresh_backend(connection.connection_id, health=health)
+        if backend is None:
+            await self._reject_unregistered_connection(connection, frame, reason=reason)
+            return False
+
+        return True
+
+    async def _ensure_registered_runtime_sub_connection(
+            self,
+            connection: NsRuntimeConnection,
+            frame: NsRuntimeWireFrame,
+            *,
+            health: dict[str, Any] | None = None,
+    ) -> bool:
+        """Return whether current connection is a registered runtime sub connection."""
+        reason = "runtime sub connection is not registered"
+
+        if (
+                connection.connection_type != "runtime_sub"
+                or connection.principal is None
+                or connection.principal.principal_type != RUNTIME_PRINCIPAL_RUNTIME_NODE
+        ):
+            await self._reject_unregistered_connection(connection, frame, reason=reason)
+            return False
+
+        sub_node = self._registry.refresh_sub_node(connection.connection_id, health=health)
+        if sub_node is None:
+            await self._reject_unregistered_connection(connection, frame, reason=reason)
+            return False
+
+        return True
+
+    async def _ensure_registered_frontend_connection(
+            self,
+            connection: NsRuntimeConnection,
+            frame: NsRuntimeWireFrame,
+            *,
+            health: dict[str, Any] | None = None,
+    ) -> bool:
+        """Return whether current connection is a registered frontend connection."""
+        reason = "frontend connection is not registered"
+
+        if (
+                connection.connection_type != "frontend"
+                or connection.principal is None
+                or connection.principal.principal_type not in {
+            RUNTIME_PRINCIPAL_FRONTEND_USER,
+            RUNTIME_PRINCIPAL_ANONYMOUS_FRONTEND,
+        }
+        ):
+            await self._reject_unregistered_connection(connection, frame, reason=reason)
+            return False
+
+        frontend = self._registry.refresh_frontend(connection.connection_id, health=health)
+        if frontend is None:
+            await self._reject_unregistered_connection(connection, frame, reason=reason)
+            return False
+
+        return True
+
+    async def _reject_unregistered_connection(
+            self,
+            connection: NsRuntimeConnection,
+            frame: NsRuntimeWireFrame,
+            *,
+            reason: str,
+    ) -> None:
+        """Reject a protected frame sent by an unregistered or mismatched connection."""
+        await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=reason)
+        self._add_stats(rejected_count=1, last_error=reason)
+
+        # Policy violation: protected frame before successful register, or frame
+        # sent by a connection registered as another role. Close to reduce abuse.
+        with contextlib.suppress(Exception):
+            await connection.websocket.close(code=1008, reason=reason)
 
     async def _send_ack(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, *, status: str, reason: str | None = None) -> None:
         """Send one ack frame through a runtime connection."""
