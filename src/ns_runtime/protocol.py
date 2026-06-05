@@ -23,6 +23,8 @@ RuntimeWireFrameType = Literal[
     "frontend.heartbeat",
     "frontend.message",
     "frontend.ack",
+    "frontend.room.join",
+    "frontend.room.leave",
     "ack",
 ]
 
@@ -40,6 +42,8 @@ RUNTIME_FRAME_FRONTEND_REGISTER = "frontend.register"
 RUNTIME_FRAME_FRONTEND_HEARTBEAT = "frontend.heartbeat"
 RUNTIME_FRAME_FRONTEND_MESSAGE = "frontend.message"
 RUNTIME_FRAME_FRONTEND_ACK = "frontend.ack"
+RUNTIME_FRAME_FRONTEND_ROOM_JOIN = "frontend.room.join"
+RUNTIME_FRAME_FRONTEND_ROOM_LEAVE = "frontend.room.leave"
 
 RUNTIME_FRAME_ACK = "ack"
 
@@ -306,6 +310,42 @@ def backend_reply_message_from_payload(payload: dict[str, Any]) -> tuple[NsRunti
     reply_to_message_id = _normalize_optional(payload.get("reply_to_message_id")) or message.headers.get("reply_to_message_id")
     return message, target_backend_id, correlation_id, reply_to_message_id
 
+
+def frontend_rooms_from_payload(payload: dict[str, Any]) -> set[str]:
+    """Build normalized room id set from frontend room join/leave payload.
+
+    Supported payload shapes:
+    - {"room_id": "room-a"}
+    - {"room": "room-a"}
+    - {"rooms": ["room-a", "room-b"]}
+
+    Empty room id values are ignored. A payload with no valid rooms is rejected.
+    """
+    if not isinstance(payload, dict):
+        raise NsRuntimeValidationError("frontend room payload must be a JSON object")
+
+    raw_rooms: Any = payload.get("rooms")
+    if raw_rooms is None:
+        raw_room = payload.get("room_id") or payload.get("room")
+        raw_rooms = [raw_room] if raw_room is not None else []
+
+    if isinstance(raw_rooms, str):
+        items = [raw_rooms]
+    elif isinstance(raw_rooms, list | tuple | set):
+        items = list(raw_rooms)
+    else:
+        raise NsRuntimeValidationError("frontend room payload.rooms must be a string or list")
+
+    rooms: set[str] = set()
+    for item in items:
+        room_id = str(item or "").strip()
+        if room_id:
+            rooms.add(room_id)
+
+    if not rooms:
+        raise NsRuntimeValidationError("frontend room payload requires at least one room")
+
+    return rooms
 
 def _normalize_optional(value: Any) -> str | None:
     """Normalize optional string value."""

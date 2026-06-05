@@ -162,6 +162,42 @@ class NsRuntimeConnectionRegistry:
                 connection.mark_seen(health=health)
             return connection
 
+    def join_frontend_rooms(self, connection_id: str, rooms: set[str] | list[str] | tuple[str, ...]) -> NsRuntimeConnection | None:
+        """Add rooms to one registered frontend connection."""
+        with self._lock:
+            connection = self._frontend_connections.get(connection_id)
+            if connection is None:
+                return None
+
+            normalized_rooms = self._normalize_rooms(rooms)
+            for room in normalized_rooms:
+                if room in connection.rooms:
+                    continue
+
+                connection.rooms.add(room)
+                self._add_index(self._frontend_by_room, room, connection_id)
+
+            connection.mark_seen()
+            return connection
+
+    def leave_frontend_rooms(self, connection_id: str, rooms: set[str] | list[str] | tuple[str, ...]) -> NsRuntimeConnection | None:
+        """Remove rooms from one registered frontend connection."""
+        with self._lock:
+            connection = self._frontend_connections.get(connection_id)
+            if connection is None:
+                return None
+
+            normalized_rooms = self._normalize_rooms(rooms)
+            for room in normalized_rooms:
+                if room not in connection.rooms:
+                    continue
+
+                connection.rooms.discard(room)
+                self._remove_index(self._frontend_by_room, room, connection_id)
+
+            connection.mark_seen()
+            return connection
+
     def select_backend_for_reply(self, target_backend_id: str | None = None) -> NsRuntimeConnection | None:
         """Select backend connection for backend.reply delivery."""
         with self._lock:

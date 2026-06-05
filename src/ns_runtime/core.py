@@ -55,7 +55,7 @@ from ns_runtime.protocol import (
     build_runtime_register_frame,
     parse_ack_frame,
     runtime_message_from_forward_payload,
-    runtime_message_from_payload,
+    runtime_message_from_payload, RUNTIME_FRAME_FRONTEND_ROOM_LEAVE, RUNTIME_FRAME_FRONTEND_ROOM_JOIN, frontend_rooms_from_payload,
 )
 from ns_runtime.registry import NsRuntimeConnectionRegistry
 
@@ -78,6 +78,8 @@ class NsRuntimeNodeStats:
     frontend_register_count: int = 0
     frontend_heartbeat_count: int = 0
     frontend_ack_count: int = 0
+    frontend_room_join_count: int = 0
+    frontend_room_leave_count: int = 0
 
     accepted_count: int = 0
     rejected_count: int = 0
@@ -413,6 +415,14 @@ class NsRuntimeNode:
             await self._handle_frontend_ack(connection, frame)
             return
 
+        if frame.frame_type == RUNTIME_FRAME_FRONTEND_ROOM_JOIN:
+            await self._handle_frontend_room_join(connection, frame)
+            return
+
+        if frame.frame_type == RUNTIME_FRAME_FRONTEND_ROOM_LEAVE:
+            await self._handle_frontend_room_leave(connection, frame)
+            return
+
         if self._config.node_role == RUNTIME_NODE_ROLE_SUB and frame.frame_type in {
             RUNTIME_FRAME_BACKEND_REGISTER,
             RUNTIME_FRAME_BACKEND_HEARTBEAT,
@@ -730,6 +740,55 @@ class NsRuntimeNode:
 
         self._add_stats(frontend_ack_count=1, accepted_count=1)
 
+    async def _handle_frontend_room_join(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
+        """Join one or more rooms for a registered frontend connection.
+
+        P12-E only updates local runtime registry and local memory presence. Room
+        ACL and IAM authorization are intentionally deferred to a later phase.
+        """
+        if not await self._ensure_registered_frontend_connection(connection, frame):
+            return
+
+        try:
+            rooms = frontend_rooms_from_payload(frame.payload)
+            frontend = self._registry.join_frontend_rooms(connection.connection_id, rooms)
+            if frontend is None:
+                await self._reject_unregistered_connection(connection, frame, reason="frontend connection is not registered")
+                return
+
+            self._upsert_presence(frontend)
+        except Exception as exc:
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=str(exc))
+            self._add_stats(rejected_count=1, last_error=str(exc))
+            return
+
+        self._add_stats(frontend_room_join_count=1, accepted_count=1)
+        await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_ACCEPTED)
+
+    async def _handle_frontend_room_leave(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
+        """Leave one or more rooms for a registered frontend connection.
+
+        Leaving a room that is not currently joined is idempotently accepted.
+        """
+        if not await self._ensure_registered_frontend_connection(connection, frame):
+            return
+
+        try:
+            rooms = frontend_rooms_from_payload(frame.payload)
+            frontend = self._registry.leave_frontend_rooms(connection.connection_id, rooms)
+            if frontend is None:
+                await self._reject_unregistered_connection(connection, frame, reason="frontend connection is not registered")
+                return
+
+            self._upsert_presence(frontend)
+        except Exception as exc:
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=str(exc))
+            self._add_stats(rejected_count=1, last_error=str(exc))
+            return
+
+        self._add_stats(frontend_room_leave_count=1, accepted_count=1)
+        await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_ACCEPTED)
+
     async def _authorize_frontend_connect(self, *, principal: NsRuntimePrincipal, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, payload: dict[str, Any]) -> None:
         """Authorize frontend connect action.
 
@@ -1000,6 +1059,8 @@ class NsRuntimeNode:
             frontend_register_count: int = 0,
             frontend_heartbeat_count: int = 0,
             frontend_ack_count: int = 0,
+            frontend_room_join_count: int = 0,
+            frontend_room_leave_count: int = 0,
             accepted_count: int = 0,
             rejected_count: int = 0,
             forwarded_count: int = 0,
@@ -1021,6 +1082,8 @@ class NsRuntimeNode:
                 frontend_register_count=self._stats.frontend_register_count + frontend_register_count,
                 frontend_heartbeat_count=self._stats.frontend_heartbeat_count + frontend_heartbeat_count,
                 frontend_ack_count=self._stats.frontend_ack_count + frontend_ack_count,
+                frontend_room_join_count=self._stats.frontend_room_join_count + frontend_room_join_count,
+                frontend_room_leave_count=self._stats.frontend_room_leave_count + frontend_room_leave_count,
                 accepted_count=self._stats.accepted_count + accepted_count,
                 rejected_count=self._stats.rejected_count + rejected_count,
                 forwarded_count=self._stats.forwarded_count + forwarded_count,
