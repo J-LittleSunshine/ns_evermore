@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal
 from dataclasses import dataclass
 from threading import Event, RLock
@@ -147,6 +148,8 @@ class NsRuntimeNode:
         max_delay: float = max(float(self._config.retry_max_delay_seconds), reconnect_delay)
 
         while not self._stop_event.is_set():
+            connection: NsRuntimeConnection | None = None
+
             try:
                 async with websockets.connect(self._config.master_url, ping_interval=20, ping_timeout=20, max_size=2 ** 20, max_queue=32) as websocket:
                     connection = NsRuntimeConnection(
@@ -171,16 +174,22 @@ class NsRuntimeNode:
 
                     done, pending = await asyncio.wait(
                         {heartbeat_task, receive_task},
-                        return_when=asyncio.FIRST_EXCEPTION,
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
 
                     for task in pending:
                         task.cancel()
 
+                    for task in pending:
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await task
+
                     for task in done:
                         task.result()
             except Exception as exc:
-                self._registry.remove(self._config.node_id, exc)
+                if connection is not None:
+                    self._registry.remove(connection.connection_id, exc)
+
                 self._add_stats(rejected_count=1, last_error=str(exc))
 
                 if self._stop_event.is_set():
