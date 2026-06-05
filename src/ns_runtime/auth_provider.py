@@ -294,6 +294,10 @@ class NsRuntimeRemoteIamAuthProvider:
             raise NsRuntimeAuthProviderError("runtime IAM internal API response is not valid JSON") from exc
         except NsHttpClientError as exc:
             raise NsRuntimeAuthProviderError(f"runtime IAM internal API request failed: {exc}") from exc
+        except Exception as exc:
+            # aiohttp/requests transport exceptions are intentionally normalized
+            # here so runtime callers do not depend on concrete HTTP libraries.
+            raise NsRuntimeAuthProviderError(f"runtime IAM internal API request failed: {exc}") from exc
 
         return self._extract_success_data(envelope)
 
