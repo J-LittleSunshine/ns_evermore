@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ns_common.config import NsObjectStorageConfig
+from ns_common.storage.config import NsObjectStorageConfig
 from ns_common.storage.models import NsObjectInfo, NsObjectRef
 from ns_common.storage.naming import (
     normalize_module_code,

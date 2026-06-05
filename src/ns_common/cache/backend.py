@@ -15,7 +15,7 @@ from ns_common import DATA_DIR
 from ns_common.cache.constants import DefaultCacheTimeout, NS_CACHE_DEFAULT_TIMEOUT
 from ns_common.cache.errors import NsCacheConfigurationError, NsCacheConnectionError
 from ns_common.cache.serializer import CacheSerializer, build_serializer
-from ns_common.config import NsCacheConfig
+from ns_common.cache.config import NsCacheConfig
 
 if TYPE_CHECKING:
     pass

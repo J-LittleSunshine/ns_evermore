@@ -5,7 +5,7 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, BinaryIO
 
-from ns_common.config import NsObjectStorageConfig
+from ns_common.storage.config import NsObjectStorageConfig
 from ns_common.storage.models import NsObjectInfo
 from ns_common.storage.utils import (
     apply_object_key_prefix,

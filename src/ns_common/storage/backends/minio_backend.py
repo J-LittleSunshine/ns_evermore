@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, BinaryIO, TYPE_CHECKING
 
-from ns_common.config import NsObjectStorageConfig
+from ns_common.storage.config import NsObjectStorageConfig
 from ns_common.storage.backends.base import BaseObjectStorageBackend
 from ns_common.storage.errors import (
     NsObjectStorageConfigurationError,

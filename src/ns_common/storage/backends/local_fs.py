@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from ns_common import DATA_DIR
-from ns_common.config import NsObjectStorageConfig
+from ns_common.storage.config import NsObjectStorageConfig
 from ns_common.storage.backends.base import BaseObjectStorageBackend
 from ns_common.storage.errors import NsObjectStorageConfigurationError, NsObjectStorageNotFoundError
 from ns_common.storage.models import NsObjectInfo

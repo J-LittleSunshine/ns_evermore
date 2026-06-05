@@ -5,7 +5,7 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, BinaryIO, ClassVar
 
-from ns_common.config import NsObjectStorageConfig
+from ns_common.storage.config import NsObjectStorageConfig
 from ns_common.storage.backends.async_local_fs import AsyncLocalFileObjectStorageBackend
 from ns_common.storage.backends.async_minio_backend import AsyncMinioObjectStorageBackend
 from ns_common.storage.backends.base import AsyncObjectStorageBackend, ObjectStorageBackend

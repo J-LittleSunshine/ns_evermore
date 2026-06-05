@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 from ns_common.cache.backend import CacheBackend, SqlWalCacheBackend, RedisCompatibleCacheBackend, AsyncCacheBackend, AsyncSqlWalCacheBackend, AsyncRedisCompatibleCacheBackend
 from ns_common.cache.constants import DefaultCacheTimeout, NS_CACHE_DEFAULT_TIMEOUT
 from ns_common.cache.errors import NsCacheConfigurationError
-from ns_common.config import NsCacheConfig
+from ns_common.cache.config import NsCacheConfig
 
 if TYPE_CHECKING:
     pass

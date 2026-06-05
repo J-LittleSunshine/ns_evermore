@@ -16,6 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 _BACKEND = ns_config.backend_config
 _CACHE = ns_config.cache_config
 
+
 def _coerce_positive_int(value: Any, default: int) -> int:
     """Resolve integer config from JSON/env while rejecting bool and non-positive values."""
     if isinstance(value, bool):
@@ -330,6 +331,7 @@ INSTALLED_APPS = [
     "adrf",
     "ns_backend.iam.apps.IamConfig",
     "ns_backend.storage.apps.StorageConfig",
+    "ns_backend.runtime_connector.apps.RuntimeConnectorConfig",
 ]
 
 for _app_name, _enabled in _BACKEND.loaded_apps.items():
