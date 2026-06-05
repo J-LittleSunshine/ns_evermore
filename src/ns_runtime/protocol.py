@@ -27,6 +27,8 @@ RuntimeWireFrameType = Literal[
 RUNTIME_FRAME_BACKEND_REGISTER = "backend.register"
 RUNTIME_FRAME_BACKEND_HEARTBEAT = "backend.heartbeat"
 RUNTIME_FRAME_BACKEND_PUBLISH = "backend.publish"
+RUNTIME_FRAME_BACKEND_DELIVER = "backend.deliver"
+RUNTIME_FRAME_BACKEND_REPLY = "backend.reply"
 
 RUNTIME_FRAME_RUNTIME_REGISTER = "runtime.register"
 RUNTIME_FRAME_RUNTIME_HEARTBEAT = "runtime.heartbeat"
@@ -198,6 +200,26 @@ def build_frontend_message_frame(message: NsRuntimeMessage) -> NsRuntimeWireFram
     )
 
 
+def build_backend_deliver_frame(*, source_node_id: str, message: NsRuntimeMessage, correlation_id: str | None = None, reply_to_message_id: str | None = None) -> NsRuntimeWireFrame:
+    """Build backend.deliver frame for runtime to backend connector delivery."""
+    normalized_message = message.normalized()
+    normalized_correlation_id = str(correlation_id).strip() if correlation_id is not None and str(correlation_id).strip() else normalized_message.headers.get("correlation_id")
+    normalized_reply_to_message_id = str(reply_to_message_id).strip() if reply_to_message_id is not None and str(reply_to_message_id).strip() else normalized_message.headers.get("reply_to_message_id")
+
+    return NsRuntimeWireFrame(
+        frame_type=RUNTIME_FRAME_BACKEND_DELIVER,
+        message_id=str(normalized_message.message_id),
+        trace_id=normalized_message.trace_id,
+        created_at_epoch_ms=int(normalized_message.created_at_epoch_ms or int(time.time() * 1000)),
+        payload={
+            "source_node_id": str(source_node_id or "").strip(),
+            "correlation_id": normalized_correlation_id,
+            "reply_to_message_id": normalized_reply_to_message_id,
+            "message": normalized_message.to_dict(),
+        },
+    )
+
+
 def runtime_message_from_payload(payload: dict[str, Any]) -> NsRuntimeMessage:
     """Build and validate NsRuntimeMessage from backend.publish payload."""
     if not isinstance(payload, dict):
@@ -256,3 +278,28 @@ def runtime_message_from_forward_payload(payload: dict[str, Any]) -> NsRuntimeMe
         raise NsRuntimeValidationError("runtime forward payload.message must be a JSON object")
 
     return runtime_message_from_payload(dict(message_raw))
+
+
+def backend_reply_message_from_payload(payload: dict[str, Any]) -> tuple[NsRuntimeMessage, str | None, str | None, str | None]:
+    """Build backend reply message and metadata from backend.reply payload."""
+    if not isinstance(payload, dict):
+        raise NsRuntimeValidationError("backend.reply payload must be a JSON object")
+
+    message_raw: Any = payload.get("message") or {}
+    if not isinstance(message_raw, dict):
+        raise NsRuntimeValidationError("backend.reply payload.message must be a JSON object")
+
+    message = runtime_message_from_payload(dict(message_raw))
+    target_backend_id = _normalize_optional(payload.get("target_backend_id")) or _normalize_optional(payload.get("backend_id"))
+    correlation_id = _normalize_optional(payload.get("correlation_id")) or message.headers.get("correlation_id") or message.trace_id
+    reply_to_message_id = _normalize_optional(payload.get("reply_to_message_id")) or message.headers.get("reply_to_message_id")
+    return message, target_backend_id, correlation_id, reply_to_message_id
+
+
+def _normalize_optional(value: Any) -> str | None:
+    """Normalize optional string value."""
+    if value is None:
+        return None
+
+    normalized = str(value).strip()
+    return normalized or None

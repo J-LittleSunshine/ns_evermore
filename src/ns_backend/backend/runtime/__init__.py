@@ -9,14 +9,24 @@ from ns_backend.backend.runtime.connector import (
     NsBackendRuntimeConnectorStats,
     NsBackendRuntimeStubSender,
 )
-
+from ns_backend.backend.runtime.inbox import (
+    NsBackendRuntimeInboundMessage,
+    SqliteBackendRuntimeInbox,
+    build_backend_runtime_inbox,
+)
 from ns_backend.backend.runtime.ipc import (
     NsRuntimeIpcClient,
     NsRuntimeIpcRequest,
     NsRuntimeIpcResponse,
     NsRuntimeIpcServer,
 )
-from ns_backend.backend.runtime.protocol import NsBackendRuntimeFrame, build_backend_heartbeat_frame, build_backend_publish_frame, build_backend_register_frame, parse_ack_frame
+from ns_backend.backend.runtime.protocol import (
+    NsBackendRuntimeFrame,
+    build_backend_heartbeat_frame,
+    build_backend_publish_frame,
+    build_backend_register_frame,
+    parse_ack_frame
+)
 from ns_backend.backend.runtime.sender import NsBackendRuntimeWebSocketSender
 
 if TYPE_CHECKING:
@@ -37,4 +47,7 @@ __all__ = [
     "build_backend_publish_frame",
     "build_backend_register_frame",
     "parse_ack_frame",
+    "NsBackendRuntimeInboundMessage",
+    "SqliteBackendRuntimeInbox",
+    "build_backend_runtime_inbox",
 ]

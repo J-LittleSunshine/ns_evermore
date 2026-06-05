@@ -29,6 +29,7 @@ class NsRuntimeConnectionRegistry:
         self._lock = RLock()
         self._connections: dict[str, NsRuntimeConnection] = {}
         self._backend_connections: dict[str, NsRuntimeConnection] = {}
+        self._backend_by_instance_id: dict[str, str] = {}
         self._sub_node_connections: dict[str, NsRuntimeConnection] = {}
 
         self._frontend_connections: dict[str, NsRuntimeConnection] = {}
@@ -46,7 +47,9 @@ class NsRuntimeConnectionRegistry:
         """Remove connection from all registry indexes."""
         with self._lock:
             connection = self._connections.pop(connection_id, None)
-            self._backend_connections.pop(connection_id, None)
+            backend = self._backend_connections.pop(connection_id, None)
+            if backend is not None and backend.instance_id:
+                self._backend_by_instance_id.pop(backend.instance_id, None)
             self._sub_node_connections.pop(connection_id, None)
 
             if connection is not None:
@@ -77,6 +80,7 @@ class NsRuntimeConnectionRegistry:
             connection.mark_seen()
 
             self._backend_connections[connection_id] = connection
+            self._backend_by_instance_id[instance_id] = connection_id
             return connection
 
     def register_sub_node(self, connection_id: str, *, payload: dict[str, Any], remote_address: str = "") -> NsRuntimeConnection:
@@ -157,6 +161,23 @@ class NsRuntimeConnectionRegistry:
             if connection is not None:
                 connection.mark_seen(health=health)
             return connection
+
+    def select_backend_for_reply(self, target_backend_id: str | None = None) -> NsRuntimeConnection | None:
+        """Select backend connection for backend.reply delivery."""
+        with self._lock:
+            if target_backend_id:
+                connection_id = self._backend_by_instance_id.get(str(target_backend_id).strip())
+                if connection_id:
+                    connection = self._backend_connections.get(connection_id)
+                    if connection is not None and connection.status == "healthy":
+                        return connection
+                return None
+
+            for connection in self._backend_connections.values():
+                if connection.status == "healthy":
+                    return connection
+
+            return None
 
     def list_healthy_sub_nodes(self) -> list[NsRuntimeConnection]:
         """Return currently healthy direct sub-node connections."""

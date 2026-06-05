@@ -39,6 +39,9 @@ from ns_runtime.protocol import (
     build_runtime_register_frame,
     runtime_message_from_forward_payload,
     runtime_message_from_payload,
+    RUNTIME_FRAME_BACKEND_REPLY,
+    build_backend_deliver_frame,
+    backend_reply_message_from_payload,
 )
 from ns_runtime.registry import NsRuntimeConnectionRegistry
 
@@ -323,6 +326,10 @@ class NsRuntimeNode:
             await self._handle_frontend_ack(connection, frame)
             return
 
+        if frame.frame_type == RUNTIME_FRAME_BACKEND_REPLY:
+            await self._handle_backend_reply(connection, frame)
+            return
+
         if self._config.node_role == RUNTIME_NODE_ROLE_SUB and frame.frame_type in {
             RUNTIME_FRAME_BACKEND_REGISTER,
             RUNTIME_FRAME_BACKEND_HEARTBEAT,
@@ -411,6 +418,63 @@ class NsRuntimeNode:
             return
 
         self._add_stats(rejected_count=1, last_error=ack.reason)
+
+    async def _handle_backend_reply(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
+        """Forward backend.reply frame to backend connector as backend.deliver.
+
+        P9 only provides the inbound reply channel skeleton. It does not
+        implement a high-level backend request_reply API yet.
+        """
+        try:
+            message, target_backend_id, correlation_id, reply_to_message_id = backend_reply_message_from_payload(frame.payload)
+            backend_connection = self._registry.select_backend_for_reply(target_backend_id)
+
+            if backend_connection is None:
+                await self._send_ack(
+                    connection,
+                    frame,
+                    status=RUNTIME_ACK_STATUS_REJECTED,
+                    reason="target backend connection is not available",
+                )
+                self._add_stats(rejected_count=1, last_error="target backend connection is not available")
+                return
+
+            deliver_frame = build_backend_deliver_frame(
+                source_node_id=self._config.node_id,
+                message=message,
+                correlation_id=correlation_id,
+                reply_to_message_id=reply_to_message_id,
+            )
+
+            pending_ack = backend_connection.create_pending_ack(deliver_frame.message_id)
+            await backend_connection.send_frame(deliver_frame)
+
+            backend_ack = await asyncio.wait_for(
+                pending_ack,
+                timeout=float(self._config.ack_timeout_seconds),
+            )
+        except Exception as exc:
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=str(exc))
+            self._add_stats(rejected_count=1, last_error=str(exc))
+            return
+        finally:
+            try:
+                backend_connection.remove_pending_ack(deliver_frame.message_id)  # type: ignore[name-defined]
+            except Exception:  # noqa
+                pass
+
+        await self._send_ack(
+            connection,
+            frame,
+            status=backend_ack.status,
+            reason=backend_ack.reason,
+        )
+
+        if backend_ack.status == RUNTIME_ACK_STATUS_ACCEPTED:
+            self._add_stats(accepted_count=1)
+            return
+
+        self._add_stats(rejected_count=1, last_error=backend_ack.reason)
 
     async def _handle_runtime_register(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
         """Register one runtime sub node on master."""

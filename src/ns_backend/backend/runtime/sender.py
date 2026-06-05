@@ -7,12 +7,15 @@ import threading
 import time
 from typing import Any, TYPE_CHECKING
 
+from ns_backend.backend.runtime.inbox import build_backend_runtime_inbox
 from ns_backend.backend.runtime.protocol import (
     NsBackendRuntimeFrame,
+    build_backend_ack_frame,
     build_backend_heartbeat_frame,
     build_backend_publish_frame,
     build_backend_register_frame,
     parse_ack_frame,
+    parse_backend_deliver_frame,
 )
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.errors import NsRuntimeAckTimeoutError, NsRuntimePublishError
@@ -41,6 +44,7 @@ class NsBackendRuntimeWebSocketSender:
         self._pending_acks: dict[str, asyncio.Future[NsRuntimeAck]] = {}
         self._websocket: Any | None = None
         self._send_lock: asyncio.Lock | None = None
+        self._inbox = build_backend_runtime_inbox(config)
 
     def start(self) -> None:
         """Start WebSocket sender background event loop."""
@@ -69,6 +73,10 @@ class NsBackendRuntimeWebSocketSender:
 
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=2.0)
+        try:
+            self._inbox.close()
+        except Exception:  # noqa
+            pass
 
     def send(self, message: NsRuntimeMessage) -> NsRuntimeAck:
         """Send one runtime message through WebSocket and wait for master ack."""
@@ -182,6 +190,28 @@ class NsBackendRuntimeWebSocketSender:
                 ack = parse_ack_frame(data)
                 self._resolve_ack(ack)
                 continue
+
+            if frame_type == "backend.deliver":
+                await self._handle_backend_deliver(data)
+                continue
+
+    async def _handle_backend_deliver(self, data: dict[str, Any]) -> None:
+        """Persist one inbound runtime message and ack runtime."""
+        message, correlation_id, reply_to_message_id = parse_backend_deliver_frame(data)
+        self._inbox.put(
+            message,
+            correlation_id=correlation_id,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+        frame = NsBackendRuntimeFrame.from_dict(data)
+        ack = NsRuntimeAck(
+            message_id=frame.message_id,
+            status="accepted",  # type: ignore[arg-type]
+            handled_by=self._config.node_id,
+            trace_id=frame.trace_id,
+        ).normalized()
+        await self._send_frame(build_backend_ack_frame(ack))
 
     async def _send_message_async(self, message: NsRuntimeMessage) -> NsRuntimeAck:
         """Send backend.publish frame and wait for ack."""
