@@ -10,7 +10,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ns_common.config import ns_config
-from ns_common.runtime.auth import NsRuntimeAuthDecision, NsRuntimeTokenAuthenticator
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.constants import (
     RUNTIME_ACK_STATUS_ACCEPTED,
@@ -21,6 +20,18 @@ from ns_common.runtime.constants import (
 )
 from ns_common.runtime.errors import NsRuntimeConfigurationError, NsRuntimeValidationError
 from ns_common.runtime.messages import NsRuntimeAck, NsRuntimeMessage
+from ns_common.runtime.permissions import (
+    RUNTIME_IAM_ACTION_CONNECT,
+    RUNTIME_IAM_RESOURCE_FRONTEND,
+    RUNTIME_PERMISSION_FRONTEND_CONNECT,
+    RUNTIME_PRINCIPAL_ANONYMOUS_FRONTEND,
+    RUNTIME_PRINCIPAL_BACKEND_SERVICE,
+    RUNTIME_PRINCIPAL_FRONTEND_USER,
+    RUNTIME_PRINCIPAL_RUNTIME_NODE,
+    build_runtime_frontend_resource_id,
+)
+from ns_common.runtime.security import NsRuntimeAuthorizationRequest, NsRuntimePrincipal
+from ns_runtime.auth_provider import NsRuntimeAuthProviderError, build_runtime_auth_provider
 from ns_runtime.connection import NsRuntimeConnection
 from ns_runtime.dispatcher import NsRuntimeDispatcher
 from ns_runtime.protocol import (
@@ -28,6 +39,7 @@ from ns_runtime.protocol import (
     RUNTIME_FRAME_BACKEND_HEARTBEAT,
     RUNTIME_FRAME_BACKEND_PUBLISH,
     RUNTIME_FRAME_BACKEND_REGISTER,
+    RUNTIME_FRAME_BACKEND_REPLY,
     RUNTIME_FRAME_FRONTEND_ACK,
     RUNTIME_FRAME_FRONTEND_HEARTBEAT,
     RUNTIME_FRAME_FRONTEND_REGISTER,
@@ -35,14 +47,13 @@ from ns_runtime.protocol import (
     RUNTIME_FRAME_RUNTIME_HEARTBEAT,
     RUNTIME_FRAME_RUNTIME_REGISTER,
     NsRuntimeWireFrame,
+    backend_reply_message_from_payload,
     build_ack_frame,
+    build_backend_deliver_frame,
     build_runtime_heartbeat_frame,
     build_runtime_register_frame,
     runtime_message_from_forward_payload,
     runtime_message_from_payload,
-    RUNTIME_FRAME_BACKEND_REPLY,
-    build_backend_deliver_frame,
-    backend_reply_message_from_payload,
 )
 from ns_runtime.registry import NsRuntimeConnectionRegistry
 
@@ -105,7 +116,7 @@ class NsRuntimeNode:
         self._stats = NsRuntimeNodeStats()
         self._registry = NsRuntimeConnectionRegistry()
         self._dispatcher = NsRuntimeDispatcher(config=self._config, registry=self._registry)
-        self._authenticator = NsRuntimeTokenAuthenticator(self._config)
+        self._auth_provider = build_runtime_auth_provider(self._config)
 
     @property
     def host(self) -> str:
@@ -385,15 +396,18 @@ class NsRuntimeNode:
     async def _handle_backend_register(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
         """Register one backend connector connection."""
         payload: dict[str, Any] = dict(frame.payload)
-        decision: NsRuntimeAuthDecision = self._authenticator.verify_service_payload(
-            payload,
-            principal_type="backend",
-            principal_id=str(payload.get("instance_id") or connection.connection_id),
-        )
 
-        if not decision.accepted:
-            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=decision.reason)
-            self._add_stats(rejected_count=1, last_error=decision.reason)
+        try:
+            principal = await self._auth_provider.authenticate_service(
+                payload,
+                principal_type=RUNTIME_PRINCIPAL_BACKEND_SERVICE,
+                trace_id=frame.trace_id,
+            )
+            connection.principal = principal
+        except Exception as exc:
+            reason = str(exc)
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=reason)
+            self._add_stats(rejected_count=1, last_error=reason)
             await connection.websocket.close(code=1008, reason="runtime backend auth failed")
             return
 
@@ -500,15 +514,18 @@ class NsRuntimeNode:
             return
 
         payload: dict[str, Any] = dict(frame.payload)
-        decision: NsRuntimeAuthDecision = self._authenticator.verify_service_payload(
-            payload,
-            principal_type="runtime_sub",
-            principal_id=str(payload.get("node_id") or connection.connection_id),
-        )
 
-        if not decision.accepted:
-            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=decision.reason)
-            self._add_stats(rejected_count=1, last_error=decision.reason)
+        try:
+            principal = await self._auth_provider.authenticate_service(
+                payload,
+                principal_type=RUNTIME_PRINCIPAL_RUNTIME_NODE,
+                trace_id=frame.trace_id,
+            )
+            connection.principal = principal
+        except Exception as exc:
+            reason = str(exc)
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=reason)
+            self._add_stats(rejected_count=1, last_error=reason)
             await connection.websocket.close(code=1008, reason="runtime sub node auth failed")
             return
 
@@ -559,11 +576,21 @@ class NsRuntimeNode:
     async def _handle_frontend_register(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
         """Register one frontend WebSocket connection."""
         payload: dict[str, Any] = dict(frame.payload)
-        decision: NsRuntimeAuthDecision = self._authenticator.verify_frontend_payload(payload)
 
-        if not decision.accepted:
-            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=decision.reason)
-            self._add_stats(rejected_count=1, last_error=decision.reason)
+        try:
+            principal = await self._auth_provider.authenticate_frontend(payload, trace_id=frame.trace_id)
+            await self._authorize_frontend_connect(
+                principal=principal,
+                connection=connection,
+                frame=frame,
+                payload=payload,
+            )
+            connection.principal = principal
+            payload = self._frontend_payload_with_principal(payload=payload, principal=principal)
+        except Exception as exc:
+            reason = str(exc)
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=reason)
+            self._add_stats(rejected_count=1, last_error=reason)
             await connection.websocket.close(code=1008, reason="runtime frontend auth failed")
             return
 
@@ -604,6 +631,74 @@ class NsRuntimeNode:
             return
 
         self._add_stats(frontend_ack_count=1, accepted_count=1)
+
+    async def _authorize_frontend_connect(
+            self,
+            *,
+            principal: NsRuntimePrincipal,
+            connection: NsRuntimeConnection,
+            frame: NsRuntimeWireFrame,
+            payload: dict[str, Any],
+    ) -> None:
+        """Authorize frontend connect action.
+
+        Anonymous frontend is controlled by authenticate_frontend(). If anonymous
+        frontend is accepted there, this method does not call IAM authorize
+        because P11.6 currently supports frontend_user authorization only.
+        """
+        if principal.principal_type == RUNTIME_PRINCIPAL_ANONYMOUS_FRONTEND:
+            return
+
+        if principal.principal_type != RUNTIME_PRINCIPAL_FRONTEND_USER:
+            raise NsRuntimeAuthProviderError(f"unsupported frontend principal type: {principal.principal_type}")
+
+        resource_id = build_runtime_frontend_resource_id(
+            user_id=principal.user_id or principal.principal_id,
+            client_id=principal.client_id or payload.get("client_id"),
+        )
+
+        decision = await self._auth_provider.authorize(
+            NsRuntimeAuthorizationRequest(
+                principal=principal,
+                resource_type=RUNTIME_IAM_RESOURCE_FRONTEND,
+                resource_id=resource_id,
+                action_code=RUNTIME_IAM_ACTION_CONNECT,
+                permission_code=RUNTIME_PERMISSION_FRONTEND_CONNECT,
+                context={
+                    "connection_id": connection.connection_id,
+                    "remote_address": connection.remote_address,
+                    "client_id": principal.client_id or payload.get("client_id"),
+                    "session_id": principal.session_id or payload.get("session_id"),
+                    "user_id": principal.user_id,
+                    "frame_type": frame.frame_type,
+                },
+                trace_id=frame.trace_id,
+            )
+        )
+
+        if not decision.allowed:
+            raise NsRuntimeAuthProviderError(decision.reason or "runtime frontend connect is denied")
+
+    @staticmethod
+    def _frontend_payload_with_principal(*, payload: dict[str, Any], principal: NsRuntimePrincipal) -> dict[str, Any]:
+        """Merge authenticated principal identity into frontend register payload.
+
+        This prevents a frontend client from registering an arbitrary user_id
+        that differs from the IAM-introspected principal.
+        """
+        merged_payload = dict(payload)
+
+        if principal.client_id is not None:
+            merged_payload["client_id"] = principal.client_id
+
+        if principal.session_id is not None:
+            merged_payload["session_id"] = principal.session_id
+
+        if principal.user_id is not None:
+            merged_payload["user_id"] = principal.user_id
+
+        merged_payload["runtime_principal"] = principal.to_dict()
+        return merged_payload
 
     async def _send_ack(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, *, status: str, reason: str | None = None) -> None:
         """Send one ack frame through a runtime connection."""
