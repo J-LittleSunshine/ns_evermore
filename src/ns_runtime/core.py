@@ -53,7 +53,7 @@ from ns_runtime.protocol import (
     build_runtime_heartbeat_frame,
     build_runtime_register_frame,
     runtime_message_from_forward_payload,
-    runtime_message_from_payload,
+    runtime_message_from_payload, parse_ack_frame,
 )
 from ns_runtime.registry import NsRuntimeConnectionRegistry
 
