@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ns_common.config import ns_config
+from ns_common.runtime.auth import NsRuntimeAuthDecision, NsRuntimeTokenAuthenticator
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.constants import (
     RUNTIME_ACK_STATUS_ACCEPTED,
@@ -44,7 +45,7 @@ from ns_runtime.protocol import (
     backend_reply_message_from_payload,
 )
 from ns_runtime.registry import NsRuntimeConnectionRegistry
-from ns_common.runtime.auth import NsRuntimeAuthDecision, NsRuntimeTokenAuthenticator
+
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class NsRuntimeNodeStats:
