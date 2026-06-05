@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import asyncio
-import json
-import urllib.error
-import urllib.request
 from typing import Any
 
+from ns_common.http_client import (
+    NsHttpClientError,
+    NsHttpResponseDecodeError,
+    NsHttpStatusError,
+    get_http_client,
+)
 from ns_common.runtime.auth import NsRuntimeAuthDecision, NsRuntimeTokenAuthenticator
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.errors import NsRuntimeConfigurationError, NsRuntimeError
@@ -31,14 +33,14 @@ class NsRuntimeAuthProviderError(NsRuntimeError):
 class NsRuntimeStaticAuthProvider:
     """Static runtime auth provider adapter.
 
-    This adapter preserves the current P11 static-token behavior while exposing
-    the P11.5 NsRuntimeAuthProvider protocol. Fine-grained authorization is
-    intentionally allowed here to keep backward compatibility until a remote IAM
-    provider is explicitly selected.
+    This class adapts the existing P11 static bearer token authenticator to the
+    P11.5 NsRuntimeAuthProvider protocol. It intentionally allows authorization
+    decisions because static mode preserves the current behavior until P11.8
+    explicitly enforces runtime authorization.
     """
 
     def __init__(self, config: NsRuntimeConfig) -> None:
-        """Initialize static auth provider."""
+        """Initialize static runtime auth provider."""
         self._config = config
         self._authenticator = NsRuntimeTokenAuthenticator(config)
 
@@ -53,10 +55,10 @@ class NsRuntimeStaticAuthProvider:
         return self._principal_from_frontend_decision(payload=payload, decision=decision)
 
     async def authenticate_service(self, payload: dict[str, Any], *, principal_type: str, trace_id: str | None = None) -> NsRuntimePrincipal:
-        """Authenticate backend connector or runtime sub-node by static service token."""
+        """Authenticate backend connector or runtime node by static service token."""
         _ = trace_id
 
-        normalized_principal_type = _normalize_required_text(principal_type, "principal_type")
+        normalized_principal_type = _normalize_service_principal_type(principal_type)
         principal_id = _resolve_service_principal_id(payload=payload, principal_type=normalized_principal_type)
 
         decision: NsRuntimeAuthDecision = self._authenticator.verify_service_payload(
@@ -67,14 +69,14 @@ class NsRuntimeStaticAuthProvider:
         if not decision.accepted:
             raise NsRuntimeAuthProviderError(decision.reason or "runtime service authentication failed")
 
-        return self._principal_from_service_decision(payload=payload, decision=decision, principal_type=normalized_principal_type)
+        return self._principal_from_service_decision(
+            payload=payload,
+            decision=decision,
+            principal_type=normalized_principal_type,
+        )
 
     async def authorize(self, request: NsRuntimeAuthorizationRequest) -> NsRuntimeAuthorizationDecision:
-        """Allow runtime action in static provider mode.
-
-        Static provider mode intentionally does not call IAM. It mirrors existing
-        P11 behavior where static token auth only gates register frames.
-        """
+        """Allow runtime action in static provider mode."""
         return NsRuntimeAuthorizationDecision.allow(
             reason="STATIC_RUNTIME_AUTH_PROVIDER_ALLOW",
             resource_type=request.resource_type,
@@ -108,7 +110,9 @@ class NsRuntimeStaticAuthProvider:
                 user_id=user_id or principal_id,
                 client_id=client_id,
                 session_id=session_id,
-                claims={},
+                claims={
+                    "runtime_static_auth": True,
+                },
             )
 
         return NsRuntimePrincipal(
@@ -118,14 +122,19 @@ class NsRuntimeStaticAuthProvider:
             display_name="anonymous",
             client_id=client_id,
             session_id=session_id,
-            claims={},
+            claims={
+                "runtime_static_auth": True,
+            },
         )
 
     @staticmethod
     def _principal_from_service_decision(*, payload: dict[str, Any], decision: NsRuntimeAuthDecision, principal_type: str) -> NsRuntimePrincipal:
         """Build backend service or runtime node principal from static auth decision."""
-        principal_id = _normalize_optional(decision.principal_id) or _resolve_service_principal_id(payload=payload, principal_type=principal_type)
+        _ = payload
+
+        principal_id = _normalize_optional(decision.principal_id) or "service:*"
         service_id = principal_id if principal_type == RUNTIME_PRINCIPAL_BACKEND_SERVICE else None
+        backend_id = principal_id if principal_type == RUNTIME_PRINCIPAL_BACKEND_SERVICE else None
         node_id = principal_id if principal_type == RUNTIME_PRINCIPAL_RUNTIME_NODE else None
 
         return NsRuntimePrincipal(
@@ -134,6 +143,7 @@ class NsRuntimeStaticAuthProvider:
             authenticated=bool(decision.authenticated),
             display_name=principal_id,
             service_id=service_id,
+            backend_id=backend_id,
             node_id=node_id,
             claims={
                 "runtime_static_auth": True,
@@ -144,8 +154,9 @@ class NsRuntimeStaticAuthProvider:
 class NsRuntimeRemoteIamAuthProvider:
     """Remote IAM auth provider for ns_runtime.
 
-    This provider calls ns_backend IAM internal HTTP API. It must not import
-    Django, ns_backend.iam services, repositories, or ORM models directly.
+    This provider calls ns_backend IAM internal HTTP API through ns_common's
+    process-wide HTTP client. It must not import Django, ns_backend.iam services,
+    repositories, or ORM models directly.
     """
 
     def __init__(self, config: NsRuntimeConfig) -> None:
@@ -192,11 +203,16 @@ class NsRuntimeRemoteIamAuthProvider:
     async def authenticate_service(self, payload: dict[str, Any], *, principal_type: str, trace_id: str | None = None) -> NsRuntimePrincipal:
         """Authenticate backend connector or runtime node.
 
-        P11.6 IAM internal API only supports frontend token introspection.
-        Service-node authentication therefore intentionally remains static-token
-        based in P11.7. Service authorization is deferred to P11.8+.
+        P11.6 IAM internal API currently supports frontend token introspection
+        and frontend_user authorization. Service-node authentication therefore
+        remains static-token based in P11.7. Service authorization is deferred to
+        P11.8+.
         """
-        return await self._static_provider.authenticate_service(payload, principal_type=principal_type, trace_id=trace_id)
+        return await self._static_provider.authenticate_service(
+            payload,
+            principal_type=principal_type,
+            trace_id=trace_id,
+        )
 
     async def authorize(self, request: NsRuntimeAuthorizationRequest) -> NsRuntimeAuthorizationDecision:
         """Authorize one runtime action through IAM internal API."""
@@ -208,7 +224,6 @@ class NsRuntimeRemoteIamAuthProvider:
         if not requests:
             return []
 
-        trace_id = requests[0].trace_id
         response_data = await self._post_json(
             "batch-authorize",
             {
@@ -217,7 +232,7 @@ class NsRuntimeRemoteIamAuthProvider:
                     for request in requests
                 ],
             },
-            trace_id=trace_id,
+            trace_id=requests[0].trace_id,
         )
 
         raw_results = response_data.get("results")
@@ -258,36 +273,27 @@ class NsRuntimeRemoteIamAuthProvider:
         return decisions
 
     async def _post_json(self, endpoint: str, payload: dict[str, Any], *, trace_id: str | None = None) -> dict[str, Any]:
-        """Post JSON payload to ns_backend IAM internal API without blocking event loop."""
-        return await asyncio.to_thread(self._post_json_sync, endpoint, payload, trace_id)
-
-    def _post_json_sync(self, endpoint: str, payload: dict[str, Any], trace_id: str | None) -> dict[str, Any]:
-        """Synchronous HTTP implementation executed in a worker thread."""
+        """Post JSON payload to ns_backend IAM internal API."""
         url = self._build_endpoint_url(endpoint)
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        request = urllib.request.Request(
-            url=url,
-            data=body,
-            headers=self._build_headers(trace_id),
-            method="POST",
-        )
+        headers = self._build_headers(trace_id)
 
         try:
-            with urllib.request.urlopen(request, timeout=self._request_timeout_seconds()) as response:
-                raw_body = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            raw_error_body = exc.read().decode("utf-8", errors="replace")
-            error_message = self._extract_error_message(raw_error_body)
-            raise NsRuntimeAuthProviderError(f"runtime IAM internal API HTTP {exc.code}: {error_message}") from exc
-        except urllib.error.URLError as exc:
-            raise NsRuntimeAuthProviderError(f"runtime IAM internal API is unavailable: {exc.reason}") from exc
-        except TimeoutError as exc:
-            raise NsRuntimeAuthProviderError("runtime IAM internal API request timed out") from exc
-
-        try:
-            envelope: Any = json.loads(raw_body)
-        except json.JSONDecodeError as exc:
+            response = await get_http_client().async_post_json(
+                url,
+                json_data=payload,
+                headers=headers,
+                timeout_seconds=self._request_timeout_seconds(),
+                raise_for_status=True,
+            )
+            envelope = response.json()
+        except NsHttpStatusError as exc:
+            raise NsRuntimeAuthProviderError(
+                f"runtime IAM internal API HTTP {exc.status_code}: {exc.response_text[:500]}"
+            ) from exc
+        except NsHttpResponseDecodeError as exc:
             raise NsRuntimeAuthProviderError("runtime IAM internal API response is not valid JSON") from exc
+        except NsHttpClientError as exc:
+            raise NsRuntimeAuthProviderError(f"runtime IAM internal API request failed: {exc}") from exc
 
         return self._extract_success_data(envelope)
 
@@ -311,29 +317,26 @@ class NsRuntimeRemoteIamAuthProvider:
         normalized_endpoint = str(endpoint or "").strip().lstrip("/")
         if not normalized_endpoint:
             raise NsRuntimeConfigurationError("runtime IAM internal API endpoint is required")
+
         return f"{str(self._config.iam_internal_base_url).strip().rstrip('/')}/{normalized_endpoint}"
 
     def _internal_service_token(self) -> str:
         """Resolve internal service token used by ns_runtime to call ns_backend IAM."""
-        token = str(
-            getattr(self._config, "iam_internal_service_token", "")
-            or getattr(self._config, "service_token", "")
-            or ""
-        ).strip()
+        token = str(self._config.iam_internal_service_token or self._config.service_token or "").strip()
         if not token:
             raise NsRuntimeConfigurationError("runtime iam_internal_service_token or service_token is required")
         return token
 
     def _request_timeout_seconds(self) -> float:
         """Resolve positive HTTP request timeout."""
-        value = float(getattr(self._config, "iam_internal_request_timeout_seconds", 3.0) or 3.0)
-        if value <= 0:
+        timeout = float(self._config.iam_internal_request_timeout_seconds or 0)
+        if timeout <= 0:
             raise NsRuntimeConfigurationError("runtime iam_internal_request_timeout_seconds must be positive")
-        return value
+        return timeout
 
     def _validate_config(self) -> None:
         """Validate remote IAM provider configuration."""
-        base_url = str(getattr(self._config, "iam_internal_base_url", "") or "").strip()
+        base_url = str(self._config.iam_internal_base_url or "").strip()
         if not base_url:
             raise NsRuntimeConfigurationError("runtime iam_internal_base_url is required when auth_provider is remote_iam")
 
@@ -359,22 +362,6 @@ class NsRuntimeRemoteIamAuthProvider:
             raise NsRuntimeAuthProviderError("runtime IAM internal API response data must be a JSON object")
 
         return dict(data)
-
-    @staticmethod
-    def _extract_error_message(raw_body: str) -> str:
-        """Extract readable error message from failed HTTP response body."""
-        if not raw_body.strip():
-            return "empty error response"
-
-        try:
-            payload: Any = json.loads(raw_body)
-        except json.JSONDecodeError:
-            return raw_body.strip()[:500]
-
-        if isinstance(payload, dict):
-            return str(payload.get("msg") or payload.get("message") or payload.get("detail") or payload)[:500]
-
-        return str(payload)[:500]
 
     @staticmethod
     def _anonymous_frontend_principal(payload: dict[str, Any]) -> NsRuntimePrincipal:
@@ -466,15 +453,36 @@ def build_runtime_auth_provider(config: NsRuntimeConfig | None = None) -> NsRunt
     raise NsRuntimeConfigurationError(f"runtime auth_provider is invalid: {provider_name}")
 
 
+def _normalize_service_principal_type(value: Any) -> str:
+    """Normalize runtime service principal type aliases."""
+    normalized = str(value or "").strip().lower()
+    if normalized in {"backend", "backend_service", "ns_backend"}:
+        return RUNTIME_PRINCIPAL_BACKEND_SERVICE
+
+    if normalized in {"runtime", "runtime_node", "runtime_sub", "node", "sub"}:
+        return RUNTIME_PRINCIPAL_RUNTIME_NODE
+
+    return normalized or "service"
+
+
 def _resolve_service_principal_id(*, payload: dict[str, Any], principal_type: str) -> str:
     """Resolve backend service or runtime node principal id from register payload."""
     if principal_type == RUNTIME_PRINCIPAL_BACKEND_SERVICE:
-        return _normalize_optional(payload.get("backend_id")) or _normalize_optional(payload.get("instance_id")) or "backend:*"
+        return (
+                _normalize_optional(payload.get("backend_id"))
+                or _normalize_optional(payload.get("instance_id"))
+                or "backend:*"
+        )
 
     if principal_type == RUNTIME_PRINCIPAL_RUNTIME_NODE:
         return _normalize_optional(payload.get("node_id")) or "node:*"
 
-    return _normalize_optional(payload.get("principal_id")) or _normalize_optional(payload.get("instance_id")) or _normalize_optional(payload.get("node_id")) or "service:*"
+    return (
+            _normalize_optional(payload.get("principal_id"))
+            or _normalize_optional(payload.get("instance_id"))
+            or _normalize_optional(payload.get("node_id"))
+            or "service:*"
+    )
 
 
 def _normalize_required_text(value: Any, field_name: str) -> str:
@@ -496,10 +504,7 @@ def _normalize_optional(value: Any) -> str | None:
 
 def _normalize_optional_int(value: Any) -> int | None:
     """Normalize optional integer field."""
-    if value is None:
-        return None
-
-    if isinstance(value, bool):
+    if value is None or isinstance(value, bool):
         return None
 
     try:

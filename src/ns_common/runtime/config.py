@@ -13,10 +13,12 @@ from ns_common.runtime.constants import (
     RUNTIME_CONNECTOR_IPC_MEMORY,
     RUNTIME_CONNECTOR_IPC_TCP,
     RUNTIME_CONNECTOR_IPC_UNIX_SOCKET,
+    RUNTIME_MASTER_FORWARD_LOCAL_FIRST,
+    RUNTIME_MASTER_FORWARD_SUB_FIRST,
+    RUNTIME_MASTER_FORWARD_SUB_REQUIRED,
     RUNTIME_NODE_ROLE_MASTER,
     RUNTIME_NODE_ROLE_STANDALONE,
     RUNTIME_NODE_ROLE_SUB,
-    RUNTIME_MASTER_FORWARD_SUB_FIRST, RUNTIME_MASTER_FORWARD_LOCAL_FIRST, RUNTIME_MASTER_FORWARD_SUB_REQUIRED,
 )
 from ns_common.runtime.errors import NsRuntimeConfigurationError
 
@@ -30,6 +32,7 @@ RuntimeBrokerBackend = Literal["memory", "redis", "valkey", "mq"]
 RuntimePresenceBackend = Literal["memory", "redis", "valkey", "sql_wal"]
 RuntimeIpcMode = Literal["unix_socket", "tcp", "memory"]
 RuntimeMasterForwardPolicy = Literal["local_first", "sub_first", "sub_required"]
+RuntimeAuthProvider = Literal["static", "remote_iam"]
 
 
 @dataclass(slots=True, kw_only=True)
@@ -83,6 +86,9 @@ class NsRuntimeConfig:
     allow_anonymous_frontend: bool = True
 
     iam_internal_service_token: str = ""
+    auth_provider: RuntimeAuthProvider = "static"
+    iam_internal_base_url: str = "http://127.0.0.1:8000/iam/runtime"
+    iam_internal_request_timeout_seconds: float = 3.0
 
     def resolved_backend_outbox_backend(self) -> RuntimeOutboxBackend:
         """Resolve backend outbox backend."""
@@ -169,11 +175,32 @@ class NsRuntimeConfig:
         }:
             raise NsRuntimeConfigurationError(f"runtime master_forward_policy is invalid: {self.master_forward_policy}")
 
+        if self.auth_provider not in {"static", "remote_iam"}:
+            raise NsRuntimeConfigurationError(f"runtime auth_provider is invalid: {self.auth_provider}")
+
         if self.auth_enabled and not str(self.service_token or "").strip():
             raise NsRuntimeConfigurationError("runtime service_token is required when auth_enabled is true")
 
-        if self.frontend_auth_enabled and not self.allow_anonymous_frontend and not str(self.frontend_static_token or "").strip():
-            raise NsRuntimeConfigurationError("runtime frontend_static_token is required when frontend_auth_enabled is true and anonymous frontend is disabled")
+        if (
+                self.auth_provider == "static"
+                and self.frontend_auth_enabled
+                and not self.allow_anonymous_frontend
+                and not str(self.frontend_static_token or "").strip()
+        ):
+            raise NsRuntimeConfigurationError(
+                "runtime frontend_static_token is required when static frontend auth is enabled and anonymous frontend is disabled"
+            )
 
         if self.auth_enabled and not str(self.iam_internal_service_token or self.service_token or "").strip():
             raise NsRuntimeConfigurationError("runtime iam_internal_service_token or service_token is required when auth_enabled is true")
+
+        if self.auth_provider == "remote_iam":
+            if not str(self.iam_internal_base_url or "").strip():
+                raise NsRuntimeConfigurationError("runtime iam_internal_base_url is required when auth_provider is remote_iam")
+            if not str(self.iam_internal_service_token or self.service_token or "").strip():
+                raise NsRuntimeConfigurationError(
+                    "runtime iam_internal_service_token or service_token is required when auth_provider is remote_iam"
+                )
+
+        if self.iam_internal_request_timeout_seconds <= 0:
+            raise NsRuntimeConfigurationError("runtime iam_internal_request_timeout_seconds must be positive")
