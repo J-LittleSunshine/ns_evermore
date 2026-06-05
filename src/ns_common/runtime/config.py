@@ -75,6 +75,13 @@ class NsRuntimeConfig:
     master_handle_when_no_sub_node: bool = True
     master_forward_policy: RuntimeMasterForwardPolicy = RUNTIME_MASTER_FORWARD_SUB_FIRST  # type: ignore[assignment]
 
+    auth_enabled: bool = False
+    service_token: str = ""
+
+    frontend_auth_enabled: bool = False
+    frontend_static_token: str = ""
+    allow_anonymous_frontend: bool = True
+
     def resolved_backend_outbox_backend(self) -> RuntimeOutboxBackend:
         """Resolve backend outbox backend."""
         return self.backend_outbox_backend
@@ -159,3 +166,9 @@ class NsRuntimeConfig:
             RUNTIME_MASTER_FORWARD_SUB_REQUIRED,
         }:
             raise NsRuntimeConfigurationError(f"runtime master_forward_policy is invalid: {self.master_forward_policy}")
+
+        if self.auth_enabled and not str(self.service_token or "").strip():
+            raise NsRuntimeConfigurationError("runtime service_token is required when auth_enabled is true")
+
+        if self.frontend_auth_enabled and not self.allow_anonymous_frontend and not str(self.frontend_static_token or "").strip():
+            raise NsRuntimeConfigurationError("runtime frontend_static_token is required when frontend_auth_enabled is true and anonymous frontend is disabled")

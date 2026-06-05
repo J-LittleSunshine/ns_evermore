@@ -44,7 +44,7 @@ from ns_runtime.protocol import (
     backend_reply_message_from_payload,
 )
 from ns_runtime.registry import NsRuntimeConnectionRegistry
-
+from ns_common.runtime.auth import NsRuntimeAuthDecision, NsRuntimeTokenAuthenticator
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class NsRuntimeNodeStats:
@@ -104,6 +104,7 @@ class NsRuntimeNode:
         self._stats = NsRuntimeNodeStats()
         self._registry = NsRuntimeConnectionRegistry()
         self._dispatcher = NsRuntimeDispatcher(config=self._config, registry=self._registry)
+        self._authenticator = NsRuntimeTokenAuthenticator(self._config)
 
     @property
     def host(self) -> str:
@@ -214,6 +215,7 @@ class NsRuntimeNode:
                             node_id=self._config.node_id,
                             node_role=RUNTIME_NODE_ROLE_SUB,
                             parent_node_id=None,
+                            auth_token=self._config.service_token,
                         )
                     )
 
@@ -381,9 +383,22 @@ class NsRuntimeNode:
 
     async def _handle_backend_register(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
         """Register one backend connector connection."""
+        payload: dict[str, Any] = dict(frame.payload)
+        decision: NsRuntimeAuthDecision = self._authenticator.verify_service_payload(
+            payload,
+            principal_type="backend",
+            principal_id=str(payload.get("instance_id") or connection.connection_id),
+        )
+
+        if not decision.accepted:
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=decision.reason)
+            self._add_stats(rejected_count=1, last_error=decision.reason)
+            await connection.websocket.close(code=1008, reason="runtime backend auth failed")
+            return
+
         self._registry.register_backend(
             connection.connection_id,
-            payload=dict(frame.payload),
+            payload=payload,
             remote_address=connection.remote_address,
         )
         self._add_stats(backend_register_count=1, accepted_count=1)
@@ -483,10 +498,23 @@ class NsRuntimeNode:
             self._add_stats(rejected_count=1)
             return
 
+        payload: dict[str, Any] = dict(frame.payload)
+        decision: NsRuntimeAuthDecision = self._authenticator.verify_service_payload(
+            payload,
+            principal_type="runtime_sub",
+            principal_id=str(payload.get("node_id") or connection.connection_id),
+        )
+
+        if not decision.accepted:
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=decision.reason)
+            self._add_stats(rejected_count=1, last_error=decision.reason)
+            await connection.websocket.close(code=1008, reason="runtime sub node auth failed")
+            return
+
         try:
             self._registry.register_sub_node(
                 connection.connection_id,
-                payload=dict(frame.payload),
+                payload=payload,
                 remote_address=connection.remote_address,
             )
         except Exception as exc:
@@ -529,10 +557,19 @@ class NsRuntimeNode:
 
     async def _handle_frontend_register(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame) -> None:
         """Register one frontend WebSocket connection."""
+        payload: dict[str, Any] = dict(frame.payload)
+        decision: NsRuntimeAuthDecision = self._authenticator.verify_frontend_payload(payload)
+
+        if not decision.accepted:
+            await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=decision.reason)
+            self._add_stats(rejected_count=1, last_error=decision.reason)
+            await connection.websocket.close(code=1008, reason="runtime frontend auth failed")
+            return
+
         try:
             self._registry.register_frontend(
                 connection.connection_id,
-                payload=dict(frame.payload),
+                payload=payload,
                 remote_address=connection.remote_address,
             )
         except Exception as exc:

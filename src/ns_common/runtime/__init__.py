@@ -3,6 +3,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ns_common.runtime.auth import (
+    NsRuntimeAuthDecision,
+    NsRuntimeAuthPayload,
+    NsRuntimeTokenAuthenticator,
+)
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.contracts import (
     AsyncNsRuntimeOutbox,
@@ -41,7 +46,7 @@ __all__ = [
     "NsRuntimeBroker",
     "NsRuntimeBrokerError",
     "NsRuntimeConfigurationError",
-"NsRuntimeIpcError",
+    "NsRuntimeIpcError",
     "NsRuntimeConfig",
     "NsRuntimeError",
     "NsRuntimeMessage",
@@ -55,4 +60,7 @@ __all__ = [
     "SqlWalRuntimeOutbox",
     "build_async_runtime_outbox",
     "build_runtime_outbox",
+    "NsRuntimeAuthDecision",
+    "NsRuntimeAuthPayload",
+    "NsRuntimeTokenAuthenticator",
 ]

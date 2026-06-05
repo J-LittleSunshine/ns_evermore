@@ -61,6 +61,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override backend runtime connector node id.",
     )
     parser.add_argument(
+        "--auth-enabled",
+        action="store_true",
+        help="Force runtime service auth enabled for this connector process.",
+    )
+    parser.add_argument(
+        "--service-token",
+        type=str,
+        default="",
+        help="Runtime service bearer token used by backend.register.",
+    )
+    parser.add_argument(
         "--sender",
         type=str,
         default="stub",
@@ -90,6 +101,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     node_id: str = str(args.node_id or "").strip()
     if node_id:
         config = replace(config, node_id=node_id)
+
+    if args.auth_enabled:
+        config = replace(config, auth_enabled=True)
+
+    service_token: str = str(args.service_token or "").strip()
+    if service_token:
+        config = replace(config, service_token=service_token)
 
     sender_type: str = str(args.sender or "stub").strip().lower()
 

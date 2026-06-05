@@ -144,19 +144,28 @@ def parse_ack_frame(frame: NsRuntimeWireFrame) -> NsRuntimeAck:
     ).normalized()
 
 
-def build_runtime_register_frame(*, node_id: str, node_role: str, parent_node_id: str | None = None) -> NsRuntimeWireFrame:
+def build_runtime_register_frame(*, node_id: str, node_role: str, parent_node_id: str | None = None, auth_token: str | None = None) -> NsRuntimeWireFrame:
     """Build runtime.register frame for sub node registration."""
+    payload: dict[str, Any] = {
+        "node_id": str(node_id or "").strip(),
+        "node_role": str(node_role or "").strip(),
+        "parent_node_id": str(parent_node_id).strip() if parent_node_id is not None and str(parent_node_id).strip() else None,
+        "capabilities": [
+            "backend_publish_forward",
+            "frontend_local_delivery",
+        ],
+    }
+
+    normalized_auth_token = str(auth_token or "").strip()
+    if normalized_auth_token:
+        payload["auth"] = {
+            "scheme": "bearer",
+            "token": normalized_auth_token,
+        }
+
     return NsRuntimeWireFrame(
         frame_type=RUNTIME_FRAME_RUNTIME_REGISTER,
-        payload={
-            "node_id": str(node_id or "").strip(),
-            "node_role": str(node_role or "").strip(),
-            "parent_node_id": str(parent_node_id).strip() if parent_node_id is not None and str(parent_node_id).strip() else None,
-            "capabilities": [
-                "backend_publish_forward",
-                "frontend_local_delivery",
-            ],
-        },
+        payload=payload,
     )
 
 

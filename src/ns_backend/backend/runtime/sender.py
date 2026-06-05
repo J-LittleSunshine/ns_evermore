@@ -67,7 +67,7 @@ class NsBackendRuntimeWebSocketSender:
             future = asyncio.run_coroutine_threadsafe(self._close_async(), self._loop)
             try:
                 future.result(timeout=2.0)
-            except Exception: # noqa
+            except Exception:  # noqa
                 pass
             self._loop.call_soon_threadsafe(self._loop.stop)
 
@@ -159,6 +159,7 @@ class NsBackendRuntimeWebSocketSender:
         """Send backend.register frame."""
         frame = build_backend_register_frame(
             node_id=self._config.node_id,
+            auth_token=self._config.service_token,
         )
         await self._send_frame(frame)
 

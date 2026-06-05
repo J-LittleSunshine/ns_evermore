@@ -82,6 +82,33 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="For sub nodes, also start inbound WebSocket server for local frontend connections.",
     )
+    parser.add_argument(
+        "--auth-enabled",
+        action="store_true",
+        help="Force runtime service auth enabled for backend and sub-node register frames.",
+    )
+    parser.add_argument(
+        "--service-token",
+        type=str,
+        default="",
+        help="Runtime service bearer token for backend and sub-node connections.",
+    )
+    parser.add_argument(
+        "--frontend-auth-enabled",
+        action="store_true",
+        help="Force runtime frontend bearer auth enabled.",
+    )
+    parser.add_argument(
+        "--frontend-static-token",
+        type=str,
+        default="",
+        help="Static frontend bearer token used when frontend auth is enabled.",
+    )
+    parser.add_argument(
+        "--disallow-anonymous-frontend",
+        action="store_true",
+        help="Reject frontend.register without bearer token when frontend auth is enabled.",
+    )
     return parser
 
 
@@ -106,6 +133,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     master_url: str = str(args.master_url or "").strip()
     if master_url:
         config = replace(config, master_url=master_url)
+
+    if args.auth_enabled:
+        config = replace(config, auth_enabled=True)
+
+    service_token: str = str(args.service_token or "").strip()
+    if service_token:
+        config = replace(config, service_token=service_token)
+
+    if args.frontend_auth_enabled:
+        config = replace(config, frontend_auth_enabled=True)
+
+    frontend_static_token: str = str(args.frontend_static_token or "").strip()
+    if frontend_static_token:
+        config = replace(config, frontend_static_token=frontend_static_token)
+
+    if args.disallow_anonymous_frontend:
+        config = replace(config, allow_anonymous_frontend=False)
 
     sub_serve_inbound = bool(args.serve_inbound)
     if config.node_role == RUNTIME_NODE_ROLE_SUB and int(args.port or 0) > 0:

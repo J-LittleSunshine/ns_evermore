@@ -69,25 +69,33 @@ class NsBackendRuntimeFrame:
         )
 
 
-def build_backend_register_frame(*, node_id: str, service_name: str = "ns_backend", version: str = "", environment: str = "") -> NsBackendRuntimeFrame:
+def build_backend_register_frame(*, node_id: str, service_name: str = "ns_backend", version: str = "", environment: str = "", auth_token: str | None = None) -> NsBackendRuntimeFrame:
     """Build backend.register frame."""
+    payload: dict[str, Any] = {
+        "instance_id": node_id,
+        "service_name": service_name,
+        "version": version,
+        "environment": environment,
+        "capabilities": [
+            "health_report",
+            "business_publish",
+            "outbox_drain",
+            "backend_inbox",
+            "request_reply_inbound",
+        ],
+    }
+
+    normalized_auth_token = str(auth_token or "").strip()
+    if normalized_auth_token:
+        payload["auth"] = {
+            "scheme": "bearer",
+            "token": normalized_auth_token,
+        }
+
     return NsBackendRuntimeFrame(
         frame_type="backend.register",
-        payload={
-            "instance_id": node_id,
-            "service_name": service_name,
-            "version": version,
-            "environment": environment,
-            "capabilities": [
-                "health_report",
-                "business_publish",
-                "outbox_drain",
-                "backend_inbox",
-                "request_reply_inbound",
-            ],
-        },
+        payload=payload,
     )
-
 
 def build_backend_heartbeat_frame(*, node_id: str, health: dict[str, Any] | None = None) -> NsBackendRuntimeFrame:
     """Build backend.heartbeat frame."""

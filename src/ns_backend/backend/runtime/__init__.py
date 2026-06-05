@@ -39,6 +39,7 @@ from ns_backend.backend.runtime.request_reply import (
 )
 from ns_backend.backend.runtime.sender import NsBackendRuntimeWebSocketSender
 
+
 if TYPE_CHECKING:
     pass
 
