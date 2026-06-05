@@ -31,6 +31,7 @@ from ns_common.runtime.permissions import (
     build_runtime_frontend_resource_id,
 )
 from ns_common.runtime.security import NsRuntimeAuthorizationRequest, NsRuntimePrincipal
+from ns_runtime import NsRuntimePresenceStore, build_runtime_presence_store
 from ns_runtime.auth_provider import NsRuntimeAuthProviderError, build_runtime_auth_provider
 from ns_runtime.connection import NsRuntimeConnection
 from ns_runtime.dispatcher import NsRuntimeDispatcher
@@ -97,15 +98,7 @@ class NsRuntimeNode:
     Presence, broker, IAM service token auth, and business routing are deferred.
     """
 
-    def __init__(
-            self,
-            *,
-            config: NsRuntimeConfig | None = None,
-            host: str | None = None,
-            port: int | None = None,
-            path: str | None = None,
-            serve_inbound: bool | None = None,
-    ) -> None:
+    def __init__(self, *, config: NsRuntimeConfig | None = None, host: str | None = None, port: int | None = None, path: str | None = None, serve_inbound: bool | None = None) -> None:
         """Initialize runtime node from ns_common config and optional bind overrides."""
         self._config: NsRuntimeConfig = config or ns_config.runtime_config
         self._host, self._port, self._path = self._resolve_bind_options(host=host, port=port, path=path)
@@ -115,6 +108,7 @@ class NsRuntimeNode:
         self._stats_lock = RLock()
         self._stats = NsRuntimeNodeStats()
         self._registry = NsRuntimeConnectionRegistry()
+        self._presence: NsRuntimePresenceStore = build_runtime_presence_store(self._config)
         self._dispatcher = NsRuntimeDispatcher(config=self._config, registry=self._registry)
         self._auth_provider = build_runtime_auth_provider(self._config)
 
@@ -254,6 +248,7 @@ class NsRuntimeNode:
                         task.result()
             except Exception as exc:
                 if connection is not None:
+                    self._remove_presence(connection.connection_id)
                     self._registry.remove(connection.connection_id, exc)
 
                 self._add_stats(rejected_count=1, last_error=str(exc))
@@ -266,6 +261,7 @@ class NsRuntimeNode:
                 continue
 
             if connection is not None:
+                self._remove_presence(connection.connection_id)
                 self._registry.remove(connection.connection_id)
 
             reconnect_delay = max(float(self._config.retry_base_delay_seconds), 1.0)
@@ -321,6 +317,10 @@ class NsRuntimeNode:
                 except Exception as exc:  # noqa
                     self._add_stats(rejected_count=1, last_error=str(exc))
         finally:
+            # P12-A: remove connection from local presence before registry cleanup.
+            # The memory presence store is local-only and does not affect durable
+            # message reliability.
+            self._remove_presence(connection.connection_id)
             self._registry.remove(connection.connection_id, RuntimeError("runtime websocket connection closed"))
             self._add_stats(active_connection_delta=-1)
 
@@ -426,11 +426,13 @@ class NsRuntimeNode:
             await connection.websocket.close(code=1008, reason="runtime backend auth failed")
             return
 
-        self._registry.register_backend(
+        registered_connection = self._registry.register_backend(
             connection.connection_id,
             payload=payload,
             remote_address=connection.remote_address,
         )
+        self._upsert_presence(registered_connection)
+
         self._add_stats(backend_register_count=1, accepted_count=1)
         await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_ACCEPTED)
 
@@ -554,11 +556,12 @@ class NsRuntimeNode:
             return
 
         try:
-            self._registry.register_sub_node(
+            registered_connection = self._registry.register_sub_node(
                 connection.connection_id,
                 payload=payload,
                 remote_address=connection.remote_address,
             )
+            self._upsert_presence(registered_connection)
         except Exception as exc:
             await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=str(exc))
             self._add_stats(rejected_count=1, last_error=str(exc))
@@ -626,11 +629,12 @@ class NsRuntimeNode:
             return
 
         try:
-            self._registry.register_frontend(
+            registered_connection = self._registry.register_frontend(
                 connection.connection_id,
                 payload=payload,
                 remote_address=connection.remote_address,
             )
+            self._upsert_presence(registered_connection)
         except Exception as exc:
             await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=str(exc))
             self._add_stats(rejected_count=1, last_error=str(exc))
@@ -657,14 +661,7 @@ class NsRuntimeNode:
 
         self._add_stats(frontend_ack_count=1, accepted_count=1)
 
-    async def _authorize_frontend_connect(
-            self,
-            *,
-            principal: NsRuntimePrincipal,
-            connection: NsRuntimeConnection,
-            frame: NsRuntimeWireFrame,
-            payload: dict[str, Any],
-    ) -> None:
+    async def _authorize_frontend_connect(self, *, principal: NsRuntimePrincipal, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, payload: dict[str, Any]) -> None:
         """Authorize frontend connect action.
 
         Anonymous frontend is controlled by authenticate_frontend(). If anonymous
@@ -774,7 +771,7 @@ class NsRuntimeNode:
                 "runtime_sub_upstream_registered": True,
             },
         )
-        self._registry.register_sub_node(
+        registered_connection = self._registry.register_sub_node(
             connection.connection_id,
             payload={
                 "node_id": node_id,
@@ -782,22 +779,13 @@ class NsRuntimeNode:
             },
             remote_address=connection.remote_address,
         )
+        self._upsert_presence(registered_connection)
 
-    async def _ensure_registered_backend_connection(
-            self,
-            connection: NsRuntimeConnection,
-            frame: NsRuntimeWireFrame,
-            *,
-            health: dict[str, Any] | None = None,
-    ) -> bool:
+    async def _ensure_registered_backend_connection(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, *, health: dict[str, Any] | None = None) -> bool:
         """Return whether current connection is a registered backend connection."""
         reason = "backend connection is not registered"
 
-        if (
-                connection.connection_type != "backend"
-                or connection.principal is None
-                or connection.principal.principal_type != RUNTIME_PRINCIPAL_BACKEND_SERVICE
-        ):
+        if connection.connection_type != "backend" or connection.principal is None or connection.principal.principal_type != RUNTIME_PRINCIPAL_BACKEND_SERVICE:
             await self._reject_unregistered_connection(connection, frame, reason=reason)
             return False
 
@@ -806,23 +794,14 @@ class NsRuntimeNode:
             await self._reject_unregistered_connection(connection, frame, reason=reason)
             return False
 
+        self._refresh_presence(backend)
         return True
 
-    async def _ensure_registered_runtime_sub_connection(
-            self,
-            connection: NsRuntimeConnection,
-            frame: NsRuntimeWireFrame,
-            *,
-            health: dict[str, Any] | None = None,
-    ) -> bool:
+    async def _ensure_registered_runtime_sub_connection(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, *, health: dict[str, Any] | None = None) -> bool:
         """Return whether current connection is a registered runtime sub connection."""
         reason = "runtime sub connection is not registered"
 
-        if (
-                connection.connection_type != "runtime_sub"
-                or connection.principal is None
-                or connection.principal.principal_type != RUNTIME_PRINCIPAL_RUNTIME_NODE
-        ):
+        if connection.connection_type != "runtime_sub" or connection.principal is None or connection.principal.principal_type != RUNTIME_PRINCIPAL_RUNTIME_NODE:
             await self._reject_unregistered_connection(connection, frame, reason=reason)
             return False
 
@@ -831,15 +810,10 @@ class NsRuntimeNode:
             await self._reject_unregistered_connection(connection, frame, reason=reason)
             return False
 
+        self._refresh_presence(sub_node)
         return True
 
-    async def _ensure_registered_frontend_connection(
-            self,
-            connection: NsRuntimeConnection,
-            frame: NsRuntimeWireFrame,
-            *,
-            health: dict[str, Any] | None = None,
-    ) -> bool:
+    async def _ensure_registered_frontend_connection(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, *, health: dict[str, Any] | None = None) -> bool:
         """Return whether current connection is a registered frontend connection."""
         reason = "frontend connection is not registered"
 
@@ -859,15 +833,10 @@ class NsRuntimeNode:
             await self._reject_unregistered_connection(connection, frame, reason=reason)
             return False
 
+        self._refresh_presence(frontend)
         return True
 
-    async def _reject_unregistered_connection(
-            self,
-            connection: NsRuntimeConnection,
-            frame: NsRuntimeWireFrame,
-            *,
-            reason: str,
-    ) -> None:
+    async def _reject_unregistered_connection(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, *, reason: str) -> None:
         """Reject a protected frame sent by an unregistered or mismatched connection."""
         await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=reason)
         self._add_stats(rejected_count=1, last_error=reason)
@@ -876,6 +845,27 @@ class NsRuntimeNode:
         # sent by a connection registered as another role. Close to reduce abuse.
         with contextlib.suppress(Exception):
             await connection.websocket.close(code=1008, reason=reason)
+
+    def _upsert_presence(self, connection: NsRuntimeConnection) -> None:
+        """Upsert local runtime presence for one registered connection."""
+        self._presence.upsert_connection(connection, node_id=self._config.node_id)
+
+    def _refresh_presence(self, connection: NsRuntimeConnection) -> None:
+        """Refresh local runtime presence for one registered connection."""
+        record = self._presence.refresh_connection(
+            connection.connection_id,
+            last_seen_epoch_ms=connection.last_seen_epoch_ms,
+            health=dict(connection.health or {}),
+        )
+        if record is None:
+            # Presence is derived state. If it is missing because of a process-local
+            # reset or future backend-specific eviction, rebuild it from registry
+            # connection state without interrupting the runtime frame.
+            self._upsert_presence(connection)
+
+    def _remove_presence(self, connection_id: str) -> None:
+        """Remove one connection from local runtime presence."""
+        self._presence.remove_connection(connection_id)
 
     async def _send_ack(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, *, status: str, reason: str | None = None) -> None:
         """Send one ack frame through a runtime connection."""
