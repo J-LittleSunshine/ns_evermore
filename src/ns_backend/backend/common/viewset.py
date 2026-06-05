@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, NoReturn
-from asgiref.sync import async_to_sync
+
 from adrf.viewsets import ViewSet
+from asgiref.sync import async_to_sync
 from django.http import JsonResponse
 
 from ns_backend.backend.common.logger import iam_logger, logger
