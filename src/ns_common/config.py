@@ -12,69 +12,9 @@ from typing import Any, ClassVar, Dict, Literal
 import portalocker
 
 from ns_common import NS_CONFIG_FILE_PATH, TMP_DIR, NS_ENV
-
-
-@dataclass(slots=True, kw_only=True)
-class NsCacheConfig:
-    """Unified cache configuration loaded through ns_config."""
-
-    backend: Literal["default", "sql_wal", "redis", "valkey"] = "default"
-    location: str = ""
-    key_prefix: str = "ns"
-    default_timeout_seconds: int | None = 300
-    serializer: Literal["pickle", "json", "raw"] = "pickle"
-
-    sql_table: str = "ns_cache"
-    sql_timeout_seconds: float = 5.0
-    sql_max_entries: int = 10000
-    sql_cull_frequency: int = 3
-
-    socket_timeout: float = 3.0
-    socket_connect_timeout: float = 3.0
-    max_connections: int = 64
-    health_check_interval: int = 30
-
-    def resolved_backend(self) -> Literal["sql_wal", "redis", "valkey"]:
-        """Resolve default backend to sql_wal without probing external services."""
-        if self.backend in {"default", "sql_wal"}:
-            return "sql_wal"
-        return self.backend
-
-
-@dataclass(slots=True, kw_only=True)
-class NsObjectStorageConfig:
-    """Unified object storage configuration loaded through ns_config."""
-
-    backend: Literal["minio", "local_fs", "s3", "oss", "cos", "obs", "azure_blob"] = "local_fs"
-
-    endpoint: str = ""
-    access_key: str = ""
-    secret_key: str = ""
-    secure: bool = False
-    region: str | None = None
-
-    default_bucket: str = "ns-default"
-    auto_create_bucket: bool = False
-    key_prefix: str = "ns"
-
-    presigned_get_expires_seconds: int = 3600
-    presigned_put_expires_seconds: int = 900
-
-    connect_timeout_seconds: float = 3.0
-    read_timeout_seconds: float = 30.0
-    max_pool_connections: int = 64
-
-    local_root_path: str = "object_storage"
-
-    multipart_threshold_size: int = 100 * 1024 * 1024
-    multipart_part_size: int = 64 * 1024 * 1024
-    max_object_size: int | None = None
-
-    extra_headers: dict[str, str] = field(default_factory=dict)
-
-    def resolved_backend(self) -> Literal["minio", "local_fs", "s3", "oss", "cos", "obs", "azure_blob"]:
-        """Resolve configured object storage backend without runtime probing."""
-        return self.backend
+from ns_common.cache import NsCacheConfig
+from ns_common.runtime import NsRuntimeConfig
+from ns_common.storage.config import NsObjectStorageConfig
 
 
 @dataclass(slots=True, kw_only=True)
@@ -164,20 +104,11 @@ class _NsBackendConfig:
 
 
 @dataclass(slots=True, kw_only=True)
-class _NsRuntimeConfig:
-    pass
-
-
-@dataclass(slots=True, kw_only=True)
-class _NsExecutorConfig:
-    pass
-
-
-@dataclass(slots=True, kw_only=True)
 class NsConfig:
     backend_config: _NsBackendConfig = field(default_factory=_NsBackendConfig)
     cache_config: NsCacheConfig = field(default_factory=NsCacheConfig)
     object_storage_config: NsObjectStorageConfig = field(default_factory=NsObjectStorageConfig)
+    runtime_config: NsRuntimeConfig = field(default_factory=NsRuntimeConfig)
     log_config: _NsLogConfig = field(default_factory=_NsLogConfig)
     _lock: ClassVar[RLock] = RLock()
 
@@ -209,11 +140,18 @@ class NsConfig:
                 if not isinstance(object_storage_config_raw, dict):
                     raise ValueError("object_storage_config/object_storage must be a JSON object")
 
+                runtime_config_raw: Any = raw_config.get("runtime_config")
+                if runtime_config_raw is None:
+                    runtime_config_raw = raw_config.get("runtime", {})
+                if not isinstance(runtime_config_raw, dict):
+                    raise ValueError("runtime_config/runtime must be a JSON object")
+
                 normalized_backend_config = cls._normalize_backend_config(dict(backend_config_raw))
                 config: NsConfig = cls(
                     backend_config=_NsBackendConfig(**normalized_backend_config),
                     cache_config=NsCacheConfig(**cache_config_raw),
                     object_storage_config=NsObjectStorageConfig(**object_storage_config_raw),
+                    runtime_config=NsRuntimeConfig(**runtime_config_raw),
                     log_config=_NsLogConfig(**log_config_raw)
                 )
                 config._validate()
@@ -245,6 +183,8 @@ class NsConfig:
         if len(allowed_hosts) == 1 and allowed_hosts[0] == "*":
             if NS_ENV not in {"dev", "local"}:
                 print("Warning: The system detected that the current environment is not a development or local environment, but the allowed hosts are set to '*'. For security reasons, it is recommended to set the allowed hosts to specific domain names or IP addresses for testing or production.")
+
+        self.runtime_config.validate()
 
     @classmethod
     def _normalize_backend_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:

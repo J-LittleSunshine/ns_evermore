@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ns_common.cache.config import NsCacheConfig
 from ns_common.cache.constants import DefaultCacheTimeout, NS_CACHE_DEFAULT_TIMEOUT
 from ns_common.cache.core import NsCacheClient, AsyncNsCacheClient
 from ns_common.cache.errors import NsCacheConfigurationError
@@ -15,5 +16,6 @@ __all__ = [
     "AsyncNsCacheClient",
     "DefaultCacheTimeout",
     "NS_CACHE_DEFAULT_TIMEOUT",
-    "NsCacheConfigurationError"
+    "NsCacheConfigurationError",
+    "NsCacheConfig"
 ]

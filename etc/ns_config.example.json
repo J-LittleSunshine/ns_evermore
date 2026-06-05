@@ -83,6 +83,35 @@
     "key_prefix": "ns",
     "local_root_path": "object_storage",
     "max_object_size": null
+  },
+  "runtime_config": {
+    "enabled": false,
+    "node_id": "runtime-default",
+    "node_role": "standalone",
+    "master_url": "ws://127.0.0.1:8765/_runtime/backend/connect",
+    "backend_outbox_backend": "sql_wal",
+    "backend_outbox_location": "runtime/backend_outbox.sqlite3",
+    "runtime_ingress_backend": "sql_wal",
+    "runtime_ingress_location": "runtime/runtime_ingress.sqlite3",
+    "runtime_broker_backend": "memory",
+    "runtime_broker_location": "",
+    "runtime_presence_backend": "memory",
+    "runtime_presence_location": "",
+    "ipc_mode": "unix_socket",
+    "ipc_socket_path": "/run/ns_evermore/backend-runtime-connector.sock",
+    "ipc_host": "127.0.0.1",
+    "ipc_port": 18766,
+    "heartbeat_interval_seconds": 15,
+    "health_report_interval_seconds": 30,
+    "ack_timeout_seconds": 5.0,
+    "retry_base_delay_seconds": 1.0,
+    "retry_max_delay_seconds": 60.0,
+    "max_attempts": 20,
+    "outbox_claim_batch_size": 100,
+    "outbox_max_pending_messages": 100000,
+    "outbox_max_storage_mb": 1024,
+    "master_handle_when_no_sub_node": true,
+    "master_forward_policy": "sub_first"
   }
 }
 
