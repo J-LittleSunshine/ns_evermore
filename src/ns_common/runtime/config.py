@@ -33,7 +33,9 @@ RuntimePresenceBackend = Literal["memory", "redis", "valkey", "sql_wal"]
 RuntimeIpcMode = Literal["unix_socket", "tcp", "memory"]
 RuntimeMasterForwardPolicy = Literal["local_first", "sub_first", "sub_required"]
 RuntimeAuthProvider = Literal["static", "remote_iam"]
-
+IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS: tuple[str, ...] = (
+    RUNTIME_BACKEND_MEMORY,
+)
 
 @dataclass(slots=True, kw_only=True)
 class NsRuntimeConfig:
@@ -106,6 +108,26 @@ class NsRuntimeConfig:
         """Resolve runtime presence backend."""
         return self.runtime_presence_backend
 
+    def is_runtime_presence_backend_implemented(self) -> bool:
+        """Return whether configured runtime presence backend is implemented."""
+        return self.resolved_runtime_presence_backend() in IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS
+
+    def ensure_runtime_presence_backend_implemented(self) -> None:
+        """Ensure configured runtime presence backend is implemented.
+
+        Redis / ValKey / sql_wal presence backends are known extension points, but
+        P12-D intentionally keeps them disabled until their concrete consistency
+        and expiration semantics are implemented.
+        """
+        backend = self.resolved_runtime_presence_backend()
+        if backend in IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS:
+            return
+
+        raise NsRuntimeConfigurationError(
+            f"runtime runtime_presence_backend is not implemented yet: {backend}; "
+            f"implemented backends: {', '.join(IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS)}"
+        )
+
     def validate(self) -> None:
         """Validate runtime configuration."""
         if self.node_role not in {RUNTIME_NODE_ROLE_STANDALONE, RUNTIME_NODE_ROLE_MASTER, RUNTIME_NODE_ROLE_SUB}:
@@ -125,6 +147,11 @@ class NsRuntimeConfig:
 
         if self.runtime_presence_backend not in {RUNTIME_BACKEND_MEMORY, RUNTIME_BACKEND_REDIS, RUNTIME_BACKEND_VALKEY, RUNTIME_BACKEND_SQL_WAL}:
             raise NsRuntimeConfigurationError(f"runtime runtime_presence_backend is invalid: {self.runtime_presence_backend}")
+
+        if self.runtime_presence_backend not in {RUNTIME_BACKEND_MEMORY, RUNTIME_BACKEND_REDIS, RUNTIME_BACKEND_VALKEY, RUNTIME_BACKEND_SQL_WAL}:
+            raise NsRuntimeConfigurationError(f"runtime runtime_presence_backend is invalid: {self.runtime_presence_backend}")
+
+        self.ensure_runtime_presence_backend_implemented()
 
         if self.ipc_mode not in {RUNTIME_CONNECTOR_IPC_UNIX_SOCKET, RUNTIME_CONNECTOR_IPC_TCP, RUNTIME_CONNECTOR_IPC_MEMORY}:
             raise NsRuntimeConfigurationError(f"runtime ipc_mode is invalid: {self.ipc_mode}")

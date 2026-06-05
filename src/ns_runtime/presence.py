@@ -404,8 +404,10 @@ class MemoryRuntimePresenceStore:
 def build_runtime_presence_store(config: NsRuntimeConfig | None = None) -> NsRuntimePresenceStore:
     """Build runtime presence store from runtime config.
 
-    P12-A supports memory only. Redis/ValKey/sql_wal presence backends are
-    intentionally deferred so the framework can first stabilize lifecycle hooks.
+    P12-D keeps presence backend extensibility explicit:
+    - memory is implemented now
+    - redis / valkey / sql_wal are reserved extension points
+    - unimplemented backends fail fast with a configuration error
     """
     if config is None:
         from ns_common.config import ns_config
@@ -413,6 +415,11 @@ def build_runtime_presence_store(config: NsRuntimeConfig | None = None) -> NsRun
         config = ns_config.runtime_config
 
     backend = str(config.resolved_runtime_presence_backend() or RUNTIME_BACKEND_MEMORY).strip().lower()
+
+    # Keep implementation availability centralized in NsRuntimeConfig so direct
+    # config.validate() and runtime factory startup have the same semantics.
+    config.ensure_runtime_presence_backend_implemented()
+
     if backend == RUNTIME_BACKEND_MEMORY:
         return MemoryRuntimePresenceStore()
 
