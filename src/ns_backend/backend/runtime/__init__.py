@@ -9,7 +9,7 @@ from ns_backend.backend.runtime.connector import (
     NsBackendRuntimeConnectorStats,
     NsBackendRuntimeStubSender,
 )
-from ns_backend.backend.runtime.connector_cli import main as run_backend_runtime_connector_main
+
 from ns_backend.backend.runtime.ipc import (
     NsRuntimeIpcClient,
     NsRuntimeIpcRequest,
@@ -37,5 +37,4 @@ __all__ = [
     "build_backend_publish_frame",
     "build_backend_register_frame",
     "parse_ack_frame",
-    "run_backend_runtime_connector_main",
 ]
