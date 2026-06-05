@@ -148,9 +148,6 @@ class NsRuntimeConfig:
         if self.runtime_presence_backend not in {RUNTIME_BACKEND_MEMORY, RUNTIME_BACKEND_REDIS, RUNTIME_BACKEND_VALKEY, RUNTIME_BACKEND_SQL_WAL}:
             raise NsRuntimeConfigurationError(f"runtime runtime_presence_backend is invalid: {self.runtime_presence_backend}")
 
-        if self.runtime_presence_backend not in {RUNTIME_BACKEND_MEMORY, RUNTIME_BACKEND_REDIS, RUNTIME_BACKEND_VALKEY, RUNTIME_BACKEND_SQL_WAL}:
-            raise NsRuntimeConfigurationError(f"runtime runtime_presence_backend is invalid: {self.runtime_presence_backend}")
-
         self.ensure_runtime_presence_backend_implemented()
 
         if self.ipc_mode not in {RUNTIME_CONNECTOR_IPC_UNIX_SOCKET, RUNTIME_CONNECTOR_IPC_TCP, RUNTIME_CONNECTOR_IPC_MEMORY}:
