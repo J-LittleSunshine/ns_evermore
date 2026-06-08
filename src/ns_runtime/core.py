@@ -10,9 +10,13 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ns_common.config import ns_config
+from ns_common.runtime.broker import (
+    NsRuntimeBrokerEnvelope,
+    build_runtime_broker,
+    build_runtime_broker_cluster_channel,
+    build_runtime_broker_node_channel,
+)
 from ns_common.runtime.config import NsRuntimeConfig
-from ns_common.runtime.broker import build_runtime_broker, build_runtime_broker_cluster_channel, build_runtime_broker_node_channel
-from ns_common.runtime.contracts import NsRuntimeBroker
 from ns_common.runtime.constants import (
     RUNTIME_ACK_STATUS_ACCEPTED,
     RUNTIME_ACK_STATUS_REJECTED,
@@ -20,6 +24,7 @@ from ns_common.runtime.constants import (
     RUNTIME_NODE_ROLE_STANDALONE,
     RUNTIME_NODE_ROLE_SUB,
 )
+from ns_common.runtime.contracts import NsRuntimeBroker
 from ns_common.runtime.errors import NsRuntimeConfigurationError, NsRuntimeValidationError
 from ns_common.runtime.messages import NsRuntimeAck, NsRuntimeMessage
 from ns_common.runtime.permissions import (
@@ -46,6 +51,8 @@ from ns_runtime.protocol import (
     RUNTIME_FRAME_FRONTEND_ACK,
     RUNTIME_FRAME_FRONTEND_HEARTBEAT,
     RUNTIME_FRAME_FRONTEND_REGISTER,
+    RUNTIME_FRAME_FRONTEND_ROOM_JOIN,
+    RUNTIME_FRAME_FRONTEND_ROOM_LEAVE,
     RUNTIME_FRAME_RUNTIME_FORWARD,
     RUNTIME_FRAME_RUNTIME_HEARTBEAT,
     RUNTIME_FRAME_RUNTIME_REGISTER,
@@ -55,9 +62,10 @@ from ns_runtime.protocol import (
     build_backend_deliver_frame,
     build_runtime_heartbeat_frame,
     build_runtime_register_frame,
+    frontend_rooms_from_payload,
     parse_ack_frame,
     runtime_message_from_forward_payload,
-    runtime_message_from_payload, RUNTIME_FRAME_FRONTEND_ROOM_LEAVE, RUNTIME_FRAME_FRONTEND_ROOM_JOIN, frontend_rooms_from_payload,
+    runtime_message_from_payload,
 )
 from ns_runtime.registry import NsRuntimeConnectionRegistry
 
@@ -83,12 +91,17 @@ class NsRuntimeNodeStats:
     frontend_room_join_count: int = 0
     frontend_room_leave_count: int = 0
 
+    broker_envelope_count: int = 0
+    broker_ignored_envelope_count: int = 0
+    broker_error_count: int = 0
+
     accepted_count: int = 0
     rejected_count: int = 0
     forwarded_count: int = 0
     local_handled_count: int = 0
 
     last_error: str | None = None
+    last_broker_event_type: str | None = None
 
 
 class NsRuntimeNode:
@@ -117,6 +130,7 @@ class NsRuntimeNode:
         self._broker: NsRuntimeBroker = build_runtime_broker(self._config)
         self._broker_cluster_channel: str = build_runtime_broker_cluster_channel()
         self._broker_node_channel: str = build_runtime_broker_node_channel(node_id=self._config.node_id)
+        self._last_broker_envelope: NsRuntimeBrokerEnvelope | None = None
         self._dispatcher = NsRuntimeDispatcher(config=self._config, registry=self._registry)
         self._auth_provider = build_runtime_auth_provider(self._config)
 
@@ -156,13 +170,20 @@ class NsRuntimeNode:
     def broker_report(self) -> dict[str, Any]:
         """Return local runtime broker report.
 
-        P13-B only exposes broker lifecycle metadata. It does not imply that
-        runtime dispatch has switched to broker-based cross-node routing.
+        P13-C exposes listener metadata only. Runtime dispatch has not switched
+        to broker-based cross-node routing.
         """
+        last_envelope = self._last_broker_envelope
         return {
             "backend": self._config.resolved_runtime_broker_backend(),
             "location_configured": bool(str(self._config.runtime_broker_location or "").strip()),
             "channels": self.broker_channels(),
+            "listener": {
+                "enabled": True,
+                "last_event_type": last_envelope.event_type if last_envelope is not None else None,
+                "last_source_node_id": last_envelope.source_node_id if last_envelope is not None else None,
+                "last_message_id": last_envelope.message_id if last_envelope is not None else None,
+            },
         }
 
     def stats_dict(self) -> dict[str, Any]:
@@ -251,6 +272,8 @@ class NsRuntimeNode:
 
     async def _run_forever_async(self) -> None:
         """Run runtime async lifecycle and close broker on exit."""
+        broker_listener_task = asyncio.create_task(self._broker_listener_loop())
+
         try:
             if self._config.node_role == RUNTIME_NODE_ROLE_SUB:
                 await self._run_sub_node()
@@ -258,7 +281,100 @@ class NsRuntimeNode:
 
             await self._run_server()
         finally:
+            broker_listener_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await broker_listener_task
+
             await self._close_broker()
+
+    async def _broker_listener_loop(self) -> None:
+        """Subscribe to runtime broker channels and consume envelopes.
+
+        P13-C is a skeleton only. It validates and records broker envelopes but
+        does not dispatch messages through broker yet.
+        """
+        retry_delay: float = max(float(self._config.retry_base_delay_seconds), 1.0)
+        max_delay: float = max(float(self._config.retry_max_delay_seconds), retry_delay)
+
+        while not self._stop_event.is_set():
+            try:
+                await self._consume_broker_channels()
+                retry_delay = max(float(self._config.retry_base_delay_seconds), 1.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._add_stats(
+                    broker_error_count=1,
+                    last_error=f"runtime broker listener failed: {exc}",
+                )
+
+                if self._stop_event.is_set():
+                    break
+
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, max_delay)
+
+    async def _consume_broker_channels(self) -> None:
+        """Consume cluster and node broker channels until cancelled."""
+        cluster_task = asyncio.create_task(self._consume_broker_channel(self._broker_cluster_channel))
+        node_task = asyncio.create_task(self._consume_broker_channel(self._broker_node_channel))
+
+        tasks = {cluster_task, node_task}
+        try:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+
+            for task in done:
+                task.result()
+
+            for task in pending:
+                task.cancel()
+
+            for task in pending:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+
+            for task in tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+    async def _consume_broker_channel(self, channel: str) -> None:
+        """Consume one broker channel."""
+        async for payload in self._broker.subscribe(channel):
+            try:
+                envelope = NsRuntimeBrokerEnvelope.from_bytes(payload)
+                await self._handle_broker_envelope(channel=channel, envelope=envelope)
+            except Exception as exc:
+                self._add_stats(
+                    broker_error_count=1,
+                    last_error=f"runtime broker envelope rejected from {channel}: {exc}",
+                )
+
+    async def _handle_broker_envelope(self, *, channel: str, envelope: NsRuntimeBrokerEnvelope) -> None:
+        """Handle one broker envelope without dispatching it.
+
+        This skeleton intentionally records envelope metadata only. Cross-node
+        routing will be introduced in a later phase after channel semantics are
+        stable.
+        """
+        _ = channel
+        normalized = envelope.normalized()
+        self._last_broker_envelope = normalized
+
+        if normalized.source_node_id == self._config.node_id:
+            self._add_stats(
+                broker_ignored_envelope_count=1,
+                last_broker_event_type=normalized.event_type,
+            )
+            return
+
+        self._add_stats(
+            broker_envelope_count=1,
+            last_broker_event_type=normalized.event_type,
+        )
 
     def stop(self) -> None:
         """Stop runtime node."""
@@ -1098,11 +1214,15 @@ class NsRuntimeNode:
             frontend_ack_count: int = 0,
             frontend_room_join_count: int = 0,
             frontend_room_leave_count: int = 0,
+            broker_envelope_count: int = 0,
+            broker_ignored_envelope_count: int = 0,
+            broker_error_count: int = 0,
             accepted_count: int = 0,
             rejected_count: int = 0,
             forwarded_count: int = 0,
             local_handled_count: int = 0,
             last_error: str | None = None,
+            last_broker_event_type: str | None = None,
     ) -> None:
         """Update node stats."""
         with self._stats_lock:
@@ -1121,11 +1241,15 @@ class NsRuntimeNode:
                 frontend_ack_count=self._stats.frontend_ack_count + frontend_ack_count,
                 frontend_room_join_count=self._stats.frontend_room_join_count + frontend_room_join_count,
                 frontend_room_leave_count=self._stats.frontend_room_leave_count + frontend_room_leave_count,
+                broker_envelope_count=self._stats.broker_envelope_count + broker_envelope_count,
+                broker_ignored_envelope_count=self._stats.broker_ignored_envelope_count + broker_ignored_envelope_count,
+                broker_error_count=self._stats.broker_error_count + broker_error_count,
                 accepted_count=self._stats.accepted_count + accepted_count,
                 rejected_count=self._stats.rejected_count + rejected_count,
                 forwarded_count=self._stats.forwarded_count + forwarded_count,
                 local_handled_count=self._stats.local_handled_count + local_handled_count,
                 last_error=last_error if last_error is not None else self._stats.last_error,
+                last_broker_event_type=last_broker_event_type if last_broker_event_type is not None else self._stats.last_broker_event_type,
             )
 
     @staticmethod
