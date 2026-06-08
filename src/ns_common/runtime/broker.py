@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
+import time
+import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ns_common.runtime.config import NsRuntimeConfig
@@ -12,7 +16,11 @@ from ns_common.runtime.constants import (
     RUNTIME_BACKEND_REDIS,
     RUNTIME_BACKEND_VALKEY,
 )
-from ns_common.runtime.errors import NsRuntimeBrokerError, NsRuntimeConfigurationError
+from ns_common.runtime.errors import NsRuntimeBrokerError, NsRuntimeConfigurationError, NsRuntimeValidationError
+
+RUNTIME_BROKER_DEFAULT_NAMESPACE = "ns_runtime"
+RUNTIME_BROKER_CLUSTER_CHANNEL = "cluster"
+RUNTIME_BROKER_NODE_CHANNEL_PREFIX = "node"
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -25,6 +33,100 @@ class NsRuntimeBrokerMessage:
 
     channel: str
     payload: bytes
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class NsRuntimeBrokerEnvelope:
+    """Runtime broker payload envelope.
+
+    P13-B only defines a stable transport envelope. Runtime core does not yet
+    use broker messages for cross-node routing, so this class is intentionally
+    generic and transport-oriented.
+    """
+
+    event_type: str
+    source_node_id: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    target_node_id: str | None = None
+    message_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    trace_id: str | None = None
+    created_at_epoch_ms: int = field(default_factory=lambda: int(time.time() * 1000))
+
+    def normalized(self) -> "NsRuntimeBrokerEnvelope":
+        """Return normalized broker envelope."""
+        event_type = str(self.event_type or "").strip()
+        if not event_type:
+            raise NsRuntimeValidationError("runtime broker envelope event_type is required")
+
+        source_node_id = str(self.source_node_id or "").strip()
+        if not source_node_id:
+            raise NsRuntimeValidationError("runtime broker envelope source_node_id is required")
+
+        target_node_id = str(self.target_node_id).strip() if self.target_node_id is not None and str(self.target_node_id).strip() else None
+        message_id = str(self.message_id or "").strip() or uuid.uuid4().hex
+        trace_id = str(self.trace_id).strip() if self.trace_id is not None and str(self.trace_id).strip() else None
+
+        return NsRuntimeBrokerEnvelope(
+            event_type=event_type,
+            source_node_id=source_node_id,
+            target_node_id=target_node_id,
+            message_id=message_id,
+            trace_id=trace_id,
+            created_at_epoch_ms=int(self.created_at_epoch_ms or int(time.time() * 1000)),
+            payload=dict(self.payload or {}),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize broker envelope to dict."""
+        normalized = self.normalized()
+        return {
+            "event_type": normalized.event_type,
+            "source_node_id": normalized.source_node_id,
+            "target_node_id": normalized.target_node_id,
+            "message_id": normalized.message_id,
+            "trace_id": normalized.trace_id,
+            "created_at_epoch_ms": int(normalized.created_at_epoch_ms),
+            "payload": dict(normalized.payload),
+        }
+
+    def to_bytes(self) -> bytes:
+        """Serialize broker envelope to compact UTF-8 JSON bytes."""
+        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "NsRuntimeBrokerEnvelope":
+        """Deserialize broker envelope from dict."""
+        if not isinstance(data, dict):
+            raise NsRuntimeValidationError("runtime broker envelope must be a JSON object")
+
+        payload_raw: Any = data.get("payload") or {}
+        if not isinstance(payload_raw, dict):
+            raise NsRuntimeValidationError("runtime broker envelope payload must be a JSON object")
+
+        return cls(
+            event_type=str(data.get("event_type") or "").strip(),
+            source_node_id=str(data.get("source_node_id") or "").strip(),
+            target_node_id=str(data.get("target_node_id")).strip() if data.get("target_node_id") is not None and str(data.get("target_node_id")).strip() else None,
+            message_id=str(data.get("message_id") or "").strip() or uuid.uuid4().hex,
+            trace_id=str(data.get("trace_id")).strip() if data.get("trace_id") is not None and str(data.get("trace_id")).strip() else None,
+            created_at_epoch_ms=int(data.get("created_at_epoch_ms") or int(time.time() * 1000)),
+            payload=dict(payload_raw),
+        ).normalized()
+
+    @classmethod
+    def from_bytes(cls, payload: bytes | bytearray | str) -> "NsRuntimeBrokerEnvelope":
+        """Deserialize broker envelope from UTF-8 JSON bytes."""
+        if isinstance(payload, bytes | bytearray):
+            raw_text = bytes(payload).decode("utf-8")
+        else:
+            raw_text = str(payload)
+
+        try:
+            data: Any = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            raise NsRuntimeValidationError("runtime broker envelope payload is invalid JSON") from exc
+
+        return cls.from_dict(data)
 
 
 class MemoryRuntimeBroker:
@@ -47,7 +149,7 @@ class MemoryRuntimeBroker:
 
     async def publish(self, channel: str, payload: bytes) -> None:
         """Publish encoded runtime message to one local memory channel."""
-        normalized_channel = self._normalize_channel(channel)
+        normalized_channel = normalize_runtime_broker_channel(channel)
         normalized_payload = self._normalize_payload(payload)
 
         async with self._lock:
@@ -59,7 +161,7 @@ class MemoryRuntimeBroker:
 
     async def subscribe(self, channel: str) -> AsyncIterator[bytes]:
         """Subscribe to one local memory channel and yield payload bytes."""
-        normalized_channel = self._normalize_channel(channel)
+        normalized_channel = normalize_runtime_broker_channel(channel)
         queue: asyncio.Queue[bytes | None] = asyncio.Queue()
 
         async with self._lock:
@@ -103,14 +205,6 @@ class MemoryRuntimeBroker:
             raise NsRuntimeBrokerError("runtime memory broker is closed")
 
     @staticmethod
-    def _normalize_channel(channel: str) -> str:
-        """Normalize broker channel."""
-        normalized = str(channel or "").strip()
-        if not normalized:
-            raise NsRuntimeBrokerError("runtime broker channel is required")
-        return normalized
-
-    @staticmethod
     def _normalize_payload(payload: bytes) -> bytes:
         """Normalize broker payload."""
         if isinstance(payload, bytes):
@@ -144,7 +238,7 @@ class RedisRuntimeBroker:
 
     async def publish(self, channel: str, payload: bytes) -> None:
         """Publish encoded runtime message through Redis/ValKey PubSub."""
-        normalized_channel = self._normalize_channel(channel)
+        normalized_channel = normalize_runtime_broker_channel(channel)
         normalized_payload = self._normalize_payload(payload)
         client = await self._get_client()
 
@@ -155,7 +249,7 @@ class RedisRuntimeBroker:
 
     async def subscribe(self, channel: str) -> AsyncIterator[bytes]:
         """Subscribe to one Redis/ValKey PubSub channel and yield payload bytes."""
-        normalized_channel = self._normalize_channel(channel)
+        normalized_channel = normalize_runtime_broker_channel(channel)
         client = await self._get_client()
         pubsub = client.pubsub()
 
@@ -185,9 +279,9 @@ class RedisRuntimeBroker:
                 return
             raise NsRuntimeBrokerError(f"runtime redis broker subscribe failed: {exc}") from exc
         finally:
-            with contextlib_suppress():
+            with contextlib.suppress(Exception):
                 await pubsub.unsubscribe(normalized_channel)
-            with contextlib_suppress():
+            with contextlib.suppress(Exception):
                 await pubsub.close()
 
     async def close(self) -> None:
@@ -198,7 +292,7 @@ class RedisRuntimeBroker:
             self._client = None
 
         if client is not None:
-            with contextlib_suppress():
+            with contextlib.suppress(Exception):
                 await client.aclose()
 
     async def _get_client(self) -> Any:
@@ -225,14 +319,6 @@ class RedisRuntimeBroker:
             return self._client
 
     @staticmethod
-    def _normalize_channel(channel: str) -> str:
-        """Normalize broker channel."""
-        normalized = str(channel or "").strip()
-        if not normalized:
-            raise NsRuntimeBrokerError("runtime broker channel is required")
-        return normalized
-
-    @staticmethod
     def _normalize_payload(payload: bytes) -> bytes:
         """Normalize broker payload."""
         if isinstance(payload, bytes):
@@ -244,27 +330,40 @@ class RedisRuntimeBroker:
         raise NsRuntimeBrokerError("runtime broker payload must be bytes")
 
 
-class contextlib_suppress:
-    """Small async-compatible suppress context manager.
-
-    Avoid importing contextlib only for two cleanup calls while keeping cleanup
-    failures explicitly ignored.
-    """
-
-    def __init__(self, *exceptions: type[BaseException]) -> None:
-        """Initialize suppress context manager."""
-        self._exceptions = exceptions or (Exception,)
-
-    def __enter__(self) -> None:
-        """Enter context manager."""
-
-    def __exit__(self, exc_type, exc, traceback) -> bool:
-        """Suppress configured exception types."""
-        _ = exc, traceback
-        return exc_type is not None and issubclass(exc_type, self._exceptions)
+def normalize_runtime_broker_channel(channel: str) -> str:
+    """Normalize runtime broker channel name."""
+    normalized = str(channel or "").strip()
+    if not normalized:
+        raise NsRuntimeBrokerError("runtime broker channel is required")
+    return normalized
 
 
-def build_runtime_broker(config: NsRuntimeConfig | None = None):
+def build_runtime_broker_channel(*, namespace: str, name: str) -> str:
+    """Build namespaced runtime broker channel."""
+    normalized_namespace = str(namespace or "").strip() or RUNTIME_BROKER_DEFAULT_NAMESPACE
+    normalized_name = str(name or "").strip()
+
+    if not normalized_name:
+        raise NsRuntimeBrokerError("runtime broker channel name is required")
+
+    return f"{normalized_namespace}:{normalized_name}"
+
+
+def build_runtime_broker_cluster_channel(*, namespace: str = RUNTIME_BROKER_DEFAULT_NAMESPACE) -> str:
+    """Build runtime cluster-level broker channel."""
+    return build_runtime_broker_channel(namespace=namespace, name=RUNTIME_BROKER_CLUSTER_CHANNEL)
+
+
+def build_runtime_broker_node_channel(*, node_id: str, namespace: str = RUNTIME_BROKER_DEFAULT_NAMESPACE) -> str:
+    """Build runtime node-specific broker channel."""
+    normalized_node_id = str(node_id or "").strip()
+    if not normalized_node_id:
+        raise NsRuntimeBrokerError("runtime broker node_id is required")
+
+    return build_runtime_broker_channel(namespace=namespace, name=f"{RUNTIME_BROKER_NODE_CHANNEL_PREFIX}:{normalized_node_id}")
+
+
+def build_runtime_broker(config: NsRuntimeConfig | None = None) -> MemoryRuntimeBroker | RedisRuntimeBroker:
     """Build runtime broker from runtime config.
 
     P13-A provides:

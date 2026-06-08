@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 from ns_common.config import ns_config
 from ns_common.runtime.config import NsRuntimeConfig
+from ns_common.runtime.broker import build_runtime_broker, build_runtime_broker_cluster_channel, build_runtime_broker_node_channel
+from ns_common.runtime.contracts import NsRuntimeBroker
 from ns_common.runtime.constants import (
     RUNTIME_ACK_STATUS_ACCEPTED,
     RUNTIME_ACK_STATUS_REJECTED,
@@ -112,6 +114,9 @@ class NsRuntimeNode:
         self._stats = NsRuntimeNodeStats()
         self._registry = NsRuntimeConnectionRegistry()
         self._presence: NsRuntimePresenceStore = build_runtime_presence_store(self._config)
+        self._broker: NsRuntimeBroker = build_runtime_broker(self._config)
+        self._broker_cluster_channel: str = build_runtime_broker_cluster_channel()
+        self._broker_node_channel: str = build_runtime_broker_node_channel(node_id=self._config.node_id)
         self._dispatcher = NsRuntimeDispatcher(config=self._config, registry=self._registry)
         self._auth_provider = build_runtime_auth_provider(self._config)
 
@@ -141,6 +146,25 @@ class NsRuntimeNode:
         with self._stats_lock:
             return self._stats
 
+    def broker_channels(self) -> dict[str, str]:
+        """Return runtime broker channels for this node."""
+        return {
+            "cluster": self._broker_cluster_channel,
+            "node": self._broker_node_channel,
+        }
+
+    def broker_report(self) -> dict[str, Any]:
+        """Return local runtime broker report.
+
+        P13-B only exposes broker lifecycle metadata. It does not imply that
+        runtime dispatch has switched to broker-based cross-node routing.
+        """
+        return {
+            "backend": self._config.resolved_runtime_broker_backend(),
+            "location_configured": bool(str(self._config.runtime_broker_location or "").strip()),
+            "channels": self.broker_channels(),
+        }
+
     def stats_dict(self) -> dict[str, Any]:
         """Return runtime node stats as a JSON-compatible dict."""
         with self._stats_lock:
@@ -169,6 +193,7 @@ class NsRuntimeNode:
                 "runtime_sub_nodes": self._registry.count_sub_nodes(),
             },
             "presence": self.presence_counts(),
+            "broker": self.broker_report(),
             "stats": self.stats_dict(),
         }
 
@@ -220,13 +245,20 @@ class NsRuntimeNode:
         self._install_signal_handlers()
 
         try:
-            if self._config.node_role == RUNTIME_NODE_ROLE_SUB:
-                asyncio.run(self._run_sub_node())
-                return
-
-            asyncio.run(self._run_server())
+            asyncio.run(self._run_forever_async())
         finally:
             self.stop()
+
+    async def _run_forever_async(self) -> None:
+        """Run runtime async lifecycle and close broker on exit."""
+        try:
+            if self._config.node_role == RUNTIME_NODE_ROLE_SUB:
+                await self._run_sub_node()
+                return
+
+            await self._run_server()
+        finally:
+            await self._close_broker()
 
     def stop(self) -> None:
         """Stop runtime node."""
@@ -994,6 +1026,11 @@ class NsRuntimeNode:
     def _remove_presence(self, connection_id: str) -> None:
         """Remove one connection from local runtime presence."""
         self._presence.remove_connection(connection_id)
+
+    async def _close_broker(self) -> None:
+        """Close runtime broker resources."""
+        with contextlib.suppress(Exception):
+            await self._broker.close()
 
     async def _send_ack(self, connection: NsRuntimeConnection, frame: NsRuntimeWireFrame, *, status: str, reason: str | None = None) -> None:
         """Send one ack frame through a runtime connection."""

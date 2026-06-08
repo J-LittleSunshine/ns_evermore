@@ -10,9 +10,14 @@ from ns_common.runtime.auth import (
 )
 from ns_common.runtime.broker import (
     MemoryRuntimeBroker,
+    NsRuntimeBrokerEnvelope,
     NsRuntimeBrokerMessage,
     RedisRuntimeBroker,
     build_runtime_broker,
+    build_runtime_broker_channel,
+    build_runtime_broker_cluster_channel,
+    build_runtime_broker_node_channel,
+    normalize_runtime_broker_channel,
 )
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.contracts import (
@@ -182,4 +187,9 @@ __all__ = [
     "NsRuntimeBrokerMessage",
     "RedisRuntimeBroker",
     "build_runtime_broker",
+"NsRuntimeBrokerEnvelope",
+    "build_runtime_broker_channel",
+    "build_runtime_broker_cluster_channel",
+    "build_runtime_broker_node_channel",
+    "normalize_runtime_broker_channel",
 ]
