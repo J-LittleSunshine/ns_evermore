@@ -22,6 +22,20 @@ RUNTIME_BROKER_DEFAULT_NAMESPACE = "ns_runtime"
 RUNTIME_BROKER_CLUSTER_CHANNEL = "cluster"
 RUNTIME_BROKER_NODE_CHANNEL_PREFIX = "node"
 
+RUNTIME_BROKER_EVENT_NODE_HEALTH = "runtime.node.health"
+RUNTIME_BROKER_EVENT_NODE_ANNOUNCE = "runtime.node.announce"
+RUNTIME_BROKER_EVENT_NODE_PING = "runtime.node.ping"
+RUNTIME_BROKER_EVENT_NODE_PONG = "runtime.node.pong"
+RUNTIME_BROKER_EVENT_MESSAGE_FORWARD = "runtime.message.forward"
+
+RUNTIME_BROKER_EVENT_TYPES: tuple[str, ...] = (
+    RUNTIME_BROKER_EVENT_NODE_HEALTH,
+    RUNTIME_BROKER_EVENT_NODE_ANNOUNCE,
+    RUNTIME_BROKER_EVENT_NODE_PING,
+    RUNTIME_BROKER_EVENT_NODE_PONG,
+    RUNTIME_BROKER_EVENT_MESSAGE_FORWARD,
+)
+
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class NsRuntimeBrokerMessage:
@@ -54,9 +68,7 @@ class NsRuntimeBrokerEnvelope:
 
     def normalized(self) -> "NsRuntimeBrokerEnvelope":
         """Return normalized broker envelope."""
-        event_type = str(self.event_type or "").strip()
-        if not event_type:
-            raise NsRuntimeValidationError("runtime broker envelope event_type is required")
+        event_type = normalize_runtime_broker_event_type(self.event_type)
 
         source_node_id = str(self.source_node_id or "").strip()
         if not source_node_id:
@@ -335,6 +347,14 @@ def normalize_runtime_broker_channel(channel: str) -> str:
     normalized = str(channel or "").strip()
     if not normalized:
         raise NsRuntimeBrokerError("runtime broker channel is required")
+    return normalized
+
+
+def normalize_runtime_broker_event_type(event_type: str) -> str:
+    """Normalize runtime broker envelope event type."""
+    normalized = str(event_type or "").strip()
+    if not normalized:
+        raise NsRuntimeValidationError("runtime broker envelope event_type is required")
     return normalized
 
 

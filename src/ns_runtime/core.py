@@ -15,6 +15,7 @@ from ns_common.runtime.broker import (
     build_runtime_broker,
     build_runtime_broker_cluster_channel,
     build_runtime_broker_node_channel,
+    RUNTIME_BROKER_EVENT_NODE_HEALTH,
 )
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.constants import (
@@ -188,7 +189,7 @@ class NsRuntimeNode:
             },
         }
 
-    async def publish_broker_envelope(self,envelope: NsRuntimeBrokerEnvelope,*,channel: str | None = None,) -> None:
+    async def publish_broker_envelope(self, envelope: NsRuntimeBrokerEnvelope, *, channel: str | None = None, ) -> None:
         """Publish one broker envelope to a broker channel.
 
         P13-D only provides a reusable publish helper. It does not switch runtime
@@ -212,7 +213,7 @@ class NsRuntimeNode:
             last_broker_event_type=normalized.event_type,
         )
 
-    async def publish_broker_event(self,*,event_type: str,payload: dict[str, Any] | None = None,target_node_id: str | None = None,trace_id: str | None = None,channel: str | None = None) -> NsRuntimeBrokerEnvelope:
+    async def publish_broker_event(self, *, event_type: str, payload: dict[str, Any] | None = None, target_node_id: str | None = None, trace_id: str | None = None, channel: str | None = None) -> NsRuntimeBrokerEnvelope:
         """Build and publish one broker envelope.
 
         If channel is omitted:
@@ -239,7 +240,7 @@ class NsRuntimeNode:
         await self.publish_broker_envelope(envelope, channel=target_channel)
         return envelope
 
-    async def publish_broker_cluster_event(self,*,event_type: str,payload: dict[str, Any] | None = None,trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
+    async def publish_broker_cluster_event(self, *, event_type: str, payload: dict[str, Any] | None = None, trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
         """Publish one broker event to the cluster channel."""
         return await self.publish_broker_event(
             event_type=event_type,
@@ -248,7 +249,7 @@ class NsRuntimeNode:
             channel=self._broker_cluster_channel,
         )
 
-    async def publish_broker_node_event(self,*,target_node_id: str,event_type: str,payload: dict[str, Any] | None = None,trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
+    async def publish_broker_node_event(self, *, target_node_id: str, event_type: str, payload: dict[str, Any] | None = None, trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
         """Publish one broker event to a node-specific channel."""
         normalized_target_node_id = str(target_node_id or "").strip()
         if not normalized_target_node_id:
@@ -260,6 +261,18 @@ class NsRuntimeNode:
             target_node_id=normalized_target_node_id,
             trace_id=trace_id,
             channel=build_runtime_broker_node_channel(node_id=normalized_target_node_id),
+        )
+
+    async def publish_broker_health_event(self, *, trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
+        """Publish current runtime node health report to broker cluster channel.
+
+        This is a manual helper only. P13-E does not start a scheduled health
+        publisher and does not change runtime dispatch behavior.
+        """
+        return await self.publish_broker_cluster_event(
+            event_type=RUNTIME_BROKER_EVENT_NODE_HEALTH,
+            payload=self.health_report(),
+            trace_id=trace_id,
         )
 
     def stats_dict(self) -> dict[str, Any]:
