@@ -91,6 +91,8 @@ class NsRuntimeNodeStats:
     frontend_room_join_count: int = 0
     frontend_room_leave_count: int = 0
 
+    broker_published_envelope_count: int = 0
+    broker_publish_error_count: int = 0
     broker_envelope_count: int = 0
     broker_ignored_envelope_count: int = 0
     broker_error_count: int = 0
@@ -185,6 +187,80 @@ class NsRuntimeNode:
                 "last_message_id": last_envelope.message_id if last_envelope is not None else None,
             },
         }
+
+    async def publish_broker_envelope(self,envelope: NsRuntimeBrokerEnvelope,*,channel: str | None = None,) -> None:
+        """Publish one broker envelope to a broker channel.
+
+        P13-D only provides a reusable publish helper. It does not switch runtime
+        dispatch to broker-based routing.
+        """
+        normalized = envelope.normalized()
+        target_channel = str(channel or "").strip() or self._broker_cluster_channel
+
+        try:
+            await self._broker.publish(target_channel, normalized.to_bytes())
+        except Exception as exc:
+            self._add_stats(
+                broker_publish_error_count=1,
+                last_error=f"runtime broker publish failed: {exc}",
+                last_broker_event_type=normalized.event_type,
+            )
+            raise
+
+        self._add_stats(
+            broker_published_envelope_count=1,
+            last_broker_event_type=normalized.event_type,
+        )
+
+    async def publish_broker_event(self,*,event_type: str,payload: dict[str, Any] | None = None,target_node_id: str | None = None,trace_id: str | None = None,channel: str | None = None) -> NsRuntimeBrokerEnvelope:
+        """Build and publish one broker envelope.
+
+        If channel is omitted:
+        - target_node_id set   -> publish to target node channel
+        - target_node_id empty -> publish to cluster channel
+        """
+        normalized_target_node_id = str(target_node_id).strip() if target_node_id is not None and str(target_node_id).strip() else None
+        target_channel = str(channel or "").strip()
+
+        if not target_channel:
+            if normalized_target_node_id:
+                target_channel = build_runtime_broker_node_channel(node_id=normalized_target_node_id)
+            else:
+                target_channel = self._broker_cluster_channel
+
+        envelope = NsRuntimeBrokerEnvelope(
+            event_type=str(event_type or "").strip(),
+            source_node_id=self._config.node_id,
+            target_node_id=normalized_target_node_id,
+            trace_id=str(trace_id).strip() if trace_id is not None and str(trace_id).strip() else None,
+            payload=dict(payload or {}),
+        ).normalized()
+
+        await self.publish_broker_envelope(envelope, channel=target_channel)
+        return envelope
+
+    async def publish_broker_cluster_event(self,*,event_type: str,payload: dict[str, Any] | None = None,trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
+        """Publish one broker event to the cluster channel."""
+        return await self.publish_broker_event(
+            event_type=event_type,
+            payload=payload,
+            trace_id=trace_id,
+            channel=self._broker_cluster_channel,
+        )
+
+    async def publish_broker_node_event(self,*,target_node_id: str,event_type: str,payload: dict[str, Any] | None = None,trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
+        """Publish one broker event to a node-specific channel."""
+        normalized_target_node_id = str(target_node_id or "").strip()
+        if not normalized_target_node_id:
+            raise NsRuntimeValidationError("runtime broker target_node_id is required")
+
+        return await self.publish_broker_event(
+            event_type=event_type,
+            payload=payload,
+            target_node_id=normalized_target_node_id,
+            trace_id=trace_id,
+            channel=build_runtime_broker_node_channel(node_id=normalized_target_node_id),
+        )
 
     def stats_dict(self) -> dict[str, Any]:
         """Return runtime node stats as a JSON-compatible dict."""
@@ -1214,6 +1290,8 @@ class NsRuntimeNode:
             frontend_ack_count: int = 0,
             frontend_room_join_count: int = 0,
             frontend_room_leave_count: int = 0,
+            broker_published_envelope_count: int = 0,
+            broker_publish_error_count: int = 0,
             broker_envelope_count: int = 0,
             broker_ignored_envelope_count: int = 0,
             broker_error_count: int = 0,
@@ -1241,6 +1319,8 @@ class NsRuntimeNode:
                 frontend_ack_count=self._stats.frontend_ack_count + frontend_ack_count,
                 frontend_room_join_count=self._stats.frontend_room_join_count + frontend_room_join_count,
                 frontend_room_leave_count=self._stats.frontend_room_leave_count + frontend_room_leave_count,
+                broker_published_envelope_count=self._stats.broker_published_envelope_count + broker_published_envelope_count,
+                broker_publish_error_count=self._stats.broker_publish_error_count + broker_publish_error_count,
                 broker_envelope_count=self._stats.broker_envelope_count + broker_envelope_count,
                 broker_ignored_envelope_count=self._stats.broker_ignored_envelope_count + broker_ignored_envelope_count,
                 broker_error_count=self._stats.broker_error_count + broker_error_count,
