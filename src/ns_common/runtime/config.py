@@ -66,6 +66,7 @@ class NsRuntimeConfig:
 
     runtime_presence_backend: RuntimePresenceBackend = RUNTIME_BACKEND_MEMORY  # type: ignore[assignment]
     runtime_presence_location: str = ""
+    runtime_broker_health_publish_enabled: bool = False
 
     ipc_mode: RuntimeIpcMode = RUNTIME_CONNECTOR_IPC_UNIX_SOCKET  # type: ignore[assignment]
     ipc_socket_path: str = "/run/ns_evermore/backend-runtime-connector.sock"
@@ -172,6 +173,9 @@ class NsRuntimeConfig:
             raise NsRuntimeConfigurationError(f"runtime runtime_broker_backend is invalid: {self.runtime_broker_backend}")
 
         self.ensure_runtime_broker_backend_implemented()
+
+        if not isinstance(self.runtime_broker_health_publish_enabled, bool):
+            raise NsRuntimeConfigurationError("runtime runtime_broker_health_publish_enabled must be bool")
 
         if self.runtime_presence_backend not in {RUNTIME_BACKEND_MEMORY, RUNTIME_BACKEND_REDIS, RUNTIME_BACKEND_VALKEY, RUNTIME_BACKEND_SQL_WAL}:
             raise NsRuntimeConfigurationError(f"runtime runtime_presence_backend is invalid: {self.runtime_presence_backend}")

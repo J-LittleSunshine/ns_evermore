@@ -173,8 +173,8 @@ class NsRuntimeNode:
     def broker_report(self) -> dict[str, Any]:
         """Return local runtime broker report.
 
-        P13-C exposes listener metadata only. Runtime dispatch has not switched
-        to broker-based cross-node routing.
+        P13-F exposes broker listener and optional health publisher metadata.
+        Runtime dispatch has not switched to broker-based cross-node routing.
         """
         last_envelope = self._last_broker_envelope
         return {
@@ -186,6 +186,10 @@ class NsRuntimeNode:
                 "last_event_type": last_envelope.event_type if last_envelope is not None else None,
                 "last_source_node_id": last_envelope.source_node_id if last_envelope is not None else None,
                 "last_message_id": last_envelope.message_id if last_envelope is not None else None,
+            },
+            "health_publisher": {
+                "enabled": bool(self._config.runtime_broker_health_publish_enabled),
+                "interval_seconds": float(self._config.health_report_interval_seconds),
             },
         }
 
@@ -362,6 +366,10 @@ class NsRuntimeNode:
     async def _run_forever_async(self) -> None:
         """Run runtime async lifecycle and close broker on exit."""
         broker_listener_task = asyncio.create_task(self._broker_listener_loop())
+        broker_health_publisher_task: asyncio.Task[None] | None = None
+
+        if self._config.runtime_broker_health_publish_enabled:
+            broker_health_publisher_task = asyncio.create_task(self._broker_health_publisher_loop())
 
         try:
             if self._config.node_role == RUNTIME_NODE_ROLE_SUB:
@@ -370,11 +378,40 @@ class NsRuntimeNode:
 
             await self._run_server()
         finally:
-            broker_listener_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await broker_listener_task
+            lifecycle_tasks: list[asyncio.Task[Any]] = [broker_listener_task]
+            if broker_health_publisher_task is not None:
+                lifecycle_tasks.append(broker_health_publisher_task)
+
+            for task in lifecycle_tasks:
+                task.cancel()
+
+            for task in lifecycle_tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
             await self._close_broker()
+
+    async def _broker_health_publisher_loop(self) -> None:
+        """Periodically publish runtime node health event to broker.
+
+        Disabled by default. This loop is opt-in and does not affect runtime
+        business message dispatch.
+        """
+        interval_seconds: float = max(float(self._config.health_report_interval_seconds), 1.0)
+
+        while not self._stop_event.is_set():
+            try:
+                await self.publish_broker_health_event()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._add_stats(
+                    broker_publish_error_count=1,
+                    last_error=f"runtime broker health publish failed: {exc}",
+                    last_broker_event_type=RUNTIME_BROKER_EVENT_NODE_HEALTH,
+                )
+
+            await asyncio.sleep(interval_seconds)
 
     async def _broker_listener_loop(self) -> None:
         """Subscribe to runtime broker channels and consume envelopes.
