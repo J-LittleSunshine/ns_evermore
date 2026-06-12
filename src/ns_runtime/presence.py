@@ -422,6 +422,7 @@ class RedisRuntimePresenceStore:
 
     DEFAULT_URL = "redis://127.0.0.1:6379/0"
     DEFAULT_KEY_PREFIX = "ns:runtime:presence"
+    RECORD_SCHEMA = "ns_runtime_presence_record.v1"
 
     def __init__(self, *, url: str = "", key_prefix: str = DEFAULT_KEY_PREFIX, record_ttl_seconds: int = 90, socket_timeout: float = 3.0, socket_connect_timeout: float = 3.0, health_check_interval: int = 30) -> None:
         """Initialize Redis/ValKey presence store."""
@@ -504,6 +505,7 @@ class RedisRuntimePresenceStore:
 
         record = self._record_from_payload_or_none(raw)
         if record is None or record.status != RUNTIME_PRESENCE_STATUS_ONLINE:
+            self._cleanup_corrupted_connection(normalized_connection_id)
             return None
 
         return record
@@ -782,6 +784,7 @@ class RedisRuntimePresenceStore:
 
         if stale_connection_ids:
             self._cleanup_stale_connection_indexes(stale_connection_ids, source_set_key=source_set_key)
+            self._delete_connection_keys(stale_connection_ids)
 
         return sorted(result, key=lambda item: item.connection_id)
 
@@ -818,6 +821,35 @@ class RedisRuntimePresenceStore:
 
         self._run_redis("cleanup stale connection indexes", _cleanup)
         self._delete_empty_index_keys(cleanup_index_keys)
+
+    def _cleanup_corrupted_connection(self, connection_id: str) -> None:
+        """Cleanup one corrupted or offline Redis presence connection."""
+        normalized_connection_id = str(connection_id or "").strip()
+        if not normalized_connection_id:
+            return
+
+        self._cleanup_stale_connection_indexes([normalized_connection_id])
+        self._delete_connection_keys([normalized_connection_id])
+
+    def _delete_connection_keys(self, connection_ids: list[str]) -> None:
+        """Delete Redis connection record keys for stale or corrupted connections."""
+        normalized_connection_ids = [
+            str(connection_id).strip()
+            for connection_id in connection_ids
+            if str(connection_id).strip()
+        ]
+        if not normalized_connection_ids:
+            return
+
+        def _delete(_client: Any) -> None:
+            _pipeline = _client.pipeline(transaction=True)
+
+            for connection_id in normalized_connection_ids:
+                _pipeline.delete(self._connection_key(connection_id))
+
+            _pipeline.execute()
+
+        self._run_redis("delete stale connection keys", _delete)
 
     def _count_online_index_records(self, index_name: str) -> int:
         """Count secondary index keys that still contain at least one live record."""
@@ -894,7 +926,9 @@ class RedisRuntimePresenceStore:
     @classmethod
     def _record_to_json(cls, record: NsRuntimePresenceRecord) -> str:
         """Serialize presence record to compact JSON."""
-        return json.dumps(record.to_dict(), ensure_ascii=False, separators=(",", ":"))
+        payload = record.to_dict()
+        payload["_schema"] = cls.RECORD_SCHEMA
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
     @classmethod
     def _record_from_payload_or_none(cls, payload: Any) -> NsRuntimePresenceRecord | None:
