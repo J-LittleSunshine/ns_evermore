@@ -37,7 +37,7 @@ from ns_common.runtime.constants import (
     RUNTIME_NODE_ROLE_SUB,
 )
 from ns_common.runtime.contracts import NsRuntimeBroker
-from ns_common.runtime.errors import NsRuntimeConfigurationError, NsRuntimeValidationError
+from ns_common.runtime.errors import NsRuntimeConfigurationError, NsRuntimePresenceError, NsRuntimeValidationError
 from ns_common.runtime.messages import NsRuntimeAck, NsRuntimeMessage
 from ns_common.runtime.permissions import (
     RUNTIME_IAM_ACTION_CONNECT,
@@ -120,6 +120,8 @@ class NsRuntimeNodeStats:
     broker_message_forward_rejected_fallback_count: int = 0
     broker_message_forward_dispatch_published_count: int = 0
     broker_message_forward_dispatch_error_count: int = 0
+
+    presence_error_count: int = 0
 
     accepted_count: int = 0
     rejected_count: int = 0
@@ -1672,25 +1674,45 @@ class NsRuntimeNode:
             await connection.websocket.close(code=1008, reason=reason)
 
     def _upsert_presence(self, connection: NsRuntimeConnection) -> None:
-        """Upsert local runtime presence for one registered connection."""
-        self._presence.upsert_connection(connection, node_id=self._config.node_id)
+        """Upsert runtime presence for one registered connection."""
+        try:
+            self._presence.upsert_connection(connection, node_id=self._config.node_id)
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence upsert failed: {exc}",
+            )
 
     def _refresh_presence(self, connection: NsRuntimeConnection) -> None:
-        """Refresh local runtime presence for one registered connection."""
-        record = self._presence.refresh_connection(
-            connection.connection_id,
-            last_seen_epoch_ms=connection.last_seen_epoch_ms,
-            health=dict(connection.health or {}),
-        )
+        """Refresh runtime presence for one registered connection."""
+        try:
+            record = self._presence.refresh_connection(
+                connection.connection_id,
+                last_seen_epoch_ms=connection.last_seen_epoch_ms,
+                health=dict(connection.health or {}),
+            )
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence refresh failed: {exc}",
+            )
+            return
+
         if record is None:
             # Presence is derived state. If it is missing because of a process-local
-            # reset or future backend-specific eviction, rebuild it from registry
+            # reset or backend-specific eviction, rebuild it from registry
             # connection state without interrupting the runtime frame.
             self._upsert_presence(connection)
 
     def _remove_presence(self, connection_id: str) -> None:
-        """Remove one connection from local runtime presence."""
-        self._presence.remove_connection(connection_id)
+        """Remove one connection from runtime presence."""
+        try:
+            self._presence.remove_connection(connection_id)
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence remove failed: {exc}",
+            )
 
     async def _close_broker(self) -> None:
         """Close runtime broker resources."""
@@ -1780,6 +1802,7 @@ class NsRuntimeNode:
             broker_message_forward_rejected_fallback_count: int = 0,
             broker_message_forward_dispatch_published_count: int = 0,
             broker_message_forward_dispatch_error_count: int = 0,
+            presence_error_count: int = 0,
             accepted_count: int = 0,
             rejected_count: int = 0,
             forwarded_count: int = 0,
@@ -1821,6 +1844,7 @@ class NsRuntimeNode:
                 broker_message_forward_rejected_fallback_count=self._stats.broker_message_forward_rejected_fallback_count + broker_message_forward_rejected_fallback_count,
                 broker_message_forward_dispatch_published_count=self._stats.broker_message_forward_dispatch_published_count + broker_message_forward_dispatch_published_count,
                 broker_message_forward_dispatch_error_count=self._stats.broker_message_forward_dispatch_error_count + broker_message_forward_dispatch_error_count,
+                presence_error_count=self._stats.presence_error_count + presence_error_count,
                 accepted_count=self._stats.accepted_count + accepted_count,
                 rejected_count=self._stats.rejected_count + rejected_count,
                 forwarded_count=self._stats.forwarded_count + forwarded_count,
