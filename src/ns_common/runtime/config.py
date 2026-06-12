@@ -52,6 +52,8 @@ IMPLEMENTED_RUNTIME_BROKER_BACKENDS: tuple[str, ...] = (
 
 IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS: tuple[str, ...] = (
     RUNTIME_BACKEND_MEMORY,
+    RUNTIME_BACKEND_REDIS,
+    RUNTIME_BACKEND_VALKEY,
 )
 
 
@@ -154,20 +156,16 @@ class NsRuntimeConfig:
         return self.resolved_runtime_presence_backend() in IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS
 
     def ensure_runtime_presence_backend_implemented(self) -> None:
-        """Ensure configured runtime presence backend is implemented.
-
-        Redis / ValKey / sql_wal presence backends are known extension points, but
-        P12-D intentionally keeps them disabled until their concrete consistency
-        and expiration semantics are implemented.
-        """
+        """Ensure configured runtime presence backend is implemented."""
         backend = self.resolved_runtime_presence_backend()
-        if backend in IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS:
-            return
+        if backend not in {RUNTIME_BACKEND_MEMORY, RUNTIME_BACKEND_REDIS, RUNTIME_BACKEND_VALKEY, RUNTIME_BACKEND_SQL_WAL}:
+            raise NsRuntimeConfigurationError(f"runtime runtime_presence_backend is invalid: {backend}")
 
-        raise NsRuntimeConfigurationError(
-            f"runtime runtime_presence_backend is not implemented yet: {backend}; "
-            f"implemented backends: {', '.join(IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS)}"
-        )
+        if backend not in IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS:
+            raise NsRuntimeConfigurationError(
+                f"runtime runtime_presence_backend is not implemented yet: {backend}; "
+                f"implemented backends: {', '.join(IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS)}"
+            )
 
     def resolved_runtime_broker_message_forward_dispatch_policy(self) -> str:
         """Return effective runtime broker message forward dispatch policy.

@@ -17,6 +17,7 @@ from ns_runtime.presence import (
     MemoryRuntimePresenceStore,
     NsRuntimePresenceRecord,
     NsRuntimePresenceStore,
+    RedisRuntimePresenceStore,
     build_runtime_presence_store,
 )
 from ns_runtime.protocol import NsRuntimeWireFrame
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "MemoryRuntimePresenceStore",
+    "RedisRuntimePresenceStore",
     "NsRuntimeAuthProviderError",
     "NsRuntimeConnection",
     "NsRuntimeConnectionRegistry",
