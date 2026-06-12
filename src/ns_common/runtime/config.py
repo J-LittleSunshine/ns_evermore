@@ -83,6 +83,7 @@ class NsRuntimeConfig:
 
     runtime_presence_backend: RuntimePresenceBackend = RUNTIME_BACKEND_MEMORY  # type: ignore[assignment]
     runtime_presence_location: str = ""
+    runtime_presence_record_ttl_seconds: int = 90
 
     ipc_mode: RuntimeIpcMode = RUNTIME_CONNECTOR_IPC_UNIX_SOCKET  # type: ignore[assignment]
     ipc_socket_path: str = "/run/ns_evermore/backend-runtime-connector.sock"
@@ -218,6 +219,9 @@ class NsRuntimeConfig:
             raise NsRuntimeConfigurationError(f"runtime runtime_presence_backend is invalid: {self.runtime_presence_backend}")
 
         self.ensure_runtime_presence_backend_implemented()
+
+        if isinstance(self.runtime_presence_record_ttl_seconds, bool) or self.runtime_presence_record_ttl_seconds <= 0:
+            raise NsRuntimeConfigurationError("runtime runtime_presence_record_ttl_seconds must be positive")
 
         if self.ipc_mode not in {RUNTIME_CONNECTOR_IPC_UNIX_SOCKET, RUNTIME_CONNECTOR_IPC_TCP, RUNTIME_CONNECTOR_IPC_MEMORY}:
             raise NsRuntimeConfigurationError(f"runtime ipc_mode is invalid: {self.ipc_mode}")

@@ -405,25 +405,28 @@ class MemoryRuntimePresenceStore:
         normalized = str(value).strip()
         return normalized or None
 
+
 class RedisRuntimePresenceStore:
-    """Redis/ValKey distributed runtime presence store skeleton.
+    """Redis/ValKey distributed runtime presence store.
 
     Scope:
     - cross-process visibility through Redis/ValKey
     - JSON connection records
     - set-based secondary indexes
-    - best-effort non-transactional index cleanup
+    - TTL-based connection lease
+    - opportunistic stale index cleanup on reads
 
-    P14-A intentionally does not implement TTL expiration, Lua atomicity, or
-    cluster-wide strong consistency. Presence remains derived runtime state.
+    P14-B intentionally does not implement Lua atomicity or distributed locks.
+    Presence remains derived runtime state.
     """
 
     DEFAULT_URL = "redis://127.0.0.1:6379/0"
     KEY_PREFIX = "ns:runtime:presence"
 
-    def __init__(self, *, url: str = "", socket_timeout: float = 3.0, socket_connect_timeout: float = 3.0, health_check_interval: int = 30) -> None:
+    def __init__(self, *, url: str = "", record_ttl_seconds: int = 90, socket_timeout: float = 3.0, socket_connect_timeout: float = 3.0, health_check_interval: int = 30) -> None:
         """Initialize Redis/ValKey presence store."""
         self._url: str = str(url or "").strip() or self.DEFAULT_URL
+        self._record_ttl_seconds: int = max(int(record_ttl_seconds), 1)
         self._socket_timeout: float = float(socket_timeout)
         self._socket_connect_timeout: float = float(socket_connect_timeout)
         self._health_check_interval: int = int(health_check_interval)
@@ -451,7 +454,7 @@ class RedisRuntimePresenceStore:
             connected_at_epoch_ms=old_record.connected_at_epoch_ms if old_record is not None else connection.registered_at_epoch_ms,
         )
 
-        client.set(self._connection_key(record.connection_id), self._record_to_json(record))
+        self._set_record(record)
         self._add_indexes(record)
         return record
 
@@ -461,7 +464,6 @@ class RedisRuntimePresenceStore:
         if not normalized_connection_id:
             return None
 
-        client = self._get_client()
         record = self.get_connection(normalized_connection_id)
         if record is None:
             return None
@@ -471,7 +473,7 @@ class RedisRuntimePresenceStore:
             last_seen_epoch_ms=int(last_seen_epoch_ms or int(time.time() * 1000)),
             health=dict(health or record.health or {}),
         )
-        client.set(self._connection_key(normalized_connection_id), self._record_to_json(refreshed_record))
+        self._set_record(refreshed_record)
         return refreshed_record
 
     def remove_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
@@ -503,7 +505,11 @@ class RedisRuntimePresenceStore:
         if raw is None:
             return None
 
-        return self._record_from_payload_or_none(raw)
+        record = self._record_from_payload_or_none(raw)
+        if record is None or record.status != RUNTIME_PRESENCE_STATUS_ONLINE:
+            return None
+
+        return record
 
     def list_online_frontends(self) -> list[NsRuntimePresenceRecord]:
         """Return online frontend presence records."""
@@ -548,23 +554,31 @@ class RedisRuntimePresenceStore:
     def count_online(self) -> int:
         """Return online connection count."""
         return (
-                self._set_count(self._role_key("frontend"))
-                + self._set_count(self._role_key("backend"))
-                + self._set_count(self._role_key("runtime_sub"))
+                len(self.list_online_frontends())
+                + len(self.list_online_backends())
+                + len(self.list_online_runtime_sub_nodes())
         )
 
     def snapshot_counts(self) -> dict[str, int]:
         """Return online presence counters."""
-        online_frontends = self._set_count(self._role_key("frontend"))
-        online_backends = self._set_count(self._role_key("backend"))
-        online_runtime_sub_nodes = self._set_count(self._role_key("runtime_sub"))
+        online_frontends = len(self.list_online_frontends())
+        online_backends = len(self.list_online_backends())
+        online_runtime_sub_nodes = len(self.list_online_runtime_sub_nodes())
         return {
             "online_connections": online_frontends + online_backends + online_runtime_sub_nodes,
             "online_frontends": online_frontends,
             "online_backends": online_backends,
             "online_runtime_sub_nodes": online_runtime_sub_nodes,
-            "online_users": self._count_non_empty_index_keys("user"),
+            "online_users": self._count_online_index_records("user"),
         }
+
+    def _set_record(self, record: NsRuntimePresenceRecord) -> None:
+        """Store one presence record with lease TTL."""
+        self._get_client().set(
+            self._connection_key(record.connection_id),
+            self._record_to_json(record),
+            ex=self._record_ttl_seconds,
+        )
 
     def _add_indexes(self, record: NsRuntimePresenceRecord) -> None:
         """Add record to role and frontend secondary indexes."""
@@ -588,67 +602,89 @@ class RedisRuntimePresenceStore:
 
     def _remove_indexes(self, record: NsRuntimePresenceRecord) -> None:
         """Remove record from all presence indexes."""
-        client = self._get_client()
-        client.srem(self._role_key(record.connection_type), record.connection_id)
+        self._remove_from_index_key(self._role_key(record.connection_type), record.connection_id)
 
         if record.user_id is not None:
-            client.srem(self._index_key("user", record.user_id), record.connection_id)
+            self._remove_from_index_key(self._index_key("user", record.user_id), record.connection_id)
 
         if record.session_id is not None:
-            client.srem(self._index_key("session", record.session_id), record.connection_id)
+            self._remove_from_index_key(self._index_key("session", record.session_id), record.connection_id)
 
         if record.client_id is not None:
-            client.srem(self._index_key("client", record.client_id), record.connection_id)
+            self._remove_from_index_key(self._index_key("client", record.client_id), record.connection_id)
 
         for room_id in record.rooms:
-            client.srem(self._index_key("room", room_id), record.connection_id)
+            self._remove_from_index_key(self._index_key("room", room_id), record.connection_id)
 
     def _records_by_set_key(self, key: str) -> list[NsRuntimePresenceRecord]:
-        """Return online records by one Redis set key."""
+        """Return online records by one Redis set key and cleanup stale members."""
         raw_connection_ids = self._get_client().smembers(key)
         connection_ids = {
             str(connection_id).strip()
             for connection_id in raw_connection_ids
             if str(connection_id).strip()
         }
-        return self._records_by_connection_ids(connection_ids)
+        return self._records_by_connection_ids(connection_ids, source_set_key=key)
 
-    def _records_by_connection_ids(self, connection_ids: set[str]) -> list[NsRuntimePresenceRecord]:
+    def _records_by_connection_ids(self, connection_ids: set[str], *, source_set_key: str | None = None) -> list[NsRuntimePresenceRecord]:
         """Return online records by connection ids."""
         if not connection_ids:
+            if source_set_key is not None:
+                self._delete_empty_index_key(source_set_key)
             return []
 
         client = self._get_client()
         normalized_connection_ids = sorted(str(connection_id).strip() for connection_id in connection_ids if str(connection_id).strip())
         if not normalized_connection_ids:
+            if source_set_key is not None:
+                self._delete_empty_index_key(source_set_key)
             return []
 
         keys = [self._connection_key(connection_id) for connection_id in normalized_connection_ids]
         raw_records = client.mget(keys)
 
         result: list[NsRuntimePresenceRecord] = []
-        for raw_record in raw_records:
+        stale_connection_ids: list[str] = []
+
+        for connection_id, raw_record in zip(normalized_connection_ids, raw_records, strict=False):
             record = self._record_from_payload_or_none(raw_record)
             if record is not None and record.status == RUNTIME_PRESENCE_STATUS_ONLINE:
                 result.append(record)
+                continue
+
+            stale_connection_ids.append(connection_id)
+
+        if source_set_key is not None and stale_connection_ids:
+            client.srem(source_set_key, *stale_connection_ids)
+            self._delete_empty_index_key(source_set_key)
 
         return sorted(result, key=lambda item: item.connection_id)
 
-    def _set_count(self, key: str) -> int:
-        """Return Redis set cardinality."""
-        return int(self._get_client().scard(key) or 0)
-
-    def _count_non_empty_index_keys(self, index_name: str) -> int:
-        """Count non-empty secondary index keys."""
-        client = self._get_client()
+    def _count_online_index_records(self, index_name: str) -> int:
+        """Count secondary index keys that still contain at least one live record."""
         count: int = 0
         pattern = self._index_key(index_name, "*")
 
-        for key in client.scan_iter(match=pattern, count=100):
-            if int(client.scard(key) or 0) > 0:
+        for key in self._get_client().scan_iter(match=pattern, count=100):
+            if self._records_by_set_key(str(key)):
                 count += 1
+                continue
+
+            self._delete_empty_index_key(str(key))
 
         return count
+
+    def _remove_from_index_key(self, key: str, connection_id: str) -> None:
+        """Remove one connection id from one index key."""
+        client = self._get_client()
+        client.srem(key, connection_id)
+        self._delete_empty_index_key(key)
+
+    def _delete_empty_index_key(self, key: str) -> None:
+        """Delete an index key when it has no remaining members."""
+        client = self._get_client()
+        if int(client.scard(key) or 0) <= 0:
+            client.delete(key)
 
     def _get_client(self) -> Any:
         """Return initialized sync Redis client."""
@@ -747,6 +783,7 @@ class RedisRuntimePresenceStore:
         normalized = str(value).strip()
         return normalized or None
 
+
 def build_runtime_presence_store(config: NsRuntimeConfig | None = None) -> NsRuntimePresenceStore:
     """Build runtime presence store from runtime config."""
     if config is None:
@@ -766,6 +803,7 @@ def build_runtime_presence_store(config: NsRuntimeConfig | None = None) -> NsRun
     if backend in {RUNTIME_BACKEND_REDIS, RUNTIME_BACKEND_VALKEY}:
         return RedisRuntimePresenceStore(
             url=str(config.runtime_presence_location or "").strip(),
+            record_ttl_seconds=int(config.runtime_presence_record_ttl_seconds),
         )
 
     raise NsRuntimeConfigurationError(f"runtime presence backend is not implemented yet: {backend}")
