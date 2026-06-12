@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import signal
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from threading import Event, RLock
 from typing import Any
 from urllib.parse import urlparse
@@ -119,6 +119,18 @@ class NsRuntimeNodeStats:
     last_error: str | None = None
     last_broker_event_type: str | None = None
 
+@dataclass(slots=True, frozen=True, kw_only=True)
+class NsRuntimeBrokerForwardCandidate:
+    """Runtime broker message forward candidate.
+
+    P13-K is selection-only. A candidate describes where a broker forward could
+    be published, but runtime core does not publish it automatically.
+    """
+
+    message_id: str
+    target_node_id: str
+    channel: str
+    envelope: NsRuntimeBrokerEnvelope
 
 class NsRuntimeNode:
     """Standalone ns_runtime core node.
@@ -206,6 +218,10 @@ class NsRuntimeNode:
             },
             "message_forward": {
                 "local_handle_enabled": bool(self._config.runtime_broker_message_forward_local_handle_enabled),
+                "candidate_selection": {
+                    "enabled": self._config.node_role == RUNTIME_NODE_ROLE_MASTER,
+                    "auto_publish_enabled": False,
+                },
             },
         }
 
@@ -364,6 +380,49 @@ class NsRuntimeNode:
             channel=self._broker_cluster_channel,
         )
         return envelope
+
+    def select_broker_forward_candidate(self, message: NsRuntimeMessage) -> NsRuntimeBrokerForwardCandidate | None:
+        """Select broker forward candidate for one runtime message.
+
+        This helper is intentionally not called by backend.publish. It only
+        exposes deterministic candidate selection for a later broker-forward
+        phase.
+        """
+        if self._config.node_role != RUNTIME_NODE_ROLE_MASTER:
+            return None
+
+        normalized_message = message.normalized()
+        target_node_id = self._select_broker_forward_target_node_id()
+        if target_node_id is None:
+            return None
+
+        channel = build_runtime_broker_node_channel(node_id=target_node_id)
+        envelope = build_runtime_broker_message_forward_envelope(
+            source_node_id=self._config.node_id,
+            target_node_id=target_node_id,
+            message=normalized_message,
+            trace_id=normalized_message.trace_id,
+        )
+
+        return NsRuntimeBrokerForwardCandidate(
+            message_id=str(normalized_message.message_id),
+            target_node_id=target_node_id,
+            channel=channel,
+            envelope=envelope,
+        )
+
+    def _select_broker_forward_target_node_id(self) -> str | None:
+        """Select one healthy runtime sub-node for broker forward candidate."""
+        sub_nodes = self._registry.list_healthy_sub_nodes()
+        if not sub_nodes:
+            return None
+
+        for sub_node in sub_nodes:
+            node_id = str(sub_node.node_id or "").strip()
+            if node_id:
+                return node_id
+
+        return None
 
     def stats_dict(self) -> dict[str, Any]:
         """Return runtime node stats as a JSON-compatible dict."""
