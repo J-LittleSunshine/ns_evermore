@@ -12,13 +12,16 @@ from urllib.parse import urlparse
 from ns_common.config import ns_config
 from ns_common.runtime.broker import (
     NsRuntimeBrokerEnvelope,
+    RUNTIME_BROKER_EVENT_MESSAGE_FORWARD,
     RUNTIME_BROKER_EVENT_NODE_HEALTH,
     RUNTIME_BROKER_EVENT_NODE_PING,
     RUNTIME_BROKER_EVENT_NODE_PONG,
     build_runtime_broker,
     build_runtime_broker_cluster_channel,
+    build_runtime_broker_message_forward_envelope,
     build_runtime_broker_node_channel,
     is_known_runtime_broker_event_type,
+    runtime_message_from_broker_forward_envelope,
 )
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.constants import (
@@ -105,6 +108,7 @@ class NsRuntimeNodeStats:
     broker_ping_count: int = 0
     broker_pong_count: int = 0
     broker_pong_published_count: int = 0
+    broker_message_forward_count: int = 0
 
     accepted_count: int = 0
     rejected_count: int = 0
@@ -113,7 +117,6 @@ class NsRuntimeNodeStats:
 
     last_error: str | None = None
     last_broker_event_type: str | None = None
-
 
 class NsRuntimeNode:
     """Standalone ns_runtime core node.
@@ -329,6 +332,33 @@ class NsRuntimeNode:
             },
             trace_id=trace_id,
         )
+
+    async def publish_broker_message_forward_event(self,*,message: NsRuntimeMessage,target_node_id: str | None = None, trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
+        """Publish runtime.message.forward broker envelope.
+
+        P13-I exposes the transport helper only. It does not change normal
+        backend.publish dispatch behavior.
+        """
+        normalized_target_node_id = str(target_node_id).strip() if target_node_id is not None and str(target_node_id).strip() else None
+        envelope = build_runtime_broker_message_forward_envelope(
+            source_node_id=self._config.node_id,
+            target_node_id=normalized_target_node_id,
+            message=message,
+            trace_id=trace_id,
+        )
+
+        if normalized_target_node_id:
+            await self.publish_broker_envelope(
+                envelope,
+                channel=build_runtime_broker_node_channel(node_id=normalized_target_node_id),
+            )
+            return envelope
+
+        await self.publish_broker_envelope(
+            envelope,
+            channel=self._broker_cluster_channel,
+        )
+        return envelope
 
     def stats_dict(self) -> dict[str, Any]:
         """Return runtime node stats as a JSON-compatible dict."""
@@ -578,6 +608,10 @@ class NsRuntimeNode:
             await self._handle_broker_pong(normalized)
             return
 
+        if normalized.event_type == RUNTIME_BROKER_EVENT_MESSAGE_FORWARD:
+            await self._handle_broker_message_forward(normalized)
+            return
+
     def _broker_envelope_targets_this_node(self, envelope: NsRuntimeBrokerEnvelope) -> bool:
         """Return whether broker envelope targets this runtime node.
 
@@ -622,6 +656,20 @@ class NsRuntimeNode:
         """
         self._add_stats(
             broker_pong_count=1,
+            last_broker_event_type=envelope.event_type,
+        )
+
+    async def _handle_broker_message_forward(self, envelope: NsRuntimeBrokerEnvelope) -> None:
+        """Parse runtime.message.forward broker envelope without dispatching.
+
+        P13-I intentionally stops at parse + stats. Actual broker-based
+        cross-node delivery will be introduced in a later phase.
+        """
+        message = runtime_message_from_broker_forward_envelope(envelope)
+        _ = message
+
+        self._add_stats(
+            broker_message_forward_count=1,
             last_broker_event_type=envelope.event_type,
         )
 
@@ -1473,6 +1521,7 @@ class NsRuntimeNode:
             broker_ping_count: int = 0,
             broker_pong_count: int = 0,
             broker_pong_published_count: int = 0,
+            broker_message_forward_count: int = 0,
             accepted_count: int = 0,
             rejected_count: int = 0,
             forwarded_count: int = 0,
@@ -1507,6 +1556,7 @@ class NsRuntimeNode:
                 broker_ping_count=self._stats.broker_ping_count + broker_ping_count,
                 broker_pong_count=self._stats.broker_pong_count + broker_pong_count,
                 broker_pong_published_count=self._stats.broker_pong_published_count + broker_pong_published_count,
+                broker_message_forward_count=self._stats.broker_message_forward_count + broker_message_forward_count,
                 accepted_count=self._stats.accepted_count + accepted_count,
                 rejected_count=self._stats.rejected_count + rejected_count,
                 forwarded_count=self._stats.forwarded_count + forwarded_count,

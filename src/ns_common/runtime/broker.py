@@ -17,6 +17,7 @@ from ns_common.runtime.constants import (
     RUNTIME_BACKEND_VALKEY,
 )
 from ns_common.runtime.errors import NsRuntimeBrokerError, NsRuntimeConfigurationError, NsRuntimeValidationError
+from ns_common.runtime.messages import NsRuntimeMessage
 
 RUNTIME_BROKER_DEFAULT_NAMESPACE = "ns_runtime"
 RUNTIME_BROKER_CLUSTER_CHANNEL = "cluster"
@@ -357,6 +358,7 @@ def normalize_runtime_broker_event_type(event_type: str) -> str:
         raise NsRuntimeValidationError("runtime broker envelope event_type is required")
     return normalized
 
+
 def is_known_runtime_broker_event_type(event_type: str) -> bool:
     """Return whether event type is a known runtime broker control-plane event."""
     try:
@@ -379,6 +381,94 @@ def ensure_runtime_broker_event_type_known(event_type: str) -> str:
         raise NsRuntimeValidationError(f"runtime broker event_type is unknown: {normalized}")
 
     return normalized
+
+
+def build_runtime_broker_message_forward_envelope(*, source_node_id: str, message: NsRuntimeMessage, target_node_id: str | None = None, trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
+    """Build runtime.message.forward broker envelope.
+
+    P13-I only defines the broker transport envelope shape. Runtime core does not
+    dispatch this message through broker yet.
+    """
+    normalized_message = message.normalized()
+    normalized_source_node_id = str(source_node_id or "").strip()
+    if not normalized_source_node_id:
+        raise NsRuntimeValidationError("runtime broker forward source_node_id is required")
+
+    normalized_target_node_id = str(target_node_id).strip() if target_node_id is not None and str(target_node_id).strip() else None
+    normalized_trace_id = str(trace_id).strip() if trace_id is not None and str(trace_id).strip() else normalized_message.trace_id
+
+    return NsRuntimeBrokerEnvelope(
+        event_type=RUNTIME_BROKER_EVENT_MESSAGE_FORWARD,
+        source_node_id=normalized_source_node_id,
+        target_node_id=normalized_target_node_id,
+        trace_id=normalized_trace_id,
+        payload={
+            "message": normalized_message.to_dict(),
+        },
+    ).normalized()
+
+
+def runtime_message_from_broker_forward_envelope(envelope: NsRuntimeBrokerEnvelope) -> NsRuntimeMessage:
+    """Parse NsRuntimeMessage from runtime.message.forward broker envelope."""
+    normalized = envelope.normalized()
+
+    if normalized.event_type != RUNTIME_BROKER_EVENT_MESSAGE_FORWARD:
+        raise NsRuntimeValidationError(f"runtime broker envelope event_type is not message forward: {normalized.event_type}")
+
+    message_raw: Any = normalized.payload.get("message") or {}
+    if not isinstance(message_raw, dict):
+        raise NsRuntimeValidationError("runtime broker message forward payload.message must be a JSON object")
+
+    return _runtime_message_from_dict(dict(message_raw))
+
+
+def _runtime_message_from_dict(payload: dict[str, Any]) -> NsRuntimeMessage:
+    """Build NsRuntimeMessage from serialized runtime message dict."""
+    if not isinstance(payload, dict):
+        raise NsRuntimeValidationError("runtime broker message payload must be a JSON object")
+
+    target: dict[str, Any] = dict(payload.get("target") or {})
+    producer: dict[str, Any] = dict(payload.get("producer") or {})
+
+    message_payload: Any = payload.get("payload") or {}
+    if not isinstance(message_payload, dict):
+        raise NsRuntimeValidationError("runtime broker message payload.payload must be a JSON object")
+
+    headers_raw: Any = payload.get("headers") or {}
+    if not isinstance(headers_raw, dict):
+        raise NsRuntimeValidationError("runtime broker message payload.headers must be a JSON object")
+
+    ttl_raw: Any = payload.get("ttl_seconds", 300)
+    ttl_seconds: int | None
+    if ttl_raw is None:
+        ttl_seconds = None
+    else:
+        ttl_seconds = int(ttl_raw)
+
+    created_at_raw: Any = payload.get("created_at_epoch_ms")
+    created_at_epoch_ms: int | None
+    if created_at_raw is None:
+        created_at_epoch_ms = None
+    else:
+        created_at_epoch_ms = int(created_at_raw)
+
+    return NsRuntimeMessage(
+        topic=str(payload.get("topic") or ""),
+        event=str(payload.get("event") or ""),
+        payload=dict(message_payload),
+        target_type=str(target.get("type") or "user"),  # type: ignore[arg-type]
+        target_id=target.get("id"),
+        producer_type=str(producer.get("type") or "backend"),  # type: ignore[arg-type]
+        producer_id=str(producer.get("id")).strip() if producer.get("id") is not None and str(producer.get("id")).strip() else None,
+        message_id=str(payload.get("message_id") or ""),
+        trace_id=str(payload.get("trace_id")).strip() if payload.get("trace_id") is not None and str(payload.get("trace_id")).strip() else None,
+        idempotency_key=str(payload.get("idempotency_key")).strip() if payload.get("idempotency_key") is not None and str(payload.get("idempotency_key")).strip() else None,
+        ttl_seconds=ttl_seconds,
+        require_ack=bool(payload.get("require_ack", True)),
+        created_at_epoch_ms=created_at_epoch_ms,
+        headers={str(key).strip(): str(value).strip() for key, value in headers_raw.items() if str(key).strip()},
+    ).normalized()
+
 
 def build_runtime_broker_channel(*, namespace: str, name: str) -> str:
     """Build namespaced runtime broker channel."""

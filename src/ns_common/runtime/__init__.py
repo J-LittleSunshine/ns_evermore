@@ -22,11 +22,13 @@ from ns_common.runtime.broker import (
     build_runtime_broker,
     build_runtime_broker_channel,
     build_runtime_broker_cluster_channel,
+    build_runtime_broker_message_forward_envelope,
     build_runtime_broker_node_channel,
     ensure_runtime_broker_event_type_known,
     is_known_runtime_broker_event_type,
     normalize_runtime_broker_channel,
     normalize_runtime_broker_event_type,
+    runtime_message_from_broker_forward_envelope,
 )
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.contracts import (
@@ -210,4 +212,6 @@ __all__ = [
     "normalize_runtime_broker_event_type",
     "ensure_runtime_broker_event_type_known",
     "is_known_runtime_broker_event_type",
+    "build_runtime_broker_message_forward_envelope",
+    "runtime_message_from_broker_forward_envelope",
 ]
