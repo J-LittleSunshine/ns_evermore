@@ -6,7 +6,9 @@ import json
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
+from _runtime_script_path import ensure_runtime_import_paths, resolve_repo_path
 
+ensure_runtime_import_paths(__file__)
 from ns_common.runtime.config import (
     RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED,
     RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED,
@@ -170,7 +172,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    run_smoke(config_path=Path(str(args.config)).resolve())
+    run_smoke(config_path=resolve_repo_path(__file__, str(args.config)).resolve())
 
     print("runtime config consistency smoke ok")
 

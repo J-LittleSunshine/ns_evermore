@@ -7,6 +7,9 @@ import contextlib
 from collections.abc import AsyncIterator
 from typing import Any
 
+from _runtime_script_path import ensure_runtime_import_paths
+
+ensure_runtime_import_paths(__file__)
 from ns_common.runtime.broker import (
     NsRuntimeBrokerEnvelope,
     RUNTIME_BROKER_EVENT_MESSAGE_FORWARD,

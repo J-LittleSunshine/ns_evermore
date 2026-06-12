@@ -8,10 +8,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from _runtime_script_path import ensure_runtime_import_paths, resolve_repo_path
+
+ensure_runtime_import_paths(__file__)
+
 from runtime_broker_memory_smoke import run_smoke as run_memory_broker_smoke
 from runtime_broker_redis_smoke import run_smoke as run_redis_broker_smoke
 from runtime_config_consistency_smoke import run_smoke as run_config_consistency_smoke
-
 
 class RuntimeSmokeError(RuntimeError):
     """Runtime smoke failed."""
@@ -116,7 +119,7 @@ def main() -> None:
     try:
         asyncio.run(
             run_smoke(
-                config_path=Path(str(args.config)).resolve(),
+                config_path=resolve_repo_path(__file__, str(args.config)).resolve(),
                 memory_timeout_seconds=float(args.memory_timeout),
                 redis_enabled=bool(args.with_redis),
                 redis_url=str(args.redis_url),
