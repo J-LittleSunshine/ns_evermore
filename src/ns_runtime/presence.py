@@ -80,51 +80,18 @@ class NsRuntimePresenceRecord:
 class NsRuntimePresenceStore(Protocol):
     """Runtime presence store protocol.
 
-    P12-A implements only memory presence. Redis/ValKey backends will implement
-    this protocol later without changing ns_runtime.core lifecycle hooks.
+    P12-A implements only memory presence. Redis/ValKey backends implement
+    this protocol without changing ns_runtime.core lifecycle hooks.
     """
 
     def upsert_connection(self, connection: NsRuntimeConnection, *, node_id: str) -> NsRuntimePresenceRecord:
         """Insert or update one online connection presence record."""
-        normalized_node_id = str(node_id or "").strip()
-        if not normalized_node_id:
-            raise ValueError("runtime presence node_id is required")
-
-        normalized_connection_id = str(connection.connection_id or "").strip()
-        if not normalized_connection_id:
-            raise ValueError("runtime presence connection_id is required")
-
-        old_record = self.get_connection(normalized_connection_id)
-        record = MemoryRuntimePresenceStore._record_from_connection(
-            connection,
-            node_id=normalized_node_id,
-            connected_at_epoch_ms=old_record.connected_at_epoch_ms if old_record is not None else connection.registered_at_epoch_ms,
-        )
-
-        cleanup_keys = self._replace_record_with_pipeline(old_record, record)
-        self._delete_empty_index_keys(cleanup_keys)
-        return record
 
     def refresh_connection(self, connection_id: str, *, last_seen_epoch_ms: int | None = None, health: dict[str, Any] | None = None) -> NsRuntimePresenceRecord | None:
         """Refresh last_seen / health for one online connection."""
 
     def remove_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Remove one connection from online presence indexes."""
-        normalized_connection_id = str(connection_id or "").strip()
-        if not normalized_connection_id:
-            return None
-
-        record = self.get_connection(normalized_connection_id)
-        if record is None:
-            return None
-
-        cleanup_keys = self._remove_record_with_pipeline(record)
-        self._delete_empty_index_keys(cleanup_keys)
-        return replace(
-            record,
-            status=RUNTIME_PRESENCE_STATUS_OFFLINE,
-            last_seen_epoch_ms=int(time.time() * 1000),
-        )
 
     def get_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Return one online presence record by connection id."""
@@ -479,17 +446,14 @@ class RedisRuntimePresenceStore:
             raise ValueError("runtime presence connection_id is required")
 
         old_record = self.get_connection(normalized_connection_id)
-        if old_record is not None:
-            self._remove_indexes(old_record)
-
         record = MemoryRuntimePresenceStore._record_from_connection(
             connection,
             node_id=normalized_node_id,
             connected_at_epoch_ms=old_record.connected_at_epoch_ms if old_record is not None else connection.registered_at_epoch_ms,
         )
 
-        self._set_record(record)
-        self._add_indexes(record)
+        cleanup_keys = self._replace_record_with_pipeline(old_record, record)
+        self._delete_empty_index_keys(cleanup_keys)
         return record
 
     def refresh_connection(self, connection_id: str, *, last_seen_epoch_ms: int | None = None, health: dict[str, Any] | None = None) -> NsRuntimePresenceRecord | None:
@@ -520,8 +484,8 @@ class RedisRuntimePresenceStore:
         if record is None:
             return None
 
-        self._run_redis("delete connection", lambda _client: _client.delete(self._connection_key(normalized_connection_id)))
-        self._remove_indexes(record)
+        cleanup_keys = self._remove_record_with_pipeline(record)
+        self._delete_empty_index_keys(cleanup_keys)
         return replace(
             record,
             status=RUNTIME_PRESENCE_STATUS_OFFLINE,
@@ -664,6 +628,9 @@ class RedisRuntimePresenceStore:
             self._role_key(record.connection_type),
         }
 
+        if record.connection_type != "frontend":
+            return keys
+
         if record.user_id is not None:
             keys.add(self._index_key("user", record.user_id))
 
@@ -707,10 +674,20 @@ class RedisRuntimePresenceStore:
         self._run_redis("add indexes", _add)
 
     def _remove_indexes(self, record: NsRuntimePresenceRecord) -> None:
-        """Remove record from all presence indexes."""
-        cleanup_keys = self._remove_record_with_pipeline(record)
-        self._delete_empty_index_keys(cleanup_keys)
+        """Remove record from all presence indexes without deleting the record."""
+        cleanup_keys = self._record_index_keys(record)
 
+        def _remove(_client: Any) -> None:
+            _pipeline = _client.pipeline(transaction=True)
+
+            for key in cleanup_keys:
+                _pipeline.srem(key, record.connection_id)
+
+            _pipeline.execute()
+
+        self._run_redis("remove indexes", _remove)
+        self._delete_empty_index_keys(cleanup_keys)
+        
     def _records_by_set_key(self, key: str) -> list[NsRuntimePresenceRecord]:
         """Return online records by one Redis set key and cleanup stale members."""
         raw_connection_ids = self._run_redis("read index set", lambda _client: _client.smembers(key))
