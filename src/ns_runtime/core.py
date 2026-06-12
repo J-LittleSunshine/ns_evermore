@@ -186,6 +186,8 @@ class NsRuntimeNode:
     def __init__(self, *, config: NsRuntimeConfig | None = None, host: str | None = None, port: int | None = None, path: str | None = None, serve_inbound: bool | None = None) -> None:
         """Initialize runtime node from ns_common config and optional bind overrides."""
         self._config: NsRuntimeConfig = config or ns_config.runtime_config
+        self._validate_runtime_config()
+
         self._host, self._port, self._path = self._resolve_bind_options(host=host, port=port, path=path)
         self._serve_inbound: bool = True if serve_inbound is None else bool(serve_inbound)
 
@@ -201,6 +203,10 @@ class NsRuntimeNode:
         self._last_broker_forward_dispatch_snapshot: NsRuntimeBrokerForwardDispatchSnapshot | None = None
         self._dispatcher = NsRuntimeDispatcher(config=self._config, registry=self._registry)
         self._auth_provider = build_runtime_auth_provider(self._config)
+
+    def _validate_runtime_config(self) -> None:
+        """Validate runtime configuration before building runtime infrastructure."""
+        self._config.validate()
 
     @property
     def host(self) -> str:
