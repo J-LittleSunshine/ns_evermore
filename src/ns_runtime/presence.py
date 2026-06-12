@@ -176,17 +176,18 @@ class MemoryRuntimePresenceStore:
         if not normalized_connection_id:
             return None
 
-        record = self.get_connection(normalized_connection_id)
-        if record is None:
-            return None
+        with self._lock:
+            record = self._records.get(normalized_connection_id)
+            if record is None:
+                return None
 
-        refreshed_record = replace(
-            record,
-            last_seen_epoch_ms=int(last_seen_epoch_ms or int(time.time() * 1000)),
-            health=dict(health or record.health or {}),
-        )
-        self._refresh_record_with_pipeline(refreshed_record)
-        return refreshed_record
+            refreshed_record = replace(
+                record,
+                last_seen_epoch_ms=int(last_seen_epoch_ms or int(time.time() * 1000)),
+                health=dict(health or record.health or {}),
+            )
+            self._records[normalized_connection_id] = refreshed_record
+            return refreshed_record
 
     def remove_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Remove one connection from online presence indexes."""
@@ -470,7 +471,7 @@ class RedisRuntimePresenceStore:
             last_seen_epoch_ms=int(last_seen_epoch_ms or int(time.time() * 1000)),
             health=dict(health or record.health or {}),
         )
-        self._set_record(refreshed_record)
+        self._refresh_record_with_pipeline(refreshed_record)
         return refreshed_record
 
     def remove_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
