@@ -116,6 +116,8 @@ class NsRuntimeNodeStats:
     broker_message_forward_count: int = 0
     broker_message_forward_local_handled_count: int = 0
     broker_message_forward_candidate_count: int = 0
+    broker_message_forward_no_sub_fallback_count: int = 0
+    broker_message_forward_rejected_fallback_count: int = 0
     broker_message_forward_dispatch_published_count: int = 0
     broker_message_forward_dispatch_error_count: int = 0
 
@@ -127,20 +129,18 @@ class NsRuntimeNodeStats:
     last_error: str | None = None
     last_broker_event_type: str | None = None
 
-
 @dataclass(slots=True, frozen=True, kw_only=True)
 class NsRuntimeBrokerForwardCandidate:
     """Runtime broker message forward candidate.
 
-    P13-K is selection-only. A candidate describes where a broker forward could
-    be published, but runtime core does not publish it automatically.
+    P13-N supports both node channel and cluster channel candidates. A None
+    target_node_id means cluster channel forward.
     """
 
     message_id: str
-    target_node_id: str
+    target_node_id: str | None
     channel: str
     envelope: NsRuntimeBrokerEnvelope
-
 
 class NsRuntimeNode:
     """Standalone ns_runtime core node.
@@ -237,6 +237,7 @@ class NsRuntimeNode:
                 "candidate_selection": {
                     "enabled": self._config.node_role == RUNTIME_NODE_ROLE_MASTER,
                     "auto_publish_enabled": dispatch_policy != RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED,
+                    "cluster_fallback_enabled": dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED,
                 },
             },
         }
@@ -397,33 +398,49 @@ class NsRuntimeNode:
         )
         return envelope
 
-    def select_broker_forward_candidate(self, message: NsRuntimeMessage) -> NsRuntimeBrokerForwardCandidate | None:
+    def select_broker_forward_candidate(self, message: NsRuntimeMessage, *, allow_cluster_fallback: bool = False) -> NsRuntimeBrokerForwardCandidate | None:
         """Select broker forward candidate for one runtime message.
 
-        This helper is intentionally not called by backend.publish. It only
-        exposes deterministic candidate selection for a later broker-forward
-        phase.
+        Node-channel candidate is preferred when a healthy runtime sub-node is
+        known. If allow_cluster_fallback is true and no healthy sub-node exists,
+        a cluster-channel candidate is returned.
         """
         if self._config.node_role != RUNTIME_NODE_ROLE_MASTER:
             return None
 
         normalized_message = message.normalized()
         target_node_id = self._select_broker_forward_target_node_id()
-        if target_node_id is None:
+
+        if target_node_id:
+            channel = build_runtime_broker_node_channel(node_id=target_node_id)
+            envelope = build_runtime_broker_message_forward_envelope(
+                source_node_id=self._config.node_id,
+                target_node_id=target_node_id,
+                message=normalized_message,
+                trace_id=normalized_message.trace_id,
+            )
+
+            return NsRuntimeBrokerForwardCandidate(
+                message_id=str(normalized_message.message_id),
+                target_node_id=target_node_id,
+                channel=channel,
+                envelope=envelope,
+            )
+
+        if not allow_cluster_fallback:
             return None
 
-        channel = build_runtime_broker_node_channel(node_id=target_node_id)
         envelope = build_runtime_broker_message_forward_envelope(
             source_node_id=self._config.node_id,
-            target_node_id=target_node_id,
+            target_node_id=None,
             message=normalized_message,
             trace_id=normalized_message.trace_id,
         )
 
         return NsRuntimeBrokerForwardCandidate(
             message_id=str(normalized_message.message_id),
-            target_node_id=target_node_id,
-            channel=channel,
+            target_node_id=None,
+            channel=self._broker_cluster_channel,
             envelope=envelope,
         )
 
@@ -434,34 +451,31 @@ class NsRuntimeNode:
         when the effective broker forward policy allows it.
         """
         normalized_message = message.normalized()
-        candidate: NsRuntimeBrokerForwardCandidate | None = None
         dispatch_policy = self._config.resolved_runtime_broker_message_forward_dispatch_policy()
-
-        if self._should_prepare_broker_forward_candidate_before_dispatch(dispatch_policy):
-            candidate = self.select_broker_forward_candidate(normalized_message)
+        had_healthy_sub_node = self._has_healthy_runtime_sub_node()
 
         ack = await self._dispatcher.dispatch_backend_publish(normalized_message)
+        fallback_reason = self._resolve_broker_forward_fallback_reason(
+            dispatch_policy=dispatch_policy,
+            ack=ack,
+            had_healthy_sub_node=had_healthy_sub_node,
+        )
 
-        if ack.status == RUNTIME_ACK_STATUS_ACCEPTED:
+        if fallback_reason is None:
             return ack
 
-        if self._config.node_role != RUNTIME_NODE_ROLE_MASTER:
-            return ack
-
-        if dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED:
-            return ack
-
-        if dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_REJECTED_ONLY:
-            candidate = candidate or self.select_broker_forward_candidate(normalized_message)
-
-        if dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED:
-            candidate = candidate or self.select_broker_forward_candidate(normalized_message)
-
+        allow_cluster_fallback = fallback_reason == "no_sub"
+        candidate = self.select_broker_forward_candidate(
+            normalized_message,
+            allow_cluster_fallback=allow_cluster_fallback,
+        )
         if candidate is None:
             return ack
 
         self._add_stats(
             broker_message_forward_candidate_count=1,
+            broker_message_forward_no_sub_fallback_count=1 if fallback_reason == "no_sub" else 0,
+            broker_message_forward_rejected_fallback_count=1 if fallback_reason == "rejected" else 0,
             last_broker_event_type=candidate.envelope.event_type,
         )
 
@@ -483,21 +497,38 @@ class NsRuntimeNode:
         return NsRuntimeAck(
             message_id=str(normalized_message.message_id),
             status=RUNTIME_ACK_STATUS_ACCEPTED,  # type: ignore[arg-type]
-            handled_by=candidate.target_node_id,
+            handled_by=candidate.target_node_id or self._config.node_id,
             trace_id=normalized_message.trace_id,
         ).normalized()
 
-    def _should_prepare_broker_forward_candidate_before_dispatch(self, dispatch_policy: str) -> bool:
-        """Return whether broker candidate should be prepared before dispatcher.
-
-        no_sub_or_rejected can eventually use candidate existence to distinguish
-        "no sub node" from "sub rejected". P13-M only hardens policy shape while
-        keeping dispatcher priority unchanged.
-        """
+    def _resolve_broker_forward_fallback_reason(self, *, dispatch_policy: str, ack: NsRuntimeAck, had_healthy_sub_node: bool) -> str | None:
+        """Return broker forward fallback reason, or None if fallback is disabled."""
         if self._config.node_role != RUNTIME_NODE_ROLE_MASTER:
-            return False
+            return None
 
-        return dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED
+        if dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED:
+            return None
+
+        if dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_REJECTED_ONLY:
+            if ack.status == RUNTIME_ACK_STATUS_REJECTED:
+                return "rejected"
+
+            return None
+
+        if dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED:
+            if not had_healthy_sub_node:
+                return "no_sub"
+
+            if ack.status == RUNTIME_ACK_STATUS_REJECTED:
+                return "rejected"
+
+            return None
+
+        return None
+
+    def _has_healthy_runtime_sub_node(self) -> bool:
+        """Return whether this node currently has at least one healthy runtime sub-node."""
+        return bool(self._registry.list_healthy_sub_nodes())
 
     def _select_broker_forward_target_node_id(self) -> str | None:
         """Select one healthy runtime sub-node for broker forward candidate."""
@@ -1695,6 +1726,8 @@ class NsRuntimeNode:
             broker_message_forward_count: int = 0,
             broker_message_forward_local_handled_count: int = 0,
             broker_message_forward_candidate_count: int = 0,
+            broker_message_forward_no_sub_fallback_count: int = 0,
+            broker_message_forward_rejected_fallback_count: int = 0,
             broker_message_forward_dispatch_published_count: int = 0,
             broker_message_forward_dispatch_error_count: int = 0,
             accepted_count: int = 0,
@@ -1734,6 +1767,8 @@ class NsRuntimeNode:
                 broker_message_forward_count=self._stats.broker_message_forward_count + broker_message_forward_count,
                 broker_message_forward_local_handled_count=self._stats.broker_message_forward_local_handled_count + broker_message_forward_local_handled_count,
                 broker_message_forward_candidate_count=self._stats.broker_message_forward_candidate_count + broker_message_forward_candidate_count,
+                broker_message_forward_no_sub_fallback_count=self._stats.broker_message_forward_no_sub_fallback_count + broker_message_forward_no_sub_fallback_count,
+                broker_message_forward_rejected_fallback_count=self._stats.broker_message_forward_rejected_fallback_count + broker_message_forward_rejected_fallback_count,
                 broker_message_forward_dispatch_published_count=self._stats.broker_message_forward_dispatch_published_count + broker_message_forward_dispatch_published_count,
                 broker_message_forward_dispatch_error_count=self._stats.broker_message_forward_dispatch_error_count + broker_message_forward_dispatch_error_count,
                 accepted_count=self._stats.accepted_count + accepted_count,
