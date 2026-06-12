@@ -65,6 +65,7 @@ class NsRuntimeConfig:
     runtime_broker_location: str = ""
     runtime_broker_health_publish_enabled: bool = False
     runtime_broker_message_forward_local_handle_enabled: bool = False
+    runtime_broker_message_forward_dispatch_enabled: bool = False
 
     runtime_presence_backend: RuntimePresenceBackend = RUNTIME_BACKEND_MEMORY  # type: ignore[assignment]
     runtime_presence_location: str = ""
@@ -180,6 +181,9 @@ class NsRuntimeConfig:
 
         if not isinstance(self.runtime_broker_message_forward_local_handle_enabled, bool):
             raise NsRuntimeConfigurationError("runtime runtime_broker_message_forward_local_handle_enabled must be bool")
+
+        if not isinstance(self.runtime_broker_message_forward_dispatch_enabled, bool):
+            raise NsRuntimeConfigurationError("runtime runtime_broker_message_forward_dispatch_enabled must be bool")
 
         if self.runtime_presence_backend not in {RUNTIME_BACKEND_MEMORY, RUNTIME_BACKEND_REDIS, RUNTIME_BACKEND_VALKEY, RUNTIME_BACKEND_SQL_WAL}:
             raise NsRuntimeConfigurationError(f"runtime runtime_presence_backend is invalid: {self.runtime_presence_backend}")

@@ -110,6 +110,9 @@ class NsRuntimeNodeStats:
     broker_pong_published_count: int = 0
     broker_message_forward_count: int = 0
     broker_message_forward_local_handled_count: int = 0
+    broker_message_forward_candidate_count: int = 0
+    broker_message_forward_dispatch_published_count: int = 0
+    broker_message_forward_dispatch_error_count: int = 0
 
     accepted_count: int = 0
     rejected_count: int = 0
@@ -118,6 +121,7 @@ class NsRuntimeNodeStats:
 
     last_error: str | None = None
     last_broker_event_type: str | None = None
+
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class NsRuntimeBrokerForwardCandidate:
@@ -131,6 +135,7 @@ class NsRuntimeBrokerForwardCandidate:
     target_node_id: str
     channel: str
     envelope: NsRuntimeBrokerEnvelope
+
 
 class NsRuntimeNode:
     """Standalone ns_runtime core node.
@@ -198,8 +203,9 @@ class NsRuntimeNode:
     def broker_report(self) -> dict[str, Any]:
         """Return local runtime broker report.
 
-        Runtime dispatch has not switched to broker-based cross-node routing.
-        Message forward local handling is opt-in and disabled by default.
+        Runtime dispatch has not switched to broker-based cross-node routing by
+        default. Broker message forward dispatch is opt-in and disabled by
+        default.
         """
         last_envelope = self._last_broker_envelope
         return {
@@ -218,9 +224,10 @@ class NsRuntimeNode:
             },
             "message_forward": {
                 "local_handle_enabled": bool(self._config.runtime_broker_message_forward_local_handle_enabled),
+                "dispatch_enabled": bool(self._config.runtime_broker_message_forward_dispatch_enabled),
                 "candidate_selection": {
                     "enabled": self._config.node_role == RUNTIME_NODE_ROLE_MASTER,
-                    "auto_publish_enabled": False,
+                    "auto_publish_enabled": bool(self._config.runtime_broker_message_forward_dispatch_enabled),
                 },
             },
         }
@@ -410,6 +417,59 @@ class NsRuntimeNode:
             channel=channel,
             envelope=envelope,
         )
+
+    async def _dispatch_backend_publish(self, message: NsRuntimeMessage) -> NsRuntimeAck:
+        """Dispatch backend.publish with optional broker forward fallback.
+
+        Default behavior is unchanged. Broker message forward is attempted only
+        when:
+        - this node is master
+        - runtime_broker_message_forward_dispatch_enabled is true
+        - existing dispatcher returns rejected
+        - a broker forward candidate exists
+        """
+        normalized_message = message.normalized()
+        ack = await self._dispatcher.dispatch_backend_publish(normalized_message)
+
+        if ack.status == RUNTIME_ACK_STATUS_ACCEPTED:
+            return ack
+
+        if self._config.node_role != RUNTIME_NODE_ROLE_MASTER:
+            return ack
+
+        if not self._config.runtime_broker_message_forward_dispatch_enabled:
+            return ack
+
+        candidate = self.select_broker_forward_candidate(normalized_message)
+        if candidate is None:
+            return ack
+
+        self._add_stats(
+            broker_message_forward_candidate_count=1,
+            last_broker_event_type=candidate.envelope.event_type,
+        )
+
+        try:
+            await self.publish_broker_envelope(candidate.envelope, channel=candidate.channel)
+        except Exception as exc:
+            self._add_stats(
+                broker_message_forward_dispatch_error_count=1,
+                last_error=f"runtime broker message forward dispatch failed: {exc}",
+                last_broker_event_type=candidate.envelope.event_type,
+            )
+            return ack
+
+        self._add_stats(
+            broker_message_forward_dispatch_published_count=1,
+            last_broker_event_type=candidate.envelope.event_type,
+        )
+
+        return NsRuntimeAck(
+            message_id=str(normalized_message.message_id),
+            status=RUNTIME_ACK_STATUS_ACCEPTED,  # type: ignore[arg-type]
+            handled_by=candidate.target_node_id,
+            trace_id=normalized_message.trace_id,
+        ).normalized()
 
     def _select_broker_forward_target_node_id(self) -> str | None:
         """Select one healthy runtime sub-node for broker forward candidate."""
@@ -1063,7 +1123,7 @@ class NsRuntimeNode:
 
         try:
             message: NsRuntimeMessage = runtime_message_from_payload(frame.payload)
-            ack: NsRuntimeAck = await self._dispatcher.dispatch_backend_publish(message)
+            ack: NsRuntimeAck = await self._dispatch_backend_publish(message)
         except Exception as exc:
             await self._send_ack(connection, frame, status=RUNTIME_ACK_STATUS_REJECTED, reason=str(exc))
             self._add_stats(rejected_count=1, last_error=str(exc))
@@ -1606,6 +1666,9 @@ class NsRuntimeNode:
             broker_pong_published_count: int = 0,
             broker_message_forward_count: int = 0,
             broker_message_forward_local_handled_count: int = 0,
+            broker_message_forward_candidate_count: int = 0,
+            broker_message_forward_dispatch_published_count: int = 0,
+            broker_message_forward_dispatch_error_count: int = 0,
             accepted_count: int = 0,
             rejected_count: int = 0,
             forwarded_count: int = 0,
@@ -1642,6 +1705,9 @@ class NsRuntimeNode:
                 broker_pong_published_count=self._stats.broker_pong_published_count + broker_pong_published_count,
                 broker_message_forward_count=self._stats.broker_message_forward_count + broker_message_forward_count,
                 broker_message_forward_local_handled_count=self._stats.broker_message_forward_local_handled_count + broker_message_forward_local_handled_count,
+                broker_message_forward_candidate_count=self._stats.broker_message_forward_candidate_count + broker_message_forward_candidate_count,
+                broker_message_forward_dispatch_published_count=self._stats.broker_message_forward_dispatch_published_count + broker_message_forward_dispatch_published_count,
+                broker_message_forward_dispatch_error_count=self._stats.broker_message_forward_dispatch_error_count + broker_message_forward_dispatch_error_count,
                 accepted_count=self._stats.accepted_count + accepted_count,
                 rejected_count=self._stats.rejected_count + rejected_count,
                 forwarded_count=self._stats.forwarded_count + forwarded_count,
