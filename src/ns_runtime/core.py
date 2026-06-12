@@ -634,39 +634,108 @@ class NsRuntimeNode:
         diagnostics. It does not expose HTTP API and does not imply distributed
         presence consistency.
         """
-        return self._presence.snapshot_counts()
+        try:
+            return self._presence.snapshot_counts()
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence counts failed: {exc}",
+            )
+            return {
+                "online_connections": 0,
+                "online_frontends": 0,
+                "online_backends": 0,
+                "online_runtime_sub_nodes": 0,
+                "online_users": 0,
+            }
 
     def get_presence_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Return one local online presence record by connection id."""
-        return self._presence.get_connection(connection_id)
+        try:
+            return self._presence.get_connection(connection_id)
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence get connection failed: {exc}",
+            )
+            return None
 
     def list_presence_frontends(self) -> list[NsRuntimePresenceRecord]:
         """Return local online frontend presence records."""
-        return self._presence.list_online_frontends()
+        try:
+            return self._presence.list_online_frontends()
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence list frontends failed: {exc}",
+            )
+            return []
 
     def list_presence_backends(self) -> list[NsRuntimePresenceRecord]:
         """Return local online backend presence records."""
-        return self._presence.list_online_backends()
+        try:
+            return self._presence.list_online_backends()
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence list backends failed: {exc}",
+            )
+            return []
 
     def list_presence_runtime_sub_nodes(self) -> list[NsRuntimePresenceRecord]:
         """Return local online runtime sub-node presence records."""
-        return self._presence.list_online_runtime_sub_nodes()
+        try:
+            return self._presence.list_online_runtime_sub_nodes()
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence list runtime sub nodes failed: {exc}",
+            )
+            return []
 
     def list_presence_by_user(self, user_id: str) -> list[NsRuntimePresenceRecord]:
         """Return local online frontend presence records for one user."""
-        return self._presence.list_online_by_user(user_id)
+        try:
+            return self._presence.list_online_by_user(user_id)
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence list by user failed: {exc}",
+            )
+            return []
 
     def list_presence_by_session(self, session_id: str) -> list[NsRuntimePresenceRecord]:
         """Return local online frontend presence records for one session."""
-        return self._presence.list_online_by_session(session_id)
+        try:
+            return self._presence.list_online_by_session(session_id)
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence list by session failed: {exc}",
+            )
+            return []
 
     def list_presence_by_client(self, client_id: str) -> list[NsRuntimePresenceRecord]:
         """Return local online frontend presence records for one client."""
-        return self._presence.list_online_by_client(client_id)
+        try:
+            return self._presence.list_online_by_client(client_id)
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence list by client failed: {exc}",
+            )
+            return []
 
     def list_presence_by_room(self, room_id: str) -> list[NsRuntimePresenceRecord]:
         """Return local online frontend presence records for one room."""
-        return self._presence.list_online_by_room(room_id)
+        try:
+            return self._presence.list_online_by_room(room_id)
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence list by room failed: {exc}",
+            )
+            return []
 
     def run_forever(self) -> None:
         """Run runtime node until stop() is called."""
