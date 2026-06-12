@@ -93,6 +93,9 @@ class NsRuntimePresenceStore(Protocol):
     def remove_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Remove one connection from online presence indexes."""
 
+    def cleanup_node_connections(self, node_id: str) -> int:
+        """Cleanup online presence records owned by one runtime node."""
+
     def get_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Return one online presence record by connection id."""
 
@@ -206,6 +209,26 @@ class MemoryRuntimePresenceStore:
                 status=RUNTIME_PRESENCE_STATUS_OFFLINE,
                 last_seen_epoch_ms=int(time.time() * 1000),
             )
+
+    def cleanup_node_connections(self, node_id: str) -> int:
+        """Cleanup online presence records owned by one runtime node."""
+        normalized_node_id = self._normalize_optional(node_id)
+        if normalized_node_id is None:
+            return 0
+
+        with self._lock:
+            connection_ids = [
+                record.connection_id
+                for record in self._records.values()
+                if record.node_id == normalized_node_id
+            ]
+
+            for connection_id in connection_ids:
+                record = self._records.pop(connection_id, None)
+                if record is not None:
+                    self._remove_indexes(record)
+
+            return len(connection_ids)
 
     def get_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Return one online presence record by connection id."""
@@ -493,6 +516,45 @@ class RedisRuntimePresenceStore:
             status=RUNTIME_PRESENCE_STATUS_OFFLINE,
             last_seen_epoch_ms=int(time.time() * 1000),
         )
+
+    def cleanup_node_connections(self, node_id: str) -> int:
+        """Cleanup online presence records owned by one runtime node."""
+        normalized_node_id = MemoryRuntimePresenceStore._normalize_optional(node_id)
+        if normalized_node_id is None:
+            return 0
+
+        node_index_key = self._index_key("node", normalized_node_id)
+        raw_connection_ids = self._run_redis("read node index set", lambda _client: _client.smembers(node_index_key))
+        connection_ids = sorted(
+            str(connection_id).strip()
+            for connection_id in raw_connection_ids
+            if str(connection_id).strip()
+        )
+
+        if not connection_ids:
+            self._delete_empty_index_key(node_index_key)
+            return 0
+
+        cleanup_index_keys: set[str] = {node_index_key}
+        for connection_id in connection_ids:
+            cleanup_index_keys.update(self._read_reverse_index_keys(connection_id))
+
+        def _cleanup(_client: Any) -> None:
+            _pipeline = _client.pipeline(transaction=True)
+
+            for connection_id in connection_ids:
+                _pipeline.delete(self._connection_key(connection_id))
+
+                for key in cleanup_index_keys:
+                    _pipeline.srem(key, connection_id)
+
+                _pipeline.delete(self._reverse_index_key(connection_id))
+
+            _pipeline.execute()
+
+        self._run_redis("cleanup node connections", _cleanup)
+        self._delete_empty_index_keys(cleanup_index_keys)
+        return len(connection_ids)
 
     def get_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Return one online presence record by connection id."""

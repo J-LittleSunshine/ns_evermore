@@ -122,6 +122,7 @@ class NsRuntimeNodeStats:
     broker_message_forward_dispatch_error_count: int = 0
 
     presence_error_count: int = 0
+    presence_cleanup_count: int = 0
 
     accepted_count: int = 0
     rejected_count: int = 0
@@ -779,6 +780,8 @@ class NsRuntimeNode:
 
     async def _run_forever_async(self) -> None:
         """Run runtime async lifecycle and close broker on exit."""
+        self._cleanup_own_presence_on_startup()
+
         broker_listener_task = asyncio.create_task(self._broker_listener_loop())
         broker_health_publisher_task: asyncio.Task[None] | None = None
 
@@ -1812,6 +1815,20 @@ class NsRuntimeNode:
                 last_error=f"runtime presence remove failed: {exc}",
             )
 
+    def _cleanup_own_presence_on_startup(self) -> None:
+        """Cleanup stale presence records owned by current runtime node."""
+        try:
+            cleanup_count = self._presence.cleanup_node_connections(self._config.node_id)
+        except NsRuntimePresenceError as exc:
+            self._add_stats(
+                presence_error_count=1,
+                last_error=f"runtime presence startup cleanup failed: {exc}",
+            )
+            return
+
+        if cleanup_count > 0:
+            self._add_stats(presence_cleanup_count=cleanup_count)
+
     async def _close_broker(self) -> None:
         """Close runtime broker resources."""
         with contextlib.suppress(Exception):
@@ -1901,6 +1918,7 @@ class NsRuntimeNode:
             broker_message_forward_dispatch_published_count: int = 0,
             broker_message_forward_dispatch_error_count: int = 0,
             presence_error_count: int = 0,
+            presence_cleanup_count: int = 0,
             accepted_count: int = 0,
             rejected_count: int = 0,
             forwarded_count: int = 0,
@@ -1943,6 +1961,7 @@ class NsRuntimeNode:
                 broker_message_forward_dispatch_published_count=self._stats.broker_message_forward_dispatch_published_count + broker_message_forward_dispatch_published_count,
                 broker_message_forward_dispatch_error_count=self._stats.broker_message_forward_dispatch_error_count + broker_message_forward_dispatch_error_count,
                 presence_error_count=self._stats.presence_error_count + presence_error_count,
+                presence_cleanup_count=self._stats.presence_cleanup_count + presence_cleanup_count,
                 accepted_count=self._stats.accepted_count + accepted_count,
                 rejected_count=self._stats.rejected_count + rejected_count,
                 forwarded_count=self._stats.forwarded_count + forwarded_count,
