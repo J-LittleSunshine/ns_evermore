@@ -32,7 +32,18 @@ RuntimeBrokerBackend = Literal["memory", "redis", "valkey", "mq"]
 RuntimePresenceBackend = Literal["memory", "redis", "valkey", "sql_wal"]
 RuntimeIpcMode = Literal["unix_socket", "tcp", "memory"]
 RuntimeMasterForwardPolicy = Literal["local_first", "sub_first", "sub_required"]
+RuntimeBrokerMessageForwardDispatchPolicy = Literal["disabled", "rejected_only", "no_sub_or_rejected"]
 RuntimeAuthProvider = Literal["static", "remote_iam"]
+
+RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED = "disabled"
+RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_REJECTED_ONLY = "rejected_only"
+RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED = "no_sub_or_rejected"
+
+RUNTIME_BROKER_MESSAGE_FORWARD_POLICIES: tuple[str, ...] = (
+    RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED,
+    RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_REJECTED_ONLY,
+    RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED,
+)
 IMPLEMENTED_RUNTIME_BROKER_BACKENDS: tuple[str, ...] = (
     RUNTIME_BACKEND_MEMORY,
     RUNTIME_BACKEND_REDIS,
@@ -66,6 +77,7 @@ class NsRuntimeConfig:
     runtime_broker_health_publish_enabled: bool = False
     runtime_broker_message_forward_local_handle_enabled: bool = False
     runtime_broker_message_forward_dispatch_enabled: bool = False
+    runtime_broker_message_forward_dispatch_policy: RuntimeBrokerMessageForwardDispatchPolicy = RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED  # type: ignore[assignment]
 
     runtime_presence_backend: RuntimePresenceBackend = RUNTIME_BACKEND_MEMORY  # type: ignore[assignment]
     runtime_presence_location: str = ""
@@ -157,6 +169,22 @@ class NsRuntimeConfig:
             f"implemented backends: {', '.join(IMPLEMENTED_RUNTIME_PRESENCE_BACKENDS)}"
         )
 
+    def resolved_runtime_broker_message_forward_dispatch_policy(self) -> str:
+        """Return effective runtime broker message forward dispatch policy.
+
+        runtime_broker_message_forward_dispatch_enabled is kept as a compatibility
+        boolean. If it is true and the explicit policy is disabled, the effective
+        policy becomes rejected_only.
+        """
+        explicit_policy = str(self.runtime_broker_message_forward_dispatch_policy or "").strip().lower()
+        if not explicit_policy:
+            explicit_policy = RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED
+
+        if explicit_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED and self.runtime_broker_message_forward_dispatch_enabled:
+            return RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_REJECTED_ONLY
+
+        return explicit_policy
+
     def validate(self) -> None:
         """Validate runtime configuration."""
         if self.node_role not in {RUNTIME_NODE_ROLE_STANDALONE, RUNTIME_NODE_ROLE_MASTER, RUNTIME_NODE_ROLE_SUB}:
@@ -184,6 +212,9 @@ class NsRuntimeConfig:
 
         if not isinstance(self.runtime_broker_message_forward_dispatch_enabled, bool):
             raise NsRuntimeConfigurationError("runtime runtime_broker_message_forward_dispatch_enabled must be bool")
+
+        if self.runtime_broker_message_forward_dispatch_policy not in RUNTIME_BROKER_MESSAGE_FORWARD_POLICIES:
+            raise NsRuntimeConfigurationError(f"runtime runtime_broker_message_forward_dispatch_policy is invalid: {self.runtime_broker_message_forward_dispatch_policy}")
 
         if self.runtime_presence_backend not in {RUNTIME_BACKEND_MEMORY, RUNTIME_BACKEND_REDIS, RUNTIME_BACKEND_VALKEY, RUNTIME_BACKEND_SQL_WAL}:
             raise NsRuntimeConfigurationError(f"runtime runtime_presence_backend is invalid: {self.runtime_presence_backend}")

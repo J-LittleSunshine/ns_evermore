@@ -23,7 +23,12 @@ from ns_common.runtime.broker import (
     is_known_runtime_broker_event_type,
     runtime_message_from_broker_forward_envelope,
 )
-from ns_common.runtime.config import NsRuntimeConfig
+from ns_common.runtime.config import (
+    RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED,
+    RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED,
+    RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_REJECTED_ONLY,
+    NsRuntimeConfig,
+)
 from ns_common.runtime.constants import (
     RUNTIME_ACK_STATUS_ACCEPTED,
     RUNTIME_ACK_STATUS_REJECTED,
@@ -208,6 +213,8 @@ class NsRuntimeNode:
         default.
         """
         last_envelope = self._last_broker_envelope
+        dispatch_policy = self._config.resolved_runtime_broker_message_forward_dispatch_policy()
+
         return {
             "backend": self._config.resolved_runtime_broker_backend(),
             "location_configured": bool(str(self._config.runtime_broker_location or "").strip()),
@@ -224,10 +231,12 @@ class NsRuntimeNode:
             },
             "message_forward": {
                 "local_handle_enabled": bool(self._config.runtime_broker_message_forward_local_handle_enabled),
-                "dispatch_enabled": bool(self._config.runtime_broker_message_forward_dispatch_enabled),
+                "dispatch_enabled": dispatch_policy != RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED,
+                "dispatch_policy": dispatch_policy,
+                "compat_dispatch_enabled": bool(self._config.runtime_broker_message_forward_dispatch_enabled),
                 "candidate_selection": {
                     "enabled": self._config.node_role == RUNTIME_NODE_ROLE_MASTER,
-                    "auto_publish_enabled": bool(self._config.runtime_broker_message_forward_dispatch_enabled),
+                    "auto_publish_enabled": dispatch_policy != RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED,
                 },
             },
         }
@@ -422,13 +431,15 @@ class NsRuntimeNode:
         """Dispatch backend.publish with optional broker forward fallback.
 
         Default behavior is unchanged. Broker message forward is attempted only
-        when:
-        - this node is master
-        - runtime_broker_message_forward_dispatch_enabled is true
-        - existing dispatcher returns rejected
-        - a broker forward candidate exists
+        when the effective broker forward policy allows it.
         """
         normalized_message = message.normalized()
+        candidate: NsRuntimeBrokerForwardCandidate | None = None
+        dispatch_policy = self._config.resolved_runtime_broker_message_forward_dispatch_policy()
+
+        if self._should_prepare_broker_forward_candidate_before_dispatch(dispatch_policy):
+            candidate = self.select_broker_forward_candidate(normalized_message)
+
         ack = await self._dispatcher.dispatch_backend_publish(normalized_message)
 
         if ack.status == RUNTIME_ACK_STATUS_ACCEPTED:
@@ -437,10 +448,15 @@ class NsRuntimeNode:
         if self._config.node_role != RUNTIME_NODE_ROLE_MASTER:
             return ack
 
-        if not self._config.runtime_broker_message_forward_dispatch_enabled:
+        if dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED:
             return ack
 
-        candidate = self.select_broker_forward_candidate(normalized_message)
+        if dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_REJECTED_ONLY:
+            candidate = candidate or self.select_broker_forward_candidate(normalized_message)
+
+        if dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED:
+            candidate = candidate or self.select_broker_forward_candidate(normalized_message)
+
         if candidate is None:
             return ack
 
@@ -471,6 +487,18 @@ class NsRuntimeNode:
             trace_id=normalized_message.trace_id,
         ).normalized()
 
+    def _should_prepare_broker_forward_candidate_before_dispatch(self, dispatch_policy: str) -> bool:
+        """Return whether broker candidate should be prepared before dispatcher.
+
+        no_sub_or_rejected can eventually use candidate existence to distinguish
+        "no sub node" from "sub rejected". P13-M only hardens policy shape while
+        keeping dispatcher priority unchanged.
+        """
+        if self._config.node_role != RUNTIME_NODE_ROLE_MASTER:
+            return False
+
+        return dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED
+    
     def _select_broker_forward_target_node_id(self) -> str | None:
         """Select one healthy runtime sub-node for broker forward candidate."""
         sub_nodes = self._registry.list_healthy_sub_nodes()
