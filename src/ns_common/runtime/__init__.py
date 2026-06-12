@@ -44,6 +44,7 @@ from ns_common.runtime.errors import (
     NsRuntimeError,
     NsRuntimeIpcError,
     NsRuntimeOutboxError,
+    NsRuntimePresenceError,
     NsRuntimePublishError,
     NsRuntimeValidationError,
 )
@@ -131,6 +132,7 @@ __all__ = [
     "NsRuntimeMessage",
     "NsRuntimeOutbox",
     "NsRuntimeOutboxError",
+    "NsRuntimePresenceError",
     "NsRuntimePublishError",
     "NsRuntimePublisher",
     "NsRuntimeTarget",

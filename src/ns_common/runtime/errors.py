@@ -31,6 +31,8 @@ class NsRuntimeOutboxError(NsRuntimeError):
 class NsRuntimeBrokerError(NsRuntimeError):
     """Raised when runtime broker operation fails."""
 
+class NsRuntimePresenceError(NsRuntimeError):
+    """Raised when runtime presence operation fails."""
 
 class NsRuntimeAckTimeoutError(NsRuntimeError):
     """Raised when runtime message ack times out."""
