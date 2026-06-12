@@ -97,6 +97,12 @@ class NsRuntimeConfig:
     heartbeat_interval_seconds: int = 15
     health_report_interval_seconds: int = 30
 
+    websocket_ping_interval_seconds: float = 20.0
+    websocket_ping_timeout_seconds: float = 20.0
+    websocket_close_timeout_seconds: float = 10.0
+    websocket_max_size_bytes: int = 1048576
+    websocket_max_queue: int = 32
+
     ack_timeout_seconds: float = 5.0
     retry_base_delay_seconds: float = 1.0
     retry_max_delay_seconds: float = 60.0
@@ -256,6 +262,21 @@ class NsRuntimeConfig:
 
         if isinstance(self.health_report_interval_seconds, bool) or self.health_report_interval_seconds <= 0:
             raise NsRuntimeConfigurationError("runtime health_report_interval_seconds must be positive")
+
+        if isinstance(self.websocket_ping_interval_seconds, bool) or self.websocket_ping_interval_seconds < 0:
+            raise NsRuntimeConfigurationError("runtime websocket_ping_interval_seconds must be zero or positive")
+
+        if isinstance(self.websocket_ping_timeout_seconds, bool) or self.websocket_ping_timeout_seconds <= 0:
+            raise NsRuntimeConfigurationError("runtime websocket_ping_timeout_seconds must be positive")
+
+        if isinstance(self.websocket_close_timeout_seconds, bool) or self.websocket_close_timeout_seconds <= 0:
+            raise NsRuntimeConfigurationError("runtime websocket_close_timeout_seconds must be positive")
+
+        if isinstance(self.websocket_max_size_bytes, bool) or not isinstance(self.websocket_max_size_bytes, int) or self.websocket_max_size_bytes <= 0:
+            raise NsRuntimeConfigurationError("runtime websocket_max_size_bytes must be a positive int")
+
+        if isinstance(self.websocket_max_queue, bool) or not isinstance(self.websocket_max_queue, int) or self.websocket_max_queue <= 0:
+            raise NsRuntimeConfigurationError("runtime websocket_max_queue must be a positive int")
 
         if self.ack_timeout_seconds <= 0:
             raise NsRuntimeConfigurationError("runtime ack_timeout_seconds must be positive")

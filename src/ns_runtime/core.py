@@ -1032,6 +1032,16 @@ class NsRuntimeNode:
         """Stop runtime node."""
         self._stop_event.set()
 
+    def _websocket_options(self) -> dict[str, Any]:
+        """Return configured WebSocket transport options."""
+        return {
+            "ping_interval": float(self._config.websocket_ping_interval_seconds),
+            "ping_timeout": float(self._config.websocket_ping_timeout_seconds),
+            "close_timeout": float(self._config.websocket_close_timeout_seconds),
+            "max_size": int(self._config.websocket_max_size_bytes),
+            "max_queue": int(self._config.websocket_max_queue),
+        }
+
     async def _run_sub_node(self) -> None:
         """Run sub node client and optional inbound frontend server."""
         if not self._serve_inbound:
@@ -1063,7 +1073,7 @@ class NsRuntimeNode:
         except ImportError as exc:
             raise NsRuntimeConfigurationError("websockets package is required for runtime node") from exc
 
-        async with websockets.serve(self._handle_connection, self._host, self._port, ping_interval=20, ping_timeout=20, max_size=2 ** 20, max_queue=32):
+        async with websockets.serve(self._handle_connection,self._host,self._port,**self._websocket_options()):
             while not self._stop_event.is_set():
                 await asyncio.sleep(0.2)
 
@@ -1081,7 +1091,7 @@ class NsRuntimeNode:
             connection: NsRuntimeConnection | None = None
 
             try:
-                async with websockets.connect(self._config.master_url, ping_interval=20, ping_timeout=20, max_size=2 ** 20, max_queue=32) as websocket:
+                async with websockets.connect(self._config.master_url, **self._websocket_options()) as websocket:
                     connection = NsRuntimeConnection(
                         websocket=websocket,
                         connection_type="runtime_sub",
