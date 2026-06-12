@@ -86,12 +86,45 @@ class NsRuntimePresenceStore(Protocol):
 
     def upsert_connection(self, connection: NsRuntimeConnection, *, node_id: str) -> NsRuntimePresenceRecord:
         """Insert or update one online connection presence record."""
+        normalized_node_id = str(node_id or "").strip()
+        if not normalized_node_id:
+            raise ValueError("runtime presence node_id is required")
+
+        normalized_connection_id = str(connection.connection_id or "").strip()
+        if not normalized_connection_id:
+            raise ValueError("runtime presence connection_id is required")
+
+        old_record = self.get_connection(normalized_connection_id)
+        record = MemoryRuntimePresenceStore._record_from_connection(
+            connection,
+            node_id=normalized_node_id,
+            connected_at_epoch_ms=old_record.connected_at_epoch_ms if old_record is not None else connection.registered_at_epoch_ms,
+        )
+
+        cleanup_keys = self._replace_record_with_pipeline(old_record, record)
+        self._delete_empty_index_keys(cleanup_keys)
+        return record
 
     def refresh_connection(self, connection_id: str, *, last_seen_epoch_ms: int | None = None, health: dict[str, Any] | None = None) -> NsRuntimePresenceRecord | None:
         """Refresh last_seen / health for one online connection."""
 
     def remove_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Remove one connection from online presence indexes."""
+        normalized_connection_id = str(connection_id or "").strip()
+        if not normalized_connection_id:
+            return None
+
+        record = self.get_connection(normalized_connection_id)
+        if record is None:
+            return None
+
+        cleanup_keys = self._remove_record_with_pipeline(record)
+        self._delete_empty_index_keys(cleanup_keys)
+        return replace(
+            record,
+            status=RUNTIME_PRESENCE_STATUS_OFFLINE,
+            last_seen_epoch_ms=int(time.time() * 1000),
+        )
 
     def get_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Return one online presence record by connection id."""
@@ -583,6 +616,73 @@ class RedisRuntimePresenceStore:
             ),
         )
 
+    def _replace_record_with_pipeline(self, old_record: NsRuntimePresenceRecord | None, record: NsRuntimePresenceRecord) -> set[str]:
+        """Replace one record and its indexes through one Redis transaction."""
+        cleanup_keys: set[str] = set()
+
+        def _replace(_client: Any) -> None:
+            _pipeline = _client.pipeline(transaction=True)
+
+            if old_record is not None:
+                for key in self._record_index_keys(old_record):
+                    _pipeline.srem(key, old_record.connection_id)
+                    cleanup_keys.add(key)
+
+            _pipeline.set(
+                self._connection_key(record.connection_id),
+                self._record_to_json(record),
+                ex=self._record_ttl_seconds,
+            )
+
+            for key in self._record_index_keys(record):
+                _pipeline.sadd(key, record.connection_id)
+
+            _pipeline.execute()
+
+        self._run_redis("replace connection with indexes", _replace)
+        return cleanup_keys
+
+    def _remove_record_with_pipeline(self, record: NsRuntimePresenceRecord) -> set[str]:
+        """Remove one record and its indexes through one Redis transaction."""
+        cleanup_keys = self._record_index_keys(record)
+
+        def _remove(_client: Any) -> None:
+            _pipeline = _client.pipeline(transaction=True)
+            _pipeline.delete(self._connection_key(record.connection_id))
+
+            for key in cleanup_keys:
+                _pipeline.srem(key, record.connection_id)
+
+            _pipeline.execute()
+
+        self._run_redis("remove connection with indexes", _remove)
+        return cleanup_keys
+
+    def _record_index_keys(self, record: NsRuntimePresenceRecord) -> set[str]:
+        """Return all index keys for one presence record."""
+        keys = {
+            self._role_key(record.connection_type),
+        }
+
+        if record.user_id is not None:
+            keys.add(self._index_key("user", record.user_id))
+
+        if record.session_id is not None:
+            keys.add(self._index_key("session", record.session_id))
+
+        if record.client_id is not None:
+            keys.add(self._index_key("client", record.client_id))
+
+        for room_id in record.rooms:
+            keys.add(self._index_key("room", room_id))
+
+        return keys
+
+    def _delete_empty_index_keys(self, keys: set[str]) -> None:
+        """Delete empty index keys after write transaction succeeds."""
+        for key in sorted(str(item).strip() for item in keys if str(item).strip()):
+            self._delete_empty_index_key(key)
+
     def _add_indexes(self, record: NsRuntimePresenceRecord) -> None:
         """Add record to role and frontend secondary indexes."""
 
@@ -608,19 +708,8 @@ class RedisRuntimePresenceStore:
 
     def _remove_indexes(self, record: NsRuntimePresenceRecord) -> None:
         """Remove record from all presence indexes."""
-        self._remove_from_index_key(self._role_key(record.connection_type), record.connection_id)
-
-        if record.user_id is not None:
-            self._remove_from_index_key(self._index_key("user", record.user_id), record.connection_id)
-
-        if record.session_id is not None:
-            self._remove_from_index_key(self._index_key("session", record.session_id), record.connection_id)
-
-        if record.client_id is not None:
-            self._remove_from_index_key(self._index_key("client", record.client_id), record.connection_id)
-
-        for room_id in record.rooms:
-            self._remove_from_index_key(self._index_key("room", room_id), record.connection_id)
+        cleanup_keys = self._remove_record_with_pipeline(record)
+        self._delete_empty_index_keys(cleanup_keys)
 
     def _records_by_set_key(self, key: str) -> list[NsRuntimePresenceRecord]:
         """Return online records by one Redis set key and cleanup stale members."""
