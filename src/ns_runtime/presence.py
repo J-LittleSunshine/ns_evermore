@@ -780,11 +780,44 @@ class RedisRuntimePresenceStore:
 
             stale_connection_ids.append(connection_id)
 
-        if source_set_key is not None and stale_connection_ids:
-            self._run_redis("cleanup stale index members", lambda _client: _client.srem(source_set_key, *stale_connection_ids))
-            self._delete_empty_index_key(source_set_key)
+        if stale_connection_ids:
+            self._cleanup_stale_connection_indexes(stale_connection_ids, source_set_key=source_set_key)
 
         return sorted(result, key=lambda item: item.connection_id)
+
+    def _cleanup_stale_connection_indexes(self, connection_ids: list[str], *, source_set_key: str | None = None) -> None:
+        """Cleanup stale connection ids from reverse-indexed Redis indexes."""
+        normalized_connection_ids = [
+            str(connection_id).strip()
+            for connection_id in connection_ids
+            if str(connection_id).strip()
+        ]
+        if not normalized_connection_ids:
+            if source_set_key is not None:
+                self._delete_empty_index_key(source_set_key)
+            return
+
+        cleanup_index_keys: set[str] = set()
+
+        for connection_id in normalized_connection_ids:
+            cleanup_index_keys.update(self._read_reverse_index_keys(connection_id))
+
+        if source_set_key is not None:
+            cleanup_index_keys.add(source_set_key)
+
+        def _cleanup(_client: Any) -> None:
+            _pipeline = _client.pipeline(transaction=True)
+
+            for connection_id in normalized_connection_ids:
+                for key in cleanup_index_keys:
+                    _pipeline.srem(key, connection_id)
+
+                _pipeline.delete(self._reverse_index_key(connection_id))
+
+            _pipeline.execute()
+
+        self._run_redis("cleanup stale connection indexes", _cleanup)
+        self._delete_empty_index_keys(cleanup_index_keys)
 
     def _count_online_index_records(self, index_name: str) -> int:
         """Count secondary index keys that still contain at least one live record."""
