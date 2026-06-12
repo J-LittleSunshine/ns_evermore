@@ -498,7 +498,7 @@ class NsRuntimeNode:
             return False
 
         return dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED
-    
+
     def _select_broker_forward_target_node_id(self) -> str | None:
         """Select one healthy runtime sub-node for broker forward candidate."""
         sub_nodes = self._registry.list_healthy_sub_nodes()
