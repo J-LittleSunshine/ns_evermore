@@ -167,7 +167,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run manual runtime Redis/ValKey broker smoke checks.")
     parser.add_argument(
         "--redis-url",
-        default=os.getenv("NS_RUNTIME_BROKER_REDIS_URL", "redis://:Ns981127*@100.100.27.29:31001/0"),
+        default=os.getenv("NS_RUNTIME_BROKER_REDIS_URL", "redis://127.0.0.1:6379/0"),
         help="Redis/ValKey connection URL. Defaults to NS_RUNTIME_BROKER_REDIS_URL or redis://127.0.0.1:6379/0.",
     )
     parser.add_argument(
