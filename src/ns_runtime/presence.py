@@ -582,15 +582,17 @@ class RedisRuntimePresenceStore:
 
     def _replace_record_with_pipeline(self, old_record: NsRuntimePresenceRecord | None, record: NsRuntimePresenceRecord) -> set[str]:
         """Replace one record and its indexes through one Redis transaction."""
-        cleanup_keys: set[str] = set()
+        new_index_keys = self._record_index_keys(record)
+        cleanup_keys = set(self._read_reverse_index_keys(record.connection_id))
+
+        if old_record is not None:
+            cleanup_keys.update(self._record_index_keys(old_record))
 
         def _replace(_client: Any) -> None:
             _pipeline = _client.pipeline(transaction=True)
 
-            if old_record is not None:
-                for key in self._record_index_keys(old_record):
-                    _pipeline.srem(key, old_record.connection_id)
-                    cleanup_keys.add(key)
+            for key in cleanup_keys:
+                _pipeline.srem(key, record.connection_id)
 
             _pipeline.set(
                 self._connection_key(record.connection_id),
@@ -598,17 +600,26 @@ class RedisRuntimePresenceStore:
                 ex=self._record_ttl_seconds,
             )
 
-            for key in self._record_index_keys(record):
+            for key in new_index_keys:
                 _pipeline.sadd(key, record.connection_id)
 
+            reverse_index_key = self._reverse_index_key(record.connection_id)
+            _pipeline.delete(reverse_index_key)
+
+            if new_index_keys:
+                _pipeline.sadd(reverse_index_key, *sorted(new_index_keys))
+
+            _pipeline.expire(reverse_index_key, self._reverse_index_ttl_seconds())
             _pipeline.execute()
 
         self._run_redis("replace connection with indexes", _replace)
+        cleanup_keys.difference_update(new_index_keys)
         return cleanup_keys
 
     def _remove_record_with_pipeline(self, record: NsRuntimePresenceRecord) -> set[str]:
         """Remove one record and its indexes through one Redis transaction."""
         cleanup_keys = self._record_index_keys(record)
+        cleanup_keys.update(self._read_reverse_index_keys(record.connection_id))
 
         def _remove(_client: Any) -> None:
             _pipeline = _client.pipeline(transaction=True)
@@ -617,6 +628,7 @@ class RedisRuntimePresenceStore:
             for key in cleanup_keys:
                 _pipeline.srem(key, record.connection_id)
 
+            _pipeline.delete(self._reverse_index_key(record.connection_id))
             _pipeline.execute()
 
         self._run_redis("remove connection with indexes", _remove)
@@ -649,6 +661,27 @@ class RedisRuntimePresenceStore:
         """Delete empty index keys after write transaction succeeds."""
         for key in sorted(str(item).strip() for item in keys if str(item).strip()):
             self._delete_empty_index_key(key)
+
+    def _read_reverse_index_keys(self, connection_id: str) -> set[str]:
+        """Read recorded index keys for one connection id."""
+        normalized_connection_id = str(connection_id or "").strip()
+        if not normalized_connection_id:
+            return set()
+
+        raw_keys = self._run_redis("read reverse index keys", lambda _client: _client.smembers(self._reverse_index_key(normalized_connection_id)))
+        return {
+            str(key).strip()
+            for key in raw_keys
+            if str(key).strip()
+        }
+
+    def _reverse_index_key(self, connection_id: str) -> str:
+        """Build Redis reverse index key for one connection id."""
+        return f"{self._key_prefix}:indexes:{str(connection_id or '').strip()}"
+
+    def _reverse_index_ttl_seconds(self) -> int:
+        """Return reverse index TTL seconds."""
+        return max(self._record_ttl_seconds * 2, self._record_ttl_seconds + 1)
 
     def _add_indexes(self, record: NsRuntimePresenceRecord) -> None:
         """Add record to role and frontend secondary indexes."""
@@ -687,7 +720,7 @@ class RedisRuntimePresenceStore:
 
         self._run_redis("remove indexes", _remove)
         self._delete_empty_index_keys(cleanup_keys)
-        
+
     def _records_by_set_key(self, key: str) -> list[NsRuntimePresenceRecord]:
         """Return online records by one Redis set key and cleanup stale members."""
         raw_connection_ids = self._run_redis("read index set", lambda _client: _client.smembers(key))
