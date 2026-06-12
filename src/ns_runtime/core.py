@@ -129,6 +129,32 @@ class NsRuntimeNodeStats:
     last_error: str | None = None
     last_broker_event_type: str | None = None
 
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class NsRuntimeBrokerForwardDispatchSnapshot:
+    """Last runtime broker forward dispatch snapshot."""
+
+    message_id: str
+    fallback_reason: str
+    target_node_id: str | None
+    channel: str
+    envelope_message_id: str
+    envelope_event_type: str
+    trace_id: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-compatible snapshot."""
+        return {
+            "message_id": self.message_id,
+            "fallback_reason": self.fallback_reason,
+            "target_node_id": self.target_node_id,
+            "channel": self.channel,
+            "envelope_message_id": self.envelope_message_id,
+            "envelope_event_type": self.envelope_event_type,
+            "trace_id": self.trace_id,
+        }
+
+
 @dataclass(slots=True, frozen=True, kw_only=True)
 class NsRuntimeBrokerForwardCandidate:
     """Runtime broker message forward candidate.
@@ -141,6 +167,7 @@ class NsRuntimeBrokerForwardCandidate:
     target_node_id: str | None
     channel: str
     envelope: NsRuntimeBrokerEnvelope
+
 
 class NsRuntimeNode:
     """Standalone ns_runtime core node.
@@ -169,6 +196,7 @@ class NsRuntimeNode:
         self._broker_cluster_channel: str = build_runtime_broker_cluster_channel()
         self._broker_node_channel: str = build_runtime_broker_node_channel(node_id=self._config.node_id)
         self._last_broker_envelope: NsRuntimeBrokerEnvelope | None = None
+        self._last_broker_forward_dispatch_snapshot: NsRuntimeBrokerForwardDispatchSnapshot | None = None
         self._dispatcher = NsRuntimeDispatcher(config=self._config, registry=self._registry)
         self._auth_provider = build_runtime_auth_provider(self._config)
 
@@ -239,8 +267,16 @@ class NsRuntimeNode:
                     "auto_publish_enabled": dispatch_policy != RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_DISABLED,
                     "cluster_fallback_enabled": dispatch_policy == RUNTIME_BROKER_MESSAGE_FORWARD_POLICY_NO_SUB_OR_REJECTED,
                 },
+                "last_dispatch": self.broker_forward_dispatch_snapshot(),
             },
         }
+
+    def broker_forward_dispatch_snapshot(self) -> dict[str, Any] | None:
+        """Return last broker forward dispatch snapshot."""
+        if self._last_broker_forward_dispatch_snapshot is None:
+            return None
+
+        return self._last_broker_forward_dispatch_snapshot.to_dict()
 
     async def publish_broker_envelope(self, envelope: NsRuntimeBrokerEnvelope, *, channel: str | None = None, ) -> None:
         """Publish one broker envelope to a broker channel.
@@ -472,6 +508,8 @@ class NsRuntimeNode:
         if candidate is None:
             return ack
 
+        self._set_broker_forward_dispatch_snapshot(candidate=candidate, fallback_reason=fallback_reason)
+
         self._add_stats(
             broker_message_forward_candidate_count=1,
             broker_message_forward_no_sub_fallback_count=1 if fallback_reason == "no_sub" else 0,
@@ -500,6 +538,18 @@ class NsRuntimeNode:
             handled_by=candidate.target_node_id or self._config.node_id,
             trace_id=normalized_message.trace_id,
         ).normalized()
+
+    def _set_broker_forward_dispatch_snapshot(self, *, candidate: NsRuntimeBrokerForwardCandidate, fallback_reason: str) -> None:
+        """Store last broker forward dispatch snapshot."""
+        self._last_broker_forward_dispatch_snapshot = NsRuntimeBrokerForwardDispatchSnapshot(
+            message_id=candidate.message_id,
+            fallback_reason=str(fallback_reason or "").strip(),
+            target_node_id=candidate.target_node_id,
+            channel=candidate.channel,
+            envelope_message_id=candidate.envelope.message_id,
+            envelope_event_type=candidate.envelope.event_type,
+            trace_id=candidate.envelope.trace_id,
+        )
 
     def _resolve_broker_forward_fallback_reason(self, *, dispatch_policy: str, ack: NsRuntimeAck, had_healthy_sub_node: bool) -> str | None:
         """Return broker forward fallback reason, or None if fallback is disabled."""
