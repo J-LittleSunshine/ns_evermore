@@ -85,6 +85,9 @@ class NsRuntimeConfig:
     runtime_presence_location: str = ""
     runtime_presence_key_prefix: str = "ns:runtime:presence"
     runtime_presence_record_ttl_seconds: int = 90
+    runtime_presence_redis_socket_timeout_seconds: float = 3.0
+    runtime_presence_redis_socket_connect_timeout_seconds: float = 3.0
+    runtime_presence_redis_health_check_interval_seconds: int = 30
 
     ipc_mode: RuntimeIpcMode = RUNTIME_CONNECTOR_IPC_UNIX_SOCKET  # type: ignore[assignment]
     ipc_socket_path: str = "/run/ns_evermore/backend-runtime-connector.sock"
@@ -226,6 +229,15 @@ class NsRuntimeConfig:
 
         if isinstance(self.runtime_presence_record_ttl_seconds, bool) or self.runtime_presence_record_ttl_seconds <= 0:
             raise NsRuntimeConfigurationError("runtime runtime_presence_record_ttl_seconds must be positive")
+
+        if isinstance(self.runtime_presence_redis_socket_timeout_seconds, bool) or self.runtime_presence_redis_socket_timeout_seconds <= 0:
+            raise NsRuntimeConfigurationError("runtime runtime_presence_redis_socket_timeout_seconds must be positive")
+
+        if isinstance(self.runtime_presence_redis_socket_connect_timeout_seconds, bool) or self.runtime_presence_redis_socket_connect_timeout_seconds <= 0:
+            raise NsRuntimeConfigurationError("runtime runtime_presence_redis_socket_connect_timeout_seconds must be positive")
+
+        if isinstance(self.runtime_presence_redis_health_check_interval_seconds, bool) or self.runtime_presence_redis_health_check_interval_seconds < 0:
+            raise NsRuntimeConfigurationError("runtime runtime_presence_redis_health_check_interval_seconds must be zero or positive")
 
         if self.ipc_mode not in {RUNTIME_CONNECTOR_IPC_UNIX_SOCKET, RUNTIME_CONNECTOR_IPC_TCP, RUNTIME_CONNECTOR_IPC_MEMORY}:
             raise NsRuntimeConfigurationError(f"runtime ipc_mode is invalid: {self.ipc_mode}")

@@ -1013,6 +1013,9 @@ def build_runtime_presence_store(config: NsRuntimeConfig | None = None) -> NsRun
             url=str(config.runtime_presence_location or "").strip(),
             key_prefix=str(config.runtime_presence_key_prefix or "").strip(),
             record_ttl_seconds=int(config.runtime_presence_record_ttl_seconds),
+            socket_timeout=float(config.runtime_presence_redis_socket_timeout_seconds),
+            socket_connect_timeout=float(config.runtime_presence_redis_socket_connect_timeout_seconds),
+            health_check_interval=int(config.runtime_presence_redis_health_check_interval_seconds),
         )
 
     raise NsRuntimeConfigurationError(f"runtime presence backend is not implemented yet: {backend}")
