@@ -101,6 +101,7 @@
     "runtime_broker_message_forward_dispatch_policy": "disabled",
     "runtime_presence_backend": "memory",
     "runtime_presence_location": "",
+    "runtime_presence_key_prefix": "ns:runtime:presence",
     "runtime_presence_record_ttl_seconds": 90,
     "ipc_mode": "unix_socket",
     "ipc_socket_path": "/run/ns_evermore/backend-runtime-connector.sock",

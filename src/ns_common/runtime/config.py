@@ -83,6 +83,7 @@ class NsRuntimeConfig:
 
     runtime_presence_backend: RuntimePresenceBackend = RUNTIME_BACKEND_MEMORY  # type: ignore[assignment]
     runtime_presence_location: str = ""
+    runtime_presence_key_prefix: str = "ns:runtime:presence"
     runtime_presence_record_ttl_seconds: int = 90
 
     ipc_mode: RuntimeIpcMode = RUNTIME_CONNECTOR_IPC_UNIX_SOCKET  # type: ignore[assignment]
@@ -219,6 +220,9 @@ class NsRuntimeConfig:
             raise NsRuntimeConfigurationError(f"runtime runtime_presence_backend is invalid: {self.runtime_presence_backend}")
 
         self.ensure_runtime_presence_backend_implemented()
+
+        if not str(self.runtime_presence_key_prefix or "").strip().strip(":"):
+            raise NsRuntimeConfigurationError("runtime runtime_presence_key_prefix is required")
 
         if isinstance(self.runtime_presence_record_ttl_seconds, bool) or self.runtime_presence_record_ttl_seconds <= 0:
             raise NsRuntimeConfigurationError("runtime runtime_presence_record_ttl_seconds must be positive")

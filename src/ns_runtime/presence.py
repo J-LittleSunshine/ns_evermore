@@ -421,11 +421,13 @@ class RedisRuntimePresenceStore:
     """
 
     DEFAULT_URL = "redis://127.0.0.1:6379/0"
-    KEY_PREFIX = "ns:runtime:presence"
+    DEFAULT_KEY_PREFIX = "ns:runtime:presence"
 
-    def __init__(self, *, url: str = "", record_ttl_seconds: int = 90, socket_timeout: float = 3.0, socket_connect_timeout: float = 3.0, health_check_interval: int = 30) -> None:
+    def __init__(self, *, url: str = "", key_prefix: str = DEFAULT_KEY_PREFIX, record_ttl_seconds: int = 90, socket_timeout: float = 3.0, socket_connect_timeout: float = 3.0, health_check_interval: int = 30) -> None:
         """Initialize Redis/ValKey presence store."""
+        normalized_key_prefix = str(key_prefix or "").strip().strip(":")
         self._url: str = str(url or "").strip() or self.DEFAULT_URL
+        self._key_prefix: str = normalized_key_prefix or self.DEFAULT_KEY_PREFIX
         self._record_ttl_seconds: int = max(int(record_ttl_seconds), 1)
         self._socket_timeout: float = float(socket_timeout)
         self._socket_connect_timeout: float = float(socket_connect_timeout)
@@ -583,6 +585,7 @@ class RedisRuntimePresenceStore:
 
     def _add_indexes(self, record: NsRuntimePresenceRecord) -> None:
         """Add record to role and frontend secondary indexes."""
+
         def _add(_client: Any) -> None:
             _client.sadd(self._role_key(record.connection_type), record.connection_id)
 
@@ -685,6 +688,7 @@ class RedisRuntimePresenceStore:
 
     def _delete_empty_index_key(self, key: str) -> None:
         """Delete an index key when it has no remaining members."""
+
         def _delete(_client: Any) -> None:
             if int(_client.scard(key) or 0) <= 0:
                 _client.delete(key)
@@ -723,7 +727,7 @@ class RedisRuntimePresenceStore:
 
     def _connection_key(self, connection_id: str) -> str:
         """Build Redis connection record key."""
-        return f"{self.KEY_PREFIX}:connections:{str(connection_id or '').strip()}"
+        return f"{self._key_prefix}:connections:{str(connection_id or '').strip()}"
 
     def _role_key(self, role: str) -> str:
         """Build Redis role index key."""
@@ -731,7 +735,7 @@ class RedisRuntimePresenceStore:
 
     def _index_key(self, index_name: str, index_value: str) -> str:
         """Build Redis secondary index key."""
-        return f"{self.KEY_PREFIX}:index:{str(index_name or '').strip()}:{str(index_value or '').strip()}"
+        return f"{self._key_prefix}:index:{str(index_name or '').strip()}:{str(index_value or '').strip()}"
 
     @classmethod
     def _record_to_json(cls, record: NsRuntimePresenceRecord) -> str:
@@ -798,6 +802,7 @@ class RedisRuntimePresenceStore:
         normalized = str(value).strip()
         return normalized or None
 
+
 def build_runtime_presence_store(config: NsRuntimeConfig | None = None) -> NsRuntimePresenceStore:
     """Build runtime presence store from runtime config."""
     if config is None:
@@ -817,6 +822,7 @@ def build_runtime_presence_store(config: NsRuntimeConfig | None = None) -> NsRun
     if backend in {RUNTIME_BACKEND_REDIS, RUNTIME_BACKEND_VALKEY}:
         return RedisRuntimePresenceStore(
             url=str(config.runtime_presence_location or "").strip(),
+            key_prefix=str(config.runtime_presence_key_prefix or "").strip(),
             record_ttl_seconds=int(config.runtime_presence_record_ttl_seconds),
         )
 
