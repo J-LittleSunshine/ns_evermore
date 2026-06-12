@@ -671,6 +671,9 @@ class RedisRuntimePresenceStore:
             self._role_key(record.connection_type),
         }
 
+        if record.node_id:
+            keys.add(self._index_key("node", record.node_id))
+
         if record.connection_type != "frontend":
             return keys
 
