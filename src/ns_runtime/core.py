@@ -623,6 +623,7 @@ class NsRuntimeNode:
                 "runtime_sub_nodes": self._registry.count_sub_nodes(),
             },
             "presence": self.presence_counts(),
+            "presence_backend": self.presence_backend_report(),
             "broker": self.broker_report(),
             "stats": self.stats_dict(),
         }
@@ -648,6 +649,28 @@ class NsRuntimeNode:
                 "online_runtime_sub_nodes": 0,
                 "online_users": 0,
             }
+
+    def presence_backend_report(self) -> dict[str, Any]:
+        """Return runtime presence backend operational metadata.
+
+        This report intentionally does not expose Redis / ValKey connection URL.
+        It is safe for diagnostics and broker health payloads.
+        """
+        backend = str(self._config.resolved_runtime_presence_backend() or "").strip().lower()
+        location_configured = bool(str(self._config.runtime_presence_location or "").strip())
+        key_prefix = str(self._config.runtime_presence_key_prefix or "").strip().strip(":")
+        record_ttl_seconds = int(self._config.runtime_presence_record_ttl_seconds)
+        stats = self.stats_dict()
+
+        return {
+            "backend": backend,
+            "distributed": backend in {"redis", "valkey"},
+            "location_configured": location_configured,
+            "key_prefix": key_prefix,
+            "record_ttl_seconds": record_ttl_seconds,
+            "fault_isolation": True,
+            "error_count": int(stats.get("presence_error_count") or 0),
+        }
 
     def get_presence_connection(self, connection_id: str) -> NsRuntimePresenceRecord | None:
         """Return one local online presence record by connection id."""
