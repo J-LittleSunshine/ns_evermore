@@ -483,6 +483,7 @@ class RedisRuntimePresenceStore:
 
         record = self.get_connection(normalized_connection_id)
         if record is None:
+            self._cleanup_missing_connection(normalized_connection_id)
             return None
 
         cleanup_keys = self._remove_record_with_pipeline(record)
@@ -501,6 +502,7 @@ class RedisRuntimePresenceStore:
 
         raw = self._run_redis("get connection", lambda _client: _client.get(self._connection_key(normalized_connection_id)))
         if raw is None:
+            self._cleanup_missing_connection(normalized_connection_id)
             return None
 
         record = self._record_from_payload_or_none(raw)
@@ -822,6 +824,19 @@ class RedisRuntimePresenceStore:
 
         self._run_redis("cleanup stale connection indexes", _cleanup)
         self._delete_empty_index_keys(cleanup_index_keys)
+
+    def _cleanup_missing_connection(self, connection_id: str) -> None:
+        """Cleanup stale indexes for one missing Redis presence connection."""
+        normalized_connection_id = str(connection_id or "").strip()
+        if not normalized_connection_id:
+            return
+
+        reverse_index_keys = self._read_reverse_index_keys(normalized_connection_id)
+        if not reverse_index_keys:
+            return
+
+        self._cleanup_stale_connection_indexes([normalized_connection_id])
+        self._delete_connection_keys([normalized_connection_id])
 
     def _cleanup_corrupted_connection(self, connection_id: str) -> None:
         """Cleanup one corrupted or offline Redis presence connection."""
