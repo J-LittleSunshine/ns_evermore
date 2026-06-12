@@ -583,7 +583,7 @@ class RedisRuntimePresenceStore:
         )
 
     def _refresh_record_with_pipeline(self, record: NsRuntimePresenceRecord) -> None:
-        """Refresh one presence record and reverse index lease through one Redis transaction."""
+        """Refresh one presence record and index leases through one Redis transaction."""
         index_keys = self._record_index_keys(record)
         reverse_index_key = self._reverse_index_key(record.connection_id)
 
@@ -600,9 +600,13 @@ class RedisRuntimePresenceStore:
                 _pipeline.sadd(reverse_index_key, *sorted(index_keys))
 
             _pipeline.expire(reverse_index_key, self._reverse_index_ttl_seconds())
+
+            for key in index_keys:
+                _pipeline.expire(key, self._index_ttl_seconds())
+
             _pipeline.execute()
 
-        self._run_redis("refresh connection with reverse index lease", _refresh)
+        self._run_redis("refresh connection with index leases", _refresh)
 
     def _replace_record_with_pipeline(self, old_record: NsRuntimePresenceRecord | None, record: NsRuntimePresenceRecord) -> set[str]:
         """Replace one record and its indexes through one Redis transaction."""
@@ -626,6 +630,7 @@ class RedisRuntimePresenceStore:
 
             for key in new_index_keys:
                 _pipeline.sadd(key, record.connection_id)
+                _pipeline.expire(key, self._index_ttl_seconds())
 
             reverse_index_key = self._reverse_index_key(record.connection_id)
             _pipeline.delete(reverse_index_key)
@@ -707,26 +712,22 @@ class RedisRuntimePresenceStore:
         """Return reverse index TTL seconds."""
         return max(self._record_ttl_seconds * 2, self._record_ttl_seconds + 1)
 
+    def _index_ttl_seconds(self) -> int:
+        """Return secondary index TTL seconds."""
+        return max(self._record_ttl_seconds * 2, self._record_ttl_seconds + 1)
+
     def _add_indexes(self, record: NsRuntimePresenceRecord) -> None:
         """Add record to role and frontend secondary indexes."""
+        index_keys = self._record_index_keys(record)
 
         def _add(_client: Any) -> None:
-            _client.sadd(self._role_key(record.connection_type), record.connection_id)
+            _pipeline = _client.pipeline(transaction=True)
 
-            if record.connection_type != "frontend":
-                return
+            for key in index_keys:
+                _pipeline.sadd(key, record.connection_id)
+                _pipeline.expire(key, self._index_ttl_seconds())
 
-            if record.user_id is not None:
-                _client.sadd(self._index_key("user", record.user_id), record.connection_id)
-
-            if record.session_id is not None:
-                _client.sadd(self._index_key("session", record.session_id), record.connection_id)
-
-            if record.client_id is not None:
-                _client.sadd(self._index_key("client", record.client_id), record.connection_id)
-
-            for room_id in record.rooms:
-                _client.sadd(self._index_key("room", room_id), record.connection_id)
+            _pipeline.execute()
 
         self._run_redis("add indexes", _add)
 
