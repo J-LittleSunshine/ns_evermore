@@ -109,6 +109,7 @@ class NsRuntimeNodeStats:
     broker_pong_count: int = 0
     broker_pong_published_count: int = 0
     broker_message_forward_count: int = 0
+    broker_message_forward_local_handled_count: int = 0
 
     accepted_count: int = 0
     rejected_count: int = 0
@@ -117,6 +118,7 @@ class NsRuntimeNodeStats:
 
     last_error: str | None = None
     last_broker_event_type: str | None = None
+
 
 class NsRuntimeNode:
     """Standalone ns_runtime core node.
@@ -184,8 +186,8 @@ class NsRuntimeNode:
     def broker_report(self) -> dict[str, Any]:
         """Return local runtime broker report.
 
-        P13-F exposes broker listener and optional health publisher metadata.
         Runtime dispatch has not switched to broker-based cross-node routing.
+        Message forward local handling is opt-in and disabled by default.
         """
         last_envelope = self._last_broker_envelope
         return {
@@ -201,6 +203,9 @@ class NsRuntimeNode:
             "health_publisher": {
                 "enabled": bool(self._config.runtime_broker_health_publish_enabled),
                 "interval_seconds": float(self._config.health_report_interval_seconds),
+            },
+            "message_forward": {
+                "local_handle_enabled": bool(self._config.runtime_broker_message_forward_local_handle_enabled),
             },
         }
 
@@ -333,7 +338,7 @@ class NsRuntimeNode:
             trace_id=trace_id,
         )
 
-    async def publish_broker_message_forward_event(self,*,message: NsRuntimeMessage,target_node_id: str | None = None, trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
+    async def publish_broker_message_forward_event(self, *, message: NsRuntimeMessage, target_node_id: str | None = None, trace_id: str | None = None) -> NsRuntimeBrokerEnvelope:
         """Publish runtime.message.forward broker envelope.
 
         P13-I exposes the transport helper only. It does not change normal
@@ -660,16 +665,35 @@ class NsRuntimeNode:
         )
 
     async def _handle_broker_message_forward(self, envelope: NsRuntimeBrokerEnvelope) -> None:
-        """Parse runtime.message.forward broker envelope without dispatching.
+        """Handle runtime.message.forward broker envelope.
 
-        P13-I intentionally stops at parse + stats. Actual broker-based
-        cross-node delivery will be introduced in a later phase.
+        By default, this only parses and records the broker envelope. If
+        runtime_broker_message_forward_local_handle_enabled is enabled, the
+        message is locally handled through the existing dispatcher local path.
         """
         message = runtime_message_from_broker_forward_envelope(envelope)
-        _ = message
 
         self._add_stats(
             broker_message_forward_count=1,
+            last_broker_event_type=envelope.event_type,
+        )
+
+        if not self._config.runtime_broker_message_forward_local_handle_enabled:
+            return
+
+        try:
+            await self._dispatcher.local_handle(message)
+        except Exception as exc:
+            self._add_stats(
+                broker_error_count=1,
+                last_error=f"runtime broker message forward local handling failed: {exc}",
+                last_broker_event_type=envelope.event_type,
+            )
+            return
+
+        self._add_stats(
+            broker_message_forward_local_handled_count=1,
+            local_handled_count=1,
             last_broker_event_type=envelope.event_type,
         )
 
@@ -1522,6 +1546,7 @@ class NsRuntimeNode:
             broker_pong_count: int = 0,
             broker_pong_published_count: int = 0,
             broker_message_forward_count: int = 0,
+            broker_message_forward_local_handled_count: int = 0,
             accepted_count: int = 0,
             rejected_count: int = 0,
             forwarded_count: int = 0,
@@ -1557,6 +1582,7 @@ class NsRuntimeNode:
                 broker_pong_count=self._stats.broker_pong_count + broker_pong_count,
                 broker_pong_published_count=self._stats.broker_pong_published_count + broker_pong_published_count,
                 broker_message_forward_count=self._stats.broker_message_forward_count + broker_message_forward_count,
+                broker_message_forward_local_handled_count=self._stats.broker_message_forward_local_handled_count + broker_message_forward_local_handled_count,
                 accepted_count=self._stats.accepted_count + accepted_count,
                 rejected_count=self._stats.rejected_count + rejected_count,
                 forwarded_count=self._stats.forwarded_count + forwarded_count,
