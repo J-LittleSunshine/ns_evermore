@@ -583,7 +583,7 @@ class RedisRuntimePresenceStore:
         )
 
     def _refresh_record_with_pipeline(self, record: NsRuntimePresenceRecord) -> None:
-        """Refresh one presence record and index leases through one Redis transaction."""
+        """Refresh one presence record and self-heal index leases through one Redis transaction."""
         index_keys = self._record_index_keys(record)
         reverse_index_key = self._reverse_index_key(record.connection_id)
 
@@ -596,17 +596,17 @@ class RedisRuntimePresenceStore:
                 ex=self._record_ttl_seconds,
             )
 
+            for key in index_keys:
+                _pipeline.sadd(key, record.connection_id)
+                _pipeline.expire(key, self._index_ttl_seconds())
+
             if index_keys:
                 _pipeline.sadd(reverse_index_key, *sorted(index_keys))
 
             _pipeline.expire(reverse_index_key, self._reverse_index_ttl_seconds())
-
-            for key in index_keys:
-                _pipeline.expire(key, self._index_ttl_seconds())
-
             _pipeline.execute()
 
-        self._run_redis("refresh connection with index leases", _refresh)
+        self._run_redis("refresh connection with self-healing index leases", _refresh)
 
     def _replace_record_with_pipeline(self, old_record: NsRuntimePresenceRecord | None, record: NsRuntimePresenceRecord) -> set[str]:
         """Replace one record and its indexes through one Redis transaction."""
