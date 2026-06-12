@@ -357,6 +357,28 @@ def normalize_runtime_broker_event_type(event_type: str) -> str:
         raise NsRuntimeValidationError("runtime broker envelope event_type is required")
     return normalized
 
+def is_known_runtime_broker_event_type(event_type: str) -> bool:
+    """Return whether event type is a known runtime broker control-plane event."""
+    try:
+        normalized = normalize_runtime_broker_event_type(event_type)
+    except NsRuntimeValidationError:
+        return False
+
+    return normalized in RUNTIME_BROKER_EVENT_TYPES
+
+
+def ensure_runtime_broker_event_type_known(event_type: str) -> str:
+    """Normalize and ensure event type is a known runtime broker control-plane event.
+
+    This helper is intentionally not called by NsRuntimeBrokerEnvelope.normalized()
+    so custom future events can still be transported. Runtime core listener uses
+    this helper to classify current control-plane events.
+    """
+    normalized = normalize_runtime_broker_event_type(event_type)
+    if normalized not in RUNTIME_BROKER_EVENT_TYPES:
+        raise NsRuntimeValidationError(f"runtime broker event_type is unknown: {normalized}")
+
+    return normalized
 
 def build_runtime_broker_channel(*, namespace: str, name: str) -> str:
     """Build namespaced runtime broker channel."""

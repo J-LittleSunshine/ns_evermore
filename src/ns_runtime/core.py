@@ -18,6 +18,7 @@ from ns_common.runtime.broker import (
     build_runtime_broker,
     build_runtime_broker_cluster_channel,
     build_runtime_broker_node_channel,
+    is_known_runtime_broker_event_type,
 )
 from ns_common.runtime.config import NsRuntimeConfig
 from ns_common.runtime.constants import (
@@ -99,6 +100,8 @@ class NsRuntimeNodeStats:
     broker_envelope_count: int = 0
     broker_ignored_envelope_count: int = 0
     broker_error_count: int = 0
+    broker_unknown_event_count: int = 0
+    broker_target_miss_count: int = 0
     broker_ping_count: int = 0
     broker_pong_count: int = 0
     broker_pong_published_count: int = 0
@@ -530,8 +533,11 @@ class NsRuntimeNode:
     async def _handle_broker_envelope(self, *, channel: str, envelope: NsRuntimeBrokerEnvelope) -> None:
         """Handle one broker envelope without business dispatching.
 
-        P13-G supports broker node ping/pong control-plane helpers only. Business
-        message routing is intentionally unchanged.
+        P13-H hardens control-plane metadata:
+        - ignore self-published envelopes
+        - ignore envelopes targeting another node
+        - classify unknown event types
+        - keep business message routing unchanged
         """
         _ = channel
         normalized = envelope.normalized()
@@ -540,6 +546,21 @@ class NsRuntimeNode:
         if normalized.source_node_id == self._config.node_id:
             self._add_stats(
                 broker_ignored_envelope_count=1,
+                last_broker_event_type=normalized.event_type,
+            )
+            return
+
+        if not self._broker_envelope_targets_this_node(normalized):
+            self._add_stats(
+                broker_target_miss_count=1,
+                last_broker_event_type=normalized.event_type,
+            )
+            return
+
+        if not is_known_runtime_broker_event_type(normalized.event_type):
+            self._add_stats(
+                broker_unknown_event_count=1,
+                last_error=f"runtime broker event_type is unknown: {normalized.event_type}",
                 last_broker_event_type=normalized.event_type,
             )
             return
@@ -557,16 +578,20 @@ class NsRuntimeNode:
             await self._handle_broker_pong(normalized)
             return
 
+    def _broker_envelope_targets_this_node(self, envelope: NsRuntimeBrokerEnvelope) -> bool:
+        """Return whether broker envelope targets this runtime node.
+
+        Empty target_node_id means cluster-level event and is accepted by every
+        node except the source node, which is filtered earlier.
+        """
+        target_node_id = str(envelope.target_node_id or "").strip()
+        return not target_node_id or target_node_id == self._config.node_id
+
     async def _handle_broker_ping(self, envelope: NsRuntimeBrokerEnvelope) -> None:
         """Handle runtime.node.ping broker envelope.
 
-        A ping with empty target_node_id is treated as a cluster ping. A ping with
-        target_node_id must target this node to trigger pong.
+        Target filtering is already enforced in _handle_broker_envelope().
         """
-        target_node_id = str(envelope.target_node_id or "").strip()
-        if target_node_id and target_node_id != self._config.node_id:
-            return
-
         self._add_stats(
             broker_ping_count=1,
             last_broker_event_type=envelope.event_type,
@@ -591,11 +616,10 @@ class NsRuntimeNode:
         )
 
     async def _handle_broker_pong(self, envelope: NsRuntimeBrokerEnvelope) -> None:
-        """Handle runtime.node.pong broker envelope."""
-        target_node_id = str(envelope.target_node_id or "").strip()
-        if target_node_id and target_node_id != self._config.node_id:
-            return
+        """Handle runtime.node.pong broker envelope.
 
+        Target filtering is already enforced in _handle_broker_envelope().
+        """
         self._add_stats(
             broker_pong_count=1,
             last_broker_event_type=envelope.event_type,
@@ -1444,6 +1468,8 @@ class NsRuntimeNode:
             broker_envelope_count: int = 0,
             broker_ignored_envelope_count: int = 0,
             broker_error_count: int = 0,
+            broker_unknown_event_count: int = 0,
+            broker_target_miss_count: int = 0,
             broker_ping_count: int = 0,
             broker_pong_count: int = 0,
             broker_pong_published_count: int = 0,
@@ -1476,6 +1502,8 @@ class NsRuntimeNode:
                 broker_envelope_count=self._stats.broker_envelope_count + broker_envelope_count,
                 broker_ignored_envelope_count=self._stats.broker_ignored_envelope_count + broker_ignored_envelope_count,
                 broker_error_count=self._stats.broker_error_count + broker_error_count,
+                broker_unknown_event_count=self._stats.broker_unknown_event_count + broker_unknown_event_count,
+                broker_target_miss_count=self._stats.broker_target_miss_count + broker_target_miss_count,
                 broker_ping_count=self._stats.broker_ping_count + broker_ping_count,
                 broker_pong_count=self._stats.broker_pong_count + broker_pong_count,
                 broker_pong_published_count=self._stats.broker_pong_published_count + broker_pong_published_count,

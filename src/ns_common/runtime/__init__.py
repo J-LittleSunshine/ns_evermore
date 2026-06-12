@@ -23,6 +23,8 @@ from ns_common.runtime.broker import (
     build_runtime_broker_channel,
     build_runtime_broker_cluster_channel,
     build_runtime_broker_node_channel,
+    ensure_runtime_broker_event_type_known,
+    is_known_runtime_broker_event_type,
     normalize_runtime_broker_channel,
     normalize_runtime_broker_event_type,
 )
@@ -206,4 +208,6 @@ __all__ = [
     "RUNTIME_BROKER_EVENT_NODE_PONG",
     "RUNTIME_BROKER_EVENT_TYPES",
     "normalize_runtime_broker_event_type",
+    "ensure_runtime_broker_event_type_known",
+    "is_known_runtime_broker_event_type",
 ]
