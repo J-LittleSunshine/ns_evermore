@@ -1,0 +1,169 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+
+INFRA_IAM_DOMAIN = "iam"
+
+RECOMMENDED_ACTION_CODES = (
+    "read",
+    "write",
+    "delete",
+    "manage",
+    "execute",
+    "approve",
+    "share",
+)
+
+DATA_SCOPE_SELF = "SELF"
+DATA_SCOPE_DEPARTMENT = "DEPARTMENT"
+DATA_SCOPE_DEPARTMENT_AND_CHILDREN = "DEPARTMENT_AND_CHILDREN"
+DATA_SCOPE_ORGANIZATION = "ORGANIZATION"
+DATA_SCOPE_SUBSIDIARY = "SUBSIDIARY"
+DATA_SCOPE_ALL = "ALL"
+
+# Legacy aliases kept for backward compatibility with stored grant values.
+DATA_SCOPE_DEPARTMENT_TREE = "DEPARTMENT_TREE"
+DATA_SCOPE_COMPANY = "COMPANY"
+
+DATA_SCOPE_ALIAS_TO_CANONICAL = {
+    DATA_SCOPE_SELF: DATA_SCOPE_SELF,
+    DATA_SCOPE_DEPARTMENT: DATA_SCOPE_DEPARTMENT,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN: DATA_SCOPE_DEPARTMENT_AND_CHILDREN,
+    DATA_SCOPE_ORGANIZATION: DATA_SCOPE_ORGANIZATION,
+    DATA_SCOPE_SUBSIDIARY: DATA_SCOPE_SUBSIDIARY,
+    DATA_SCOPE_ALL: DATA_SCOPE_ALL,
+    DATA_SCOPE_DEPARTMENT_TREE: DATA_SCOPE_DEPARTMENT_AND_CHILDREN,
+    DATA_SCOPE_COMPANY: DATA_SCOPE_ORGANIZATION,
+}
+
+DATA_SCOPE_CANONICAL_TO_STORAGE = {
+    DATA_SCOPE_SELF: DATA_SCOPE_SELF,
+    DATA_SCOPE_DEPARTMENT: DATA_SCOPE_DEPARTMENT,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN: DATA_SCOPE_DEPARTMENT_TREE,
+    DATA_SCOPE_ORGANIZATION: DATA_SCOPE_COMPANY,
+    DATA_SCOPE_SUBSIDIARY: DATA_SCOPE_SUBSIDIARY,
+    DATA_SCOPE_ALL: DATA_SCOPE_ALL,
+}
+
+DATA_SCOPE_CANONICAL_VALUES = (
+    DATA_SCOPE_SELF,
+    DATA_SCOPE_DEPARTMENT,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN,
+    DATA_SCOPE_ORGANIZATION,
+    DATA_SCOPE_SUBSIDIARY,
+    DATA_SCOPE_ALL,
+)
+
+DATA_SCOPE_VALUES = (
+    DATA_SCOPE_SELF,
+    DATA_SCOPE_DEPARTMENT,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN,
+    DATA_SCOPE_ORGANIZATION,
+    DATA_SCOPE_SUBSIDIARY,
+    DATA_SCOPE_ALL,
+    DATA_SCOPE_DEPARTMENT_TREE,
+    DATA_SCOPE_COMPANY,
+)
+
+DATA_SCOPE_CHOICES = (
+    (
+        DATA_SCOPE_SELF,
+        "Self"
+    ),
+    (
+        DATA_SCOPE_DEPARTMENT,
+        "Department"
+    ),
+    (
+        DATA_SCOPE_DEPARTMENT_AND_CHILDREN,
+        "Department and child departments"
+    ),
+    (
+        DATA_SCOPE_ORGANIZATION,
+        "Organization"
+    ),
+    (
+        DATA_SCOPE_SUBSIDIARY,
+        "Subsidiary"
+    ),
+    (
+        DATA_SCOPE_ALL,
+        "All"
+    ),
+    (
+        DATA_SCOPE_DEPARTMENT_TREE,
+        "Department and child departments"
+    ),
+    (
+        DATA_SCOPE_COMPANY,
+        "Organization"
+    ),
+)
+
+DATA_SCOPE_LEVELS = {
+    DATA_SCOPE_SELF: 10,
+    DATA_SCOPE_DEPARTMENT: 20,
+    DATA_SCOPE_DEPARTMENT_AND_CHILDREN: 30,
+    DATA_SCOPE_DEPARTMENT_TREE: 30,
+    DATA_SCOPE_SUBSIDIARY: 40,
+    DATA_SCOPE_ORGANIZATION: 50,
+    DATA_SCOPE_COMPANY: 50,
+    DATA_SCOPE_ALL: 60,
+}
+
+
+def normalize_data_scope(scope: str | None) -> str | None:
+    """Normalize legacy and canonical data-scope values to canonical names."""
+    if not isinstance(scope, str):
+        return None
+
+    normalized_scope = scope.strip().upper()
+    if not normalized_scope:
+        return None
+
+    return DATA_SCOPE_ALIAS_TO_CANONICAL.get(normalized_scope)
+
+
+def is_data_scope_value(scope: str | None) -> bool:
+    """Return whether one data-scope value is supported by IAM."""
+    return normalize_data_scope(scope) is not None
+
+
+def to_storage_data_scope(scope: str | None) -> str | None:
+    """Convert input scope to legacy storage value accepted by current grant tables."""
+    normalized_scope = normalize_data_scope(scope)
+    if not normalized_scope:
+        return None
+    return DATA_SCOPE_CANONICAL_TO_STORAGE.get(normalized_scope)
+
+
+USER_TYPE_PERSONAL = "PERSONAL"
+USER_TYPE_ENTERPRISE = "ENTERPRISE"
+
+ROLE_SCOPE_PERSONAL = "PERSONAL"
+ROLE_SCOPE_ENTERPRISE = "ENTERPRISE"
+
+PERMISSION_TYPE_MENU = "MENU"
+PERMISSION_TYPE_ACTION = "ACTION"
+PERMISSION_TYPE_DATA = "DATA"
+
+PERMISSION_EFFECT_ALLOW = "ALLOW"
+PERMISSION_EFFECT_DENY = "DENY"
+
+RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW = "RBAC_DEFAULT_ALLOW"
+RESOURCE_ACCESS_MODE_ACL_REQUIRED = "ACL_REQUIRED"
+
+RESOURCE_ACCESS_MODE_CHOICES = (
+    (
+        RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW,
+        "RBAC default allow"
+    ),
+    (
+        RESOURCE_ACCESS_MODE_ACL_REQUIRED,
+        "ACL required"
+    ),
+)
