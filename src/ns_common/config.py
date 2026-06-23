@@ -73,6 +73,20 @@ class NsBackendConfig:
     databases: dict[str, dict[str, Any]] = field(default_factory=dict)
     database_router_map: dict[str, str] = field(default_factory=dict)
 
+    jwt_secret_key: str = ""
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 14
+    jwt_issuer: str = "ns_evermore"
+    jwt_leeway_seconds: int = 30
+    jwt_min_secret_length: int = 32
+
+    password_transport_mode: Literal["plain", "rsa_oaep"] = "plain"
+    password_transport_max_payload_length: int = 4096
+    password_plaintext_max_length: int = 256
+    password_rsa_private_key: str = ""
+    password_rsa_private_key_file: str = ""
+    password_rsa_private_key_passphrase: str = ""
+
 
 @dataclass(slots=True, kw_only=True)
 class NsLogConfig:
@@ -208,6 +222,36 @@ class NsConfig:
                         "db_alias": db_alias,
                     },
                 )
+
+        self._validate_positive_int("backend.access_token_expire_minutes", self.backend.access_token_expire_minutes, )
+        self._validate_positive_int("backend.refresh_token_expire_days", self.backend.refresh_token_expire_days, )
+        self._validate_positive_int("backend.jwt_leeway_seconds", self.backend.jwt_leeway_seconds, )
+        self._validate_positive_int("backend.jwt_min_secret_length", self.backend.jwt_min_secret_length, )
+        self._validate_positive_int("backend.password_transport_max_payload_length", self.backend.password_transport_max_payload_length, )
+        self._validate_positive_int("backend.password_plaintext_max_length", self.backend.password_plaintext_max_length, )
+
+        if self.backend.password_transport_mode not in {"plain", "rsa_oaep"}:
+            raise NsConfigError("backend.password_transport_mode is invalid.",
+                details={
+                    "field": "backend.password_transport_mode",
+                    "value": self.backend.password_transport_mode,
+                    "allowed_values": [
+                        "plain",
+                        "rsa_oaep",
+                    ],
+                },
+            )
+
+    @staticmethod
+    def _validate_positive_int(field_name: str, value: Any) -> None:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise NsConfigError(f"{field_name} must be a positive integer.",
+                details={
+                    "field": field_name,
+                    "value": value,
+                    "actual_type": type(value).__name__,
+                },
+            )
 
     @staticmethod
     def _get_section(raw_config: dict[str, Any], *, preferred_key: str, compatible_key: str) -> dict[str, Any]:

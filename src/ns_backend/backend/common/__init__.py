@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from backend.common.repositories import BaseRepository
 from backend.common.responses import (
     build_error_body,
     build_success_body,
@@ -10,7 +11,10 @@ from backend.common.responses import (
     internal_error_response,
     success_response,
 )
-from backend.common.views import NsAPIView, NsViewSet
+from backend.common.views import (
+    NsAPIView,
+    NsViewSet
+)
 
 if TYPE_CHECKING:
     pass
@@ -23,4 +27,5 @@ __all__ = [
     "error_response",
     "internal_error_response",
     "success_response",
+    "BaseRepository",
 ]
