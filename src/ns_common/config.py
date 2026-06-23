@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Literal, TYPE_CHECKING
 
+from ns_common.exceptions import NsConfigError
 from ns_common.paths import ETC_DIR, TMP_DIR, ensure_runtime_dirs
 
 if TYPE_CHECKING:
@@ -142,16 +143,39 @@ class NsConfig:
 
     def validate(self) -> None:
         if self.backend.debug and NS_ENV == "prod":
-            raise RuntimeError("backend.debug must be False when NS_ENV is prod.")
+            raise NsConfigError(
+                "backend.debug must be False when NS_ENV is prod.",
+                details={
+                    "field": "backend.debug",
+                    "env": NS_ENV,
+                },
+            )
 
         if not self.backend.secret_key.strip():
-            raise RuntimeError("backend.secret_key must not be empty.")
+            raise NsConfigError(
+                "backend.secret_key must not be empty.",
+                details={
+                    "field": "backend.secret_key",
+                },
+            )
 
         if NS_ENV == "prod" and self.backend.secret_key.startswith("change-me-"):
-            raise RuntimeError("backend.secret_key must be changed in prod.")
+            raise NsConfigError(
+                "backend.secret_key must be changed in prod.",
+                details={
+                    "field": "backend.secret_key",
+                    "env": NS_ENV,
+                },
+            )
 
         if not isinstance(self.backend.allowed_hosts, list):
-            raise TypeError("backend.allowed_hosts must be a list.")
+            raise NsConfigError(
+                "backend.allowed_hosts must be a list.",
+                details={
+                    "field": "backend.allowed_hosts",
+                    "actual_type": type(self.backend.allowed_hosts).__name__,
+                },
+            )
 
     @staticmethod
     def _get_section(raw_config: dict[str, Any], *, preferred_key: str, compatible_key: str) -> dict[str, Any]:
@@ -174,7 +198,14 @@ class NsConfig:
             section = raw_config.get(compatible_key, {})
 
         if not isinstance(section, dict):
-            raise ValueError(f"{preferred_key}/{compatible_key} must be a JSON object.")
+            raise NsConfigError(
+                f"{preferred_key}/{compatible_key} must be a JSON object.",
+                details={
+                    "preferred_key": preferred_key,
+                    "compatible_key": compatible_key,
+                    "actual_type": type(section).__name__,
+                },
+            )
 
         return section
 
@@ -192,10 +223,23 @@ class NsConfig:
             with config_path.open("r", encoding="utf-8") as file:
                 raw_config = json.load(file)
         except json.JSONDecodeError as error:
-            raise ValueError(f"Invalid JSON config file: {config_path}") from error
+            raise NsConfigError(
+                f"Invalid JSON config file: {config_path}",
+                details={
+                    "config_path": str(config_path),
+                    "line": error.lineno,
+                    "column": error.colno,
+                },
+            ) from error
 
         if not isinstance(raw_config, dict):
-            raise ValueError(f"Config root must be a JSON object: {config_path}")
+            raise NsConfigError(
+                f"Config root must be a JSON object: {config_path}",
+                details={
+                    "config_path": str(config_path),
+                    "actual_type": type(raw_config).__name__,
+                },
+            )
 
         return raw_config
 
