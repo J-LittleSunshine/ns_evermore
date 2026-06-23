@@ -12,21 +12,24 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 
+from ns_common import ns_config
+from ns_common.paths import DATA_DIR, ensure_runtime_dirs
+
+ensure_runtime_dirs()
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-)-vtt6x99)ne+5r9e8p)7eok!7!i0x&!&c^abuk$2*#r10juop'
+SECRET_KEY = ns_config.backend.secret_key
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = ns_config.backend.debug
 
-ALLOWED_HOSTS = []
-
+ALLOWED_HOSTS = ns_config.backend.allowed_hosts
 
 # Application definition
 
@@ -68,17 +71,15 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'backend.wsgi.application'
 
-
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': DATA_DIR / 'db.sqlite3',
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -98,23 +99,21 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = ns_config.backend.language_code
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = ns_config.backend.time_zone
 
-USE_I18N = True
+USE_I18N = ns_config.backend.use_i18n
 
-USE_TZ = True
-
+USE_TZ = ns_config.backend.use_tz
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = ns_config.backend.static_url
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
