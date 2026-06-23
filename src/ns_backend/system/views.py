@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-from ns_backend.backend.common import NsViewSet
+from backend.common import NsViewSet
 from ns_common import NsValidationError
 
 if TYPE_CHECKING:
