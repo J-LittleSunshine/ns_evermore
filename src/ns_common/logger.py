@@ -13,8 +13,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Mapping, TYPE_CHECKING
 
-from ns_common import LOG_DIR
 from ns_common.config import ns_config
+from ns_common.paths import LOG_DIR
 
 try:
     from concurrent_log_handler import ConcurrentTimedRotatingFileHandler as _ConcurrentTimedRotatingFileHandler

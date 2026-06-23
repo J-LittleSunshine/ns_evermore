@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import inspect
 import re
 import time
 import uuid
 from typing import Any, ClassVar, TYPE_CHECKING
 
-from adrf.views import APIView
+from adrf.viewsets import ViewSet
 from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 
@@ -24,21 +23,36 @@ from ns_common import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rest_framework.request import Request
 
 _ACTION_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
-class NsAPIView(APIView):
+class NsAPIView(ViewSet):
     logger_name: str = "ns_backend.api"
     wrap_response: bool = True
 
     def initial(self, request: "Request", *args: Any, **kwargs: Any) -> None:
-        self.request_id = self._get_or_create_request_id(request)
-        self.request_started_at = time.monotonic()
-        self.logger = get_ns_logger(self.logger_name)
+        self.request_id = self._get_or_create_request_id(request)  # noqa
+        self.request_started_at = time.monotonic()  # noqa
+        self.logger = get_ns_logger(self.logger_name)  # noqa
 
         super().initial(request, *args, **kwargs)
+
+    async def dispatch(self, request: "Request", *args: Any, **kwargs: Any) -> Response:
+        try:
+            return await super().dispatch(request, *args, **kwargs)  # noqa
+        except Exception as exc:  # noqa
+            response = self.handle_exception(exc)
+
+            return self.finalize_response(
+                request,
+                response,
+                *args,
+                **kwargs,
+            )
 
     def handle_exception(self, exc: Exception) -> Response:
         request_id = getattr(self, "request_id", None)
@@ -90,6 +104,7 @@ class NsAPIView(APIView):
             exc_info=exc,
             extra={
                 "request_id": request_id,
+                "view": self.__class__.__name__,
             },
         )
         return internal_error_response(
@@ -105,7 +120,12 @@ class NsAPIView(APIView):
                 request_id=request_id,
             )
 
-        response = super().finalize_response(request, response, *args, **kwargs)
+        response = super().finalize_response(
+            request,
+            response,
+            *args,
+            **kwargs,
+        )
 
         self._log_response(response)
 
@@ -124,7 +144,7 @@ class NsAPIView(APIView):
         logger = getattr(self, "logger", get_ns_logger(self.logger_name))
         request_id = getattr(self, "request_id", None)
         started_at = getattr(self, "request_started_at", None)
-        action_name = getattr(self, "action_name", None)
+        action_name = getattr(self, "action", None)
 
         duration_ms: float | None = None
         if started_at is not None:
@@ -146,28 +166,23 @@ class NsViewSet(NsAPIView):
     http_method_name: ClassVar[str] = "post"
 
     @classmethod
-    def as_action_view(cls, action_name: str, *, http_method_name: str | None = None):
-        method_name = (http_method_name or cls.http_method_name).strip().lower()
+    def as_view(cls, actions: dict[str, str] | None = None, **initkwargs: Any) -> "Callable[..., Any]":
+        if not actions:
+            raise NsValidationError(
+                "ViewSet actions must be declared.",
+                details={
+                    "view_set": cls.__name__,
+                },
+            )
 
-        cls.validate_action_definition(action_name)
-        cls.validate_http_method_name(method_name)
+        for method_name, action_name in actions.items():
+            cls.validate_http_method_name(method_name)
+            cls.validate_action_definition(action_name)
 
-        async def action_handler(self: "NsViewSet", request: "Request", *args: Any, **kwargs: Any) -> Any:
-            self.action_name = action_name
-            return await self.dispatch_action(action_name, request, *args, **kwargs)
-
-        view_cls = type(
-            f"{cls.__name__}_{action_name}",
-            (
-                cls,
-            ),
-            {
-                method_name: action_handler,
-                "action_name": action_name,
-            },
+        return super().as_view(
+            actions=actions,
+            **initkwargs,
         )
-
-        return view_cls.as_view()
 
     @classmethod
     def validate_action_definition(cls, action_name: str) -> None:
@@ -223,7 +238,9 @@ class NsViewSet(NsAPIView):
 
     @staticmethod
     def validate_http_method_name(method_name: str) -> None:
-        if method_name not in {
+        normalized = str(method_name).strip().lower()
+
+        if normalized not in {
             "get",
             "post",
             "put",
@@ -236,22 +253,3 @@ class NsViewSet(NsAPIView):
                     "method": method_name,
                 },
             )
-
-    async def dispatch_action(self, action_name: str, request: "Request", *args: Any, **kwargs: Any) -> Any:
-        handler = getattr(self, action_name, None)
-
-        if handler is None or not callable(handler):
-            raise NsValidationError(
-                "Action handler does not exist.",
-                details={
-                    "action": action_name,
-                    "view_set": self.__class__.__name__,
-                },
-            )
-
-        result = handler(request, *args, **kwargs)
-
-        if inspect.isawaitable(result):
-            return await result
-
-        return result
