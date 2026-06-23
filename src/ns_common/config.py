@@ -59,6 +59,7 @@ class NsBackendConfig:
     static_url: str = "static/"
 
     databases: dict[str, dict[str, Any]] = field(default_factory=dict)
+    database_router_map: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -176,6 +177,44 @@ class NsConfig:
                     "actual_type": type(self.backend.allowed_hosts).__name__,
                 },
             )
+
+        if not isinstance(self.backend.databases, dict):
+            raise NsConfigError(
+                "backend.databases must be a dict.",
+                details={
+                    "field": "backend.databases",
+                    "actual_type": type(self.backend.databases).__name__,
+                },
+            )
+
+        if not isinstance(self.backend.database_router_map, dict):
+            raise NsConfigError(
+                "backend.database_router_map must be a dict.",
+                details={
+                    "field": "backend.database_router_map",
+                    "actual_type": type(self.backend.database_router_map).__name__,
+                },
+            )
+
+        for app_label, db_alias in self.backend.database_router_map.items():
+            if not isinstance(app_label, str) or not app_label.strip():
+                raise NsConfigError(
+                    "backend.database_router_map app label must be a non-empty string.",
+                    details={
+                        "field": "backend.database_router_map",
+                        "app_label": app_label,
+                    },
+                )
+
+            if not isinstance(db_alias, str) or not db_alias.strip():
+                raise NsConfigError(
+                    "backend.database_router_map database alias must be a non-empty string.",
+                    details={
+                        "field": "backend.database_router_map",
+                        "app_label": app_label,
+                        "db_alias": db_alias,
+                    },
+                )
 
     @staticmethod
     def _get_section(raw_config: dict[str, Any], *, preferred_key: str, compatible_key: str) -> dict[str, Any]:

@@ -10,7 +10,7 @@ from adrf.viewsets import ViewSet
 from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 
-from ns_backend.common.responses import (
+from backend.common.responses import (
     error_response,
     internal_error_response,
     success_response,

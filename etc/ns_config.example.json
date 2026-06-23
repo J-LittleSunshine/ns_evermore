@@ -11,7 +11,8 @@
     "use_i18n": true,
     "use_tz": true,
     "static_url": "static/",
-    "databases": {}
+    "databases": {},
+    "database_router_map": {}
   },
   "log": {
     "level": "INFO",

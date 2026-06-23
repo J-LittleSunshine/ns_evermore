@@ -48,6 +48,12 @@ DATABASES = ns_config.backend.databases or {
     }
 }
 
+DATABASE_ROUTER_MAP = ns_config.backend.database_router_map
+
+DATABASE_ROUTERS = [
+    "backend.db.routers.AppDatabaseRouter",
+]
+
 LANGUAGE_CODE = ns_config.backend.language_code
 
 TIME_ZONE = ns_config.backend.time_zone
