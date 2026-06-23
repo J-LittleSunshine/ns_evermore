@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from asgiref.sync import sync_to_async
 from django.db import transaction
 from django.utils import timezone
 
@@ -57,7 +58,7 @@ class UserTokenRepository:
     @classmethod
     async def revoke_token_session(cls, *, token_record: IamUserToken, revoked_at) -> bool:
         db_alias = token_record._state.db or BaseRepository.resolve_db_alias(model_class=IamUserToken)  # noqa
-        return cls._revoke_token_session_sync(
+        return await sync_to_async(cls._revoke_token_session_sync, thread_sensitive=True)(
             token_id=token_record.id,
             session_id=token_record.session_id,
             revoked_at=revoked_at,
