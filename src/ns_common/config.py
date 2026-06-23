@@ -63,9 +63,38 @@ class NsBackendConfig:
 @dataclass(slots=True, kw_only=True)
 class NsLogConfig:
     level: str = "INFO"
+    file_level: str = "INFO"
+    console_level: str = "INFO"
     console: bool = True
-    format_type: Literal["text", "json"] = "text"
+
+    format_type: Literal["json", "text"] = "json"
+    console_format_type: Literal["json", "text"] | None = "text"
+    file_format_type: Literal["json", "text"] | None = "json"
+
+    format: str = (
+        "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - "
+        "%(name)s - %(filename)s:%(lineno)d - %(message)s"
+    )
     datefmt: str = "%Y-%m-%d %H:%M:%S"
+
+    when: str = "midnight"
+    interval: int = 1
+    backup_count: int = 14
+    encoding: str = "utf-8"
+    delay: bool = True
+    utc: bool = False
+    at_time: str | None = None
+    max_bytes: int = 0
+    use_gzip: bool = False
+    lock_file_directory: str | None = None
+
+    level_files: tuple[str, ...] = (
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL",
+    )
 
 
 @dataclass(slots=True, kw_only=True)
