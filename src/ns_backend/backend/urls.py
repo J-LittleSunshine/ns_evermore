@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from django.urls import include, path
+from django.urls import (
+    include,
+    path
+)
 
 urlpatterns = [
     path("api/system/", include("ns_backend.system.urls")),
+    path("api/iam/", include("ns_backend.iam.urls")),
 ]
