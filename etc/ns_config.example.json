@@ -1,131 +1,22 @@
 {
   "backend": {
-    "secret_key": "change-me-secret-key-at-least-32-chars",
-    "jwt_secret_key": "change-me-jwt-secret-key-at-least-32-chars",
     "debug": true,
-    "iam_decision_audit_strict_mode": false,
+    "secret_key": "change-me-secret-key-at-least-32-chars",
     "allowed_hosts": [
       "127.0.0.1",
       "localhost"
     ],
-    "loaded_apps": {
-      "iam": true
-    },
-    "databases": {
-      "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": "db.sqlite3",
-        "NS_VENDOR": "sqlite"
-      },
-      "iam": {
-        "ENGINE": "django.db.backends.mysql",
-        "NS_VENDOR": "mysql",
-        "NAME": "change-me-iam-db-name",
-        "USER": "change-me-iam-db-user",
-        "PASSWORD": "change-me-iam-db-password",
-        "HOST": "change-me-iam-db-host",
-        "PORT": "3306",
-        "OPTIONS": {
-          "charset": "utf8mb4"
-        }
-      }
-    },
-    "infra_db_router_map": {
-      "iam": "iam"
-    },
-    "database_router_map": {}
+    "language_code": "zh-hans",
+    "time_zone": "Asia/Shanghai",
+    "use_i18n": true,
+    "use_tz": true,
+    "static_url": "static/",
+    "databases": {}
   },
-  "cache_config": {
-    "backend": "sql_wal",
-    "location": "ns_cache.sqlite3",
-    "key_prefix": "ns",
-    "default_timeout_seconds": 300,
-    "serializer": "pickle",
-    "sql_table": "ns_cache",
-    "sql_timeout_seconds": 5.0,
-    "sql_max_entries": 10000,
-    "sql_cull_frequency": 3,
-    "socket_timeout": 3.0,
-    "socket_connect_timeout": 3.0,
-    "max_connections": 64,
-    "health_check_interval": 30
-  },
-  "log_config": {
+  "log": {
     "level": "INFO",
-    "file_level": "INFO",
-    "console_level": "INFO",
     "console": true,
-    "format_type": "json",
-    "console_format_type": "text",
-    "file_format_type": "json",
-    "datefmt": "%Y-%m-%d %H:%M:%S",
-    "when": "midnight",
-    "interval": 1,
-    "backup_count": 30,
-    "encoding": "utf-8",
-    "delay": true,
-    "utc": false,
-    "at_time": null,
-    "max_bytes": 0,
-    "use_gzip": false,
-    "lock_file_directory": null,
-    "level_files": [
-      "INFO",
-      "WARNING",
-      "ERROR",
-      "CRITICAL"
-    ]
-  },
-  "object_storage_config": {
-    "backend": "local_fs",
-    "default_bucket": "ns-local",
-    "auto_create_bucket": true,
-    "key_prefix": "ns",
-    "local_root_path": "object_storage",
-    "max_object_size": null
-  },
-  "runtime_config": {
-    "enabled": false,
-    "node_id": "runtime-default",
-    "node_role": "standalone",
-    "master_url": "ws://127.0.0.1:8765/_runtime/backend/connect",
-    "backend_outbox_backend": "sql_wal",
-    "backend_outbox_location": "runtime/backend_outbox.sqlite3",
-    "runtime_ingress_backend": "sql_wal",
-    "runtime_ingress_location": "runtime/runtime_ingress.sqlite3",
-    "runtime_broker_backend": "memory",
-    "runtime_broker_location": "",
-    "runtime_broker_health_publish_enabled": false,
-    "runtime_broker_message_forward_local_handle_enabled": false,
-    "runtime_broker_message_forward_dispatch_enabled": false,
-    "runtime_broker_message_forward_dispatch_policy": "disabled",
-    "runtime_presence_backend": "memory",
-    "runtime_presence_location": "",
-    "runtime_presence_key_prefix": "ns:runtime:presence",
-    "runtime_presence_record_ttl_seconds": 90,
-    "runtime_presence_redis_socket_timeout_seconds": 3.0,
-    "runtime_presence_redis_socket_connect_timeout_seconds": 3.0,
-    "runtime_presence_redis_health_check_interval_seconds": 30,
-    "ipc_mode": "unix_socket",
-    "ipc_socket_path": "/run/ns_evermore/backend-runtime-connector.sock",
-    "ipc_host": "127.0.0.1",
-    "ipc_port": 18766,
-    "heartbeat_interval_seconds": 15,
-    "health_report_interval_seconds": 30,
-    "websocket_ping_interval_seconds": 20.0,
-    "websocket_ping_timeout_seconds": 20.0,
-    "websocket_close_timeout_seconds": 10.0,
-    "websocket_max_size_bytes": 1048576,
-    "websocket_max_queue": 32,
-    "ack_timeout_seconds": 5.0,
-    "retry_base_delay_seconds": 1.0,
-    "retry_max_delay_seconds": 60.0,
-    "max_attempts": 20,
-    "outbox_claim_batch_size": 100,
-    "outbox_max_pending_messages": 100000,
-    "outbox_max_storage_mb": 1024,
-    "master_handle_when_no_sub_node": true,
-    "master_forward_policy": "sub_first"
+    "format_type": "text",
+    "datefmt": "%Y-%m-%d %H:%M:%S"
   }
 }
-
