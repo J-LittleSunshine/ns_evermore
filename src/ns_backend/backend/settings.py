@@ -19,8 +19,6 @@ ALLOWED_HOSTS = ns_config.backend.allowed_hosts
 INSTALLED_APPS = [
     'rest_framework',
     'adrf',
-
-    'ns_backend.iam.apps.IamConfig',
 ]
 
 MIDDLEWARE = [
