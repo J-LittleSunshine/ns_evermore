@@ -97,3 +97,15 @@ class IamPasswordTransportDecryptFailedError(IamPasswordTransportError):
     code = "IAM_PASSWORD_TRANSPORT_DECRYPT_FAILED"
     numeric_code = 200123
     default_message = "Password transport decrypt failed."
+
+
+class IamUserNotLoggedInOrSessionExpiredError(IamAuthError):
+    code = "IAM_USER_NOT_LOGGED_IN_OR_SESSION_EXPIRED"
+    numeric_code = 200110
+    default_message = "User is not logged in or session has expired."
+
+
+class IamLoginFailureUpdateFailedError(IamAuthError):
+    code = "IAM_LOGIN_FAILURE_UPDATE_FAILED"
+    numeric_code = 200130
+    default_message = "Failed to update login failure counter."

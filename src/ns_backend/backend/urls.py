@@ -8,4 +8,5 @@ from django.urls import (
 
 urlpatterns = [
     path("api/system/", include("ns_backend.system.urls")),
+    path("api/iam/", include("ns_backend.iam.urls")),
 ]
