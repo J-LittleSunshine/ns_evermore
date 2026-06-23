@@ -17,10 +17,11 @@ SRC_DIR = ROOT_DIR / "src"
 
 
 def ensure_runtime_dirs() -> None:
-    for directory in (
-            DATA_DIR,
-            ETC_DIR,
-            LOG_DIR,
-            TMP_DIR,
-    ):
+    must_dirs = {
+        DATA_DIR,
+        ETC_DIR,
+        LOG_DIR,
+        TMP_DIR,
+    }
+    for directory in must_dirs:
         directory.mkdir(parents=True, exist_ok=True)

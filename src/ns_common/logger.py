@@ -7,11 +7,19 @@ import os
 import sys
 import traceback
 from dataclasses import asdict
-from datetime import datetime, time, timezone
+from datetime import (
+    datetime,
+    time,
+    timezone
+)
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from threading import RLock
-from typing import Any, Mapping, TYPE_CHECKING
+from typing import (
+    Any,
+    Mapping,
+    TYPE_CHECKING
+)
 
 from ns_common.config import ns_config
 from ns_common.paths import LOG_DIR
@@ -117,32 +125,14 @@ class _JsonLogFormatter(logging.Formatter):
         if record.stack_info:
             payload["stack"] = record.stack_info
 
-        return json.dumps(
-            payload, ensure_ascii=False, separators=(
-                ",",
-                ":"
-            ), default=str
-        )
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
 
     @staticmethod
     def _normalize_value(value: object) -> object:
         """Normalize extra value for JSON serialization."""
-        if value is None or isinstance(
-                value, (
-                        str,
-                        int,
-                        float,
-                        bool
-                )
-        ):
+        if value is None or isinstance(value, (str, int, float, bool)):
             return value
-        if isinstance(
-                value, (
-                        list,
-                        tuple,
-                        set
-                )
-        ):
+        if isinstance(value, (list, tuple, set)):
             return list(value)
         if isinstance(value, dict):
             return value
@@ -174,10 +164,7 @@ class _BackupTimedRotatingFileHandler(TimedRotatingFileHandler):
 
 
 if _ConcurrentTimedRotatingFileHandler is not None:
-
     class _BackupConcurrentTimedRotatingFileHandler(_ConcurrentTimedRotatingFileHandler):  # type: ignore[misc]
-        """Multiprocess-safe timed rotating handler that stores rotated files under backup."""
-
         def __init__(self, filename: Path, backup_dir: Path, **kwargs: Any) -> None:
             self._backup_dir: Path = backup_dir
             self._source_filename: str = filename.name
@@ -185,12 +172,10 @@ if _ConcurrentTimedRotatingFileHandler is not None:
             super().__init__(filename=str(filename), **kwargs)
 
         def rotation_filename(self, _default_name: str) -> str:
-            # Keep the default rotated file name and only change its parent directory.
             return str(self._backup_dir / Path(_default_name).name)
 
         # noinspection PyPep8Naming
         def getFilesToDelete(self) -> list[str]:
-            # With a custom backup directory, cleanup must use backup_dir glob matching.
             backup_count: int = int(getattr(self, "backupCount", 0))
             if backup_count <= 0:
                 return []
@@ -266,7 +251,6 @@ class NsLogger(logging.Logger):
         text_format: str = str(config.get("format", "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s"))
 
         def _build_formatter(_format_type: str) -> logging.Formatter:
-            """Build formatter by configured format type."""
             if _format_type == "json":
                 return _JsonLogFormatter(datefmt=datefmt, utc_enabled=utc_enabled)
 
@@ -371,13 +355,7 @@ class NsLogger(logging.Logger):
 
     @staticmethod
     def _resolve_level_files(_value: Any) -> tuple[str, ...]:
-        if not isinstance(
-                _value, (
-                        list,
-                        tuple,
-                        set
-                )
-        ):
+        if not isinstance(_value, (list, tuple, set)):
             return _DEFAULT_LEVEL_FILES
 
         result: list[str] = []
@@ -407,10 +385,7 @@ class NsLogger(logging.Logger):
             raise ValueError("Invalid at_time config.")
 
         parts: list[str] = _value.split(":")
-        if len(parts) not in (
-                2,
-                3
-        ):
+        if len(parts) not in (2, 3):
             raise ValueError("Invalid at_time config.")
 
         hour: int = int(parts[0])

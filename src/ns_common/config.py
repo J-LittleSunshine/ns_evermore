@@ -3,13 +3,25 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import (
+    asdict,
+    dataclass,
+    field
+)
 from pathlib import Path
 from threading import RLock
-from typing import Any, Literal, TYPE_CHECKING
+from typing import (
+    Any,
+    Literal,
+    TYPE_CHECKING
+)
 
 from ns_common.exceptions import NsConfigError
-from ns_common.paths import ETC_DIR, TMP_DIR, ensure_runtime_dirs
+from ns_common.paths import (
+    ETC_DIR,
+    TMP_DIR,
+    ensure_runtime_dirs
+)
 
 if TYPE_CHECKING:
     pass
@@ -115,21 +127,10 @@ class NsConfig:
         with cls._lock:
             raw_config = cls._load_json_config(path)
 
-            backend_raw = cls._get_section(
-                raw_config,
-                preferred_key="backend",
-                compatible_key="backend_config",
-            )
-            log_raw = cls._get_section(
-                raw_config,
-                preferred_key="log",
-                compatible_key="log_config",
-            )
+            backend_raw = cls._get_section(raw_config, preferred_key="backend", compatible_key="backend_config")
+            log_raw = cls._get_section(raw_config, preferred_key="log", compatible_key="log_config")
 
-            config = cls(
-                backend=NsBackendConfig(**backend_raw),
-                log=NsLogConfig(**log_raw),
-            )
+            config = cls(backend=NsBackendConfig(**backend_raw), log=NsLogConfig(**log_raw))
             config.validate()
             return config
 
@@ -144,8 +145,7 @@ class NsConfig:
 
     def validate(self) -> None:
         if self.backend.debug and NS_ENV == "prod":
-            raise NsConfigError(
-                "backend.debug must be False when NS_ENV is prod.",
+            raise NsConfigError("backend.debug must be False when NS_ENV is prod.",
                 details={
                     "field": "backend.debug",
                     "env": NS_ENV,
@@ -153,16 +153,14 @@ class NsConfig:
             )
 
         if not self.backend.secret_key.strip():
-            raise NsConfigError(
-                "backend.secret_key must not be empty.",
+            raise NsConfigError("backend.secret_key must not be empty.",
                 details={
                     "field": "backend.secret_key",
                 },
             )
 
         if NS_ENV == "prod" and self.backend.secret_key.startswith("change-me-"):
-            raise NsConfigError(
-                "backend.secret_key must be changed in prod.",
+            raise NsConfigError("backend.secret_key must be changed in prod.",
                 details={
                     "field": "backend.secret_key",
                     "env": NS_ENV,
@@ -170,8 +168,7 @@ class NsConfig:
             )
 
         if not isinstance(self.backend.allowed_hosts, list):
-            raise NsConfigError(
-                "backend.allowed_hosts must be a list.",
+            raise NsConfigError("backend.allowed_hosts must be a list.",
                 details={
                     "field": "backend.allowed_hosts",
                     "actual_type": type(self.backend.allowed_hosts).__name__,
@@ -179,8 +176,7 @@ class NsConfig:
             )
 
         if not isinstance(self.backend.databases, dict):
-            raise NsConfigError(
-                "backend.databases must be a dict.",
+            raise NsConfigError("backend.databases must be a dict.",
                 details={
                     "field": "backend.databases",
                     "actual_type": type(self.backend.databases).__name__,
@@ -188,8 +184,7 @@ class NsConfig:
             )
 
         if not isinstance(self.backend.database_router_map, dict):
-            raise NsConfigError(
-                "backend.database_router_map must be a dict.",
+            raise NsConfigError("backend.database_router_map must be a dict.",
                 details={
                     "field": "backend.database_router_map",
                     "actual_type": type(self.backend.database_router_map).__name__,
@@ -198,8 +193,7 @@ class NsConfig:
 
         for app_label, db_alias in self.backend.database_router_map.items():
             if not isinstance(app_label, str) or not app_label.strip():
-                raise NsConfigError(
-                    "backend.database_router_map app label must be a non-empty string.",
+                raise NsConfigError("backend.database_router_map app label must be a non-empty string.",
                     details={
                         "field": "backend.database_router_map",
                         "app_label": app_label,
@@ -207,8 +201,7 @@ class NsConfig:
                 )
 
             if not isinstance(db_alias, str) or not db_alias.strip():
-                raise NsConfigError(
-                    "backend.database_router_map database alias must be a non-empty string.",
+                raise NsConfigError("backend.database_router_map database alias must be a non-empty string.",
                     details={
                         "field": "backend.database_router_map",
                         "app_label": app_label,
@@ -218,27 +211,13 @@ class NsConfig:
 
     @staticmethod
     def _get_section(raw_config: dict[str, Any], *, preferred_key: str, compatible_key: str) -> dict[str, Any]:
-        """
-        Read config section with backup-compatible key support.
-
-        新配置推荐:
-        {
-          "backend": {}
-        }
-
-        兼容旧配置:
-        {
-          "backend_config": {}
-        }
-        """
         section = raw_config.get(preferred_key)
 
         if section is None:
             section = raw_config.get(compatible_key, {})
 
         if not isinstance(section, dict):
-            raise NsConfigError(
-                f"{preferred_key}/{compatible_key} must be a JSON object.",
+            raise NsConfigError(f"{preferred_key}/{compatible_key} must be a JSON object.",
                 details={
                     "preferred_key": preferred_key,
                     "compatible_key": compatible_key,
@@ -250,11 +229,6 @@ class NsConfig:
 
     @staticmethod
     def _load_json_config(config_path: Path) -> dict[str, Any]:
-        """
-        Load raw JSON config.
-
-        配置文件不存在时返回空配置，使用 dataclass 默认值。
-        """
         if not config_path.exists():
             return {}
 
@@ -262,8 +236,7 @@ class NsConfig:
             with config_path.open("r", encoding="utf-8") as file:
                 raw_config = json.load(file)
         except json.JSONDecodeError as error:
-            raise NsConfigError(
-                f"Invalid JSON config file: {config_path}",
+            raise NsConfigError(f"Invalid JSON config file: {config_path}",
                 details={
                     "config_path": str(config_path),
                     "line": error.lineno,
@@ -272,8 +245,7 @@ class NsConfig:
             ) from error
 
         if not isinstance(raw_config, dict):
-            raise NsConfigError(
-                f"Config root must be a JSON object: {config_path}",
+            raise NsConfigError(f"Config root must be a JSON object: {config_path}",
                 details={
                     "config_path": str(config_path),
                     "actual_type": type(raw_config).__name__,

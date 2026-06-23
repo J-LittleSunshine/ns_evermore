@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import (
+    Any,
+    TYPE_CHECKING
+)
 
 from backend.common import NsViewSet
 from ns_common import NsValidationError
@@ -14,11 +17,12 @@ class SystemViewSet(NsViewSet):
     logger_name = "ns_backend.system.api"
 
     allowed_actions = {
-        "ping",
+        "health_check",
         "raise_validation_error",
     }
 
-    async def ping(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+    @staticmethod
+    async def health_check(request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         return {
             "pong": True,
         }

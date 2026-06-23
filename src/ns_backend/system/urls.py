@@ -6,18 +6,6 @@ from django.urls import path
 from ns_backend.system.views import SystemViewSet
 
 urlpatterns = [
-    path(
-        "ping/", SystemViewSet.as_view(
-            {
-                "post": "ping"
-            }
-        )
-    ),
-    path(
-        "raise_validation_error/", SystemViewSet.as_view(
-            {
-                "post": "raise_validation_error"
-            }
-        ),
-    ),
+    path("health_check/", SystemViewSet.as_view({"post": "health_check"})),
+    path("raise_validation_error/", SystemViewSet.as_view({"post": "raise_validation_error"})),
 ]

@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Any, Mapping, TYPE_CHECKING
+from typing import (
+    Any,
+    Mapping,
+    TYPE_CHECKING
+)
 
 from rest_framework.response import Response
 

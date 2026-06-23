@@ -4,7 +4,11 @@ from __future__ import annotations
 import re
 import time
 import uuid
-from typing import Any, ClassVar, TYPE_CHECKING
+from typing import (
+    Any,
+    ClassVar,
+    TYPE_CHECKING
+)
 
 from adrf.viewsets import ViewSet
 from rest_framework.exceptions import APIException
@@ -47,20 +51,14 @@ class NsAPIView(ViewSet):
         except Exception as exc:  # noqa
             response = self.handle_exception(exc)
 
-            return self.finalize_response(
-                request,
-                response,
-                *args,
-                **kwargs,
-            )
+            return self.finalize_response(request, response, *args, **kwargs)
 
     def handle_exception(self, exc: Exception) -> Response:
         request_id = getattr(self, "request_id", None)
         logger = getattr(self, "logger", get_ns_logger(self.logger_name))
 
         if isinstance(exc, NsEvermoreError):
-            logger.warning(
-                "api known error",
+            logger.warning("api known error",
                 extra={
                     "request_id": request_id,
                     "error": exc.code,
@@ -68,11 +66,7 @@ class NsAPIView(ViewSet):
                     "details": exc.details,
                 },
             )
-            return error_response(
-                exc,
-                status=400,
-                request_id=request_id,
-            )
+            return error_response(exc, status=400, request_id=request_id)
 
         if isinstance(exc, APIException):
             error = NsRuntimeError(
@@ -84,8 +78,7 @@ class NsAPIView(ViewSet):
                     "status_code": getattr(exc, "status_code", None),
                 },
             )
-            logger.warning(
-                "api framework error",
+            logger.warning("api framework error",
                 extra={
                     "request_id": request_id,
                     "error": error.code,
@@ -93,39 +86,24 @@ class NsAPIView(ViewSet):
                     "details": error.details,
                 },
             )
-            return error_response(
-                error,
-                status=getattr(exc, "status_code", 400),
-                request_id=request_id,
-            )
+            return error_response(error, status=getattr(exc, "status_code", 400), request_id=request_id)
 
-        logger.error(
-            "api unexpected error",
+        logger.error("api unexpected error",
             exc_info=exc,
             extra={
                 "request_id": request_id,
                 "view": self.__class__.__name__,
             },
         )
-        return internal_error_response(
-            request_id=request_id,
-        )
+        return internal_error_response(request_id=request_id)
 
     def finalize_response(self, request: "Request", response: Any, *args: Any, **kwargs: Any) -> Response:
         request_id = getattr(self, "request_id", None)
 
         if self.wrap_response and not isinstance(response, Response):
-            response = success_response(
-                data=response,
-                request_id=request_id,
-            )
+            response = success_response(data=response, request_id=request_id)
 
-        response = super().finalize_response(
-            request,
-            response,
-            *args,
-            **kwargs,
-        )
+        response = super().finalize_response(request, response, *args, **kwargs)
 
         self._log_response(response)
 
@@ -150,8 +128,7 @@ class NsAPIView(ViewSet):
         if started_at is not None:
             duration_ms = round((time.monotonic() - started_at) * 1000, 2)
 
-        logger.info(
-            "api response",
+        logger.info("api response",
             extra={
                 "request_id": request_id,
                 "action": action_name,
@@ -168,8 +145,7 @@ class NsViewSet(NsAPIView):
     @classmethod
     def as_view(cls, actions: dict[str, str] | None = None, **initkwargs: Any) -> "Callable[..., Any]":
         if not actions:
-            raise NsValidationError(
-                "ViewSet actions must be declared.",
+            raise NsValidationError("ViewSet actions must be declared.",
                 details={
                     "view_set": cls.__name__,
                 },
@@ -179,18 +155,14 @@ class NsViewSet(NsAPIView):
             cls.validate_http_method_name(method_name)
             cls.validate_action_definition(action_name)
 
-        return super().as_view(
-            actions=actions,
-            **initkwargs,
-        )
+        return super().as_view(actions=actions, **initkwargs)
 
     @classmethod
     def validate_action_definition(cls, action_name: str) -> None:
         cls.validate_action_name(action_name)
 
         if cls.allowed_actions is not None and action_name not in cls.allowed_actions:
-            raise NsValidationError(
-                "Action is not allowed.",
+            raise NsValidationError("Action is not allowed.",
                 details={
                     "action": action_name,
                     "allowed_actions": sorted(cls.allowed_actions),
@@ -200,8 +172,7 @@ class NsViewSet(NsAPIView):
 
         handler = getattr(cls, action_name, None)
         if handler is None or not callable(handler):
-            raise NsValidationError(
-                "Action handler does not exist.",
+            raise NsValidationError("Action handler does not exist.",
                 details={
                     "action": action_name,
                     "view_set": cls.__name__,
@@ -211,8 +182,7 @@ class NsViewSet(NsAPIView):
     @staticmethod
     def validate_action_name(action_name: str) -> None:
         if not isinstance(action_name, str) or not action_name.strip():
-            raise NsValidationError(
-                "Action name must not be empty.",
+            raise NsValidationError("Action name must not be empty.",
                 details={
                     "action": action_name,
                 },
@@ -221,16 +191,14 @@ class NsViewSet(NsAPIView):
         normalized = action_name.strip()
 
         if not _ACTION_NAME_PATTERN.fullmatch(normalized):
-            raise NsValidationError(
-                "Invalid action name.",
+            raise NsValidationError("Invalid action name.",
                 details={
                     "action": action_name,
                 },
             )
 
         if "__" in normalized:
-            raise NsValidationError(
-                "Invalid action name.",
+            raise NsValidationError("Invalid action name.",
                 details={
                     "action": action_name,
                 },
@@ -240,15 +208,15 @@ class NsViewSet(NsAPIView):
     def validate_http_method_name(method_name: str) -> None:
         normalized = str(method_name).strip().lower()
 
-        if normalized not in {
+        allowed_methods = {
             "get",
             "post",
             "put",
             "patch",
             "delete",
-        }:
-            raise NsValidationError(
-                "Invalid HTTP method name.",
+        }
+        if normalized not in allowed_methods:
+            raise NsValidationError("Invalid HTTP method name.",
                 details={
                     "method": method_name,
                 },

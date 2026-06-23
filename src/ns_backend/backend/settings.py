@@ -1,7 +1,10 @@
 from pathlib import Path
 
 from ns_common import ns_config
-from ns_common.paths import DATA_DIR, ensure_runtime_dirs
+from ns_common.paths import (
+    DATA_DIR,
+    ensure_runtime_dirs
+)
 
 ensure_runtime_dirs()
 
@@ -16,6 +19,8 @@ ALLOWED_HOSTS = ns_config.backend.allowed_hosts
 INSTALLED_APPS = [
     'rest_framework',
     'adrf',
+
+    'ns_backend.iam.apps.IamConfig',
 ]
 
 MIDDLEWARE = [
