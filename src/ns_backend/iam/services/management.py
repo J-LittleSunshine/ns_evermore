@@ -1271,6 +1271,7 @@ class RoleManagementService(IamManagementService):
 
         return create_data
 
+
 class UserManagementService(IamManagementService):
     model_class = IamUser
     validator_class = UserValidator
@@ -1655,6 +1656,7 @@ class UserManagementService(IamManagementService):
             )
 
         return update_data
+
 
 class UserRoleManagementService(IamManagementService):
     model_class = IamUserRole
@@ -2117,6 +2119,7 @@ class UserPermissionManagementService(DirectPermissionGrantManagementService):
             label="user",
         )
 
+
 class DepartmentPermissionManagementService(DirectPermissionGrantManagementService):
     model_class = IamDepartmentPermission
     validator_class = DepartmentPermissionValidator
@@ -2167,6 +2170,7 @@ class DepartmentPermissionManagementService(DirectPermissionGrantManagementServi
             operator=operator,
             label="department",
         )
+
 
 class SubsidiaryPermissionManagementService(DirectPermissionGrantManagementService):
     model_class = IamSubsidiaryPermission
