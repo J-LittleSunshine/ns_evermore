@@ -30,3 +30,13 @@ class TokenRotationResult:
 class TokenRotationOutcome:
     status: str
     result: TokenRotationResult | None = None
+
+@dataclass(slots=True, kw_only=True)
+class TenantContext:
+    user_id: int
+    user_type: str
+    company_id: int | None = None
+    subsidiary_id: int | None = None
+    department_id: int | None = None
+    is_staff: bool = False
+    is_superuser: bool = False
