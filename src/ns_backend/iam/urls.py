@@ -12,4 +12,5 @@ urlpatterns = [
     path("auth/profile/", AuthViewSet.as_view({"post": "profile"})),
     path("auth/current_user/", AuthViewSet.as_view({"post": "current_user"})),
     path("auth/permissions/", AuthViewSet.as_view({"post": "permissions"})),
+    path("auth/menus/", AuthViewSet.as_view({"post": "menus"})),
 ]

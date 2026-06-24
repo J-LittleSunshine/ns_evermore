@@ -26,6 +26,7 @@ class AuthViewSet(NsViewSet):
         "profile",
         "current_user",
         "permissions",
+        "menus",
     }
 
     async def login(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -69,4 +70,14 @@ class AuthViewSet(NsViewSet):
 
         return {
             "permissions": permission_codes,
+        }
+
+    async def menus(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        user, _ = await AuthService.resolve_user_from_request(request)
+        self.set_current_user(user)
+
+        menus = await AuthContextService.list_menus(user)
+
+        return {
+            "menus": menus,
         }
