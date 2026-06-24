@@ -525,15 +525,18 @@ class IamManagementService:
         for field, value in tenant_filters.items():
             current_value = result.get(field)
 
-            if current_value not in (None, "") and current_value != value:
-                raise IamManagementAccessDeniedError(
-                    "Cannot query IAM resource from another company.",
-                    details={
-                        "field": field,
-                        "operator_value": value,
-                        "request_value": current_value,
-                    },
-                )
+            if current_value not in (None, ""):
+                normalized_current_value = cls.normalize_company_id(current_value)
+
+                if normalized_current_value != value:
+                    raise IamManagementAccessDeniedError(
+                        "Cannot query IAM resource from another company.",
+                        details={
+                            "field": field,
+                            "operator_value": value,
+                            "request_value": current_value,
+                        },
+                    )
 
             result[field] = value
 
