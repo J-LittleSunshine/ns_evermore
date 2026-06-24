@@ -123,6 +123,33 @@ class IamManagementService:
         )
 
     @classmethod
+    async def list_all_items_for_operator(cls, *, data: dict[str, Any], operator: Any, fields: tuple[str, ...] | None = None, extra_filters: dict[str, Any] | None = None, default_order_by: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        filters = cls.build_filters(data=data)
+
+        if extra_filters:
+            filters.update(extra_filters)
+
+        filters = cls.apply_tenant_filters(
+            filters=filters,
+            operator=operator,
+        )
+
+        keyword_conditions = cls.build_keyword_conditions(data=data)
+
+        if data.get("order_by") or data.get("ordering"):
+            order_by = cls.build_order_by(data=data)
+        else:
+            order_by = default_order_by or ("id",)
+
+        return await cls.repository_class.list_all_items(
+            model_class=cls.model_class,
+            fields=fields or cls.detail_fields,
+            filters=filters,
+            keyword_conditions=keyword_conditions,
+            order_by=order_by,
+        )
+
+    @classmethod
     async def detail_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
         item_id = cls.get_required_id(data=data)
 
@@ -726,6 +753,139 @@ class CompanyManagementService(IamManagementService):
     platform_create_only = True
     platform_delete_only = True
 
+    @classmethod
+    async def tree_items(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        companies = await cls.list_all_items_for_operator(
+            data=data,
+            operator=operator,
+            default_order_by=(
+                "company_code",
+                "id",
+            ),
+        )
+
+        if not companies:
+            return {
+                "tree": [],
+                "total": 0,
+            }
+
+        company_ids = [
+            item["id"]
+            for item in companies
+            if isinstance(item.get("id"), int)
+        ]
+
+        subsidiaries = await SubsidiaryManagementService.list_all_items_for_operator(
+            data={},
+            operator=operator,
+            extra_filters={
+                "company_id__in": company_ids,
+            },
+            default_order_by=(
+                "company_id",
+                "subsidiary_code",
+                "id",
+            ),
+        )
+
+        departments = await DepartmentManagementService.list_all_items_for_operator(
+            data={},
+            operator=operator,
+            extra_filters={
+                "company_id__in": company_ids,
+            },
+            default_order_by=(
+                "company_id",
+                "subsidiary_id",
+                "parent_id",
+                "department_code",
+                "id",
+            ),
+        )
+
+        return {
+            "tree": cls.build_company_tree(
+                companies=companies,
+                subsidiaries=subsidiaries,
+                departments=departments,
+            ),
+            "total": len(companies),
+        }
+
+    @classmethod
+    async def org_tree_items(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        return await cls.tree_items(
+            data=data,
+            operator=operator,
+        )
+
+    @classmethod
+    def build_company_tree(cls, *, companies: list[dict[str, Any]], subsidiaries: list[dict[str, Any]], departments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        subsidiaries_by_company: dict[int, list[dict[str, Any]]] = {}
+        departments_by_company: dict[int, list[dict[str, Any]]] = {}
+
+        for subsidiary in subsidiaries:
+            company_id = subsidiary.get("company_id")
+            if isinstance(company_id, int):
+                subsidiaries_by_company.setdefault(company_id, []).append(subsidiary)
+
+        for department in departments:
+            company_id = department.get("company_id")
+            if isinstance(company_id, int):
+                departments_by_company.setdefault(company_id, []).append(department)
+
+        tree: list[dict[str, Any]] = []
+
+        for company in companies:
+            company_id = company.get("id")
+            if not isinstance(company_id, int):
+                continue
+
+            company_subsidiaries = subsidiaries_by_company.get(company_id, [])
+            company_departments = departments_by_company.get(company_id, [])
+
+            departments_by_subsidiary: dict[int | None, list[dict[str, Any]]] = {}
+
+            for department in company_departments:
+                subsidiary_id = department.get("subsidiary_id")
+                if subsidiary_id is not None and not isinstance(subsidiary_id, int):
+                    subsidiary_id = None
+
+                departments_by_subsidiary.setdefault(subsidiary_id, []).append(department)
+
+            company_node = {
+                **company,
+                "node_type": "COMPANY",
+                "children": [],
+            }
+
+            for subsidiary in company_subsidiaries:
+                subsidiary_id = subsidiary.get("id")
+                if not isinstance(subsidiary_id, int):
+                    continue
+
+                company_node["children"].append(
+                    {
+                        **subsidiary,
+                        "node_type": "SUBSIDIARY",
+                        "children": DepartmentManagementService.build_department_tree(
+                            departments_by_subsidiary.get(subsidiary_id, [])
+                        ),
+                    }
+                )
+
+            # 未绑定 subsidiary 的部门，直接挂在 company 下。
+            company_node["children"].extend(
+                DepartmentManagementService.build_department_tree(
+                    departments_by_subsidiary.get(None, [])
+                )
+            )
+
+            tree.append(company_node)
+
+        return tree
+
 
 class SubsidiaryManagementService(IamManagementService):
     model_class = IamSubsidiary
@@ -780,6 +940,74 @@ class SubsidiaryManagementService(IamManagementService):
                     "company_id": company_id,
                 },
             )
+
+    @classmethod
+    async def tree_items(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        subsidiaries = await cls.list_all_items_for_operator(
+            data=data,
+            operator=operator,
+            default_order_by=(
+                "company_id",
+                "subsidiary_code",
+                "id",
+            ),
+        )
+
+        if not subsidiaries:
+            return {
+                "tree": [],
+                "total": 0,
+            }
+
+        subsidiary_ids = [
+            item["id"]
+            for item in subsidiaries
+            if isinstance(item.get("id"), int)
+        ]
+
+        departments = await DepartmentManagementService.list_all_items_for_operator(
+            data={},
+            operator=operator,
+            extra_filters={
+                "subsidiary_id__in": subsidiary_ids,
+            },
+            default_order_by=(
+                "company_id",
+                "subsidiary_id",
+                "parent_id",
+                "department_code",
+                "id",
+            ),
+        )
+
+        departments_by_subsidiary: dict[int, list[dict[str, Any]]] = {}
+
+        for department in departments:
+            subsidiary_id = department.get("subsidiary_id")
+            if isinstance(subsidiary_id, int):
+                departments_by_subsidiary.setdefault(subsidiary_id, []).append(department)
+
+        tree: list[dict[str, Any]] = []
+
+        for subsidiary in subsidiaries:
+            subsidiary_id = subsidiary.get("id")
+            if not isinstance(subsidiary_id, int):
+                continue
+
+            tree.append(
+                {
+                    **subsidiary,
+                    "node_type": "SUBSIDIARY",
+                    "children": DepartmentManagementService.build_department_tree(
+                        departments_by_subsidiary.get(subsidiary_id, [])
+                    ),
+                }
+            )
+
+        return {
+            "tree": tree,
+            "total": len(subsidiaries),
+        }
 
 
 class DepartmentManagementService(IamManagementService):
@@ -889,6 +1117,112 @@ class DepartmentManagementService(IamManagementService):
                         "parent_id": parent_id,
                     },
                 )
+
+    @classmethod
+    async def tree_items(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        departments = await cls.list_all_items_for_operator(
+            data=data,
+            operator=operator,
+            default_order_by=(
+                "company_id",
+                "subsidiary_id",
+                "parent_id",
+                "department_code",
+                "id",
+            ),
+        )
+
+        return {
+            "tree": cls.build_department_tree(departments),
+            "total": len(departments),
+        }
+
+    @classmethod
+    def build_department_tree(cls, departments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not departments:
+            return []
+
+        node_map: dict[int, dict[str, Any]] = {}
+
+        for department in departments:
+            department_id = department.get("id")
+            if not isinstance(department_id, int):
+                continue
+
+            node_map[department_id] = {
+                **department,
+                "node_type": "DEPARTMENT",
+                "children": [],
+            }
+
+        if not node_map:
+            return []
+
+        children_map: dict[int, list[int]] = {}
+
+        for node_id, node in node_map.items():
+            parent_id = node.get("parent_id")
+
+            if (
+                    isinstance(parent_id, int)
+                    and parent_id in node_map
+                    and parent_id != node_id
+            ):
+                children_map.setdefault(parent_id, []).append(node_id)
+
+        root_ids = [
+            node_id
+            for node_id, node in node_map.items()
+            if node.get("parent_id") not in node_map
+               or node.get("parent_id") == node_id
+        ]
+
+        if not root_ids:
+            root_ids = list(node_map)
+
+        def sort_key(_node_id: int) -> tuple[int, int, str, int]:
+            _node = node_map[_node_id]
+            company_id = _node.get("company_id")
+            subsidiary_id = _node.get("subsidiary_id")
+            return (
+                company_id if isinstance(company_id, int) else 0,
+                subsidiary_id if isinstance(subsidiary_id, int) else 0,
+                str(_node.get("department_code") or ""),
+                _node_id,
+            )
+
+        def build_node(_node_id: int, _path_ids: set[int]) -> dict[str, Any]:
+            _node = {
+                **node_map[_node_id],
+                "children": [],
+            }
+
+            next_path_ids = set(_path_ids)
+            next_path_ids.add(_node_id)
+
+            for child_id in sorted(children_map.get(_node_id, []), key=sort_key):
+                if child_id in next_path_ids:
+                    continue
+
+                _node["children"].append(
+                    build_node(child_id, next_path_ids)
+                )
+
+            return _node
+
+        tree: list[dict[str, Any]] = []
+        built_root_ids: set[int] = set()
+
+        for root_id in sorted(root_ids, key=sort_key):
+            if root_id in built_root_ids:
+                continue
+
+            tree.append(
+                build_node(root_id, set())
+            )
+            built_root_ids.add(root_id)
+
+        return tree
 
 
 class PermissionManagementService(IamManagementService):

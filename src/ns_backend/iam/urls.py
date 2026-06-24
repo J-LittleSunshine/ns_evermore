@@ -33,18 +33,22 @@ urlpatterns = [
     path("company/create/", CompanyViewSet.as_view({"post": "create"})),
     path("company/update/", CompanyViewSet.as_view({"post": "update"})),
     path("company/delete/", CompanyViewSet.as_view({"post": "delete"})),
+    path("company/tree/", CompanyViewSet.as_view({"post": "tree"})),
+    path("company/org_tree/", CompanyViewSet.as_view({"post": "org_tree"})),
 
     path("subsidiary/list/", SubsidiaryViewSet.as_view({"post": "list"})),
     path("subsidiary/detail/", SubsidiaryViewSet.as_view({"post": "get_detail"})),
     path("subsidiary/create/", SubsidiaryViewSet.as_view({"post": "create"})),
     path("subsidiary/update/", SubsidiaryViewSet.as_view({"post": "update"})),
     path("subsidiary/delete/", SubsidiaryViewSet.as_view({"post": "delete"})),
+    path("subsidiary/tree/", SubsidiaryViewSet.as_view({"post": "tree"})),
 
     path("department/list/", DepartmentViewSet.as_view({"post": "list"})),
     path("department/detail/", DepartmentViewSet.as_view({"post": "get_detail"})),
     path("department/create/", DepartmentViewSet.as_view({"post": "create"})),
     path("department/update/", DepartmentViewSet.as_view({"post": "update"})),
     path("department/delete/", DepartmentViewSet.as_view({"post": "delete"})),
+    path("department/tree/", DepartmentViewSet.as_view({"post": "tree"})),
 
     path("permission/list/", PermissionViewSet.as_view({"post": "list"})),
     path("permission/detail/", PermissionViewSet.as_view({"post": "get_detail"})),

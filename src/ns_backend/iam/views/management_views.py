@@ -136,18 +136,47 @@ class CompanyViewSet(IamManagementViewSet):
     logger_name = "ns_backend.iam.company.api"
     service_class = CompanyManagementService
 
+    allowed_actions = IamManagementViewSet.allowed_actions | {
+        "tree",
+        "org_tree",
+    }
+
     required_permissions = {
         "list": ("iam:company:read",),
         "get_detail": ("iam:company:read",),
         "create": ("iam:company:create",),
         "update": ("iam:company:update",),
         "delete": ("iam:company:delete",),
+        "tree": ("iam:company:read",),
+        "org_tree": ("iam:company:read",),
     }
+
+    async def tree(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        # noinspection PyUnresolvedReferences
+        return await self.get_service_class().tree_items(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
+
+    async def org_tree(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        # noinspection PyUnresolvedReferences
+        return await self.get_service_class().org_tree_items(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
 
 
 class SubsidiaryViewSet(IamManagementViewSet):
     logger_name = "ns_backend.iam.subsidiary.api"
     service_class = SubsidiaryManagementService
+
+    allowed_actions = IamManagementViewSet.allowed_actions | {
+        "tree",
+    }
 
     required_permissions = {
         "list": ("iam:subsidiary:read",),
@@ -155,12 +184,26 @@ class SubsidiaryViewSet(IamManagementViewSet):
         "create": ("iam:subsidiary:create",),
         "update": ("iam:subsidiary:update",),
         "delete": ("iam:subsidiary:delete",),
+        "tree": ("iam:subsidiary:read",),
     }
+
+    async def tree(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        # noinspection PyUnresolvedReferences
+        return await self.get_service_class().tree_items(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
 
 
 class DepartmentViewSet(IamManagementViewSet):
     logger_name = "ns_backend.iam.department.api"
     service_class = DepartmentManagementService
+
+    allowed_actions = IamManagementViewSet.allowed_actions | {
+        "tree",
+    }
 
     required_permissions = {
         "list": ("iam:department:read",),
@@ -168,7 +211,17 @@ class DepartmentViewSet(IamManagementViewSet):
         "create": ("iam:department:create",),
         "update": ("iam:department:update",),
         "delete": ("iam:department:delete",),
+        "tree": ("iam:department:read",),
     }
+
+    async def tree(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        # noinspection PyUnresolvedReferences
+        return await self.get_service_class().tree_items(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
 
 
 class PermissionViewSet(IamManagementViewSet):
@@ -197,6 +250,7 @@ class PermissionViewSet(IamManagementViewSet):
     async def tree(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         operator = await self.get_operator(request)
 
+        # noinspection PyUnresolvedReferences
         return await self.get_service_class().tree_items(
             data=self.get_request_data(request),
             operator=operator,
@@ -205,6 +259,7 @@ class PermissionViewSet(IamManagementViewSet):
     async def menu_tree(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         operator = await self.get_operator(request)
 
+        # noinspection PyUnresolvedReferences
         return await self.get_service_class().menu_tree_items(
             data=self.get_request_data(request),
             operator=operator,
@@ -213,6 +268,7 @@ class PermissionViewSet(IamManagementViewSet):
     async def action_list(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         operator = await self.get_operator(request)
 
+        # noinspection PyUnresolvedReferences
         return await self.get_service_class().action_items(
             data=self.get_request_data(request),
             operator=operator,
@@ -221,6 +277,7 @@ class PermissionViewSet(IamManagementViewSet):
     async def data_list(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         operator = await self.get_operator(request)
 
+        # noinspection PyUnresolvedReferences
         return await self.get_service_class().data_items(
             data=self.get_request_data(request),
             operator=operator,
@@ -260,6 +317,7 @@ class UserViewSet(IamManagementViewSet):
     async def reset_password(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         operator = await self.get_operator(request)
 
+        # noinspection PyUnresolvedReferences
         return await self.get_service_class().reset_password(
             data=self.get_request_data(request),
             operator=operator,
