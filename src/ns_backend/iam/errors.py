@@ -109,3 +109,51 @@ class IamLoginFailureUpdateFailedError(IamAuthError):
     code = "IAM_LOGIN_FAILURE_UPDATE_FAILED"
     numeric_code = 200130
     default_message = "Failed to update login failure counter."
+
+
+class IamManagementError(IamError):
+    code = "IAM_MANAGEMENT_ERROR"
+    numeric_code = 200200
+    default_message = "IAM management error."
+
+
+class IamManagementRequestInvalidError(IamManagementError):
+    code = "IAM_MANAGEMENT_REQUEST_INVALID"
+    numeric_code = 200201
+    default_message = "IAM management request is invalid."
+
+
+class IamResourceNotFoundError(IamManagementError):
+    code = "IAM_RESOURCE_NOT_FOUND"
+    numeric_code = 200202
+    default_message = "IAM resource was not found."
+
+
+class IamResourceAlreadyExistsError(IamManagementError):
+    code = "IAM_RESOURCE_ALREADY_EXISTS"
+    numeric_code = 200203
+    default_message = "IAM resource already exists."
+
+
+class IamResourceInUseError(IamManagementError):
+    code = "IAM_RESOURCE_IN_USE"
+    numeric_code = 200204
+    default_message = "IAM resource is in use and cannot be deleted."
+
+
+class IamInvalidRelationError(IamManagementError):
+    code = "IAM_INVALID_RELATION"
+    numeric_code = 200205
+    default_message = "IAM resource relation is invalid."
+
+
+class IamManagementAccessDeniedError(IamManagementError):
+    code = "IAM_MANAGEMENT_ACCESS_DENIED"
+    numeric_code = 200206
+    default_message = "IAM management access denied."
+
+
+class IamManagementPersistenceError(IamManagementError):
+    code = "IAM_MANAGEMENT_PERSISTENCE_ERROR"
+    numeric_code = 200207
+    default_message = "IAM management persistence error."

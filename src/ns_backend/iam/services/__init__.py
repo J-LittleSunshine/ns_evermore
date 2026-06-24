@@ -6,6 +6,12 @@ from typing import TYPE_CHECKING
 from ns_backend.iam.services.auth import AuthService
 from ns_backend.iam.services.auth_context import AuthContextService
 from ns_backend.iam.services.data_scope import DataScopeService
+from ns_backend.iam.services.management import (
+    CompanyManagementService,
+    DepartmentManagementService,
+    IamManagementService,
+    SubsidiaryManagementService,
+)
 from ns_backend.iam.services.permission import PermissionService
 
 if TYPE_CHECKING:
@@ -14,6 +20,10 @@ if TYPE_CHECKING:
 __all__ = [
     "AuthContextService",
     "AuthService",
+    "CompanyManagementService",
     "DataScopeService",
+    "DepartmentManagementService",
+    "IamManagementService",
     "PermissionService",
+    "SubsidiaryManagementService",
 ]
