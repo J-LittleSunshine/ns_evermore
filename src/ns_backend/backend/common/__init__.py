@@ -13,7 +13,8 @@ from backend.common.responses import (
 )
 from backend.common.views import (
     NsAPIView,
-    NsViewSet
+    NsRequestContext,
+    NsViewSet,
 )
 
 if TYPE_CHECKING:
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "NsAPIView",
+    "NsRequestContext",
     "NsViewSet",
     "build_error_body",
     "build_success_body",

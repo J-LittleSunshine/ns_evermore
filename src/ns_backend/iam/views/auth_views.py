@@ -23,20 +23,11 @@ class AuthViewSet(NsViewSet):
     }
 
     async def login(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
-        result = await AuthService.login(data=self.get_request_data(request), request=request, )
+        result = await AuthService.login(data=self.get_request_data(request), request=request)
         return result.data
 
     async def refresh(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return await AuthService.refresh(data=self.get_request_data(request), )
+        return await AuthService.refresh(data=self.get_request_data(request))
 
     async def logout(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         return await AuthService.logout(data=self.get_request_data(request), request=request)
-
-    @staticmethod
-    def get_request_data(request: "Request") -> dict[str, Any]:
-        data = getattr(request, "data", None)
-
-        if isinstance(data, dict):
-            return dict(data)
-
-        return {}

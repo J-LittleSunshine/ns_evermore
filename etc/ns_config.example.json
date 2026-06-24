@@ -11,8 +11,33 @@
     "use_i18n": true,
     "use_tz": true,
     "static_url": "static/",
-    "databases": {},
-    "database_router_map": {}
+    "databases": {
+      "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": "data/db.sqlite3"
+      },
+      "iam": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": "data/iam.sqlite3"
+      }
+    },
+    "database_router_map": {
+      "iam": "iam"
+    },
+    "jwt_secret_key": "change-me-jwt-secret",
+    "access_token_expire_minutes": 30,
+    "refresh_token_expire_days": 14,
+    "jwt_issuer": "ns_evermore",
+    "jwt_leeway_seconds": 30,
+    "jwt_min_secret_length": 32,
+    "password_transport_mode": "plain",
+    "password_transport_max_payload_length": 4096,
+    "password_plaintext_max_length": 256,
+    "password_rsa_private_key": "",
+    "password_rsa_private_key_file": "",
+    "password_rsa_private_key_passphrase": "",
+    "login_max_failed_count": 5,
+    "login_lock_minutes": 15
   },
   "log": {
     "level": "INFO",
