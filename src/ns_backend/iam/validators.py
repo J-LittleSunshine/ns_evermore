@@ -13,6 +13,8 @@ from ns_backend.iam.constants import (
     PERMISSION_TYPE_MENU,
     ROLE_SCOPE_ENTERPRISE,
     ROLE_SCOPE_PERSONAL,
+    USER_TYPE_ENTERPRISE,
+    USER_TYPE_PERSONAL,
 )
 from ns_backend.iam.errors import IamManagementRequestInvalidError
 
@@ -389,4 +391,76 @@ class RoleValidator(IamManagementValidator):
     }
     defaults = {
         "status": 1,
+    }
+
+
+class UserValidator(IamManagementValidator):
+    required_create_fields = (
+        "username",
+        "password",
+        "user_type",
+    )
+    allowed_create_fields = (
+        "username",
+        "password",
+        "email",
+        "phone",
+        "display_name",
+        "user_type",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+        "is_active",
+        "is_staff",
+        "is_superuser",
+    )
+    allowed_update_fields = (
+        "email",
+        "phone",
+        "display_name",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+        "is_active",
+        "is_staff",
+        "is_superuser",
+    )
+    integer_fields = (
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+        "is_active",
+        "is_staff",
+        "is_superuser",
+    )
+    nullable_fields = (
+        "email",
+        "phone",
+        "display_name",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+    )
+    status_fields = (
+        "is_active",
+        "is_staff",
+        "is_superuser",
+    )
+    enum_fields = {
+        "user_type": (
+            USER_TYPE_PERSONAL,
+            USER_TYPE_ENTERPRISE,
+        ),
+    }
+    max_lengths = {
+        "username": 64,
+        "email": 128,
+        "phone": 32,
+        "display_name": 64,
+        "user_type": 32,
+    }
+    defaults = {
+        "is_active": 1,
+        "is_staff": 0,
+        "is_superuser": 0,
     }

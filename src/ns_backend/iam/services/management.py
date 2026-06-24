@@ -7,12 +7,19 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from asgiref.sync import sync_to_async
+from django.contrib.auth.hashers import make_password
+
+from backend.utils.password_transport import PasswordTransportService
 from ns_backend.iam.constants import (
     ROLE_SCOPE_ENTERPRISE,
     ROLE_SCOPE_PERSONAL,
+    USER_TYPE_ENTERPRISE,
+    USER_TYPE_PERSONAL,
 )
 from ns_backend.iam.errors import (
     IamInvalidRelationError,
+    IamManagementAccessDeniedError,
     IamManagementRequestInvalidError,
     IamResourceAlreadyExistsError,
     IamResourceNotFoundError,
@@ -23,6 +30,7 @@ from ns_backend.iam.models import (
     IamPermission,
     IamRole,
     IamSubsidiary,
+    IamUser,
 )
 from ns_backend.iam.repositories import IamManagementRepository
 from ns_backend.iam.validators import (
@@ -32,6 +40,7 @@ from ns_backend.iam.validators import (
     PermissionValidator,
     RoleValidator,
     SubsidiaryValidator,
+    UserValidator,
 )
 
 if TYPE_CHECKING:
@@ -784,3 +793,274 @@ class RoleManagementService(IamManagementService):
                     "role_code": role_code,
                 },
             )
+
+
+class UserManagementService(IamManagementService):
+    model_class = IamUser
+    validator_class = UserValidator
+
+    # 不返回 password。
+    list_fields = detail_fields = (
+        "id",
+        "username",
+        "email",
+        "phone",
+        "display_name",
+        "user_type",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+        "is_active",
+        "is_staff",
+        "is_superuser",
+        "last_login",
+        "created_at",
+        "updated_at",
+    )
+    filter_fields = (
+        "id",
+        "username",
+        "email",
+        "phone",
+        "display_name",
+        "user_type",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+        "is_active",
+        "is_staff",
+        "is_superuser",
+    )
+    keyword_fields = (
+        "username",
+        "display_name",
+        "email",
+        "phone",
+    )
+    order_fields = (
+        "id",
+        "username",
+        "email",
+        "phone",
+        "display_name",
+        "user_type",
+        "company_id",
+        "subsidiary_id",
+        "department_id",
+        "is_active",
+        "is_staff",
+        "is_superuser",
+        "last_login",
+        "created_at",
+        "updated_at",
+    )
+    unique_fields = (
+        "username",
+        "email",
+        "phone",
+    )
+
+    @classmethod
+    async def create_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        validated_data = cls.validator_class.validate_create(data)
+
+        cls.ensure_can_write_privileged_flags(
+            data=validated_data,
+            operator=operator,
+        )
+
+        raw_password = PasswordTransportService.resolve(str(validated_data.pop("password", "") or ""))
+
+        # make_password 是同步 CPU 操作；放到线程中执行，避免阻塞 async view。
+        hashed_password = await sync_to_async(make_password, thread_sensitive=False)(raw_password)
+        validated_data["password"] = hashed_password
+
+        await cls.validate_create_business_rules(
+            data=validated_data,
+            operator=operator,
+        )
+        await cls.validate_unique_fields(
+            data=validated_data,
+            exclude_id=None,
+        )
+
+        return await cls.repository_class.create_item(
+            model_class=cls.model_class,
+            data=validated_data,
+            fields=cls.detail_fields,
+            operator_id=cls.get_operator_id(operator),
+        )
+
+    @classmethod
+    async def update_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        cls.ensure_can_write_privileged_flags(
+            data=data,
+            operator=operator,
+        )
+        return await super().update_item(
+            data=data,
+            operator=operator,
+        )
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
+        await cls.validate_user_org_relation(
+            user_type=data.get("user_type"),
+            company_id=data.get("company_id"),
+            subsidiary_id=data.get("subsidiary_id"),
+            department_id=data.get("department_id"),
+        )
+
+    @classmethod
+    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], operator: Any) -> None:
+        user_type = getattr(item, "user_type", None)
+        company_id = data.get("company_id", getattr(item, "company_id", None))
+        subsidiary_id = data.get("subsidiary_id", getattr(item, "subsidiary_id", None))
+        department_id = data.get("department_id", getattr(item, "department_id", None))
+
+        await cls.validate_user_org_relation(
+            user_type=user_type,
+            company_id=company_id,
+            subsidiary_id=subsidiary_id,
+            department_id=department_id,
+        )
+
+    @classmethod
+    async def validate_user_org_relation(
+            cls,
+            *,
+            user_type: str | None,
+            company_id: int | None,
+            subsidiary_id: int | None,
+            department_id: int | None,
+    ) -> None:
+        if user_type == USER_TYPE_PERSONAL:
+            if company_id is not None or subsidiary_id is not None or department_id is not None:
+                raise IamInvalidRelationError(
+                    "Personal user must not bind to organization.",
+                    details={
+                        "user_type": user_type,
+                        "company_id": company_id,
+                        "subsidiary_id": subsidiary_id,
+                        "department_id": department_id,
+                    },
+                )
+            return
+
+        if user_type != USER_TYPE_ENTERPRISE:
+            raise IamInvalidRelationError(
+                "User type is invalid.",
+                details={
+                    "user_type": user_type,
+                },
+            )
+
+        if company_id is None:
+            raise IamInvalidRelationError(
+                "Enterprise user must bind to company.",
+                details={
+                    "user_type": user_type,
+                },
+            )
+
+        company = await cls.repository_class.get_by_id(
+            model_class=IamCompany,
+            item_id=company_id,
+        )
+
+        if company is None:
+            raise IamInvalidRelationError(
+                "Company does not exist.",
+                details={
+                    "company_id": company_id,
+                },
+            )
+
+        if subsidiary_id is not None:
+            subsidiary = await cls.repository_class.get_by_id(
+                model_class=IamSubsidiary,
+                item_id=subsidiary_id,
+            )
+
+            if subsidiary is None:
+                raise IamInvalidRelationError(
+                    "Subsidiary does not exist.",
+                    details={
+                        "subsidiary_id": subsidiary_id,
+                    },
+                )
+
+            if subsidiary.company_id != company_id:
+                raise IamInvalidRelationError(
+                    "Subsidiary does not belong to company.",
+                    details={
+                        "company_id": company_id,
+                        "subsidiary_id": subsidiary_id,
+                    },
+                )
+
+        if department_id is not None:
+            department = await cls.repository_class.get_by_id(
+                model_class=IamDepartment,
+                item_id=department_id,
+            )
+
+            if department is None:
+                raise IamInvalidRelationError(
+                    "Department does not exist.",
+                    details={
+                        "department_id": department_id,
+                    },
+                )
+
+            if department.company_id != company_id:
+                raise IamInvalidRelationError(
+                    "Department does not belong to company.",
+                    details={
+                        "company_id": company_id,
+                        "department_id": department_id,
+                    },
+                )
+
+            department_subsidiary_id = getattr(department, "subsidiary_id", None)
+            if subsidiary_id is not None and department_subsidiary_id is not None and department_subsidiary_id != subsidiary_id:
+                raise IamInvalidRelationError(
+                    "Department does not belong to subsidiary.",
+                    details={
+                        "subsidiary_id": subsidiary_id,
+                        "department_id": department_id,
+                        "department_subsidiary_id": department_subsidiary_id,
+                    },
+                )
+
+    @classmethod
+    def ensure_can_write_privileged_flags(cls, *, data: dict[str, Any], operator: Any) -> None:
+        if cls.operator_is_superuser(operator):
+            return
+
+        privileged_fields = [
+            field
+            for field in (
+                "is_staff",
+                "is_superuser",
+            )
+            if field in data
+        ]
+
+        if not privileged_fields:
+            return
+
+        raise IamManagementAccessDeniedError(
+            "Only superuser can modify privileged user flags.",
+            details={
+                "fields": privileged_fields,
+            },
+        )
+
+    @staticmethod
+    def operator_is_superuser(operator: Any) -> bool:
+        return getattr(operator, "is_superuser", 0) in (
+            True,
+            1,
+            "1",
+        )

@@ -11,6 +11,7 @@ from ns_backend.iam.views.management_views import (
     PermissionViewSet,
     RoleViewSet,
     SubsidiaryViewSet,
+    UserViewSet,
 )
 
 if TYPE_CHECKING:
@@ -24,4 +25,5 @@ __all__ = [
     "PermissionViewSet",
     "RoleViewSet",
     "SubsidiaryViewSet",
+    "UserViewSet",
 ]

@@ -17,6 +17,7 @@ from ns_backend.iam.services import (
     PermissionManagementService,
     RoleManagementService,
     SubsidiaryManagementService,
+    UserManagementService,
 )
 
 if TYPE_CHECKING:
@@ -158,4 +159,17 @@ class RoleViewSet(IamManagementViewSet):
         "create": ("iam:role:create",),
         "update": ("iam:role:update",),
         "delete": ("iam:role:delete",),
+    }
+
+
+class UserViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.user.api"
+    service_class = UserManagementService
+
+    required_permissions = {
+        "list": ("iam:user:read",),
+        "detail": ("iam:user:read",),
+        "create": ("iam:user:create",),
+        "update": ("iam:user:update",),
+        "delete": ("iam:user:delete",),
     }
