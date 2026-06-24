@@ -8,7 +8,7 @@ from typing import (
 
 from ns_backend.iam.schemas import TenantContext
 from ns_backend.iam.services.auth import AuthService
-
+from ns_backend.iam.services.permission import PermissionService
 if TYPE_CHECKING:
     pass
 
@@ -94,3 +94,7 @@ class AuthContextService:
             return True
 
         return context.company_id is None
+
+    @staticmethod
+    async def list_permission_codes(user: Any) -> list[str]:
+        return await PermissionService.list_permission_codes(user)

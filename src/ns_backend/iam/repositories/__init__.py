@@ -8,6 +8,7 @@ from ns_backend.iam.repositories.auth import (
     AuthUserRepository,
     LoginFailureRepository,
 )
+from ns_backend.iam.repositories.permission import PermissionRepository
 from ns_backend.iam.repositories.token import (
     UserSessionRepository,
     UserTokenRepository,
@@ -21,6 +22,7 @@ __all__ = [
     "AuthLoginBundleRepository",
     "AuthUserRepository",
     "LoginFailureRepository",
+    "PermissionRepository",
     "UserSessionRepository",
     "UserTokenRepository",
     "UserTokenRotationRepository",

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from ns_backend.iam.services.auth import AuthService
 from ns_backend.iam.services.auth_context import AuthContextService
+from ns_backend.iam.services.permission import PermissionService
 
 if TYPE_CHECKING:
     pass
@@ -12,4 +13,5 @@ if TYPE_CHECKING:
 __all__ = [
     "AuthContextService",
     "AuthService",
+    "PermissionService",
 ]

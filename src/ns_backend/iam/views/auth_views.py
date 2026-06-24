@@ -25,6 +25,7 @@ class AuthViewSet(NsViewSet):
         "logout",
         "profile",
         "current_user",
+        "permissions",
     }
 
     async def login(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -59,3 +60,13 @@ class AuthViewSet(NsViewSet):
         self.set_current_user(user)
 
         return AuthService.build_current_user_payload(user)
+
+    async def permissions(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        user, _ = await AuthService.resolve_user_from_request(request)
+        self.set_current_user(user)
+
+        permission_codes = await AuthContextService.list_permission_codes(user)
+
+        return {
+            "permissions": permission_codes,
+        }

@@ -11,4 +11,5 @@ urlpatterns = [
     path("auth/logout/", AuthViewSet.as_view({"post": "logout"})),
     path("auth/profile/", AuthViewSet.as_view({"post": "profile"})),
     path("auth/current_user/", AuthViewSet.as_view({"post": "current_user"})),
+    path("auth/permissions/", AuthViewSet.as_view({"post": "permissions"})),
 ]
