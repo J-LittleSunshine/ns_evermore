@@ -6,12 +6,15 @@ from typing import TYPE_CHECKING
 from ns_backend.iam.views.auth_views import AuthViewSet
 from ns_backend.iam.views.management_views import (
     CompanyViewSet,
+    DepartmentPermissionViewSet,
     DepartmentViewSet,
     IamManagementViewSet,
     PermissionViewSet,
     RolePermissionViewSet,
     RoleViewSet,
+    SubsidiaryPermissionViewSet,
     SubsidiaryViewSet,
+    UserPermissionViewSet,
     UserRoleViewSet,
     UserViewSet,
 )
@@ -22,12 +25,15 @@ if TYPE_CHECKING:
 __all__ = [
     "AuthViewSet",
     "CompanyViewSet",
+    "DepartmentPermissionViewSet",
     "DepartmentViewSet",
     "IamManagementViewSet",
     "PermissionViewSet",
     "RolePermissionViewSet",
     "RoleViewSet",
+    "SubsidiaryPermissionViewSet",
     "SubsidiaryViewSet",
+    "UserPermissionViewSet",
     "UserRoleViewSet",
     "UserViewSet",
 ]

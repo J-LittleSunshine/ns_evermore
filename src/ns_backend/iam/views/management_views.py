@@ -13,12 +13,15 @@ from ns_backend.iam.services import (
     AuthService,
     CompanyManagementService,
     DepartmentManagementService,
+    DepartmentPermissionManagementService,
     IamManagementService,
     PermissionManagementService,
     RoleManagementService,
     RolePermissionManagementService,
     SubsidiaryManagementService,
+    SubsidiaryPermissionManagementService,
     UserManagementService,
+    UserPermissionManagementService,
     UserRoleManagementService,
 )
 
@@ -221,4 +224,55 @@ class RolePermissionViewSet(IamManagementViewSet):
         "list": ("iam:role_permission:read",),
         "create": ("iam:role_permission:create",),
         "delete": ("iam:role_permission:delete",),
+    }
+
+
+class UserPermissionViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.user_permission.api"
+    service_class = UserPermissionManagementService
+
+    allowed_actions = {
+        "list",
+        "create",
+        "delete",
+    }
+
+    required_permissions = {
+        "list": ("iam:user_permission:read",),
+        "create": ("iam:user_permission:create",),
+        "delete": ("iam:user_permission:delete",),
+    }
+
+
+class DepartmentPermissionViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.department_permission.api"
+    service_class = DepartmentPermissionManagementService
+
+    allowed_actions = {
+        "list",
+        "create",
+        "delete",
+    }
+
+    required_permissions = {
+        "list": ("iam:department_permission:read",),
+        "create": ("iam:department_permission:create",),
+        "delete": ("iam:department_permission:delete",),
+    }
+
+
+class SubsidiaryPermissionViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.subsidiary_permission.api"
+    service_class = SubsidiaryPermissionManagementService
+
+    allowed_actions = {
+        "list",
+        "create",
+        "delete",
+    }
+
+    required_permissions = {
+        "list": ("iam:subsidiary_permission:read",),
+        "create": ("iam:subsidiary_permission:create",),
+        "delete": ("iam:subsidiary_permission:delete",),
     }

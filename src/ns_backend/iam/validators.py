@@ -13,6 +13,8 @@ from django.utils.dateparse import parse_datetime
 
 from ns_backend.iam.constants import (
     DATA_SCOPE_VALUES,
+    PERMISSION_EFFECT_ALLOW,
+    PERMISSION_EFFECT_DENY,
     PERMISSION_TYPE_ACTION,
     PERMISSION_TYPE_DATA,
     PERMISSION_TYPE_MENU,
@@ -552,3 +554,91 @@ class RolePermissionValidator(IamManagementValidator):
     enum_fields = {
         "data_scope": DATA_SCOPE_VALUES,
     }
+
+
+class DirectPermissionGrantValidator(IamManagementValidator):
+    required_create_fields = (
+        "permission_id",
+        "effect",
+    )
+    allowed_create_fields = (
+        "permission_id",
+        "effect",
+        "data_scope",
+        "expired_at",
+    )
+    allowed_update_fields = ()
+    integer_fields = (
+        "permission_id",
+    )
+    datetime_fields = (
+        "expired_at",
+    )
+    nullable_fields = (
+        "data_scope",
+        "expired_at",
+    )
+    enum_fields = {
+        "effect": (
+            PERMISSION_EFFECT_ALLOW,
+            PERMISSION_EFFECT_DENY,
+        ),
+        "data_scope": DATA_SCOPE_VALUES,
+    }
+
+
+class UserPermissionValidator(DirectPermissionGrantValidator):
+    required_create_fields = (
+        "user_id",
+        "permission_id",
+        "effect",
+    )
+    allowed_create_fields = (
+        "user_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "expired_at",
+    )
+    integer_fields = (
+        "user_id",
+        "permission_id",
+    )
+
+
+class DepartmentPermissionValidator(DirectPermissionGrantValidator):
+    required_create_fields = (
+        "department_id",
+        "permission_id",
+        "effect",
+    )
+    allowed_create_fields = (
+        "department_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "expired_at",
+    )
+    integer_fields = (
+        "department_id",
+        "permission_id",
+    )
+
+
+class SubsidiaryPermissionValidator(DirectPermissionGrantValidator):
+    required_create_fields = (
+        "subsidiary_id",
+        "permission_id",
+        "effect",
+    )
+    allowed_create_fields = (
+        "subsidiary_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "expired_at",
+    )
+    integer_fields = (
+        "subsidiary_id",
+        "permission_id",
+    )

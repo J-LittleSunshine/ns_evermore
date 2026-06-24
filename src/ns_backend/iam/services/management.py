@@ -28,11 +28,14 @@ from ns_backend.iam.errors import (
 from ns_backend.iam.models import (
     IamCompany,
     IamDepartment,
+    IamDepartmentPermission,
     IamPermission,
     IamRole,
     IamRolePermission,
     IamSubsidiary,
+    IamSubsidiaryPermission,
     IamUser,
+    IamUserPermission,
     IamUserRole,
 )
 from ns_backend.iam.repositories import (
@@ -41,12 +44,15 @@ from ns_backend.iam.repositories import (
 )
 from ns_backend.iam.validators import (
     CompanyValidator,
+    DepartmentPermissionValidator,
     DepartmentValidator,
     IamManagementValidator,
     PermissionValidator,
     RolePermissionValidator,
     RoleValidator,
+    SubsidiaryPermissionValidator,
     SubsidiaryValidator,
+    UserPermissionValidator,
     UserRoleValidator,
     UserValidator,
 )
@@ -1397,3 +1403,248 @@ class RolePermissionManagementService(IamManagementService):
                     "permission_id": permission_id,
                 },
             )
+
+
+class DirectPermissionGrantManagementService(IamManagementService):
+    """
+    直接授权关系管理基类。
+
+    适用表：
+    1. iam_user_permission
+    2. iam_department_permission
+    3. iam_subsidiary_permission
+    """
+
+    subject_model_class: ClassVar[Any] = None
+    subject_id_field: ClassVar[str] = ""
+    subject_label: ClassVar[str] = ""
+
+    list_fields = detail_fields = (
+        "id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "granted_by_id",
+        "expired_at",
+        "created_by",
+        "updated_by",
+        "created_at",
+        "updated_at",
+    )
+    keyword_fields = ()
+    unique_fields = ()
+
+    @classmethod
+    async def create_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        validated_data = cls.validator_class.validate_create(data)
+        validated_data["granted_by_id"] = cls.get_operator_id(operator)
+
+        await cls.validate_create_business_rules(
+            data=validated_data,
+            operator=operator,
+        )
+        await cls.validate_unique_fields(
+            data=validated_data,
+            exclude_id=None,
+        )
+
+        return await cls.repository_class.create_item(
+            model_class=cls.model_class,
+            data=validated_data,
+            fields=cls.detail_fields,
+            operator_id=cls.get_operator_id(operator),
+        )
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
+        subject_id = data.get(cls.subject_id_field)
+        permission_id = data.get("permission_id")
+
+        subject = await cls.repository_class.get_by_id(
+            model_class=cls.subject_model_class,
+            item_id=subject_id,
+        )
+
+        if subject is None:
+            raise IamInvalidRelationError(
+                f"{cls.subject_label} does not exist.",
+                details={
+                    cls.subject_id_field: subject_id,
+                },
+            )
+
+        permission = await cls.repository_class.get_by_id(
+            model_class=IamPermission,
+            item_id=permission_id,
+        )
+
+        if permission is None:
+            raise IamInvalidRelationError(
+                "Permission does not exist.",
+                details={
+                    "permission_id": permission_id,
+                },
+            )
+
+        await cls.validate_subject_business_rules(
+            subject=subject,
+            data=data,
+            operator=operator,
+        )
+
+    @classmethod
+    async def validate_subject_business_rules(cls, *, subject: Any, data: dict[str, Any], operator: Any) -> None:
+        return None
+
+    @classmethod
+    async def validate_unique_fields(cls, *, data: dict[str, Any], exclude_id: int | None) -> None:
+        subject_id = data.get(cls.subject_id_field)
+        permission_id = data.get("permission_id")
+
+        if subject_id in (None, "") or permission_id in (None, ""):
+            return
+
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=cls.model_class,
+            filters={
+                cls.subject_id_field: subject_id,
+                "permission_id": permission_id,
+            },
+            exclude_id=exclude_id,
+        )
+
+        if exists:
+            raise IamResourceAlreadyExistsError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "fields": [
+                        cls.subject_id_field,
+                        "permission_id",
+                    ],
+                    cls.subject_id_field: subject_id,
+                    "permission_id": permission_id,
+                },
+            )
+
+
+class UserPermissionManagementService(DirectPermissionGrantManagementService):
+    model_class = IamUserPermission
+    validator_class = UserPermissionValidator
+    subject_model_class = IamUser
+    subject_id_field = "user_id"
+    subject_label = "User"
+
+    list_fields = detail_fields = (
+        "id",
+        "user_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "granted_by_id",
+        "expired_at",
+        "created_by",
+        "updated_by",
+        "created_at",
+        "updated_at",
+    )
+    filter_fields = (
+        "id",
+        "user_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "granted_by_id",
+    )
+    order_fields = (
+        "id",
+        "user_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "granted_by_id",
+        "expired_at",
+        "created_at",
+        "updated_at",
+    )
+
+
+class DepartmentPermissionManagementService(DirectPermissionGrantManagementService):
+    model_class = IamDepartmentPermission
+    validator_class = DepartmentPermissionValidator
+    subject_model_class = IamDepartment
+    subject_id_field = "department_id"
+    subject_label = "Department"
+
+    list_fields = detail_fields = (
+        "id",
+        "department_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "granted_by_id",
+        "expired_at",
+        "created_by",
+        "updated_by",
+        "created_at",
+        "updated_at",
+    )
+    filter_fields = (
+        "id",
+        "department_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "granted_by_id",
+    )
+    order_fields = (
+        "id",
+        "department_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "granted_by_id",
+        "expired_at",
+        "created_at",
+        "updated_at",
+    )
+
+
+class SubsidiaryPermissionManagementService(DirectPermissionGrantManagementService):
+    model_class = IamSubsidiaryPermission
+    validator_class = SubsidiaryPermissionValidator
+    subject_model_class = IamSubsidiary
+    subject_id_field = "subsidiary_id"
+    subject_label = "Subsidiary"
+
+    list_fields = detail_fields = (
+        "id",
+        "subsidiary_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "granted_by_id",
+        "expired_at",
+        "created_by",
+        "updated_by",
+        "created_at",
+        "updated_at",
+    )
+    filter_fields = (
+        "id",
+        "subsidiary_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "granted_by_id",
+    )
+    order_fields = (
+        "id",
+        "subsidiary_id",
+        "permission_id",
+        "effect",
+        "data_scope",
+        "granted_by_id",
+        "expired_at",
+        "created_at",
+        "updated_at",
+    )

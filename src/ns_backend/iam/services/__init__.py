@@ -9,12 +9,16 @@ from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.management import (
     CompanyManagementService,
     DepartmentManagementService,
+    DepartmentPermissionManagementService,
+    DirectPermissionGrantManagementService,
     IamManagementService,
     PermissionManagementService,
     RoleManagementService,
     RolePermissionManagementService,
     SubsidiaryManagementService,
+    SubsidiaryPermissionManagementService,
     UserManagementService,
+    UserPermissionManagementService,
     UserRoleManagementService,
 )
 from ns_backend.iam.services.permission import PermissionService
@@ -28,12 +32,16 @@ __all__ = [
     "CompanyManagementService",
     "DataScopeService",
     "DepartmentManagementService",
+    "DepartmentPermissionManagementService",
+    "DirectPermissionGrantManagementService",
     "IamManagementService",
     "PermissionManagementService",
     "PermissionService",
     "RoleManagementService",
     "RolePermissionManagementService",
     "SubsidiaryManagementService",
+    "SubsidiaryPermissionManagementService",
     "UserManagementService",
+    "UserPermissionManagementService",
     "UserRoleManagementService",
 ]

@@ -49,7 +49,7 @@ ASGI_APPLICATION = 'backend.asgi.application'
 DATABASES = ns_config.backend.databases or {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": DATA_DIR / "db.sqlite3",
+        "NAME": DATA_DIR / "ns_db.sqlite3",
     }
 }
 

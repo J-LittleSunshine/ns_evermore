@@ -6,11 +6,14 @@ from django.urls import path
 from ns_backend.iam.views import (
     AuthViewSet,
     CompanyViewSet,
+    DepartmentPermissionViewSet,
     DepartmentViewSet,
     PermissionViewSet,
     RolePermissionViewSet,
     RoleViewSet,
+    SubsidiaryPermissionViewSet,
     SubsidiaryViewSet,
+    UserPermissionViewSet,
     UserRoleViewSet,
     UserViewSet,
 )
@@ -69,4 +72,16 @@ urlpatterns = [
     path("role_permission/list/", RolePermissionViewSet.as_view({"post": "list"})),
     path("role_permission/create/", RolePermissionViewSet.as_view({"post": "create"})),
     path("role_permission/delete/", RolePermissionViewSet.as_view({"post": "delete"})),
+
+    path("user_permission/list/", UserPermissionViewSet.as_view({"post": "list"})),
+    path("user_permission/create/", UserPermissionViewSet.as_view({"post": "create"})),
+    path("user_permission/delete/", UserPermissionViewSet.as_view({"post": "delete"})),
+
+    path("department_permission/list/", DepartmentPermissionViewSet.as_view({"post": "list"})),
+    path("department_permission/create/", DepartmentPermissionViewSet.as_view({"post": "create"})),
+    path("department_permission/delete/", DepartmentPermissionViewSet.as_view({"post": "delete"})),
+
+    path("subsidiary_permission/list/", SubsidiaryPermissionViewSet.as_view({"post": "list"})),
+    path("subsidiary_permission/create/", SubsidiaryPermissionViewSet.as_view({"post": "create"})),
+    path("subsidiary_permission/delete/", SubsidiaryPermissionViewSet.as_view({"post": "delete"})),
 ]
