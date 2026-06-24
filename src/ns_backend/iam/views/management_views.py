@@ -14,6 +14,7 @@ from ns_backend.iam.services import (
     CompanyManagementService,
     DepartmentManagementService,
     IamManagementService,
+    PermissionManagementService,
     SubsidiaryManagementService,
 )
 
@@ -130,4 +131,17 @@ class DepartmentViewSet(IamManagementViewSet):
         "create": ("iam:department:create",),
         "update": ("iam:department:update",),
         "delete": ("iam:department:delete",),
+    }
+
+
+class PermissionViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.permission.api"
+    service_class = PermissionManagementService
+
+    required_permissions = {
+        "list": ("iam:permission:read",),
+        "detail": ("iam:permission:read",),
+        "create": ("iam:permission:create",),
+        "update": ("iam:permission:update",),
+        "delete": ("iam:permission:delete",),
     }

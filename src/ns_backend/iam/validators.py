@@ -7,6 +7,11 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from ns_backend.iam.constants import (
+    PERMISSION_TYPE_ACTION,
+    PERMISSION_TYPE_DATA,
+    PERMISSION_TYPE_MENU,
+)
 from ns_backend.iam.errors import IamManagementRequestInvalidError
 
 if TYPE_CHECKING:
@@ -21,6 +26,7 @@ class IamManagementValidator:
     integer_fields: ClassVar[tuple[str, ...]] = ()
     nullable_fields: ClassVar[tuple[str, ...]] = ()
     status_fields: ClassVar[tuple[str, ...]] = ("status",)
+    enum_fields: ClassVar[dict[str, tuple[Any, ...]]] = {}
     max_lengths: ClassVar[dict[str, int]] = {}
     defaults: ClassVar[dict[str, Any]] = {}
 
@@ -136,6 +142,16 @@ class IamManagementValidator:
                 details={
                     "field": field,
                     "max_length": max_length,
+                },
+            )
+
+        enum_values = cls.enum_fields.get(field)
+        if enum_values is not None and normalized not in enum_values:
+            raise IamManagementRequestInvalidError("Field value is not allowed.",
+                details={
+                    "field": field,
+                    "value": normalized,
+                    "allowed_values": list(enum_values),
                 },
             )
 
@@ -285,6 +301,49 @@ class DepartmentValidator(IamManagementValidator):
     max_lengths = {
         "department_code": 64,
         "department_name": 128,
+    }
+    defaults = {
+        "status": 1,
+    }
+
+
+class PermissionValidator(IamManagementValidator):
+    required_create_fields = (
+        "permission_code",
+        "permission_name",
+        "permission_type",
+    )
+    allowed_create_fields = (
+        "permission_code",
+        "permission_name",
+        "permission_type",
+        "parent_id",
+        "status",
+    )
+    allowed_update_fields = (
+        "permission_name",
+        "permission_type",
+        "parent_id",
+        "status",
+    )
+    integer_fields = (
+        "parent_id",
+        "status",
+    )
+    nullable_fields = (
+        "parent_id",
+    )
+    enum_fields = {
+        "permission_type": (
+            PERMISSION_TYPE_MENU,
+            PERMISSION_TYPE_ACTION,
+            PERMISSION_TYPE_DATA,
+        ),
+    }
+    max_lengths = {
+        "permission_code": 128,
+        "permission_name": 128,
+        "permission_type": 32,
     }
     defaults = {
         "status": 1,

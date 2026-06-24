@@ -16,6 +16,7 @@ from ns_backend.iam.errors import (
 from ns_backend.iam.models import (
     IamCompany,
     IamDepartment,
+    IamPermission,
     IamSubsidiary,
 )
 from ns_backend.iam.repositories import IamManagementRepository
@@ -23,6 +24,7 @@ from ns_backend.iam.validators import (
     CompanyValidator,
     DepartmentValidator,
     IamManagementValidator,
+    PermissionValidator,
     SubsidiaryValidator,
 )
 
@@ -567,3 +569,90 @@ class DepartmentManagementService(IamManagementService):
                         "parent_id": parent_id,
                     },
                 )
+
+
+class PermissionManagementService(IamManagementService):
+    model_class = IamPermission
+    validator_class = PermissionValidator
+
+    list_fields = detail_fields = (
+        "id",
+        "permission_code",
+        "permission_name",
+        "permission_type",
+        "parent_id",
+        "status",
+    )
+    filter_fields = (
+        "id",
+        "permission_code",
+        "permission_name",
+        "permission_type",
+        "parent_id",
+        "status",
+    )
+    keyword_fields = (
+        "permission_code",
+        "permission_name",
+    )
+    order_fields = (
+        "id",
+        "permission_code",
+        "permission_name",
+        "permission_type",
+        "parent_id",
+        "status",
+        "created_at",
+        "updated_at",
+    )
+    unique_fields = (
+        "permission_code",
+    )
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
+        parent_id = data.get("parent_id")
+        if parent_id is None:
+            return
+
+        parent = await cls.repository_class.get_by_id(
+            model_class=IamPermission,
+            item_id=parent_id,
+        )
+
+        if parent is None:
+            raise IamInvalidRelationError(
+                "Parent permission does not exist.",
+                details={
+                    "parent_id": parent_id,
+                },
+            )
+
+    @classmethod
+    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], operator: Any) -> None:
+        parent_id = data.get("parent_id")
+        if parent_id is None:
+            return
+
+        item_id = getattr(item, "id", None)
+        if parent_id == item_id:
+            raise IamInvalidRelationError(
+                "Permission cannot use itself as parent.",
+                details={
+                    "id": item_id,
+                    "parent_id": parent_id,
+                },
+            )
+
+        parent = await cls.repository_class.get_by_id(
+            model_class=IamPermission,
+            item_id=parent_id,
+        )
+
+        if parent is None:
+            raise IamInvalidRelationError(
+                "Parent permission does not exist.",
+                details={
+                    "parent_id": parent_id,
+                },
+            )

@@ -10,6 +10,7 @@ from ns_backend.iam.services.management import (
     CompanyManagementService,
     DepartmentManagementService,
     IamManagementService,
+    PermissionManagementService,
     SubsidiaryManagementService,
 )
 from ns_backend.iam.services.permission import PermissionService
@@ -24,6 +25,7 @@ __all__ = [
     "DataScopeService",
     "DepartmentManagementService",
     "IamManagementService",
+    "PermissionManagementService",
     "PermissionService",
     "SubsidiaryManagementService",
 ]

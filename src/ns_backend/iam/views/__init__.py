@@ -8,6 +8,7 @@ from ns_backend.iam.views.management_views import (
     CompanyViewSet,
     DepartmentViewSet,
     IamManagementViewSet,
+    PermissionViewSet,
     SubsidiaryViewSet,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "CompanyViewSet",
     "DepartmentViewSet",
     "IamManagementViewSet",
+    "PermissionViewSet",
     "SubsidiaryViewSet",
 ]
