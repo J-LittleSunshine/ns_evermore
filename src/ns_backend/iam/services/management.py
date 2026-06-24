@@ -7,6 +7,10 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from ns_backend.iam.constants import (
+    ROLE_SCOPE_ENTERPRISE,
+    ROLE_SCOPE_PERSONAL,
+)
 from ns_backend.iam.errors import (
     IamInvalidRelationError,
     IamManagementRequestInvalidError,
@@ -17,6 +21,7 @@ from ns_backend.iam.models import (
     IamCompany,
     IamDepartment,
     IamPermission,
+    IamRole,
     IamSubsidiary,
 )
 from ns_backend.iam.repositories import IamManagementRepository
@@ -25,6 +30,7 @@ from ns_backend.iam.validators import (
     DepartmentValidator,
     IamManagementValidator,
     PermissionValidator,
+    RoleValidator,
     SubsidiaryValidator,
 )
 
@@ -654,5 +660,127 @@ class PermissionManagementService(IamManagementService):
                 "Parent permission does not exist.",
                 details={
                     "parent_id": parent_id,
+                },
+            )
+
+
+class RoleManagementService(IamManagementService):
+    model_class = IamRole
+    validator_class = RoleValidator
+
+    list_fields = detail_fields = (
+        "id",
+        "role_code",
+        "role_name",
+        "role_scope",
+        "company_id",
+        "status",
+    )
+    filter_fields = (
+        "id",
+        "role_code",
+        "role_name",
+        "role_scope",
+        "company_id",
+        "status",
+    )
+    keyword_fields = (
+        "role_code",
+        "role_name",
+    )
+    order_fields = (
+        "id",
+        "role_code",
+        "role_name",
+        "role_scope",
+        "company_id",
+        "status",
+        "created_at",
+        "updated_at",
+    )
+
+    # role 唯一性是复合唯一：
+    # PERSONAL: role_scope + company_id(NULL) + role_code
+    # ENTERPRISE: role_scope + company_id + role_code
+    # 因此不使用 base unique_fields 的单字段校验。
+    unique_fields = ()
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
+        role_scope = data.get("role_scope")
+        company_id = data.get("company_id")
+
+        if role_scope == ROLE_SCOPE_PERSONAL:
+            if company_id is not None:
+                raise IamInvalidRelationError(
+                    "Personal role must not bind to company.",
+                    details={
+                        "role_scope": role_scope,
+                        "company_id": company_id,
+                    },
+                )
+            return
+
+        if role_scope == ROLE_SCOPE_ENTERPRISE:
+            if company_id is None:
+                raise IamInvalidRelationError(
+                    "Enterprise role must bind to company.",
+                    details={
+                        "role_scope": role_scope,
+                    },
+                )
+
+            company = await cls.repository_class.get_by_id(
+                model_class=IamCompany,
+                item_id=company_id,
+            )
+
+            if company is None:
+                raise IamInvalidRelationError(
+                    "Company does not exist.",
+                    details={
+                        "company_id": company_id,
+                    },
+                )
+            return
+
+        raise IamInvalidRelationError(
+            "Role scope is invalid.",
+            details={
+                "role_scope": role_scope,
+            },
+        )
+
+    @classmethod
+    async def validate_unique_fields(cls, *, data: dict[str, Any], exclude_id: int | None) -> None:
+        role_code = data.get("role_code")
+        role_scope = data.get("role_scope")
+        company_id = data.get("company_id")
+
+        if role_code in (None, "") or role_scope in (None, ""):
+            return
+
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=cls.model_class,
+            filters={
+                "role_code": role_code,
+                "role_scope": role_scope,
+                "company_id": company_id,
+            },
+            exclude_id=exclude_id,
+        )
+
+        if exists:
+            raise IamResourceAlreadyExistsError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "fields": [
+                        "role_scope",
+                        "company_id",
+                        "role_code",
+                    ],
+                    "role_scope": role_scope,
+                    "company_id": company_id,
+                    "role_code": role_code,
                 },
             )

@@ -11,6 +11,8 @@ from ns_backend.iam.constants import (
     PERMISSION_TYPE_ACTION,
     PERMISSION_TYPE_DATA,
     PERMISSION_TYPE_MENU,
+    ROLE_SCOPE_ENTERPRISE,
+    ROLE_SCOPE_PERSONAL,
 )
 from ns_backend.iam.errors import IamManagementRequestInvalidError
 
@@ -344,6 +346,46 @@ class PermissionValidator(IamManagementValidator):
         "permission_code": 128,
         "permission_name": 128,
         "permission_type": 32,
+    }
+    defaults = {
+        "status": 1,
+    }
+
+
+class RoleValidator(IamManagementValidator):
+    required_create_fields = (
+        "role_code",
+        "role_name",
+        "role_scope",
+    )
+    allowed_create_fields = (
+        "role_code",
+        "role_name",
+        "role_scope",
+        "company_id",
+        "status",
+    )
+    allowed_update_fields = (
+        "role_name",
+        "status",
+    )
+    integer_fields = (
+        "company_id",
+        "status",
+    )
+    nullable_fields = (
+        "company_id",
+    )
+    enum_fields = {
+        "role_scope": (
+            ROLE_SCOPE_PERSONAL,
+            ROLE_SCOPE_ENTERPRISE,
+        ),
+    }
+    max_lengths = {
+        "role_code": 64,
+        "role_name": 128,
+        "role_scope": 32,
     }
     defaults = {
         "status": 1,

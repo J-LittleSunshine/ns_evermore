@@ -8,6 +8,7 @@ from ns_backend.iam.views import (
     CompanyViewSet,
     DepartmentViewSet,
     PermissionViewSet,
+    RoleViewSet,
     SubsidiaryViewSet,
 )
 
@@ -44,4 +45,10 @@ urlpatterns = [
     path("permission/create/", PermissionViewSet.as_view({"post": "create"})),
     path("permission/update/", PermissionViewSet.as_view({"post": "update"})),
     path("permission/delete/", PermissionViewSet.as_view({"post": "delete"})),
+
+    path("role/list/", RoleViewSet.as_view({"post": "list"})),
+    path("role/detail/", RoleViewSet.as_view({"post": "detail"})),
+    path("role/create/", RoleViewSet.as_view({"post": "create"})),
+    path("role/update/", RoleViewSet.as_view({"post": "update"})),
+    path("role/delete/", RoleViewSet.as_view({"post": "delete"})),
 ]
