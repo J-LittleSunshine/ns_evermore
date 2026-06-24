@@ -35,7 +35,7 @@ class IamManagementViewSet(NsViewSet):
 
     allowed_actions = {
         "list",
-        "detail",
+        "get_detail",
         "create",
         "update",
         "delete",
@@ -51,7 +51,7 @@ class IamManagementViewSet(NsViewSet):
             operator=operator,
         )
 
-    async def detail(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+    async def get_detail(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         operator = await self.get_operator(request)
 
         return await self.get_service_class().detail_item(
@@ -108,7 +108,7 @@ class CompanyViewSet(IamManagementViewSet):
 
     required_permissions = {
         "list": ("iam:company:read",),
-        "detail": ("iam:company:read",),
+        "get_detail": ("iam:company:read",),
         "create": ("iam:company:create",),
         "update": ("iam:company:update",),
         "delete": ("iam:company:delete",),
@@ -121,7 +121,7 @@ class SubsidiaryViewSet(IamManagementViewSet):
 
     required_permissions = {
         "list": ("iam:subsidiary:read",),
-        "detail": ("iam:subsidiary:read",),
+        "get_detail": ("iam:subsidiary:read",),
         "create": ("iam:subsidiary:create",),
         "update": ("iam:subsidiary:update",),
         "delete": ("iam:subsidiary:delete",),
@@ -134,7 +134,7 @@ class DepartmentViewSet(IamManagementViewSet):
 
     required_permissions = {
         "list": ("iam:department:read",),
-        "detail": ("iam:department:read",),
+        "get_detail": ("iam:department:read",),
         "create": ("iam:department:create",),
         "update": ("iam:department:update",),
         "delete": ("iam:department:delete",),
@@ -147,7 +147,7 @@ class PermissionViewSet(IamManagementViewSet):
 
     required_permissions = {
         "list": ("iam:permission:read",),
-        "detail": ("iam:permission:read",),
+        "get_detail": ("iam:permission:read",),
         "create": ("iam:permission:create",),
         "update": ("iam:permission:update",),
         "delete": ("iam:permission:delete",),
@@ -160,7 +160,7 @@ class RoleViewSet(IamManagementViewSet):
 
     required_permissions = {
         "list": ("iam:role:read",),
-        "detail": ("iam:role:read",),
+        "get_detail": ("iam:role:read",),
         "create": ("iam:role:create",),
         "update": ("iam:role:update",),
         "delete": ("iam:role:delete",),
@@ -177,7 +177,7 @@ class UserViewSet(IamManagementViewSet):
 
     required_permissions = {
         "list": ("iam:user:read",),
-        "detail": ("iam:user:read",),
+        "get_detail": ("iam:user:read",),
         "create": ("iam:user:create",),
         "update": ("iam:user:update",),
         "delete": ("iam:user:delete",),
