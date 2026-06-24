@@ -80,6 +80,15 @@ class IamManagementService:
     default_page_size = 20
     max_page_size = 200
 
+    tenant_scope_field: ClassVar[str | None] = None
+    tenant_create_field: ClassVar[str | None] = None
+
+    enterprise_resource_required: ClassVar[bool] = False
+
+    platform_create_only: ClassVar[bool] = False
+    platform_update_only: ClassVar[bool] = False
+    platform_delete_only: ClassVar[bool] = False
+
     @classmethod
     async def list_items(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
         page = cls.parse_positive_int(
@@ -96,7 +105,10 @@ class IamManagementService:
         if page_size > cls.max_page_size:
             page_size = cls.max_page_size
 
-        filters = cls.build_filters(data=data)
+        filters = cls.apply_tenant_filters(
+            filters=cls.build_filters(data=data),
+            operator=operator,
+        )
         keyword_conditions = cls.build_keyword_conditions(data=data)
         order_by = cls.build_order_by(data=data)
 
@@ -113,6 +125,11 @@ class IamManagementService:
     @classmethod
     async def detail_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
         item_id = cls.get_required_id(data=data)
+
+        await cls.ensure_item_accessible(
+            item_id=item_id,
+            operator=operator,
+        )
 
         item = await cls.repository_class.detail_item(
             model_class=cls.model_class,
@@ -132,7 +149,16 @@ class IamManagementService:
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
-        validated_data = cls.validator_class.validate_create(data)
+        cls.ensure_platform_operation_allowed(
+            action_name="create",
+            operator=operator,
+        )
+
+        prepared_data = cls.prepare_create_data_for_operator(
+            data=data,
+            operator=operator,
+        )
+        validated_data = cls.validator_class.validate_create(prepared_data)
 
         await cls.validate_create_business_rules(
             data=validated_data,
@@ -152,8 +178,23 @@ class IamManagementService:
 
     @classmethod
     async def update_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        cls.ensure_platform_operation_allowed(
+            action_name="update",
+            operator=operator,
+        )
+
         item_id = cls.get_required_id(data=data)
-        validated_data = cls.validator_class.validate_update(data)
+
+        await cls.ensure_item_accessible(
+            item_id=item_id,
+            operator=operator,
+        )
+
+        prepared_data = cls.prepare_update_data_for_operator(
+            data=data,
+            operator=operator,
+        )
+        validated_data = cls.validator_class.validate_update(prepared_data)
 
         existing_item = await cls.repository_class.get_by_id(
             model_class=cls.model_class,
@@ -199,6 +240,16 @@ class IamManagementService:
     @classmethod
     async def delete_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
         item_id = cls.get_required_id(data=data)
+
+        cls.ensure_platform_operation_allowed(
+            action_name="delete",
+            operator=operator,
+        )
+
+        await cls.ensure_item_accessible(
+            item_id=item_id,
+            operator=operator,
+        )
 
         existing_item = await cls.repository_class.get_by_id(
             model_class=cls.model_class,
@@ -408,6 +459,229 @@ class IamManagementService:
 
         return None
 
+    @classmethod
+    def ensure_platform_operation_allowed(cls, *, action_name: str, operator: Any) -> None:
+        action_flag_map = {
+            "create": cls.platform_create_only,
+            "update": cls.platform_update_only,
+            "delete": cls.platform_delete_only,
+        }
+
+        if not action_flag_map.get(action_name, False):
+            return
+
+        if cls.operator_is_superuser(operator):
+            return
+
+        raise IamManagementAccessDeniedError(
+            "Only platform superuser can perform this IAM management operation.",
+            details={
+                "model": cls.model_class.__name__,
+                "action": action_name,
+            },
+        )
+
+    @classmethod
+    def prepare_create_data_for_operator(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        create_data = dict(data)
+
+        if not cls.tenant_create_field:
+            return create_data
+
+        if cls.operator_is_superuser(operator):
+            return create_data
+
+        company_id = cls.get_operator_company_id_or_raise(operator)
+
+        raw_company_id = create_data.get(cls.tenant_create_field)
+        if raw_company_id not in (None, ""):
+            requested_company_id = cls.normalize_company_id(raw_company_id)
+            if requested_company_id != company_id:
+                raise IamManagementAccessDeniedError(
+                    "Cannot create IAM resource for another company.",
+                    details={
+                        "field": cls.tenant_create_field,
+                        "operator_company_id": company_id,
+                        "request_company_id": requested_company_id,
+                    },
+                )
+
+        create_data[cls.tenant_create_field] = company_id
+        return create_data
+
+    @classmethod
+    def prepare_update_data_for_operator(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        return dict(data)
+
+    @classmethod
+    def apply_tenant_filters(cls, *, filters: dict[str, Any], operator: Any) -> dict[str, Any]:
+        tenant_filters = cls.build_tenant_filters(operator=operator)
+
+        if not tenant_filters:
+            return filters
+
+        result = dict(filters)
+
+        for field, value in tenant_filters.items():
+            current_value = result.get(field)
+
+            if current_value not in (None, "") and current_value != value:
+                raise IamManagementAccessDeniedError(
+                    "Cannot query IAM resource from another company.",
+                    details={
+                        "field": field,
+                        "operator_value": value,
+                        "request_value": current_value,
+                    },
+                )
+
+            result[field] = value
+
+        return result
+
+    @classmethod
+    def build_tenant_filters(cls, *, operator: Any) -> dict[str, Any]:
+        if not cls.tenant_scope_field:
+            return {}
+
+        return cls.build_company_boundary_filter(
+            scope_field=cls.tenant_scope_field,
+            operator=operator,
+        )
+
+    @classmethod
+    def build_company_boundary_filter(cls, *, scope_field: str, operator: Any) -> dict[str, Any]:
+        if cls.operator_is_superuser(operator):
+            return {}
+
+        company_id = cls.get_operator_company_id_or_raise(operator)
+
+        return {
+            scope_field: company_id,
+        }
+
+    @classmethod
+    async def ensure_item_accessible(cls, *, item_id: int, operator: Any) -> None:
+        tenant_filters = cls.build_tenant_filters(operator=operator)
+
+        if not tenant_filters:
+            return
+
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=cls.model_class,
+            filters={
+                "id": item_id,
+                **tenant_filters,
+            },
+            exclude_id=None,
+        )
+
+        if exists:
+            return
+
+        raise IamResourceNotFoundError(
+            details={
+                "model": cls.model_class.__name__,
+                "id": item_id,
+            },
+        )
+
+    @classmethod
+    async def ensure_model_item_company_access(cls, *, model_class: Any, item_id: int, scope_field: str, operator: Any, label: str) -> None:
+        tenant_filters = cls.build_company_boundary_filter(
+            scope_field=scope_field,
+            operator=operator,
+        )
+
+        if not tenant_filters:
+            return
+
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=model_class,
+            filters={
+                "id": item_id,
+                **tenant_filters,
+            },
+            exclude_id=None,
+        )
+
+        if exists:
+            return
+
+        raise IamManagementAccessDeniedError(
+            f"Cannot operate {label} from another company.",
+            details={
+                "model": model_class.__name__,
+                "id": item_id,
+                "scope_field": scope_field,
+            },
+        )
+
+    @classmethod
+    def get_operator_company_id_or_raise(cls, operator: Any) -> int:
+        if cls.enterprise_resource_required and not cls.operator_is_enterprise_user(operator):
+            raise IamManagementAccessDeniedError(
+                "Personal users cannot access enterprise IAM resources.",
+                details={
+                    "model": cls.model_class.__name__,
+                    "operator_user_type": getattr(operator, "user_type", None),
+                },
+            )
+
+        if not cls.operator_is_enterprise_user(operator):
+            raise IamManagementAccessDeniedError(
+                "Operator must be an enterprise user.",
+                details={
+                    "model": cls.model_class.__name__,
+                    "operator_user_type": getattr(operator, "user_type", None),
+                },
+            )
+
+        company_id = getattr(operator, "company_id", None)
+        if company_id in (None, ""):
+            raise IamManagementAccessDeniedError(
+                "Enterprise user is not bound to company.",
+                details={
+                    "operator_id": getattr(operator, "id", None),
+                },
+            )
+
+        return cls.normalize_company_id(company_id)
+
+    @staticmethod
+    def normalize_company_id(value: Any) -> int:
+        try:
+            company_id = int(value)
+        except (TypeError, ValueError) as exc:
+            raise IamManagementRequestInvalidError(
+                "company_id has invalid format.",
+                details={
+                    "company_id": value,
+                },
+            ) from exc
+
+        if company_id <= 0:
+            raise IamManagementRequestInvalidError(
+                "company_id must be positive.",
+                details={
+                    "company_id": company_id,
+                },
+            )
+
+        return company_id
+
+    @staticmethod
+    def operator_is_superuser(operator: Any) -> bool:
+        return getattr(operator, "is_superuser", 0) in (
+            True,
+            1,
+            "1",
+        )
+
+    @staticmethod
+    def operator_is_enterprise_user(operator: Any) -> bool:
+        return getattr(operator, "user_type", None) == USER_TYPE_ENTERPRISE
+
 
 class CompanyManagementService(IamManagementService):
     model_class = IamCompany
@@ -443,6 +717,11 @@ class CompanyManagementService(IamManagementService):
     unique_fields = (
         "company_code",
     )
+    tenant_scope_field = "id"
+    tenant_create_field = None
+    enterprise_resource_required = True
+    platform_create_only = True
+    platform_delete_only = True
 
 
 class SubsidiaryManagementService(IamManagementService):
@@ -479,6 +758,9 @@ class SubsidiaryManagementService(IamManagementService):
     unique_fields = (
         "subsidiary_code",
     )
+    tenant_scope_field = "company_id"
+    tenant_create_field = "company_id"
+    enterprise_resource_required = True
 
     @classmethod
     async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
@@ -537,6 +819,9 @@ class DepartmentManagementService(IamManagementService):
     unique_fields = (
         "department_code",
     )
+    tenant_scope_field = "company_id"
+    tenant_create_field = "company_id"
+    enterprise_resource_required = True
 
     @classmethod
     async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
@@ -738,12 +1023,7 @@ class PermissionManagementService(IamManagementService):
         }
 
     @classmethod
-    async def list_all_permission_items(
-            cls,
-            *,
-            data: dict[str, Any],
-            forced_permission_type: str | None,
-    ) -> list[dict[str, Any]]:
+    async def list_all_permission_items(cls, *, data: dict[str, Any], forced_permission_type: str | None) -> list[dict[str, Any]]:
         filters = cls.build_filters(data=data)
 
         if forced_permission_type is not None:
@@ -887,11 +1167,9 @@ class RoleManagementService(IamManagementService):
         "updated_at",
     )
 
-    # role 唯一性是复合唯一：
-    # PERSONAL: role_scope + company_id(NULL) + role_code
-    # ENTERPRISE: role_scope + company_id + role_code
-    # 因此不使用 base unique_fields 的单字段校验。
     unique_fields = ()
+    tenant_scope_field = "company_id"
+    tenant_create_field = None
 
     @classmethod
     async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
@@ -973,6 +1251,25 @@ class RoleManagementService(IamManagementService):
                 },
             )
 
+    @classmethod
+    def prepare_create_data_for_operator(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        create_data = dict(data)
+
+        if cls.operator_is_superuser(operator):
+            return create_data
+
+        if create_data.get("role_scope") == ROLE_SCOPE_PERSONAL:
+            raise IamManagementAccessDeniedError(
+                "Only platform superuser can create personal role.",
+                details={
+                    "role_scope": ROLE_SCOPE_PERSONAL,
+                },
+            )
+
+        if create_data.get("role_scope") == ROLE_SCOPE_ENTERPRISE:
+            create_data["company_id"] = cls.get_operator_company_id_or_raise(operator)
+
+        return create_data
 
 class UserManagementService(IamManagementService):
     model_class = IamUser
@@ -1037,10 +1334,16 @@ class UserManagementService(IamManagementService):
         "email",
         "phone",
     )
+    tenant_scope_field = "company_id"
+    tenant_create_field = None
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
-        validated_data = cls.validator_class.validate_create(data)
+        prepared_data = cls.prepare_create_data_for_operator(
+            data=data,
+            operator=operator,
+        )
+        validated_data = cls.validator_class.validate_create(prepared_data)
 
         cls.ensure_can_write_privileged_flags(
             data=validated_data,
@@ -1075,7 +1378,10 @@ class UserManagementService(IamManagementService):
             operator=operator,
         )
         return await super().update_item(
-            data=data,
+            data=cls.prepare_update_data_for_operator(
+                data=data,
+                operator=operator,
+            ),
             operator=operator,
         )
 
@@ -1306,6 +1612,49 @@ class UserManagementService(IamManagementService):
             "1",
         )
 
+    @classmethod
+    def prepare_create_data_for_operator(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        create_data = dict(data)
+
+        if cls.operator_is_superuser(operator):
+            return create_data
+
+        if create_data.get("user_type") == USER_TYPE_PERSONAL:
+            raise IamManagementAccessDeniedError(
+                "Only platform superuser can create personal user.",
+                details={
+                    "user_type": USER_TYPE_PERSONAL,
+                },
+            )
+
+        if create_data.get("user_type") == USER_TYPE_ENTERPRISE:
+            create_data["company_id"] = cls.get_operator_company_id_or_raise(operator)
+
+        return create_data
+
+    @classmethod
+    def prepare_update_data_for_operator(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        update_data = dict(data)
+
+        if cls.operator_is_superuser(operator):
+            return update_data
+
+        if "company_id" not in update_data:
+            return update_data
+
+        company_id = cls.get_operator_company_id_or_raise(operator)
+        requested_company_id = cls.normalize_company_id(update_data["company_id"])
+
+        if requested_company_id != company_id:
+            raise IamManagementAccessDeniedError(
+                "Cannot move user to another company.",
+                details={
+                    "operator_company_id": company_id,
+                    "request_company_id": requested_company_id,
+                },
+            )
+
+        return update_data
 
 class UserRoleManagementService(IamManagementService):
     model_class = IamUserRole
@@ -1334,6 +1683,7 @@ class UserRoleManagementService(IamManagementService):
         "updated_at",
     )
     unique_fields = ()
+    tenant_scope_field = "user__company_id"
 
     @classmethod
     async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
@@ -1363,6 +1713,21 @@ class UserRoleManagementService(IamManagementService):
                     "role_id": role_id,
                 },
             )
+
+        await cls.ensure_model_item_company_access(
+            model_class=IamUser,
+            item_id=user_id,
+            scope_field="company_id",
+            operator=operator,
+            label="user",
+        )
+        await cls.ensure_model_item_company_access(
+            model_class=IamRole,
+            item_id=role_id,
+            scope_field="company_id",
+            operator=operator,
+            label="role",
+        )
 
         await cls.validate_user_role_scope(
             user=user,
@@ -1488,6 +1853,7 @@ class RolePermissionManagementService(IamManagementService):
         "updated_at",
     )
     unique_fields = ()
+    tenant_scope_field = "role__company_id"
 
     @classmethod
     async def create_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
@@ -1538,6 +1904,14 @@ class RolePermissionManagementService(IamManagementService):
                     "permission_id": permission_id,
                 },
             )
+
+        await cls.ensure_model_item_company_access(
+            model_class=IamRole,
+            item_id=role_id,
+            scope_field="company_id",
+            operator=operator,
+            label="role",
+        )
 
     @classmethod
     async def validate_unique_fields(cls, *, data: dict[str, Any], exclude_id: int | None) -> None:
@@ -1731,7 +2105,17 @@ class UserPermissionManagementService(DirectPermissionGrantManagementService):
         "created_at",
         "updated_at",
     )
+    tenant_scope_field = "user__company_id"
 
+    @classmethod
+    async def validate_subject_business_rules(cls, *, subject: Any, data: dict[str, Any], operator: Any) -> None:
+        await cls.ensure_model_item_company_access(
+            model_class=IamUser,
+            item_id=getattr(subject, "id", None),
+            scope_field="company_id",
+            operator=operator,
+            label="user",
+        )
 
 class DepartmentPermissionManagementService(DirectPermissionGrantManagementService):
     model_class = IamDepartmentPermission
@@ -1772,7 +2156,17 @@ class DepartmentPermissionManagementService(DirectPermissionGrantManagementServi
         "created_at",
         "updated_at",
     )
+    tenant_scope_field = "department__company_id"
 
+    @classmethod
+    async def validate_subject_business_rules(cls, *, subject: Any, data: dict[str, Any], operator: Any) -> None:
+        await cls.ensure_model_item_company_access(
+            model_class=IamDepartment,
+            item_id=getattr(subject, "id", None),
+            scope_field="company_id",
+            operator=operator,
+            label="department",
+        )
 
 class SubsidiaryPermissionManagementService(DirectPermissionGrantManagementService):
     model_class = IamSubsidiaryPermission
@@ -1813,3 +2207,14 @@ class SubsidiaryPermissionManagementService(DirectPermissionGrantManagementServi
         "created_at",
         "updated_at",
     )
+    tenant_scope_field = "subsidiary__company_id"
+
+    @classmethod
+    async def validate_subject_business_rules(cls, *, subject: Any, data: dict[str, Any], operator: Any) -> None:
+        await cls.ensure_model_item_company_access(
+            model_class=IamSubsidiary,
+            item_id=getattr(subject, "id", None),
+            scope_field="company_id",
+            operator=operator,
+            label="subsidiary",
+        )
