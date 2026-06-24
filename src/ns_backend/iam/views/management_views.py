@@ -8,7 +8,10 @@ from typing import (
 )
 
 from backend.common import NsViewSet
-from ns_backend.iam.errors import IamManagementRequestInvalidError
+from ns_backend.iam.errors import (
+    IamManagementAccessDeniedError,
+    IamManagementRequestInvalidError,
+)
 from ns_backend.iam.services import (
     AuthService,
     CompanyManagementService,
@@ -16,6 +19,7 @@ from ns_backend.iam.services import (
     DepartmentPermissionManagementService,
     IamManagementService,
     PermissionManagementService,
+    PermissionService,
     RoleManagementService,
     RolePermissionManagementService,
     SubsidiaryManagementService,
@@ -87,7 +91,33 @@ class IamManagementViewSet(NsViewSet):
         user, _ = await AuthService.resolve_user_from_request(request)
         self.set_current_user(user)
 
+        await self.enforce_required_permissions(
+            operator=user,
+        )
+
         return user
+
+    async def enforce_required_permissions(self, *, operator: Any) -> None:
+        action_name = str(getattr(self, "action", "") or "").strip()
+        permissions = self.required_permissions.get(action_name, ())
+
+        if not permissions:
+            return
+
+        if bool(getattr(operator, "is_superuser", False)):
+            return
+
+        for permission_code in permissions:
+            if await PermissionService.has_permission(operator, permission_code):
+                return
+
+        raise IamManagementAccessDeniedError(
+            details={
+                "action": action_name,
+                "required_permissions": list(permissions),
+                "view_set": self.__class__.__name__,
+            },
+        )
 
     @classmethod
     def get_service_class(cls) -> type[IamManagementService]:
