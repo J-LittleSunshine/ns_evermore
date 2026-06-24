@@ -175,13 +175,56 @@ class PermissionViewSet(IamManagementViewSet):
     logger_name = "ns_backend.iam.permission.api"
     service_class = PermissionManagementService
 
+    allowed_actions = IamManagementViewSet.allowed_actions | {
+        "tree",
+        "menu_tree",
+        "action_list",
+        "data_list",
+    }
+
     required_permissions = {
         "list": ("iam:permission:read",),
         "get_detail": ("iam:permission:read",),
         "create": ("iam:permission:create",),
         "update": ("iam:permission:update",),
         "delete": ("iam:permission:delete",),
+        "tree": ("iam:permission:read",),
+        "menu_tree": ("iam:permission:read",),
+        "action_list": ("iam:permission:read",),
+        "data_list": ("iam:permission:read",),
     }
+
+    async def tree(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        return await self.get_service_class().tree_items(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
+
+    async def menu_tree(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        return await self.get_service_class().menu_tree_items(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
+
+    async def action_list(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        return await self.get_service_class().action_items(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
+
+    async def data_list(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        return await self.get_service_class().data_items(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
 
 
 class RoleViewSet(IamManagementViewSet):

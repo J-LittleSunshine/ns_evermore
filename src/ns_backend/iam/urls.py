@@ -51,6 +51,10 @@ urlpatterns = [
     path("permission/create/", PermissionViewSet.as_view({"post": "create"})),
     path("permission/update/", PermissionViewSet.as_view({"post": "update"})),
     path("permission/delete/", PermissionViewSet.as_view({"post": "delete"})),
+    path("permission/tree/", PermissionViewSet.as_view({"post": "tree"})),
+    path("permission/menu_tree/", PermissionViewSet.as_view({"post": "menu_tree"})),
+    path("permission/action_list/", PermissionViewSet.as_view({"post": "action_list"})),
+    path("permission/data_list/", PermissionViewSet.as_view({"post": "data_list"})),
 
     path("role/list/", RoleViewSet.as_view({"post": "list"})),
     path("role/detail/", RoleViewSet.as_view({"post": "get_detail"})),

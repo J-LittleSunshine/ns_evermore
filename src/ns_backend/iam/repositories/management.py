@@ -67,6 +67,45 @@ class IamManagementRepository(BaseRepository):
         }
 
     @classmethod
+    async def list_all_items(cls, *, model_class: Any, fields: tuple[str, ...], filters: dict[str, Any] | None = None, keyword_conditions: list[dict[str, Any]] | None = None, order_by: tuple[str, ...] = ("id",)) -> list[dict[str, Any]]:
+        """
+        查询管理端结构化输出需要的全量数据。
+
+        说明：
+        - 仅用于权限树、菜单树、action/data 权限列表这类小型配置数据。
+        - 不替代通用 list_items 分页接口。
+        - 同步 ORM 包在 sync_to_async(thread_sensitive=True) 内，避免 async view 直接执行同步 ORM。
+        """
+        db_alias = cls.resolve_db_alias(model_class=model_class)
+
+        return await sync_to_async(cls._list_all_items_sync, thread_sensitive=True)(
+            model_class=model_class,
+            fields=fields,
+            filters=filters or {},
+            keyword_conditions=keyword_conditions or [],
+            order_by=order_by,
+            db_alias=db_alias,
+        )
+
+    @classmethod
+    def _list_all_items_sync(cls, *, model_class: Any, fields: tuple[str, ...], filters: dict[str, Any], keyword_conditions: list[dict[str, Any]], order_by: tuple[str, ...], db_alias: str) -> list[dict[str, Any]]:
+        queryset = model_class.objects.using(db_alias).all()
+
+        if filters:
+            queryset = queryset.filter(**filters)
+
+        keyword_query = cls.build_keyword_query(keyword_conditions)
+        if keyword_query is not None:
+            queryset = queryset.filter(keyword_query)
+
+        rows = list(queryset.order_by(*order_by))
+
+        return [
+            cls.serialize_instance(instance=row, fields=fields)
+            for row in rows
+        ]
+
+    @classmethod
     async def get_by_id(cls, *, model_class: Any, item_id: int) -> Any | None:
         db_alias = cls.resolve_db_alias(model_class=model_class)
 

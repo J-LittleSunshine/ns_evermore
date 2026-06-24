@@ -245,12 +245,7 @@ class Command(BaseCommand):
         return code
 
     @classmethod
-    def resolve_grant_usernames(
-            cls,
-            *,
-            admin_username: str,
-            extra_usernames: list[object],
-    ) -> tuple[str, ...]:
+    def resolve_grant_usernames(cls, *, admin_username: str, extra_usernames: list[object]) -> tuple[str, ...]:
         """
         解析需要绑定 iam_manager 角色的用户。
 
@@ -299,12 +294,7 @@ class Command(BaseCommand):
         return grantor
 
     @classmethod
-    def upsert_permissions(
-            cls,
-            *,
-            database_alias: str,
-            grantor: IamUser,
-    ) -> dict[str, int]:
+    def upsert_permissions(cls, *, database_alias: str, grantor: IamUser) -> dict[str, int]:
         now = timezone.now()
         created_count = 0
         updated_count = 0
@@ -356,13 +346,7 @@ class Command(BaseCommand):
         }
 
     @staticmethod
-    def upsert_manager_role(
-            *,
-            database_alias: str,
-            role_code: str,
-            role_name: str,
-            grantor: IamUser,
-    ) -> tuple[IamRole, bool]:
+    def upsert_manager_role(*, database_alias: str, role_code: str, role_name: str, grantor: IamUser) -> tuple[IamRole, bool]:
         """
         初始化 PERSONAL 域 IAM 管理角色。
 
@@ -413,13 +397,7 @@ class Command(BaseCommand):
         return role, False
 
     @classmethod
-    def bind_permissions_to_role(
-            cls,
-            *,
-            database_alias: str,
-            role: IamRole,
-            grantor: IamUser,
-    ) -> dict[str, int]:
+    def bind_permissions_to_role(cls, *, database_alias: str, role: IamRole, grantor: IamUser) -> dict[str, int]:
         now = timezone.now()
         created_count = 0
         updated_count = 0
@@ -489,13 +467,7 @@ class Command(BaseCommand):
         }
 
     @staticmethod
-    def bind_role_to_users(
-            *,
-            database_alias: str,
-            role: IamRole,
-            grantor: IamUser,
-            usernames: tuple[str, ...],
-    ) -> dict[str, int]:
+    def bind_role_to_users(*, database_alias: str, role: IamRole, grantor: IamUser, usernames: tuple[str, ...]) -> dict[str, int]:
         now = timezone.now()
         created_count = 0
         existing_count = 0

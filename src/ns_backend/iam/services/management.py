@@ -13,6 +13,9 @@ from django.utils import timezone
 
 from backend.utils.password_transport import PasswordTransportService
 from ns_backend.iam.constants import (
+    PERMISSION_TYPE_ACTION,
+    PERMISSION_TYPE_DATA,
+    PERMISSION_TYPE_MENU,
     ROLE_SCOPE_ENTERPRISE,
     ROLE_SCOPE_PERSONAL,
     USER_TYPE_ENTERPRISE,
@@ -685,6 +688,168 @@ class PermissionManagementService(IamManagementService):
                     "parent_id": parent_id,
                 },
             )
+
+    @classmethod
+    async def tree_items(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        items = await cls.list_all_permission_items(
+            data=data,
+            forced_permission_type=None,
+        )
+
+        return {
+            "tree": cls.build_permission_tree(items),
+            "total": len(items),
+        }
+
+    @classmethod
+    async def menu_tree_items(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        items = await cls.list_all_permission_items(
+            data=data,
+            forced_permission_type=PERMISSION_TYPE_MENU,
+        )
+
+        return {
+            "tree": cls.build_permission_tree(items),
+            "total": len(items),
+        }
+
+    @classmethod
+    async def action_items(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        items = await cls.list_all_permission_items(
+            data=data,
+            forced_permission_type=PERMISSION_TYPE_ACTION,
+        )
+
+        return {
+            "items": items,
+            "total": len(items),
+        }
+
+    @classmethod
+    async def data_items(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        items = await cls.list_all_permission_items(
+            data=data,
+            forced_permission_type=PERMISSION_TYPE_DATA,
+        )
+
+        return {
+            "items": items,
+            "total": len(items),
+        }
+
+    @classmethod
+    async def list_all_permission_items(
+            cls,
+            *,
+            data: dict[str, Any],
+            forced_permission_type: str | None,
+    ) -> list[dict[str, Any]]:
+        filters = cls.build_filters(data=data)
+
+        if forced_permission_type is not None:
+            filters["permission_type"] = forced_permission_type
+
+        keyword_conditions = cls.build_keyword_conditions(data=data)
+
+        if data.get("order_by") or data.get("ordering"):
+            order_by = cls.build_order_by(data=data)
+        else:
+            order_by = (
+                "permission_type",
+                "permission_code",
+                "id",
+            )
+
+        return await cls.repository_class.list_all_items(
+            model_class=cls.model_class,
+            fields=cls.detail_fields,
+            filters=filters,
+            keyword_conditions=keyword_conditions,
+            order_by=order_by,
+        )
+
+    @classmethod
+    def build_permission_tree(cls, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not items:
+            return []
+
+        node_map: dict[int, dict[str, Any]] = {}
+
+        for item in items:
+            item_id = item.get("id")
+            if not isinstance(item_id, int):
+                continue
+
+            node_map[item_id] = {
+                **item,
+                "children": [],
+            }
+
+        if not node_map:
+            return []
+
+        children_map: dict[int, list[int]] = {}
+
+        for node_id, node in node_map.items():
+            parent_id = node.get("parent_id")
+
+            if (
+                    isinstance(parent_id, int)
+                    and parent_id in node_map
+                    and parent_id != node_id
+            ):
+                children_map.setdefault(parent_id, []).append(node_id)
+
+        root_ids = [
+            node_id
+            for node_id, node in node_map.items()
+            if node.get("parent_id") not in node_map
+               or node.get("parent_id") == node_id
+        ]
+
+        if not root_ids:
+            root_ids = list(node_map)
+
+        def sort_key(_node_id: int) -> tuple[str, str, int]:
+            _node = node_map[_node_id]
+            return (
+                str(_node.get("permission_type") or ""),
+                str(_node.get("permission_code") or ""),
+                _node_id,
+            )
+
+        def build_node(_node_id: int, _path_ids: set[int]) -> dict[str, Any]:
+            _node = {
+                **node_map[_node_id],
+                "children": [],
+            }
+
+            next_path_ids = set(_path_ids)
+            next_path_ids.add(_node_id)
+
+            for child_id in sorted(children_map.get(_node_id, []), key=sort_key):
+                if child_id in next_path_ids:
+                    continue
+
+                _node["children"].append(
+                    build_node(child_id, next_path_ids)
+                )
+
+            return _node
+
+        tree: list[dict[str, Any]] = []
+        built_root_ids: set[int] = set()
+
+        for root_id in sorted(root_ids, key=sort_key):
+            if root_id in built_root_ids:
+                continue
+
+            tree.append(
+                build_node(root_id, set())
+            )
+            built_root_ids.add(root_id)
+
+        return tree
 
 
 class RoleManagementService(IamManagementService):
