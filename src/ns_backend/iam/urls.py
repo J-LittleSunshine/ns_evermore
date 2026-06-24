@@ -58,4 +58,5 @@ urlpatterns = [
     path("user/create/", UserViewSet.as_view({"post": "create"})),
     path("user/update/", UserViewSet.as_view({"post": "update"})),
     path("user/delete/", UserViewSet.as_view({"post": "delete"})),
+    path("user/reset_password/", UserViewSet.as_view({"post": "reset_password"})),
 ]

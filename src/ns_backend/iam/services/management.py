@@ -9,6 +9,7 @@ from typing import (
 
 from asgiref.sync import sync_to_async
 from django.contrib.auth.hashers import make_password
+from django.utils import timezone
 
 from backend.utils.password_transport import PasswordTransportService
 from ns_backend.iam.constants import (
@@ -33,6 +34,9 @@ from ns_backend.iam.models import (
     IamUser,
 )
 from ns_backend.iam.repositories import IamManagementRepository
+from ns_backend.iam.repositories import (
+    UserSessionRepository,
+)
 from ns_backend.iam.validators import (
     CompanyValidator,
     DepartmentValidator,
@@ -799,7 +803,6 @@ class UserManagementService(IamManagementService):
     model_class = IamUser
     validator_class = UserValidator
 
-    # 不返回 password。
     list_fields = detail_fields = (
         "id",
         "username",
@@ -871,7 +874,6 @@ class UserManagementService(IamManagementService):
 
         raw_password = PasswordTransportService.resolve(str(validated_data.pop("password", "") or ""))
 
-        # make_password 是同步 CPU 操作；放到线程中执行，避免阻塞 async view。
         hashed_password = await sync_to_async(make_password, thread_sensitive=False)(raw_password)
         validated_data["password"] = hashed_password
 
@@ -903,6 +905,78 @@ class UserManagementService(IamManagementService):
         )
 
     @classmethod
+    async def reset_password(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        if not cls.operator_is_superuser(operator):
+            raise IamManagementAccessDeniedError("Only superuser can reset user password.")
+
+        user_id = cls.get_required_id(data=data)
+        password_payload = cls.get_password_payload(data=data)
+
+        user = await cls.repository_class.get_by_id(
+            model_class=cls.model_class,
+            item_id=user_id,
+        )
+
+        if user is None:
+            raise IamResourceNotFoundError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "id": user_id,
+                },
+            )
+
+        raw_password = PasswordTransportService.resolve(password_payload)
+        hashed_password = await sync_to_async(make_password, thread_sensitive=False)(raw_password)
+
+        item = await cls.repository_class.update_item(
+            model_class=cls.model_class,
+            item_id=user_id,
+            data={
+                "password": hashed_password,
+            },
+            fields=cls.detail_fields,
+            operator_id=cls.get_operator_id(operator),
+        )
+
+        if item is None:
+            raise IamResourceNotFoundError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "id": user_id,
+                },
+            )
+
+        revoked_at = timezone.now()
+        await UserSessionRepository.revoke_user_sessions_and_tokens(
+            user_id=user_id,
+            revoked_at=revoked_at,
+        )
+
+        return {
+            "id": user_id,
+            "password_reset": True,
+            "sessions_revoked": True,
+            "revoked_at": revoked_at.isoformat(),
+        }
+
+    @classmethod
+    def get_password_payload(cls, *, data: dict[str, Any]) -> str:
+        raw_password = data.get("new_password")
+
+        if raw_password in (None, ""):
+            raw_password = data.get("password")
+
+        if raw_password in (None, ""):
+            raise IamManagementRequestInvalidError(
+                "Password cannot be empty.",
+                details={
+                    "field": "new_password",
+                },
+            )
+
+        return str(raw_password)
+
+    @classmethod
     async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
         await cls.validate_user_org_relation(
             user_type=data.get("user_type"),
@@ -926,14 +1000,7 @@ class UserManagementService(IamManagementService):
         )
 
     @classmethod
-    async def validate_user_org_relation(
-            cls,
-            *,
-            user_type: str | None,
-            company_id: int | None,
-            subsidiary_id: int | None,
-            department_id: int | None,
-    ) -> None:
+    async def validate_user_org_relation(cls, *, user_type: str | None, company_id: int | None, subsidiary_id: int | None, department_id: int | None) -> None:
         if user_type == USER_TYPE_PERSONAL:
             if company_id is not None or subsidiary_id is not None or department_id is not None:
                 raise IamInvalidRelationError(
@@ -948,8 +1015,7 @@ class UserManagementService(IamManagementService):
             return
 
         if user_type != USER_TYPE_ENTERPRISE:
-            raise IamInvalidRelationError(
-                "User type is invalid.",
+            raise IamInvalidRelationError("User type is invalid.",
                 details={
                     "user_type": user_type,
                 },

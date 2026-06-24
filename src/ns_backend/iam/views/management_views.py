@@ -166,10 +166,23 @@ class UserViewSet(IamManagementViewSet):
     logger_name = "ns_backend.iam.user.api"
     service_class = UserManagementService
 
+    allowed_actions = IamManagementViewSet.allowed_actions | {
+        "reset_password",
+    }
+
     required_permissions = {
         "list": ("iam:user:read",),
         "detail": ("iam:user:read",),
         "create": ("iam:user:create",),
         "update": ("iam:user:update",),
         "delete": ("iam:user:delete",),
+        "reset_password": ("iam:user:reset_password",),
     }
+
+    async def reset_password(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        return await self.get_service_class().reset_password(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
