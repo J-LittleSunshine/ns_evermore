@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from datetime import datetime
 from typing import (
     Any,
     ClassVar,
     TYPE_CHECKING,
 )
 
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+
 from ns_backend.iam.constants import (
+    DATA_SCOPE_VALUES,
     PERMISSION_TYPE_ACTION,
     PERMISSION_TYPE_DATA,
     PERMISSION_TYPE_MENU,
@@ -28,6 +33,7 @@ class IamManagementValidator:
     allowed_update_fields: ClassVar[tuple[str, ...]] = ()
 
     integer_fields: ClassVar[tuple[str, ...]] = ()
+    datetime_fields: ClassVar[tuple[str, ...]] = ()
     nullable_fields: ClassVar[tuple[str, ...]] = ()
     status_fields: ClassVar[tuple[str, ...]] = ("status",)
     enum_fields: ClassVar[dict[str, tuple[Any, ...]]] = {}
@@ -132,6 +138,9 @@ class IamManagementValidator:
         if field in cls.integer_fields:
             return cls.normalize_integer_field(field=field, value=value)
 
+        if field in cls.datetime_fields:
+            return cls.normalize_datetime_field(field=field, value=value)
+
         if cls.is_empty_value(value):
             if field in cls.nullable_fields:
                 return None
@@ -197,6 +206,41 @@ class IamManagementValidator:
                     "field": field,
                     "value": normalized,
                 },
+            )
+
+        return normalized
+
+    @classmethod
+    def normalize_datetime_field(cls, *, field: str, value: Any) -> datetime | None:
+        if cls.is_empty_value(value):
+            if field in cls.nullable_fields:
+                return None
+
+            raise IamManagementRequestInvalidError(
+                "Datetime field cannot be empty.",
+                details={
+                    "field": field,
+                },
+            )
+
+        if isinstance(value, datetime):
+            normalized = value
+        else:
+            normalized = parse_datetime(str(value).strip())
+
+        if normalized is None:
+            raise IamManagementRequestInvalidError(
+                "Datetime field has invalid format.",
+                details={
+                    "field": field,
+                    "expected": "ISO 8601 datetime string",
+                },
+            )
+
+        if timezone.is_naive(normalized):
+            normalized = timezone.make_aware(
+                normalized,
+                timezone.get_current_timezone(),
             )
 
         return normalized
@@ -463,4 +507,48 @@ class UserValidator(IamManagementValidator):
         "is_active": 1,
         "is_staff": 0,
         "is_superuser": 0,
+    }
+
+
+class UserRoleValidator(IamManagementValidator):
+    required_create_fields = (
+        "user_id",
+        "role_id",
+    )
+    allowed_create_fields = (
+        "user_id",
+        "role_id",
+    )
+    allowed_update_fields = ()
+    integer_fields = (
+        "user_id",
+        "role_id",
+    )
+
+
+class RolePermissionValidator(IamManagementValidator):
+    required_create_fields = (
+        "role_id",
+        "permission_id",
+    )
+    allowed_create_fields = (
+        "role_id",
+        "permission_id",
+        "data_scope",
+        "expired_at",
+    )
+    allowed_update_fields = ()
+    integer_fields = (
+        "role_id",
+        "permission_id",
+    )
+    datetime_fields = (
+        "expired_at",
+    )
+    nullable_fields = (
+        "data_scope",
+        "expired_at",
+    )
+    enum_fields = {
+        "data_scope": DATA_SCOPE_VALUES,
     }

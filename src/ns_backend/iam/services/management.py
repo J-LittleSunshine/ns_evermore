@@ -30,11 +30,13 @@ from ns_backend.iam.models import (
     IamDepartment,
     IamPermission,
     IamRole,
+    IamRolePermission,
     IamSubsidiary,
     IamUser,
+    IamUserRole,
 )
-from ns_backend.iam.repositories import IamManagementRepository
 from ns_backend.iam.repositories import (
+    IamManagementRepository,
     UserSessionRepository,
 )
 from ns_backend.iam.validators import (
@@ -42,8 +44,10 @@ from ns_backend.iam.validators import (
     DepartmentValidator,
     IamManagementValidator,
     PermissionValidator,
+    RolePermissionValidator,
     RoleValidator,
     SubsidiaryValidator,
+    UserRoleValidator,
     UserValidator,
 )
 
@@ -1130,3 +1134,266 @@ class UserManagementService(IamManagementService):
             1,
             "1",
         )
+
+
+class UserRoleManagementService(IamManagementService):
+    model_class = IamUserRole
+    validator_class = UserRoleValidator
+
+    list_fields = detail_fields = (
+        "id",
+        "user_id",
+        "role_id",
+        "created_by",
+        "updated_by",
+        "created_at",
+        "updated_at",
+    )
+    filter_fields = (
+        "id",
+        "user_id",
+        "role_id",
+    )
+    keyword_fields = ()
+    order_fields = (
+        "id",
+        "user_id",
+        "role_id",
+        "created_at",
+        "updated_at",
+    )
+    unique_fields = ()
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
+        user_id = data.get("user_id")
+        role_id = data.get("role_id")
+
+        user = await cls.repository_class.get_by_id(
+            model_class=IamUser,
+            item_id=user_id,
+        )
+        if user is None:
+            raise IamInvalidRelationError(
+                "User does not exist.",
+                details={
+                    "user_id": user_id,
+                },
+            )
+
+        role = await cls.repository_class.get_by_id(
+            model_class=IamRole,
+            item_id=role_id,
+        )
+        if role is None:
+            raise IamInvalidRelationError(
+                "Role does not exist.",
+                details={
+                    "role_id": role_id,
+                },
+            )
+
+        await cls.validate_user_role_scope(
+            user=user,
+            role=role,
+        )
+
+    @classmethod
+    async def validate_unique_fields(cls, *, data: dict[str, Any], exclude_id: int | None) -> None:
+        user_id = data.get("user_id")
+        role_id = data.get("role_id")
+
+        if user_id in (None, "") or role_id in (None, ""):
+            return
+
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=cls.model_class,
+            filters={
+                "user_id": user_id,
+                "role_id": role_id,
+            },
+            exclude_id=exclude_id,
+        )
+
+        if exists:
+            raise IamResourceAlreadyExistsError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "fields": [
+                        "user_id",
+                        "role_id",
+                    ],
+                    "user_id": user_id,
+                    "role_id": role_id,
+                },
+            )
+
+    @classmethod
+    async def validate_user_role_scope(cls, *, user: Any, role: Any) -> None:
+        user_type = getattr(user, "user_type", None)
+        user_company_id = getattr(user, "company_id", None)
+        role_scope = getattr(role, "role_scope", None)
+        role_company_id = getattr(role, "company_id", None)
+
+        if user_type == USER_TYPE_PERSONAL:
+            if role_scope != ROLE_SCOPE_PERSONAL or role_company_id is not None:
+                raise IamInvalidRelationError(
+                    "Personal user can only bind personal role.",
+                    details={
+                        "user_id": getattr(user, "id", None),
+                        "user_type": user_type,
+                        "role_id": getattr(role, "id", None),
+                        "role_scope": role_scope,
+                        "role_company_id": role_company_id,
+                    },
+                )
+            return
+
+        if user_type == USER_TYPE_ENTERPRISE:
+            if role_scope != ROLE_SCOPE_ENTERPRISE:
+                raise IamInvalidRelationError(
+                    "Enterprise user can only bind enterprise role.",
+                    details={
+                        "user_id": getattr(user, "id", None),
+                        "user_type": user_type,
+                        "role_id": getattr(role, "id", None),
+                        "role_scope": role_scope,
+                    },
+                )
+
+            if user_company_id is None or role_company_id != user_company_id:
+                raise IamInvalidRelationError(
+                    "Enterprise role must belong to user company.",
+                    details={
+                        "user_id": getattr(user, "id", None),
+                        "user_company_id": user_company_id,
+                        "role_id": getattr(role, "id", None),
+                        "role_company_id": role_company_id,
+                    },
+                )
+            return
+
+        raise IamInvalidRelationError(
+            "User type is invalid.",
+            details={
+                "user_id": getattr(user, "id", None),
+                "user_type": user_type,
+            },
+        )
+
+
+class RolePermissionManagementService(IamManagementService):
+    model_class = IamRolePermission
+    validator_class = RolePermissionValidator
+
+    list_fields = detail_fields = (
+        "id",
+        "role_id",
+        "permission_id",
+        "data_scope",
+        "granted_by_id",
+        "expired_at",
+        "created_by",
+        "updated_by",
+        "created_at",
+        "updated_at",
+    )
+    filter_fields = (
+        "id",
+        "role_id",
+        "permission_id",
+        "data_scope",
+        "granted_by_id",
+    )
+    keyword_fields = ()
+    order_fields = (
+        "id",
+        "role_id",
+        "permission_id",
+        "data_scope",
+        "granted_by_id",
+        "expired_at",
+        "created_at",
+        "updated_at",
+    )
+    unique_fields = ()
+
+    @classmethod
+    async def create_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        validated_data = cls.validator_class.validate_create(data)
+        validated_data["granted_by_id"] = cls.get_operator_id(operator)
+
+        await cls.validate_create_business_rules(
+            data=validated_data,
+            operator=operator,
+        )
+        await cls.validate_unique_fields(
+            data=validated_data,
+            exclude_id=None,
+        )
+
+        return await cls.repository_class.create_item(
+            model_class=cls.model_class,
+            data=validated_data,
+            fields=cls.detail_fields,
+            operator_id=cls.get_operator_id(operator),
+        )
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
+        role_id = data.get("role_id")
+        permission_id = data.get("permission_id")
+
+        role = await cls.repository_class.get_by_id(
+            model_class=IamRole,
+            item_id=role_id,
+        )
+        if role is None:
+            raise IamInvalidRelationError(
+                "Role does not exist.",
+                details={
+                    "role_id": role_id,
+                },
+            )
+
+        permission = await cls.repository_class.get_by_id(
+            model_class=IamPermission,
+            item_id=permission_id,
+        )
+        if permission is None:
+            raise IamInvalidRelationError(
+                "Permission does not exist.",
+                details={
+                    "permission_id": permission_id,
+                },
+            )
+
+    @classmethod
+    async def validate_unique_fields(cls, *, data: dict[str, Any], exclude_id: int | None) -> None:
+        role_id = data.get("role_id")
+        permission_id = data.get("permission_id")
+
+        if role_id in (None, "") or permission_id in (None, ""):
+            return
+
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=cls.model_class,
+            filters={
+                "role_id": role_id,
+                "permission_id": permission_id,
+            },
+            exclude_id=exclude_id,
+        )
+
+        if exists:
+            raise IamResourceAlreadyExistsError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "fields": [
+                        "role_id",
+                        "permission_id",
+                    ],
+                    "role_id": role_id,
+                    "permission_id": permission_id,
+                },
+            )

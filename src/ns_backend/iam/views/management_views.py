@@ -16,8 +16,10 @@ from ns_backend.iam.services import (
     IamManagementService,
     PermissionManagementService,
     RoleManagementService,
+    RolePermissionManagementService,
     SubsidiaryManagementService,
     UserManagementService,
+    UserRoleManagementService,
 )
 
 if TYPE_CHECKING:
@@ -186,3 +188,37 @@ class UserViewSet(IamManagementViewSet):
             data=self.get_request_data(request),
             operator=operator,
         )
+
+
+class UserRoleViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.user_role.api"
+    service_class = UserRoleManagementService
+
+    allowed_actions = {
+        "list",
+        "create",
+        "delete",
+    }
+
+    required_permissions = {
+        "list": ("iam:user_role:read",),
+        "create": ("iam:user_role:create",),
+        "delete": ("iam:user_role:delete",),
+    }
+
+
+class RolePermissionViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.role_permission.api"
+    service_class = RolePermissionManagementService
+
+    allowed_actions = {
+        "list",
+        "create",
+        "delete",
+    }
+
+    required_permissions = {
+        "list": ("iam:role_permission:read",),
+        "create": ("iam:role_permission:create",),
+        "delete": ("iam:role_permission:delete",),
+    }
