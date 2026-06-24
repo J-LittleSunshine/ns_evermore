@@ -27,6 +27,7 @@ class AuthViewSet(NsViewSet):
         "current_user",
         "permissions",
         "menus",
+        "data_scopes",
     }
 
     async def login(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -81,3 +82,54 @@ class AuthViewSet(NsViewSet):
         return {
             "menus": menus,
         }
+
+    async def data_scopes(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        user, _ = await AuthService.resolve_user_from_request(request)
+        self.set_current_user(user)
+
+        permission_codes = self.get_permission_codes_from_request(request)
+        items = await AuthContextService.list_data_scopes(
+            user=user,
+            permission_codes=permission_codes,
+        )
+
+        return {
+            "items": items,
+        }
+
+    @classmethod
+    def get_permission_codes_from_request(cls, request: "Request") -> list[str]:
+        data = cls.get_request_data(request)
+        raw_permission_codes = data.get("permission_codes")
+
+        if raw_permission_codes is None:
+            raw_permission_codes = data.get("permissions")
+
+        if raw_permission_codes is None:
+            raw_permission_codes = data.get("codes")
+
+        if isinstance(raw_permission_codes, str):
+            raw_items = raw_permission_codes.split(",")
+        elif isinstance(raw_permission_codes, (list, tuple, set)):
+            raw_items = list(raw_permission_codes)
+        else:
+            return []
+
+        clean_codes: list[str] = []
+        seen_codes: set[str] = set()
+
+        for item in raw_items:
+            code = str(item or "").strip()
+            if not code:
+                continue
+
+            if len(code) > 128:
+                continue
+
+            if code in seen_codes:
+                continue
+
+            seen_codes.add(code)
+            clean_codes.append(code)
+
+        return clean_codes

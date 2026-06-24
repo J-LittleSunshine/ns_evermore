@@ -6,8 +6,13 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from ns_backend.iam.schemas import TenantContext
+from ns_backend.iam.constants import normalize_data_scope
+from ns_backend.iam.schemas import (
+    DataScopeResult,
+    TenantContext,
+)
 from ns_backend.iam.services.auth import AuthService
+from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.permission import PermissionService
 
 if TYPE_CHECKING:
@@ -103,3 +108,38 @@ class AuthContextService:
     @staticmethod
     async def list_menus(user: Any) -> list[dict[str, Any]]:
         return await PermissionService.list_menu_tree(user)
+
+    @classmethod
+    async def list_data_scopes(cls, *, user: Any, permission_codes: list[str]) -> list[dict[str, Any]]:
+        if not user or not bool(getattr(user, "is_active", False)):
+            return []
+
+        items: list[dict[str, Any]] = []
+        for permission_code in permission_codes:
+            result = await DataScopeService.resolve_scope(
+                user=user,
+                permission_code=permission_code,
+            )
+            items.append(
+                cls.serialize_data_scope_result(
+                    permission_code=permission_code,
+                    result=result,
+                )
+            )
+
+        return items
+
+    @staticmethod
+    def serialize_data_scope_result(*, permission_code: str, result: DataScopeResult) -> dict[str, Any]:
+        return {
+            "permission_code": permission_code,
+            "allowed": result.allowed,
+            "scope": result.scope,
+            "normalized_scope": normalize_data_scope(result.scope),
+            "company_id": result.company_id,
+            "subsidiary_id": result.subsidiary_id,
+            "department_id": result.department_id,
+            "department_ids": list(result.department_ids or []),
+            "user_id": result.user_id,
+            "is_platform_scope": result.is_platform_scope,
+        }
