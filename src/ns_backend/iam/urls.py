@@ -156,6 +156,7 @@ urlpatterns = [
 
     path("permission/sync/", PermissionSyncViewSet.as_view({"post": "sync"})),
     path("permission/batch_sync/", PermissionSyncViewSet.as_view({"post": "batch_sync"})),
+    path("permission/sync_registered/", PermissionSyncViewSet.as_view({"post": "sync_registered"})),
 
     path("resource/sync/", ResourceSyncViewSet.as_view({"post": "sync"})),
     path("resource/batch_sync/", ResourceSyncViewSet.as_view({"post": "batch_sync"})),

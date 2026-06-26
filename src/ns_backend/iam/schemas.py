@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import (
     Any,
+    Protocol,
     TYPE_CHECKING
 )
 
@@ -69,3 +70,18 @@ class DataScopeFilterPlan:
     filters: dict[str, Any] | None = None
     reason: str | None = None
     is_platform_scope: bool = False
+
+@dataclass(slots=True, kw_only=True)
+class PermissionSpec:
+    permission_code: str
+    permission_name: str
+    permission_type: str = "ACTION"
+    parent_code: str | None = None
+    status: int = 1
+
+
+class PermissionProvider(Protocol):
+    app_label: str
+
+    def list_permissions(self) -> list[PermissionSpec] | tuple[PermissionSpec, ...]:
+        ...

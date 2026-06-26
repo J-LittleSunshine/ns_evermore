@@ -57,11 +57,13 @@ class PermissionSyncViewSet(IamManagementViewSet):
     allowed_actions = {
         "sync",
         "batch_sync",
+        "sync_registered",
     }
 
     required_permissions = {
         "sync": ("iam:permission:sync",),
         "batch_sync": ("iam:permission:sync",),
+        "sync_registered": ("iam:permission:sync",),
     }
 
     async def sync(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -80,6 +82,15 @@ class PermissionSyncViewSet(IamManagementViewSet):
             operation_type="sync",
             handler=lambda operator, data: self.get_service_class().batch_sync_permissions(
                 data=data,
+                operator=operator,
+            ),
+        )
+
+    async def sync_registered(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.execute_with_operation_audit(
+            request=request,
+            operation_type="sync_registered",
+            handler=lambda operator, data: self.get_service_class().sync_registered_permissions(
                 operator=operator,
             ),
         )

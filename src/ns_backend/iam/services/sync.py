@@ -12,6 +12,7 @@ from ns_backend.iam.constants import (
 )
 from ns_backend.iam.errors import IamManagementRequestInvalidError
 from ns_backend.iam.repositories import IamSyncRepository
+from ns_backend.iam.schemas import PermissionSpec
 from ns_backend.iam.validators import (
     ResourceActionValidator,
     ResourceValidator,
@@ -87,6 +88,35 @@ class IamSyncService:
             ],
             operator_id=cls.get_operator_id(operator),
         )
+
+    @classmethod
+    async def sync_registered_permissions(cls, *, operator: Any) -> dict[str, Any]:
+        from ns_backend.iam.registry import (
+            PermissionModuleRegistry,
+            register_builtin_permission_providers,
+        )
+
+        register_builtin_permission_providers()
+
+        specs = PermissionModuleRegistry.list_specs()
+
+        return await cls.repository_class.sync_permissions(
+            permissions=[
+                cls.permission_spec_to_payload(spec)
+                for spec in specs
+            ],
+            operator_id=cls.get_operator_id(operator),
+        )
+
+    @staticmethod
+    def permission_spec_to_payload(spec: PermissionSpec) -> dict[str, Any]:
+        return {
+            "permission_code": spec.permission_code,
+            "permission_name": spec.permission_name,
+            "permission_type": spec.permission_type,
+            "parent_code": spec.parent_code,
+            "status": spec.status,
+        }
 
     @classmethod
     def normalize_resource_spec(cls, value: Any) -> dict[str, Any]:
