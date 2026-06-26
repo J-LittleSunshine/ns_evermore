@@ -86,3 +86,7 @@ PASSWORD_RSA_PRIVATE_KEY_FILE = ns_config.backend.password_rsa_private_key_file
 PASSWORD_RSA_PRIVATE_KEY_PASSPHRASE = ns_config.backend.password_rsa_private_key_passphrase
 
 IAM_INTERNAL_TOKEN = ns_config.backend.iam_internal_token
+
+IAM_DECISION_AUDIT_ENABLED = ns_config.backend.iam_decision_audit_enabled
+
+IAM_DECISION_AUDIT_STRICT_MODE = ns_config.backend.iam_decision_audit_strict_mode
