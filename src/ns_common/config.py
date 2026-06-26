@@ -89,6 +89,8 @@ class NsBackendConfig:
     iam_internal_token: str = "change-me-iam-internal-token-at-least-32-chars"
     iam_decision_audit_enabled: bool = True
     iam_decision_audit_strict_mode: bool = False
+    iam_operation_audit_enabled: bool = True
+    iam_operation_audit_strict_mode: bool = False
 
 
 @dataclass(slots=True, kw_only=True)

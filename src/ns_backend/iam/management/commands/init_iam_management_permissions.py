@@ -80,6 +80,7 @@ class Command(BaseCommand):
         SeedPermissionSpec(permission_code="iam:resource_relation:delete", permission_name="Delete resource relations"),
 
         SeedPermissionSpec(permission_code="iam:audit:decision:read", permission_name="Read decision audit logs"),
+        SeedPermissionSpec(permission_code="iam:audit:operation:read", permission_name="Read operation audit logs"),
 
         SeedPermissionSpec(permission_code="iam:policy:read", permission_name="Read policies"),
         SeedPermissionSpec(permission_code="iam:policy:create", permission_name="Create policies"),

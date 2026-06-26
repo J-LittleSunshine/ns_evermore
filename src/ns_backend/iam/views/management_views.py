@@ -18,6 +18,7 @@ from ns_backend.iam.services import (
     DepartmentManagementService,
     DepartmentPermissionManagementService,
     IamManagementService,
+    OperationAuditService,
     PermissionManagementService,
     PermissionService,
     PolicyManagementService,
@@ -52,6 +53,7 @@ class IamManagementViewSet(NsViewSet):
     }
 
     required_permissions: ClassVar[dict[str, tuple[str, ...]]] = {}
+    audit_resource_type: ClassVar[str | None] = None
 
     async def list(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         operator = await self.get_operator(request)
@@ -70,28 +72,186 @@ class IamManagementViewSet(NsViewSet):
         )
 
     async def create(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
-        operator = await self.get_operator(request)
-
-        return await self.get_service_class().create_item(
-            data=self.get_request_data(request),
-            operator=operator,
+        return await self.execute_with_operation_audit(
+            request=request,
+            operation_type="create",
+            handler=lambda operator, data: self.get_service_class().create_item(
+                data=data,
+                operator=operator,
+            ),
         )
 
     async def update(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
-        operator = await self.get_operator(request)
-
-        return await self.get_service_class().update_item(
-            data=self.get_request_data(request),
-            operator=operator,
+        return await self.execute_with_operation_audit(
+            request=request,
+            operation_type="update",
+            handler=lambda operator, data: self.get_service_class().update_item(
+                data=data,
+                operator=operator,
+            ),
         )
 
     async def delete(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
-        operator = await self.get_operator(request)
-
-        return await self.get_service_class().delete_item(
-            data=self.get_request_data(request),
-            operator=operator,
+        return await self.execute_with_operation_audit(
+            request=request,
+            operation_type="delete",
+            handler=lambda operator, data: self.get_service_class().delete_item(
+                data=data,
+                operator=operator,
+            ),
         )
+
+    async def execute_with_operation_audit(self, *, request: "Request", operation_type: str, handler: Any) -> dict[str, Any]:
+        request_data = self.get_request_data(request)
+        operator = None
+        before_data = None
+
+        resource_type = self.resolve_operation_audit_resource_type()
+        request_resource_id = OperationAuditService.extract_resource_id(
+            request_data=request_data,
+        )
+
+        try:
+            operator = await self.get_operator(request)
+
+            before_data = await self.get_operation_audit_before_data(
+                operator=operator,
+                request_data=request_data,
+                operation_type=operation_type,
+            )
+
+            result = await handler(
+                operator,
+                request_data,
+            )
+
+            await OperationAuditService.record_safe(
+                operator=operator,
+                operation_type=operation_type,
+                resource_type=resource_type,
+                request=request,
+                request_data=request_data,
+                before_data=before_data,
+                after_data=result if isinstance(result, dict) else None,
+                status=OperationAuditService.STATUS_SUCCESS,
+                resource_id=OperationAuditService.extract_resource_id(
+                    request_data=request_data,
+                    result_data=result if isinstance(result, dict) else None,
+                ),
+                company_id=self.extract_company_id(
+                    operator=operator,
+                    request_data=request_data,
+                    result_data=result if isinstance(result, dict) else None,
+                    before_data=before_data,
+                ),
+            )
+
+            return result
+
+        except Exception as exc:
+            await OperationAuditService.record_safe(
+                operator=operator,
+                operation_type=operation_type,
+                resource_type=resource_type,
+                request=request,
+                request_data=request_data,
+                before_data=before_data,
+                after_data=None,
+                status=OperationAuditService.STATUS_FAILED,
+                error=exc,
+                resource_id=request_resource_id,
+                company_id=self.extract_company_id(
+                    operator=operator,
+                    request_data=request_data,
+                    result_data=None,
+                    before_data=before_data,
+                ),
+            )
+
+            raise
+
+    async def get_operation_audit_before_data(self, *, operator: Any, request_data: dict[str, Any], operation_type: str) -> dict[str, Any] | None:
+        if operation_type not in (
+                "update",
+                "delete",
+                "publish",
+                "disable",
+                "reset_password",
+        ):
+            return None
+
+        item_id = OperationAuditService.extract_resource_id(
+            request_data=request_data,
+        )
+
+        if item_id is None:
+            return None
+
+        service_class = self.get_service_class()
+        model_class = getattr(service_class, "model_class", None)
+        detail_fields = getattr(service_class, "detail_fields", ())
+
+        if model_class is None or not detail_fields:
+            return None
+
+        try:
+            await service_class.ensure_item_accessible(
+                item_id=item_id,
+                operator=operator,
+            )
+
+            return await service_class.repository_class.detail_item(
+                model_class=model_class,
+                item_id=item_id,
+                fields=detail_fields,
+            )
+        except Exception:
+            return None
+
+    def resolve_operation_audit_resource_type(self) -> str:
+        if self.audit_resource_type:
+            return self.audit_resource_type
+
+        service_class = self.get_service_class()
+        model_class = getattr(service_class, "model_class", None)
+
+        if model_class is not None:
+            return str(model_class._meta.db_table).strip().lower()[:64]  # noqa
+
+        return self.__class__.__name__.replace("ViewSet", "").lower()[:64]
+
+    @staticmethod
+    def extract_company_id(*, operator: Any | None, request_data: dict[str, Any] | None, result_data: dict[str, Any] | None, before_data: dict[str, Any] | None) -> int | None:
+        for source in (
+                result_data,
+                before_data,
+                request_data,
+        ):
+            if not isinstance(source, dict):
+                continue
+
+            value = source.get("company_id")
+            if value in (None, ""):
+                continue
+
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                continue
+
+            if parsed > 0:
+                return parsed
+
+        operator_company_id = getattr(operator, "company_id", None)
+        if operator_company_id in (None, ""):
+            return None
+
+        try:
+            parsed_operator_company_id = int(operator_company_id)
+        except (TypeError, ValueError):
+            return None
+
+        return parsed_operator_company_id if parsed_operator_company_id > 0 else None
 
     async def get_operator(self, request: "Request") -> Any:
         user, _ = await AuthService.resolve_user_from_request(request)
@@ -315,19 +475,23 @@ class PolicyViewSet(IamManagementViewSet):
     }
 
     async def publish(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
-        operator = await self.get_operator(request)
-
-        return await self.get_service_class().publish_item(
-            data=self.get_request_data(request),
-            operator=operator,
+        return await self.execute_with_operation_audit(
+            request=request,
+            operation_type="publish",
+            handler=lambda operator, data: self.get_service_class().publish_item(
+                data=data,
+                operator=operator,
+            ),
         )
 
     async def disable(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
-        operator = await self.get_operator(request)
-
-        return await self.get_service_class().disable_item(
-            data=self.get_request_data(request),
-            operator=operator,
+        return await self.execute_with_operation_audit(
+            request=request,
+            operation_type="disable",
+            handler=lambda operator, data: self.get_service_class().disable_item(
+                data=data,
+                operator=operator,
+            ),
         )
 
 
@@ -435,14 +599,14 @@ class UserViewSet(IamManagementViewSet):
     }
 
     async def reset_password(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
-        operator = await self.get_operator(request)
-
-        # noinspection PyUnresolvedReferences
-        return await self.get_service_class().reset_password(
-            data=self.get_request_data(request),
-            operator=operator,
+        return await self.execute_with_operation_audit(
+            request=request,
+            operation_type="reset_password",
+            handler=lambda operator, data: self.get_service_class().reset_password(
+                data=data,
+                operator=operator,
+            ),
         )
-
 
 class UserRoleViewSet(IamManagementViewSet):
     logger_name = "ns_backend.iam.user_role.api"

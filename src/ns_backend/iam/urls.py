@@ -11,6 +11,7 @@ from ns_backend.iam.views import (
     DepartmentPermissionViewSet,
     DepartmentViewSet,
     InternalIamViewSet,
+    OperationAuditViewSet,
     PermissionViewSet,
     PolicyRuleViewSet,
     PolicyViewSet,
@@ -45,6 +46,7 @@ urlpatterns = [
     path("access/batch_check/", AccessViewSet.as_view({"post": "batch_check"})),
 
     path("audit/decision/list/", DecisionAuditViewSet.as_view({"post": "list"})),
+    path("audit/operation/list/", OperationAuditViewSet.as_view({"post": "list"})),
 
     path("company/list/", CompanyViewSet.as_view({"post": "list"})),
     path("company/detail/", CompanyViewSet.as_view({"post": "get_detail"})),
