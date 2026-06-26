@@ -15,6 +15,7 @@ from ns_backend.iam.models import (
     IamResourceAction,
     IamResourceRelation,
     IamUserRole,
+    IamPolicyRule,
 )
 
 if TYPE_CHECKING:
@@ -195,4 +196,33 @@ class RuntimeAuthorizeRepository:
         return [
             dict(row)
             async for row in queryset
+        ]
+
+    @classmethod
+    async def list_active_policy_rules_for_action(cls, *, action_code: str) -> list[dict[str, Any]]:
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamPolicyRule)
+
+        queryset = IamPolicyRule.objects.using(db_alias).filter(
+            action_code=action_code,
+            status=1,
+            policy__status=1,
+        ).values(
+            "id",
+            "policy_id",
+            "subject_type",
+            "subject_id",
+            "resource_type",
+            "resource_id",
+            "action_code",
+            "effect",
+            "data_scope",
+            "condition_json",
+            "priority",
+            "status",
+            "policy__priority",
+        )
+
+        return [
+            dict(item)
+            async for item in queryset
         ]

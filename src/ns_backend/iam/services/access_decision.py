@@ -19,7 +19,7 @@ from ns_backend.iam.errors import IamRuntimeRequestInvalidError
 from ns_backend.iam.repositories import RuntimeAuthorizeRepository
 from ns_backend.iam.services.decision_audit import DecisionAuditService
 from ns_backend.iam.services.permission import PermissionService
-
+from ns_backend.iam.services.policy_engine import PolicyEngineService
 if TYPE_CHECKING:
     pass
 
@@ -32,6 +32,7 @@ class AccessDecisionService:
     MATCHED_SOURCE_RBAC = "rbac"
     MATCHED_SOURCE_SUPERUSER = "superuser"
     MATCHED_SOURCE_NONE = "none"
+    MATCHED_SOURCE_POLICY = "policy"
 
     ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
@@ -102,6 +103,9 @@ class AccessDecisionService:
                 "access_mode": None,
             },
             "acl": {
+                "matched": False,
+            },
+            "policy": {
                 "matched": False,
             },
             "rbac": {
@@ -221,6 +225,22 @@ class AccessDecisionService:
             action_code=action_code,
         )
 
+        policy_result = await PolicyEngineService.evaluate(
+            subject_bindings=subject_bindings,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action_code=action_code,
+            context=cls.build_policy_context(
+                request_data=request_data,
+                user=user,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action_code=action_code,
+                permission_code=permission_code,
+                access_mode=access_mode,
+            ),
+        )
+
         if acl_result is None:
             cls.append_chain(
                 decision_chain,
@@ -258,6 +278,48 @@ class AccessDecisionService:
                 permission_code=permission_code,
                 access_mode=access_mode,
                 matched_acl_id=acl_result.get("matched_acl_id"),
+                hit_details=hit_details,
+                decision_chain=decision_chain,
+                trace_id=trace_id,
+            )
+
+        if policy_result is None:
+            cls.append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_POLICY,
+                effect="none",
+                reason="POLICY_NOT_MATCHED",
+            )
+
+        if policy_result is not None and policy_result.get("effect") == PERMISSION_EFFECT_DENY:
+            hit_details["policy"] = {
+                "matched": True,
+                "effect": PERMISSION_EFFECT_DENY,
+                "matched_policy_id": policy_result.get("matched_policy_id"),
+                "matched_rule_id": policy_result.get("matched_rule_id"),
+                "data_scope": policy_result.get("data_scope"),
+            }
+
+            cls.append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_POLICY,
+                effect=cls.EFFECT_DENY,
+                reason="POLICY_DENY",
+                matched_policy_id=policy_result.get("matched_policy_id"),
+                matched_rule_id=policy_result.get("matched_rule_id"),
+            )
+
+            return cls.build_decision(
+                allowed=False,
+                reason="POLICY_DENY",
+                matched_source=cls.MATCHED_SOURCE_POLICY,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action_code=action_code,
+                permission_code=permission_code,
+                access_mode=access_mode,
+                matched_policy_id=policy_result.get("matched_policy_id"),
+                matched_rule_id=policy_result.get("matched_rule_id"),
                 hit_details=hit_details,
                 decision_chain=decision_chain,
                 trace_id=trace_id,
@@ -474,6 +536,32 @@ class AccessDecisionService:
         return subject_bindings
 
     @classmethod
+    def build_policy_context(cls,*,request_data: dict[str, Any],user: Any,resource_type: str,resource_id: str,action_code: str,permission_code: str | None,access_mode: str) -> dict[str, Any]:
+        raw_context = request_data.get("context")
+
+        if isinstance(raw_context, dict):
+            context = dict(raw_context)
+        else:
+            context = {}
+
+        context.setdefault("user_id", getattr(user, "id", None))
+        context.setdefault("username", getattr(user, "username", None))
+        context.setdefault("user_type", getattr(user, "user_type", None))
+        context.setdefault("company_id", getattr(user, "company_id", None))
+        context.setdefault("subsidiary_id", getattr(user, "subsidiary_id", None))
+        context.setdefault("department_id", getattr(user, "department_id", None))
+        context.setdefault("is_staff", bool(getattr(user, "is_staff", False)))
+        context.setdefault("is_superuser", bool(getattr(user, "is_superuser", False)))
+
+        context.setdefault("resource_type", resource_type)
+        context.setdefault("resource_id", resource_id)
+        context.setdefault("action_code", action_code)
+        context.setdefault("permission_code", permission_code)
+        context.setdefault("access_mode", access_mode)
+
+        return context
+
+    @classmethod
     async def resolve_acl_effect(cls, *, subject_bindings: list[tuple[str, int]], resource_type: str, resource_id: str, action_code: str) -> dict[str, Any] | None:
         now = timezone.now()
 
@@ -677,6 +765,8 @@ class AccessDecisionService:
             access_mode: str | None = None,
             filters: dict[str, Any] | None = None,
             matched_acl_id: int | None = None,
+            matched_policy_id: int | None = None,
+            matched_rule_id: int | None = None,
             matched_rbac_permission_code: str | None = None,
             hit_details: dict[str, Any] | None = None,
             decision_chain: list[dict[str, Any]] | None = None,
@@ -689,6 +779,8 @@ class AccessDecisionService:
             "matched_source": matched_source,
             "access_mode": access_mode,
             "matched_acl_id": matched_acl_id,
+            "matched_policy_id": matched_policy_id,
+            "matched_rule_id": matched_rule_id,
             "matched_rbac_permission_code": matched_rbac_permission_code,
             "resource_type": resource_type,
             "resource_id": resource_id,
