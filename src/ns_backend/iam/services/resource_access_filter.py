@@ -6,6 +6,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from django.conf import settings
 from django.utils import timezone
 
 from ns_backend.iam.constants import (
@@ -17,15 +18,81 @@ from ns_backend.iam.constants import (
 from ns_backend.iam.errors import IamRuntimeRequestInvalidError
 from ns_backend.iam.repositories import AccessDecisionRepository
 from ns_backend.iam.schemas import DataScopeFieldMap
+from ns_backend.iam.services.backoff import retry_with_backoff
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.permission import PermissionService
+from ns_common import get_ns_logger
 
 if TYPE_CHECKING:
     pass
 
+logger = get_ns_logger("ns_backend.iam.resource_access_filter", True)
+
 
 class ResourceAccessFilterService:
     DEFAULT_RESOURCE_ID_FIELD = "resource_id"
+    DEFAULT_AUTH_BACKOFF_ENABLED = True
+    DEFAULT_AUTH_BACKOFF_MAX_RETRIES = 3
+    DEFAULT_AUTH_BACKOFF_BASE_DELAY_MS = 50
+    DEFAULT_AUTH_BACKOFF_MAX_DELAY_MS = 1000
+    DEFAULT_AUTH_BACKOFF_JITTER_RATIO = 0.5
+
+    @staticmethod
+    def coerce_non_negative_int(value: Any, default: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(parsed, 0)
+
+    @staticmethod
+    def coerce_float(value: Any, default: float, *, min_value: float, max_value: float) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return default
+
+        if parsed < min_value:
+            return min_value
+
+        if parsed > max_value:
+            return max_value
+
+        return parsed
+
+    @classmethod
+    def backoff_enabled(cls) -> bool:
+        return bool(getattr(settings, "IAM_AUTH_BACKOFF_ENABLED", cls.DEFAULT_AUTH_BACKOFF_ENABLED))
+
+    @classmethod
+    def backoff_max_retries(cls) -> int:
+        return cls.coerce_non_negative_int(
+            getattr(settings, "IAM_AUTH_BACKOFF_MAX_RETRIES", cls.DEFAULT_AUTH_BACKOFF_MAX_RETRIES),
+            cls.DEFAULT_AUTH_BACKOFF_MAX_RETRIES,
+        )
+
+    @classmethod
+    def backoff_base_delay_ms(cls) -> int:
+        return cls.coerce_non_negative_int(
+            getattr(settings, "IAM_AUTH_BACKOFF_BASE_DELAY_MS", cls.DEFAULT_AUTH_BACKOFF_BASE_DELAY_MS),
+            cls.DEFAULT_AUTH_BACKOFF_BASE_DELAY_MS,
+        )
+
+    @classmethod
+    def backoff_max_delay_ms(cls) -> int:
+        return cls.coerce_non_negative_int(
+            getattr(settings, "IAM_AUTH_BACKOFF_MAX_DELAY_MS", cls.DEFAULT_AUTH_BACKOFF_MAX_DELAY_MS),
+            cls.DEFAULT_AUTH_BACKOFF_MAX_DELAY_MS,
+        )
+
+    @classmethod
+    def backoff_jitter_ratio(cls) -> float:
+        return cls.coerce_float(
+            getattr(settings, "IAM_AUTH_BACKOFF_JITTER_RATIO", cls.DEFAULT_AUTH_BACKOFF_JITTER_RATIO),
+            cls.DEFAULT_AUTH_BACKOFF_JITTER_RATIO,
+            min_value=0.0,
+            max_value=1.0,
+        )
 
     @staticmethod
     def normalize_required_text(value: Any, field_name: str) -> str:
@@ -451,8 +518,13 @@ class ResourceAccessFilterService:
         normalized_resource_type = cls.normalize_resource_type(resource_type)
         normalized_action_code = cls.normalize_action_code(action_code)
 
-        try:
-            result = await cls.resolve_retrieval_filter_once(
+        attempt_count = 0
+
+        async def operation() -> dict[str, Any]:
+            nonlocal attempt_count
+            attempt_count += 1
+
+            return await cls.resolve_retrieval_filter_once(
                 user=user,
                 resource_type=normalized_resource_type,
                 action_code=normalized_action_code,
@@ -460,11 +532,49 @@ class ResourceAccessFilterService:
                 field_map=field_map,
             )
 
-            if not isinstance(result, dict):
-                return cls.build_deny_all_filter(reason="AUTH_FILTER_BUILD_FAILED")
+        try:
+            if cls.backoff_enabled():
+                result = await retry_with_backoff(
+                    operation,
+                    max_retries=cls.backoff_max_retries(),
+                    base_delay_ms=cls.backoff_base_delay_ms(),
+                    max_delay_ms=cls.backoff_max_delay_ms(),
+                    jitter_ratio=cls.backoff_jitter_ratio(),
+                    retryable_exceptions=(
+                        Exception,
+                    ),
+                    operation_name="iam_resource_access_filter",
+                )
+            else:
+                result = await operation()
 
-            result.setdefault("retry_count", 0)
+            retry_count = max(attempt_count - 1, 0)
+
+            if not isinstance(result, dict):
+                result = cls.build_deny_all_filter(
+                    reason="AUTH_FILTER_BUILD_FAILED",
+                    retry_count=retry_count,
+                )
+
+            result["retry_count"] = retry_count
             return result
 
-        except Exception:  # noqa
-            return cls.build_deny_all_filter(reason="AUTH_FILTER_BUILD_FAILED")
+        except Exception as exc:  # noqa
+            retry_count = max(attempt_count - 1, 0)
+
+            logger.error(
+                "resource access filter build failed",
+                exc_info=True,
+                extra={
+                    "resource_type": normalized_resource_type,
+                    "action_code": normalized_action_code,
+                    "user_id": getattr(user, "id", None),
+                    "retry_count": retry_count,
+                    "exception_class": exc.__class__.__name__,
+                },
+            )
+
+            return cls.build_deny_all_filter(
+                reason="AUTH_FILTER_BUILD_FAILED",
+                retry_count=retry_count,
+            )

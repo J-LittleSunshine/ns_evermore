@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from ns_backend.iam.services.access_decision import AccessDecisionService
 from ns_backend.iam.services.auth import AuthService
 from ns_backend.iam.services.auth_context import AuthContextService
+from ns_backend.iam.services.backoff import retry_with_backoff
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.decision_audit import DecisionAuditService
 from ns_backend.iam.services.internal import InternalIamService
@@ -72,4 +73,5 @@ __all__ = [
     "SessionService",
     "IamSyncService",
     "ResourceAccessFilterService",
+    "retry_with_backoff",
 ]
