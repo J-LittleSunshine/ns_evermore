@@ -16,7 +16,7 @@ from ns_backend.iam.constants import (
     RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW,
 )
 from ns_backend.iam.errors import IamRuntimeRequestInvalidError
-from ns_backend.iam.repositories import RuntimeAuthorizeRepository
+from ns_backend.iam.repositories import AccessDecisionRepository
 from ns_backend.iam.services.decision_audit import DecisionAuditService
 from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.policy_engine import PolicyEngineService
@@ -134,7 +134,7 @@ class AccessDecisionService:
                 trace_id=trace_id,
             )
 
-        resource = await RuntimeAuthorizeRepository.get_resource_by_type(
+        resource = await AccessDecisionRepository.get_resource_by_type(
             resource_type=resource_type,
         )
 
@@ -159,7 +159,7 @@ class AccessDecisionService:
                 trace_id=trace_id,
             )
 
-        action_registered = await RuntimeAuthorizeRepository.has_action_for_resource_type(
+        action_registered = await AccessDecisionRepository.has_action_for_resource_type(
             resource_type=resource_type,
             action_code=action_code,
         )
@@ -365,6 +365,45 @@ class AccessDecisionService:
                 trace_id=trace_id,
             )
 
+        if policy_result is not None and policy_result.get("effect") == PERMISSION_EFFECT_ALLOW:
+            hit_details["policy"] = {
+                "matched": True,
+                "effect": PERMISSION_EFFECT_ALLOW,
+                "matched_policy_id": policy_result.get("matched_policy_id"),
+                "matched_rule_id": policy_result.get("matched_rule_id"),
+                "data_scope": policy_result.get("data_scope"),
+            }
+
+            filters: dict[str, Any] = {}
+            if policy_result.get("data_scope"):
+                filters["policy_data_scope"] = policy_result.get("data_scope")
+
+            cls.append_chain(
+                decision_chain,
+                source=cls.MATCHED_SOURCE_POLICY,
+                effect=cls.EFFECT_ALLOW,
+                reason="POLICY_ALLOW",
+                matched_policy_id=policy_result.get("matched_policy_id"),
+                matched_rule_id=policy_result.get("matched_rule_id"),
+            )
+
+            return cls.build_decision(
+                allowed=True,
+                reason="POLICY_ALLOW",
+                matched_source=cls.MATCHED_SOURCE_POLICY,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action_code=action_code,
+                permission_code=permission_code,
+                access_mode=access_mode,
+                filters=filters,
+                matched_policy_id=policy_result.get("matched_policy_id"),
+                matched_rule_id=policy_result.get("matched_rule_id"),
+                hit_details=hit_details,
+                decision_chain=decision_chain,
+                trace_id=trace_id,
+            )
+
         if access_mode == RESOURCE_ACCESS_MODE_ACL_REQUIRED:
             cls.append_chain(
                 decision_chain,
@@ -494,7 +533,7 @@ class AccessDecisionService:
             )
         ]
 
-        role_ids = await RuntimeAuthorizeRepository.list_active_role_ids_for_user(
+        role_ids = await AccessDecisionRepository.list_active_role_ids_for_user(
             user_id=user_id,
         )
 
@@ -565,7 +604,7 @@ class AccessDecisionService:
     async def resolve_acl_effect(cls, *, subject_bindings: list[tuple[str, int]], resource_type: str, resource_id: str, action_code: str) -> dict[str, Any] | None:
         now = timezone.now()
 
-        resource_chain = await RuntimeAuthorizeRepository.list_resource_ancestor_chain(
+        resource_chain = await AccessDecisionRepository.list_resource_ancestor_chain(
             resource_type=resource_type,
             resource_id=resource_id,
         )
@@ -596,7 +635,7 @@ class AccessDecisionService:
             for item in resource_chain
         }
 
-        effect_rows = await RuntimeAuthorizeRepository.list_active_acl_effects_for_resources(
+        effect_rows = await AccessDecisionRepository.list_active_acl_effects_for_resources(
             subject_bindings=subject_bindings,
             resource_pairs=resource_pairs,
             action_code=action_code,

@@ -15,7 +15,7 @@ from ns_backend.iam.constants import (
     PERMISSION_EFFECT_ALLOW,
     PERMISSION_EFFECT_DENY,
 )
-from ns_backend.iam.repositories import RuntimeAuthorizeRepository
+from ns_backend.iam.repositories import AccessDecisionRepository
 
 if TYPE_CHECKING:
     pass
@@ -41,7 +41,7 @@ class PolicyEngineService:
 
     @classmethod
     async def evaluate(cls, *, subject_bindings: list[tuple[str, int]], resource_type: str, resource_id: str, action_code: str, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
-        rule_rows = await RuntimeAuthorizeRepository.list_active_policy_rules_for_action(
+        rule_rows = await AccessDecisionRepository.list_active_policy_rules_for_action(
             action_code=action_code,
         )
 

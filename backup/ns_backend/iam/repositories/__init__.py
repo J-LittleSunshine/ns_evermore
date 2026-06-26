@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from ns_backend.iam.repositories.admin import AdminRepository
 from ns_backend.iam.repositories.audit import AuditRepository
-from ns_backend.iam.repositories.authorize import AuthorizeRepository
+from ns_backend.iam.repositories.access_decision import AuthorizeRepository
 from ns_backend.iam.repositories.auth import AuthLoginBundleRepository, AuthUserRepository, LoginFailureRepository
 from ns_backend.iam.repositories.base import IamBaseRepository
 from ns_backend.iam.repositories.data_scope import DataScopeRepository

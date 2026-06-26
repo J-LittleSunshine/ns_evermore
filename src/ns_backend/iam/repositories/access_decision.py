@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     pass
 
 
-class RuntimeAuthorizeRepository:
+class AccessDecisionRepository:
     MAX_RESOURCE_ANCESTOR_DEPTH = 20
 
     @staticmethod
