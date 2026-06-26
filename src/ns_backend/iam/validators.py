@@ -952,3 +952,202 @@ class ResourceAclValidator(IamManagementValidator):
             field=field,
             value=value,
         )
+
+
+class PolicyValidator(IamManagementValidator):
+    required_create_fields = (
+        "policy_code",
+        "policy_name",
+    )
+    allowed_create_fields = (
+        "policy_code",
+        "policy_name",
+        "priority",
+        "status",
+        "version",
+    )
+    allowed_update_fields = (
+        "policy_name",
+        "priority",
+        "status",
+        "version",
+    )
+    integer_fields = (
+        "priority",
+        "status",
+        "version",
+    )
+    max_lengths = {
+        "policy_code": 128,
+        "policy_name": 128,
+    }
+    defaults = {
+        "priority": 0,
+        "status": 0,
+        "version": 1,
+    }
+
+    @classmethod
+    def normalize_field_value(cls, *, field: str, value: Any) -> Any:
+        if field == "policy_code":
+            normalized = str(value or "").strip().lower()
+
+            if not normalized:
+                return ""
+
+            if " " in normalized:
+                raise IamManagementRequestInvalidError(
+                    "policy_code cannot contain spaces.",
+                    details={
+                        "field": field,
+                        "value": normalized,
+                    },
+                )
+
+            if len(normalized) > cls.max_lengths["policy_code"]:
+                raise IamManagementRequestInvalidError(
+                    "Field length exceeds limit.",
+                    details={
+                        "field": field,
+                        "max_length": cls.max_lengths["policy_code"],
+                    },
+                )
+
+            return normalized
+
+        return super().normalize_field_value(
+            field=field,
+            value=value,
+        )
+
+
+class PolicyRuleValidator(IamManagementValidator):
+    ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+    SUBJECT_TYPES = (
+        "USER",
+        "ROLE",
+        "DEPARTMENT",
+        "ORGANIZATION",
+        "SUBSIDIARY",
+    )
+
+    required_create_fields = (
+        "policy_id",
+        "action_code",
+        "effect",
+    )
+    allowed_create_fields = (
+        "policy_id",
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "action_code",
+        "effect",
+        "data_scope",
+        "condition_json",
+        "priority",
+        "status",
+    )
+    allowed_update_fields = (
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "action_code",
+        "effect",
+        "data_scope",
+        "condition_json",
+        "priority",
+        "status",
+    )
+    integer_fields = (
+        "policy_id",
+        "subject_id",
+        "priority",
+        "status",
+    )
+    nullable_fields = (
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "data_scope",
+        "condition_json",
+    )
+    enum_fields = {
+        "subject_type": SUBJECT_TYPES,
+        "effect": (
+            PERMISSION_EFFECT_ALLOW,
+            PERMISSION_EFFECT_DENY,
+        ),
+        "data_scope": DATA_SCOPE_VALUES,
+    }
+    max_lengths = {
+        "subject_type": 32,
+        "resource_type": 128,
+        "resource_id": 128,
+        "action_code": 64,
+        "effect": 16,
+        "data_scope": 32,
+    }
+    defaults = {
+        "priority": 0,
+        "status": 1,
+    }
+
+    @classmethod
+    def normalize_field_value(cls, *, field: str, value: Any) -> Any:
+        if field == "subject_type":
+            if cls.is_empty_value(value):
+                return None
+
+            return str(value).strip().upper()
+
+        if field == "resource_type":
+            if cls.is_empty_value(value):
+                return None
+
+            return ResourceValidator.normalize_resource_key(
+                value=value,
+                field=field,
+            )
+
+        if field == "action_code":
+            normalized = str(value or "").strip().lower()
+
+            if cls.ACTION_CODE_PATTERN.fullmatch(normalized) is None:
+                raise IamManagementRequestInvalidError(
+                    "action_code is invalid.",
+                    details={
+                        "field": field,
+                        "value": normalized,
+                        "pattern": cls.ACTION_CODE_PATTERN.pattern,
+                    },
+                )
+
+            return normalized
+
+        if field == "effect":
+            return str(value or "").strip().upper()
+
+        if field == "condition_json":
+            if cls.is_empty_value(value):
+                return None
+
+            if not isinstance(value, dict):
+                raise IamManagementRequestInvalidError(
+                    "condition_json must be an object.",
+                    details={
+                        "field": field,
+                    },
+                )
+
+            return value
+
+        return super().normalize_field_value(
+            field=field,
+            value=value,
+        )
+   

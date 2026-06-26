@@ -33,6 +33,8 @@ from ns_backend.iam.models import (
     IamDepartment,
     IamDepartmentPermission,
     IamPermission,
+    IamPolicy,
+    IamPolicyRule,
     IamResource,
     IamResourceAcl,
     IamResourceAction,
@@ -55,6 +57,8 @@ from ns_backend.iam.validators import (
     DepartmentValidator,
     IamManagementValidator,
     PermissionValidator,
+    PolicyRuleValidator,
+    PolicyValidator,
     ResourceAclValidator,
     ResourceActionValidator,
     ResourceRelationValidator,
@@ -2083,6 +2087,365 @@ class ResourceAclManagementService(IamManagementService):
             subject_id=getattr(item, "subject_id", None),
             operator=operator,
         )
+
+
+class PolicyRuleManagementService(IamManagementService):
+    model_class = IamPolicyRule
+    validator_class = PolicyRuleValidator
+
+    list_fields = detail_fields = (
+        "id",
+        "policy_id",
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "action_code",
+        "effect",
+        "data_scope",
+        "condition_json",
+        "priority",
+        "status",
+    )
+    filter_fields = (
+        "id",
+        "policy_id",
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "action_code",
+        "effect",
+        "data_scope",
+        "priority",
+        "status",
+    )
+    keyword_fields = (
+        "resource_type",
+        "resource_id",
+        "action_code",
+    )
+    order_fields = (
+        "id",
+        "policy_id",
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "action_code",
+        "effect",
+        "priority",
+        "status",
+        "created_at",
+        "updated_at",
+    )
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
+        await cls.validate_policy_exists(
+            policy_id=data.get("policy_id"),
+        )
+
+        await cls.validate_subject_exists(
+            subject_type=data.get("subject_type"),
+            subject_id=data.get("subject_id"),
+        )
+
+        await cls.validate_resource_action(
+            resource_type=data.get("resource_type"),
+            action_code=data.get("action_code"),
+        )
+
+    @classmethod
+    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], operator: Any) -> None:
+        policy_id = data.get("policy_id", getattr(item, "policy_id", None))
+        subject_type = data.get("subject_type", getattr(item, "subject_type", None))
+        subject_id = data.get("subject_id", getattr(item, "subject_id", None))
+        resource_type = data.get("resource_type", getattr(item, "resource_type", None))
+        action_code = data.get("action_code", getattr(item, "action_code", None))
+
+        if policy_id:
+            await cls.validate_policy_exists(
+                policy_id=policy_id,
+            )
+
+        await cls.validate_subject_exists(
+            subject_type=subject_type,
+            subject_id=subject_id,
+        )
+
+        await cls.validate_resource_action(
+            resource_type=resource_type,
+            action_code=action_code,
+        )
+
+    @classmethod
+    async def validate_policy_exists(cls, *, policy_id: int) -> None:
+        policy = await cls.repository_class.get_by_id(
+            model_class=IamPolicy,
+            item_id=policy_id,
+        )
+
+        if policy is None:
+            raise IamInvalidRelationError(
+                "Policy does not exist.",
+                details={
+                    "policy_id": policy_id,
+                },
+            )
+
+    @classmethod
+    async def validate_subject_exists(cls, *, subject_type: str | None, subject_id: int | None) -> None:
+        if subject_type in (None, "") and subject_id in (None, ""):
+            return
+
+        if subject_type in (None, "") or subject_id in (None, ""):
+            raise IamManagementRequestInvalidError(
+                "subject_type and subject_id must be provided together.",
+                details={
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                },
+            )
+
+        subject_models = {
+            "USER": IamUser,
+            "ROLE": IamRole,
+            "DEPARTMENT": IamDepartment,
+            "ORGANIZATION": IamCompany,
+            "SUBSIDIARY": IamSubsidiary,
+        }
+
+        model_class = subject_models.get(str(subject_type or "").strip().upper())
+
+        if model_class is None:
+            raise IamManagementRequestInvalidError(
+                "subject_type is invalid.",
+                details={
+                    "subject_type": subject_type,
+                    "allowed_values": sorted(subject_models),
+                },
+            )
+
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=model_class,
+            filters={
+                "id": subject_id,
+            },
+            exclude_id=None,
+        )
+
+        if not exists:
+            raise IamInvalidRelationError(
+                "Policy rule subject does not exist.",
+                details={
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                },
+            )
+
+    @classmethod
+    async def validate_resource_action(cls, *, resource_type: str | None, action_code: str) -> None:
+        if resource_type not in (None, ""):
+            resource = await cls.repository_class.get_one_by_filters(
+                model_class=IamResource,
+                filters={
+                    "resource_type": resource_type,
+                },
+            )
+
+            if resource is None:
+                raise IamInvalidRelationError(
+                    "Resource type does not exist.",
+                    details={
+                        "resource_type": resource_type,
+                    },
+                )
+
+            action_exists = await cls.repository_class.exists_by_filters(
+                model_class=IamResourceAction,
+                filters={
+                    "resource_id": resource.id,
+                    "action_code": action_code,
+                },
+                exclude_id=None,
+            )
+
+            if not action_exists:
+                raise IamInvalidRelationError(
+                    "Action code does not exist under resource type.",
+                    details={
+                        "resource_type": resource_type,
+                        "action_code": action_code,
+                    },
+                )
+
+            return
+
+        action_exists = await cls.repository_class.exists_by_filters(
+            model_class=IamResourceAction,
+            filters={
+                "action_code": action_code,
+            },
+            exclude_id=None,
+        )
+
+        if not action_exists:
+            raise IamInvalidRelationError(
+                "Action code is not registered.",
+                details={
+                    "action_code": action_code,
+                },
+            )
+
+    @classmethod
+    async def list_rules_by_policy_id(cls, *, policy_id: int) -> list[dict[str, Any]]:
+        return await cls.repository_class.list_all_items(
+            model_class=cls.model_class,
+            fields=cls.detail_fields,
+            filters={
+                "policy_id": policy_id,
+            },
+            keyword_conditions=[],
+            order_by=(
+                "-priority",
+                "id",
+            ),
+        )
+
+
+class PolicyManagementService(IamManagementService):
+    model_class = IamPolicy
+    validator_class = PolicyValidator
+
+    list_fields = detail_fields = (
+        "id",
+        "policy_code",
+        "policy_name",
+        "priority",
+        "status",
+        "version",
+    )
+    filter_fields = (
+        "id",
+        "policy_code",
+        "policy_name",
+        "priority",
+        "status",
+        "version",
+    )
+    keyword_fields = (
+        "policy_code",
+        "policy_name",
+    )
+    order_fields = (
+        "id",
+        "policy_code",
+        "policy_name",
+        "priority",
+        "status",
+        "version",
+        "created_at",
+        "updated_at",
+    )
+    unique_fields = (
+        "policy_code",
+    )
+
+    @classmethod
+    async def detail_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        item = await super().detail_item(
+            data=data,
+            operator=operator,
+        )
+
+        item["rules"] = await PolicyRuleManagementService.list_rules_by_policy_id(
+            policy_id=item["id"],
+        )
+
+        return item
+
+    @classmethod
+    async def publish_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        item_id = cls.get_required_id(data=data)
+
+        existing_item = await cls.repository_class.get_by_id(
+            model_class=cls.model_class,
+            item_id=item_id,
+        )
+
+        if existing_item is None:
+            raise IamResourceNotFoundError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "id": item_id,
+                },
+            )
+
+        version = int(getattr(existing_item, "version", 0) or 0) + 1
+
+        item = await cls.repository_class.update_item(
+            model_class=cls.model_class,
+            item_id=item_id,
+            data={
+                "status": 1,
+                "version": version,
+            },
+            fields=cls.detail_fields,
+            operator_id=cls.get_operator_id(operator),
+        )
+
+        if item is None:
+            raise IamResourceNotFoundError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "id": item_id,
+                },
+            )
+
+        return item
+
+    @classmethod
+    async def disable_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        item_id = cls.get_required_id(data=data)
+
+        item = await cls.repository_class.update_item(
+            model_class=cls.model_class,
+            item_id=item_id,
+            data={
+                "status": 0,
+            },
+            fields=cls.detail_fields,
+            operator_id=cls.get_operator_id(operator),
+        )
+
+        if item is None:
+            raise IamResourceNotFoundError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "id": item_id,
+                },
+            )
+
+        return item
+
+    @classmethod
+    async def validate_delete_business_rules(cls, *, item: Any, operator: Any) -> None:
+        has_rules = await cls.repository_class.exists_by_filters(
+            model_class=IamPolicyRule,
+            filters={
+                "policy_id": item.id,
+            },
+            exclude_id=None,
+        )
+
+        if has_rules:
+            raise IamInvalidRelationError(
+                "Policy has rules and cannot be deleted.",
+                details={
+                    "policy_id": item.id,
+                },
+            )
 
 
 class RoleManagementService(IamManagementService):

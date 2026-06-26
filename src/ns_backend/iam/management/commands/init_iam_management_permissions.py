@@ -81,6 +81,18 @@ class Command(BaseCommand):
 
         SeedPermissionSpec(permission_code="iam:audit:decision:read", permission_name="Read decision audit logs"),
 
+        SeedPermissionSpec(permission_code="iam:policy:read", permission_name="Read policies"),
+        SeedPermissionSpec(permission_code="iam:policy:create", permission_name="Create policies"),
+        SeedPermissionSpec(permission_code="iam:policy:update", permission_name="Update policies"),
+        SeedPermissionSpec(permission_code="iam:policy:delete", permission_name="Delete policies"),
+        SeedPermissionSpec(permission_code="iam:policy:publish", permission_name="Publish policies"),
+        SeedPermissionSpec(permission_code="iam:policy:disable", permission_name="Disable policies"),
+
+        SeedPermissionSpec(permission_code="iam:policy_rule:read", permission_name="Read policy rules"),
+        SeedPermissionSpec(permission_code="iam:policy_rule:create", permission_name="Create policy rules"),
+        SeedPermissionSpec(permission_code="iam:policy_rule:update", permission_name="Update policy rules"),
+        SeedPermissionSpec(permission_code="iam:policy_rule:delete", permission_name="Delete policy rules"),
+
         SeedPermissionSpec(permission_code="iam:role:read", permission_name="Read roles"),
         SeedPermissionSpec(permission_code="iam:role:create", permission_name="Create roles"),
         SeedPermissionSpec(permission_code="iam:role:update", permission_name="Update roles"),

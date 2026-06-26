@@ -20,6 +20,8 @@ from ns_backend.iam.services import (
     IamManagementService,
     PermissionManagementService,
     PermissionService,
+    PolicyManagementService,
+    PolicyRuleManagementService,
     ResourceAclManagementService,
     ResourceActionManagementService,
     ResourceManagementService,
@@ -30,7 +32,7 @@ from ns_backend.iam.services import (
     SubsidiaryPermissionManagementService,
     UserManagementService,
     UserPermissionManagementService,
-    UserRoleManagementService,
+    UserRoleManagementService
 )
 
 if TYPE_CHECKING:
@@ -286,6 +288,60 @@ class PermissionViewSet(IamManagementViewSet):
             data=self.get_request_data(request),
             operator=operator,
         )
+
+
+class PolicyViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.policy.api"
+    service_class = PolicyManagementService
+
+    allowed_actions = {
+        "list",
+        "get_detail",
+        "create",
+        "update",
+        "delete",
+        "publish",
+        "disable",
+    }
+
+    required_permissions = {
+        "list": ("iam:policy:read",),
+        "get_detail": ("iam:policy:read",),
+        "create": ("iam:policy:create",),
+        "update": ("iam:policy:update",),
+        "delete": ("iam:policy:delete",),
+        "publish": ("iam:policy:publish",),
+        "disable": ("iam:policy:disable",),
+    }
+
+    async def publish(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        return await self.get_service_class().publish_item(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
+
+    async def disable(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        operator = await self.get_operator(request)
+
+        return await self.get_service_class().disable_item(
+            data=self.get_request_data(request),
+            operator=operator,
+        )
+
+
+class PolicyRuleViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.policy_rule.api"
+    service_class = PolicyRuleManagementService
+
+    required_permissions = {
+        "list": ("iam:policy_rule:read",),
+        "get_detail": ("iam:policy_rule:read",),
+        "create": ("iam:policy_rule:create",),
+        "update": ("iam:policy_rule:update",),
+        "delete": ("iam:policy_rule:delete",),
+    }
 
 
 class ResourceViewSet(IamManagementViewSet):

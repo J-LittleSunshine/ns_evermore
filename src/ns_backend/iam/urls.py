@@ -22,7 +22,9 @@ from ns_backend.iam.views import (
     SubsidiaryViewSet,
     UserPermissionViewSet,
     UserRoleViewSet,
-    UserViewSet
+    UserViewSet,
+PolicyRuleViewSet,
+    PolicyViewSet,
 )
 
 urlpatterns = [
@@ -71,6 +73,20 @@ urlpatterns = [
     path("permission/menu_tree/", PermissionViewSet.as_view({"post": "menu_tree"})),
     path("permission/action_list/", PermissionViewSet.as_view({"post": "action_list"})),
     path("permission/data_list/", PermissionViewSet.as_view({"post": "data_list"})),
+
+    path("policy/list/", PolicyViewSet.as_view({"post": "list"})),
+    path("policy/detail/", PolicyViewSet.as_view({"post": "get_detail"})),
+    path("policy/create/", PolicyViewSet.as_view({"post": "create"})),
+    path("policy/update/", PolicyViewSet.as_view({"post": "update"})),
+    path("policy/delete/", PolicyViewSet.as_view({"post": "delete"})),
+    path("policy/publish/", PolicyViewSet.as_view({"post": "publish"})),
+    path("policy/disable/", PolicyViewSet.as_view({"post": "disable"})),
+
+    path("policy_rule/list/", PolicyRuleViewSet.as_view({"post": "list"})),
+    path("policy_rule/detail/", PolicyRuleViewSet.as_view({"post": "get_detail"})),
+    path("policy_rule/create/", PolicyRuleViewSet.as_view({"post": "create"})),
+    path("policy_rule/update/", PolicyRuleViewSet.as_view({"post": "update"})),
+    path("policy_rule/delete/", PolicyRuleViewSet.as_view({"post": "delete"})),
 
     path("internal/introspect_token/", InternalIamViewSet.as_view({"post": "introspect_token"})),
     path("internal/access_check/", InternalIamViewSet.as_view({"post": "access_check"})),

@@ -13,6 +13,8 @@ from ns_backend.iam.views.management_views import (
     DepartmentViewSet,
     IamManagementViewSet,
     PermissionViewSet,
+    PolicyRuleViewSet,
+    PolicyViewSet,
     ResourceAclViewSet,
     ResourceActionViewSet,
     ResourceRelationViewSet,
@@ -50,4 +52,6 @@ __all__ = [
     "UserPermissionViewSet",
     "UserRoleViewSet",
     "UserViewSet",
+    "PolicyViewSet",
+    "PolicyRuleViewSet",
 ]
