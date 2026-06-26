@@ -10,12 +10,12 @@ from django.db.models import Q
 
 from backend.common import BaseRepository
 from ns_backend.iam.models import (
+    IamPolicyRule,
     IamResource,
     IamResourceAcl,
     IamResourceAction,
     IamResourceRelation,
-    IamUserRole,
-    IamPolicyRule,
+    IamUserRole
 )
 
 if TYPE_CHECKING:
