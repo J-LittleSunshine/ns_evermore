@@ -5,7 +5,7 @@ from typing import Any
 
 from ns_backend.backend.common.viewset import BaseRequestViewSet
 from ns_backend.backend.exceptions import BusinessError
-from ns_backend.iam.services.runtime_auth import RuntimeIamInternalAuthService
+from ns_backend.iam.services.internal import InternalIamService
 from ns_common.error_codes import NsErrorCode
 
 
@@ -20,7 +20,7 @@ class RuntimeIamInternalViewSet(BaseRequestViewSet):
     permission_classes = ()
     throttle_classes = ()
 
-    service_class = RuntimeIamInternalAuthService
+    service_class = InternalIamService
 
     def perform_authentication(self, request) -> None:
         """Disable DRF default authentication for runtime internal API.
@@ -62,7 +62,7 @@ class RuntimeIamInternalViewSet(BaseRequestViewSet):
 
     async def authorize(self, request, *args, **kwargs):
         """Authorize one runtime action."""
-        result = await self.service_class.authorize(
+        result = await self.service_class.access_check(
             self._request_data(request),
             trace_id=self._trace_id(request),
         )
@@ -70,7 +70,7 @@ class RuntimeIamInternalViewSet(BaseRequestViewSet):
 
     async def batch_authorize(self, request, *args, **kwargs):
         """Authorize multiple runtime actions."""
-        result = await self.service_class.batch_authorize(
+        result = await self.service_class.batch_access_check(
             self._request_data(request),
             trace_id=self._trace_id(request),
         )

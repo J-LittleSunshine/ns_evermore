@@ -1631,7 +1631,7 @@ class NsRuntimeNode:
             client_id=principal.client_id or payload.get("client_id"),
         )
 
-        decision = await self._auth_provider.authorize(
+        decision = await self._auth_provider.access_check(
             NsRuntimeAuthorizationRequest(
                 principal=principal,
                 resource_type=RUNTIME_IAM_RESOURCE_FRONTEND,

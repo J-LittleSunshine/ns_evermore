@@ -26,7 +26,7 @@ from ns_backend.iam.views.grant_views import (
 )
 from ns_backend.iam.views.policy_views import PolicyViewSet
 from ns_backend.iam.views.resource_views import ResourceViewSet
-from ns_backend.iam.views.runtime_auth_views import RuntimeIamInternalViewSet
+from ns_backend.iam.views.internal_views import InternalIamViewSet
 from ns_backend.iam.views.session_views import SessionViewSet
 
 if TYPE_CHECKING:
@@ -570,23 +570,23 @@ urlpatterns = [
     ),
 
     path(
-        "runtime/introspect-token", RuntimeIamInternalViewSet.as_view(
+        "runtime/introspect-token", InternalIamViewSet.as_view(
             {
                 "post": "introspect_token"
             }
         )
     ),
     path(
-        "runtime/authorize", RuntimeIamInternalViewSet.as_view(
+        "runtime/authorize", InternalIamViewSet.as_view(
             {
-                "post": "authorize"
+                "post": "access_check"
             }
         )
     ),
     path(
-        "runtime/batch-authorize", RuntimeIamInternalViewSet.as_view(
+        "runtime/batch-authorize", InternalIamViewSet.as_view(
             {
-                "post": "batch_authorize"
+                "post": "batch_access_check"
             }
         )
     ),

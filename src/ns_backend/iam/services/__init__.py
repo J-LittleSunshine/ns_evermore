@@ -27,7 +27,7 @@ from ns_backend.iam.services.management import (
     UserRoleManagementService,
 )
 from ns_backend.iam.services.permission import PermissionService
-from ns_backend.iam.services.runtime_auth import RuntimeIamInternalAuthService
+from ns_backend.iam.services.internal import InternalIamService
 
 if TYPE_CHECKING:
     pass
@@ -50,7 +50,7 @@ __all__ = [
     "ResourceRelationManagementService",
     "RoleManagementService",
     "RolePermissionManagementService",
-    "RuntimeIamInternalAuthService",
+    "InternalIamService",
     "SubsidiaryManagementService",
     "SubsidiaryPermissionManagementService",
     "UserManagementService",

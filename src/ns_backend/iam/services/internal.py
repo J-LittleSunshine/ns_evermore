@@ -15,14 +15,14 @@ from ns_backend.iam.errors import (
     IamUserNotLoggedInOrSessionExpiredError,
 )
 from ns_backend.iam.repositories import AuthUserRepository
-from ns_backend.iam.services.auth import AuthService
 from ns_backend.iam.services.access_decision import AccessDecisionService
+from ns_backend.iam.services.auth import AuthService
 
 if TYPE_CHECKING:
     pass
 
 
-class RuntimeIamInternalAuthService:
+class InternalIamService:
     PRINCIPAL_TYPE_FRONTEND_USER = "FRONTEND_USER"
 
     @classmethod
@@ -100,7 +100,7 @@ class RuntimeIamInternalAuthService:
         }
 
     @classmethod
-    async def authorize(cls, data: dict[str, Any], *, trace_id: str | None = None) -> dict[str, Any]:
+    async def access_check(cls, data: dict[str, Any], *, trace_id: str | None = None) -> dict[str, Any]:
         request_data = cls.ensure_dict(data)
         principal = cls.ensure_principal(request_data.get("principal"))
 
@@ -122,7 +122,7 @@ class RuntimeIamInternalAuthService:
         )
 
     @classmethod
-    async def batch_authorize(cls, data: dict[str, Any], *, trace_id: str | None = None) -> dict[str, Any]:
+    async def batch_access_check(cls, data: dict[str, Any], *, trace_id: str | None = None) -> dict[str, Any]:
         request_data = cls.ensure_dict(data)
         items = request_data.get("items") or request_data.get("requests") or []
         principal = request_data.get("principal")
@@ -151,7 +151,7 @@ class RuntimeIamInternalAuthService:
                 item_data["principal"] = dict(principal)
 
             results.append(
-                await cls.authorize(
+                await cls.access_check(
                     item_data,
                     trace_id=trace_id,
                 )

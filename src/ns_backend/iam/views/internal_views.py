@@ -8,29 +8,29 @@ from typing import (
 
 from backend.common import NsViewSet
 from ns_backend.iam.errors import IamRuntimeAccessDeniedError
-from ns_backend.iam.services import RuntimeIamInternalAuthService
+from ns_backend.iam.services import InternalIamService
 
 if TYPE_CHECKING:
     from rest_framework.request import Request
 
 
-class RuntimeIamInternalViewSet(NsViewSet):
-    logger_name = "ns_backend.iam.runtime.api"
+class InternalIamViewSet(NsViewSet):
+    logger_name = "ns_backend.iam.internal.api"
 
     allowed_actions = {
         "introspect_token",
-        "authorize",
-        "batch_authorize",
+        "access_check",
+        "batch_access_check",
     }
 
-    service_class = RuntimeIamInternalAuthService
+    service_class = InternalIamService
 
     def check_action_access(self, request: "Request", *args: Any, **kwargs: Any) -> None:
         token = self.get_bearer_token_from_request(request)
 
         if not self.service_class.verify_internal_service_token(token):
             raise IamRuntimeAccessDeniedError(
-                "runtime internal service token is invalid.",
+                "internal service token is invalid.",
             )
 
     async def introspect_token(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -38,14 +38,14 @@ class RuntimeIamInternalViewSet(NsViewSet):
             self.get_request_data(request),
         )
 
-    async def authorize(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return await self.service_class.authorize(
+    async def access_check(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.service_class.access_check(
             self.get_request_data(request),
             trace_id=self.get_trace_id(request),
         )
 
-    async def batch_authorize(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return await self.service_class.batch_authorize(
+    async def batch_access_check(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.service_class.batch_access_check(
             self.get_request_data(request),
             trace_id=self.get_trace_id(request),
         )

@@ -4,11 +4,12 @@ from __future__ import annotations
 from django.urls import path
 
 from ns_backend.iam.views import (
-    AuthViewSet,
     AccessViewSet,
+    AuthViewSet,
     CompanyViewSet,
     DepartmentPermissionViewSet,
     DepartmentViewSet,
+    InternalIamViewSet,
     PermissionViewSet,
     ResourceAclViewSet,
     ResourceActionViewSet,
@@ -16,12 +17,11 @@ from ns_backend.iam.views import (
     ResourceViewSet,
     RolePermissionViewSet,
     RoleViewSet,
-    RuntimeIamInternalViewSet,
     SubsidiaryPermissionViewSet,
     SubsidiaryViewSet,
     UserPermissionViewSet,
     UserRoleViewSet,
-    UserViewSet,
+    UserViewSet
 )
 
 urlpatterns = [
@@ -69,9 +69,9 @@ urlpatterns = [
     path("permission/action_list/", PermissionViewSet.as_view({"post": "action_list"})),
     path("permission/data_list/", PermissionViewSet.as_view({"post": "data_list"})),
 
-    path("runtime/introspect_token/", RuntimeIamInternalViewSet.as_view({"post": "introspect_token"})),
-    path("runtime/authorize/", RuntimeIamInternalViewSet.as_view({"post": "authorize"})),
-    path("runtime/batch_authorize/", RuntimeIamInternalViewSet.as_view({"post": "batch_authorize"})),
+    path("internal/introspect_token/", InternalIamViewSet.as_view({"post": "introspect_token"})),
+    path("internal/access_check/", InternalIamViewSet.as_view({"post": "access_check"})),
+    path("internal/batch_access_check/", InternalIamViewSet.as_view({"post": "batch_access_check"})),
 
     path("resource/list/", ResourceViewSet.as_view({"post": "list"})),
     path("resource/detail/", ResourceViewSet.as_view({"post": "get_detail"})),
