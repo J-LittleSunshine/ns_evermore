@@ -60,11 +60,13 @@ class Command(BaseCommand):
         SeedPermissionSpec(permission_code="iam:permission:create", permission_name="Create permissions"),
         SeedPermissionSpec(permission_code="iam:permission:update", permission_name="Update permissions"),
         SeedPermissionSpec(permission_code="iam:permission:delete", permission_name="Delete permissions"),
+        SeedPermissionSpec(permission_code="iam:permission:sync", permission_name="Sync permissions"),
 
         SeedPermissionSpec(permission_code="iam:resource:read", permission_name="Read resources"),
         SeedPermissionSpec(permission_code="iam:resource:create", permission_name="Create resources"),
         SeedPermissionSpec(permission_code="iam:resource:update", permission_name="Update resources"),
         SeedPermissionSpec(permission_code="iam:resource:delete", permission_name="Delete resources"),
+        SeedPermissionSpec(permission_code="iam:resource:sync", permission_name="Sync resources and actions"),
 
         SeedPermissionSpec(permission_code="iam:resource_acl:read", permission_name="Read resource ACLs"),
         SeedPermissionSpec(permission_code="iam:resource_acl:create", permission_name="Create resource ACLs"),

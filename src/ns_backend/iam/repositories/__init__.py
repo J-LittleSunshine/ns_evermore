@@ -14,6 +14,7 @@ from ns_backend.iam.repositories.decision_audit import DecisionAuditRepository
 from ns_backend.iam.repositories.management import IamManagementRepository
 from ns_backend.iam.repositories.operation_audit import OperationAuditRepository
 from ns_backend.iam.repositories.permission import PermissionRepository
+from ns_backend.iam.repositories.sync import IamSyncRepository
 from ns_backend.iam.repositories.token import (
     UserSessionRepository,
     UserTokenRepository,
@@ -36,4 +37,5 @@ __all__ = [
     "UserTokenRepository",
     "UserTokenRotationRepository",
     "OperationAuditRepository",
+    "IamSyncRepository",
 ]

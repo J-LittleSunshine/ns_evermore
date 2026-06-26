@@ -31,6 +31,10 @@ from ns_backend.iam.views.management_views import (
     UserViewSet
 )
 from ns_backend.iam.views.session_views import SessionViewSet
+from ns_backend.iam.views.sync_views import (
+    PermissionSyncViewSet,
+    ResourceSyncViewSet,
+)
 
 if TYPE_CHECKING:
     pass
@@ -60,4 +64,6 @@ __all__ = [
     "PolicyRuleViewSet",
     "SessionViewSet",
     "OperationAuditViewSet",
+    "PermissionSyncViewSet",
+    "ResourceSyncViewSet",
 ]

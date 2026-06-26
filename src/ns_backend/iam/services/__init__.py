@@ -34,6 +34,7 @@ from ns_backend.iam.services.operation_audit import OperationAuditService
 from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.policy_engine import PolicyEngineService
 from ns_backend.iam.services.session import SessionService
+from ns_backend.iam.services.sync import IamSyncService
 
 if TYPE_CHECKING:
     pass
@@ -68,4 +69,5 @@ __all__ = [
     "PolicyEngineService",
     "OperationAuditService",
     "SessionService",
+    "IamSyncService",
 ]

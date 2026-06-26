@@ -12,12 +12,14 @@ from ns_backend.iam.views import (
     DepartmentViewSet,
     InternalIamViewSet,
     OperationAuditViewSet,
+    PermissionSyncViewSet,
     PermissionViewSet,
     PolicyRuleViewSet,
     PolicyViewSet,
     ResourceAclViewSet,
     ResourceActionViewSet,
     ResourceRelationViewSet,
+    ResourceSyncViewSet,
     ResourceViewSet,
     RolePermissionViewSet,
     RoleViewSet,
@@ -150,4 +152,10 @@ urlpatterns = [
     path("subsidiary_permission/list/", SubsidiaryPermissionViewSet.as_view({"post": "list"})),
     path("subsidiary_permission/create/", SubsidiaryPermissionViewSet.as_view({"post": "create"})),
     path("subsidiary_permission/delete/", SubsidiaryPermissionViewSet.as_view({"post": "delete"})),
+
+    path("permission/sync/", PermissionSyncViewSet.as_view({"post": "sync"})),
+    path("permission/batch_sync/", PermissionSyncViewSet.as_view({"post": "batch_sync"})),
+
+    path("resource/sync/", ResourceSyncViewSet.as_view({"post": "sync"})),
+    path("resource/batch_sync/", ResourceSyncViewSet.as_view({"post": "batch_sync"})),
 ]
