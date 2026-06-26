@@ -6,7 +6,6 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from django.conf import settings
 from django.utils import timezone
 
 from ns_backend.iam.constants import (
@@ -18,7 +17,10 @@ from ns_backend.iam.constants import (
 from ns_backend.iam.errors import IamRuntimeRequestInvalidError
 from ns_backend.iam.repositories import AccessDecisionRepository
 from ns_backend.iam.schemas import DataScopeFieldMap
-from ns_backend.iam.services.backoff import retry_with_backoff
+from ns_backend.iam.services.backoff import (
+    get_backoff_enabled,
+    retry_with_backoff,
+)
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.permission import PermissionService
 from ns_common import get_ns_logger
@@ -31,68 +33,6 @@ logger = get_ns_logger("ns_backend.iam.resource_access_filter", True)
 
 class ResourceAccessFilterService:
     DEFAULT_RESOURCE_ID_FIELD = "resource_id"
-    DEFAULT_AUTH_BACKOFF_ENABLED = True
-    DEFAULT_AUTH_BACKOFF_MAX_RETRIES = 3
-    DEFAULT_AUTH_BACKOFF_BASE_DELAY_MS = 50
-    DEFAULT_AUTH_BACKOFF_MAX_DELAY_MS = 1000
-    DEFAULT_AUTH_BACKOFF_JITTER_RATIO = 0.5
-
-    @staticmethod
-    def coerce_non_negative_int(value: Any, default: int) -> int:
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return default
-        return max(parsed, 0)
-
-    @staticmethod
-    def coerce_float(value: Any, default: float, *, min_value: float, max_value: float) -> float:
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return default
-
-        if parsed < min_value:
-            return min_value
-
-        if parsed > max_value:
-            return max_value
-
-        return parsed
-
-    @classmethod
-    def backoff_enabled(cls) -> bool:
-        return bool(getattr(settings, "IAM_AUTH_BACKOFF_ENABLED", cls.DEFAULT_AUTH_BACKOFF_ENABLED))
-
-    @classmethod
-    def backoff_max_retries(cls) -> int:
-        return cls.coerce_non_negative_int(
-            getattr(settings, "IAM_AUTH_BACKOFF_MAX_RETRIES", cls.DEFAULT_AUTH_BACKOFF_MAX_RETRIES),
-            cls.DEFAULT_AUTH_BACKOFF_MAX_RETRIES,
-        )
-
-    @classmethod
-    def backoff_base_delay_ms(cls) -> int:
-        return cls.coerce_non_negative_int(
-            getattr(settings, "IAM_AUTH_BACKOFF_BASE_DELAY_MS", cls.DEFAULT_AUTH_BACKOFF_BASE_DELAY_MS),
-            cls.DEFAULT_AUTH_BACKOFF_BASE_DELAY_MS,
-        )
-
-    @classmethod
-    def backoff_max_delay_ms(cls) -> int:
-        return cls.coerce_non_negative_int(
-            getattr(settings, "IAM_AUTH_BACKOFF_MAX_DELAY_MS", cls.DEFAULT_AUTH_BACKOFF_MAX_DELAY_MS),
-            cls.DEFAULT_AUTH_BACKOFF_MAX_DELAY_MS,
-        )
-
-    @classmethod
-    def backoff_jitter_ratio(cls) -> float:
-        return cls.coerce_float(
-            getattr(settings, "IAM_AUTH_BACKOFF_JITTER_RATIO", cls.DEFAULT_AUTH_BACKOFF_JITTER_RATIO),
-            cls.DEFAULT_AUTH_BACKOFF_JITTER_RATIO,
-            min_value=0.0,
-            max_value=1.0,
-        )
 
     @staticmethod
     def normalize_required_text(value: Any, field_name: str) -> str:
@@ -533,13 +473,9 @@ class ResourceAccessFilterService:
             )
 
         try:
-            if cls.backoff_enabled():
+            if get_backoff_enabled():
                 result = await retry_with_backoff(
                     operation,
-                    max_retries=cls.backoff_max_retries(),
-                    base_delay_ms=cls.backoff_base_delay_ms(),
-                    max_delay_ms=cls.backoff_max_delay_ms(),
-                    jitter_ratio=cls.backoff_jitter_ratio(),
                     retryable_exceptions=(
                         Exception,
                     ),

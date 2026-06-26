@@ -91,3 +91,9 @@ IAM_DECISION_AUDIT_ENABLED = ns_config.backend.iam_decision_audit_enabled
 IAM_DECISION_AUDIT_STRICT_MODE = ns_config.backend.iam_decision_audit_strict_mode
 IAM_OPERATION_AUDIT_ENABLED = ns_config.backend.iam_operation_audit_enabled
 IAM_OPERATION_AUDIT_STRICT_MODE = ns_config.backend.iam_operation_audit_strict_mode
+
+IAM_AUTH_BACKOFF_ENABLED = ns_config.backend.iam_auth_backoff_enabled
+IAM_AUTH_BACKOFF_MAX_RETRIES = ns_config.backend.iam_auth_backoff_max_retries
+IAM_AUTH_BACKOFF_BASE_DELAY_MS = ns_config.backend.iam_auth_backoff_base_delay_ms
+IAM_AUTH_BACKOFF_MAX_DELAY_MS = ns_config.backend.iam_auth_backoff_max_delay_ms
+IAM_AUTH_BACKOFF_JITTER_RATIO = ns_config.backend.iam_auth_backoff_jitter_ratio

@@ -92,6 +92,12 @@ class NsBackendConfig:
     iam_operation_audit_enabled: bool = True
     iam_operation_audit_strict_mode: bool = False
 
+    iam_auth_backoff_enabled: bool = True
+    iam_auth_backoff_max_retries: int = 3
+    iam_auth_backoff_base_delay_ms: int = 50
+    iam_auth_backoff_max_delay_ms: int = 1000
+    iam_auth_backoff_jitter_ratio: float = 0.5
+
 
 @dataclass(slots=True, kw_only=True)
 class NsLogConfig:
@@ -228,12 +234,17 @@ class NsConfig:
                     },
                 )
 
-        self._validate_positive_int("backend.access_token_expire_minutes", self.backend.access_token_expire_minutes, )
-        self._validate_positive_int("backend.refresh_token_expire_days", self.backend.refresh_token_expire_days, )
-        self._validate_positive_int("backend.jwt_leeway_seconds", self.backend.jwt_leeway_seconds, )
-        self._validate_positive_int("backend.jwt_min_secret_length", self.backend.jwt_min_secret_length, )
-        self._validate_positive_int("backend.password_transport_max_payload_length", self.backend.password_transport_max_payload_length, )
-        self._validate_positive_int("backend.password_plaintext_max_length", self.backend.password_plaintext_max_length, )
+        self._validate_positive_int("backend.access_token_expire_minutes", self.backend.access_token_expire_minutes)
+        self._validate_positive_int("backend.refresh_token_expire_days", self.backend.refresh_token_expire_days)
+        self._validate_positive_int("backend.jwt_leeway_seconds", self.backend.jwt_leeway_seconds)
+        self._validate_positive_int("backend.jwt_min_secret_length", self.backend.jwt_min_secret_length)
+        self._validate_positive_int("backend.password_transport_max_payload_length", self.backend.password_transport_max_payload_length)
+        self._validate_positive_int("backend.password_plaintext_max_length", self.backend.password_plaintext_max_length)
+        self._validate_bool("backend.iam_auth_backoff_enabled", self.backend.iam_auth_backoff_enabled)
+        self._validate_non_negative_int("backend.iam_auth_backoff_max_retries", self.backend.iam_auth_backoff_max_retries)
+        self._validate_non_negative_int("backend.iam_auth_backoff_base_delay_ms", self.backend.iam_auth_backoff_base_delay_ms)
+        self._validate_non_negative_int("backend.iam_auth_backoff_max_delay_ms", self.backend.iam_auth_backoff_max_delay_ms)
+        self._validate_float_range("backend.iam_auth_backoff_jitter_ratio", self.backend.iam_auth_backoff_jitter_ratio, min_value=0.0, max_value=1.0)
 
         if self.backend.password_transport_mode not in {"plain", "rsa_oaep"}:
             raise NsConfigError("backend.password_transport_mode is invalid.",
@@ -255,6 +266,50 @@ class NsConfig:
                     "field": field_name,
                     "value": value,
                     "actual_type": type(value).__name__,
+                },
+            )
+
+    @staticmethod
+    def _validate_bool(field_name: str, value: Any) -> None:
+        if not isinstance(value, bool):
+            raise NsConfigError(f"{field_name} must be a boolean.",
+                details={
+                    "field": field_name,
+                    "value": value,
+                    "actual_type": type(value).__name__,
+                },
+            )
+
+    @staticmethod
+    def _validate_non_negative_int(field_name: str, value: Any) -> None:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise NsConfigError(f"{field_name} must be a non-negative integer.",
+                details={
+                    "field": field_name,
+                    "value": value,
+                    "actual_type": type(value).__name__,
+                },
+            )
+
+    @staticmethod
+    def _validate_float_range(field_name: str, value: Any, *, min_value: float, max_value: float) -> None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise NsConfigError(f"{field_name} must be a number.",
+                details={
+                    "field": field_name,
+                    "value": value,
+                    "actual_type": type(value).__name__,
+                },
+            )
+
+        parsed = float(value)
+        if parsed < min_value or parsed > max_value:
+            raise NsConfigError(f"{field_name} must be between {min_value} and {max_value}.",
+                details={
+                    "field": field_name,
+                    "value": value,
+                    "min_value": min_value,
+                    "max_value": max_value,
                 },
             )
 
