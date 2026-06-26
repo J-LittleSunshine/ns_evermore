@@ -17,9 +17,12 @@ from ns_backend.iam.constants import (
 )
 from ns_backend.iam.errors import IamRuntimeRequestInvalidError
 from ns_backend.iam.repositories import AccessDecisionRepository
+from ns_backend.iam.schemas import DataScopeFieldMap
+from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.decision_audit import DecisionAuditService
 from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.policy_engine import PolicyEngineService
+
 if TYPE_CHECKING:
     pass
 
@@ -336,9 +339,14 @@ class AccessDecisionService:
                 "data_scope": acl_result.get("data_scope"),
             }
 
-            filters: dict[str, Any] = {}
+            filters = await cls.resolve_data_filters(
+                user=user,
+                permission_code=permission_code,
+                field_map_data=request_data.get("field_map"),
+            )
+
             if acl_result.get("data_scope"):
-                filters["acl_data_scope"] = acl_result.get("data_scope")
+                filters.setdefault("acl_data_scope", acl_result.get("data_scope"))
 
             cls.append_chain(
                 decision_chain,
@@ -374,9 +382,14 @@ class AccessDecisionService:
                 "data_scope": policy_result.get("data_scope"),
             }
 
-            filters: dict[str, Any] = {}
+            filters = await cls.resolve_data_filters(
+                user=user,
+                permission_code=permission_code,
+                field_map_data=request_data.get("field_map"),
+            )
+
             if policy_result.get("data_scope"):
-                filters["policy_data_scope"] = policy_result.get("data_scope")
+                filters.setdefault("policy_data_scope", policy_result.get("data_scope"))
 
             cls.append_chain(
                 decision_chain,
@@ -437,7 +450,14 @@ class AccessDecisionService:
                     "matched": True,
                     "effect": cls.EFFECT_ALLOW,
                     "permission_code": permission_code,
+                    "access_mode": access_mode,
                 }
+
+                filters = await cls.resolve_data_filters(
+                    user=user,
+                    permission_code=permission_code,
+                    field_map_data=request_data.get("field_map"),
+                )
 
                 cls.append_chain(
                     decision_chain,
@@ -456,6 +476,7 @@ class AccessDecisionService:
                     action_code=action_code,
                     permission_code=permission_code,
                     access_mode=access_mode,
+                    filters=filters,
                     matched_rbac_permission_code=permission_code,
                     hit_details=hit_details,
                     decision_chain=decision_chain,
@@ -573,6 +594,41 @@ class AccessDecisionService:
             )
 
         return subject_bindings
+
+    @staticmethod
+    def build_field_map(field_map_data: Any) -> DataScopeFieldMap:
+        if not isinstance(field_map_data, dict):
+            return DataScopeFieldMap(
+                self_field=None,
+                company_field="company_id",
+                subsidiary_field="subsidiary_id",
+                department_field="department_id",
+            )
+
+        return DataScopeFieldMap(
+            self_field=field_map_data.get("self_field"),
+            company_field=field_map_data.get("company_field", "company_id"),
+            subsidiary_field=field_map_data.get("subsidiary_field", "subsidiary_id"),
+            department_field=field_map_data.get("department_field", "department_id"),
+        )
+
+    @classmethod
+    async def resolve_data_filters(cls,*,user: Any,permission_code: str | None,field_map_data: Any) -> dict[str, Any]:
+        if permission_code is None:
+            return {}
+
+        filter_plan = await DataScopeService.resolve_filter_plan(
+            user=user,
+            permission_code=permission_code,
+            field_map=cls.build_field_map(field_map_data),
+        )
+
+        if not filter_plan.allowed:
+            return {
+                "_denied_reason": filter_plan.reason,
+            }
+
+        return dict(filter_plan.filters or {})
 
     @classmethod
     def build_policy_context(cls,*,request_data: dict[str, Any],user: Any,resource_type: str,resource_id: str,action_code: str,permission_code: str | None,access_mode: str) -> dict[str, Any]:
