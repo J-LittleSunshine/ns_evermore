@@ -858,3 +858,97 @@ class ResourceRelationValidator(IamManagementValidator):
             return normalized
 
         return super().normalize_field_value(field=field, value=value)
+
+
+class ResourceAclValidator(IamManagementValidator):
+    SUBJECT_TYPES = (
+        "USER",
+        "ROLE",
+        "DEPARTMENT",
+        "ORGANIZATION",
+        "SUBSIDIARY",
+    )
+
+    ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+    required_create_fields = (
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "action_code",
+    )
+    allowed_create_fields = (
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "action_code",
+        "effect",
+        "data_scope",
+        "expired_at",
+    )
+    allowed_update_fields = ()
+    integer_fields = (
+        "subject_id",
+    )
+    datetime_fields = (
+        "expired_at",
+    )
+    nullable_fields = (
+        "data_scope",
+        "expired_at",
+    )
+    enum_fields = {
+        "subject_type": SUBJECT_TYPES,
+        "effect": (
+            PERMISSION_EFFECT_ALLOW,
+            PERMISSION_EFFECT_DENY,
+        ),
+        "data_scope": DATA_SCOPE_VALUES,
+    }
+    max_lengths = {
+        "subject_type": 32,
+        "resource_type": 128,
+        "resource_id": 128,
+        "action_code": 64,
+        "effect": 16,
+        "data_scope": 32,
+    }
+    defaults = {
+        "effect": PERMISSION_EFFECT_ALLOW,
+    }
+
+    @classmethod
+    def normalize_field_value(cls, *, field: str, value: Any) -> Any:
+        if field == "subject_type":
+            value = str(value or "").strip().upper()
+
+        if field == "resource_type":
+            return ResourceValidator.normalize_resource_key(
+                value=value,
+                field=field,
+            )
+
+        if field == "action_code":
+            normalized = str(value or "").strip().lower()
+
+            if cls.ACTION_CODE_PATTERN.fullmatch(normalized) is None:
+                raise IamManagementRequestInvalidError(
+                    "action_code is invalid.",
+                    details={
+                        "field": field,
+                        "value": normalized,
+                        "pattern": cls.ACTION_CODE_PATTERN.pattern,
+                    },
+                )
+
+            return normalized
+
+        if field == "effect":
+            value = str(value or PERMISSION_EFFECT_ALLOW).strip().upper()
+
+        return super().normalize_field_value(
+            field=field,
+            value=value,
+        )

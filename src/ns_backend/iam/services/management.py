@@ -34,6 +34,7 @@ from ns_backend.iam.models import (
     IamDepartmentPermission,
     IamPermission,
     IamResource,
+    IamResourceAcl,
     IamResourceAction,
     IamResourceRelation,
     IamRole,
@@ -54,6 +55,7 @@ from ns_backend.iam.validators import (
     DepartmentValidator,
     IamManagementValidator,
     PermissionValidator,
+    ResourceAclValidator,
     ResourceActionValidator,
     ResourceRelationValidator,
     ResourceValidator,
@@ -1786,6 +1788,301 @@ class ResourceRelationManagementService(IamManagementService):
                     "parent_resource_id": parent_resource_id,
                 },
             )
+
+
+class ResourceAclManagementService(IamManagementService):
+    model_class = IamResourceAcl
+    validator_class = ResourceAclValidator
+
+    list_fields = detail_fields = (
+        "id",
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "action_code",
+        "effect",
+        "data_scope",
+        "expired_at",
+    )
+    filter_fields = (
+        "id",
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "action_code",
+        "effect",
+        "data_scope",
+    )
+    keyword_fields = (
+        "resource_type",
+        "resource_id",
+        "action_code",
+    )
+    order_fields = (
+        "id",
+        "subject_type",
+        "subject_id",
+        "resource_type",
+        "resource_id",
+        "action_code",
+        "effect",
+        "data_scope",
+        "expired_at",
+        "created_at",
+        "updated_at",
+    )
+
+    allowed_subject_models = {
+        "USER": IamUser,
+        "ROLE": IamRole,
+        "DEPARTMENT": IamDepartment,
+        "ORGANIZATION": IamCompany,
+        "SUBSIDIARY": IamSubsidiary,
+    }
+
+    @classmethod
+    async def create_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        return await super().create_item(
+            data=data,
+            operator=operator,
+        )
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
+        await cls.validate_subject_exists(
+            subject_type=data.get("subject_type"),
+            subject_id=data.get("subject_id"),
+            operator=operator,
+        )
+
+        await cls.validate_resource_action_exists(
+            resource_type=data.get("resource_type"),
+            action_code=data.get("action_code"),
+        )
+
+        await cls.validate_acl_unique(
+            data=data,
+        )
+
+    @classmethod
+    async def validate_subject_exists(cls, *, subject_type: str, subject_id: int, operator: Any) -> None:
+        model_class = cls.allowed_subject_models.get(subject_type)
+
+        if model_class is None:
+            raise IamManagementRequestInvalidError(
+                "subject_type is invalid.",
+                details={
+                    "subject_type": subject_type,
+                    "allowed_values": sorted(cls.allowed_subject_models),
+                },
+            )
+
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=model_class,
+            filters={
+                "id": subject_id,
+            },
+            exclude_id=None,
+        )
+
+        if not exists:
+            raise IamInvalidRelationError(
+                "ACL subject does not exist.",
+                details={
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                },
+            )
+
+        await cls.validate_subject_company_boundary(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            operator=operator,
+        )
+
+    @classmethod
+    async def validate_subject_company_boundary(cls, *, subject_type: str, subject_id: int, operator: Any) -> None:
+        if cls.operator_is_superuser(operator):
+            return
+
+        if subject_type == "USER":
+            await cls.ensure_model_item_company_access(
+                model_class=IamUser,
+                item_id=subject_id,
+                scope_field="company_id",
+                operator=operator,
+                label="user",
+            )
+            return
+
+        if subject_type == "ROLE":
+            await cls.ensure_model_item_company_access(
+                model_class=IamRole,
+                item_id=subject_id,
+                scope_field="company_id",
+                operator=operator,
+                label="role",
+            )
+            return
+
+        if subject_type == "DEPARTMENT":
+            await cls.ensure_model_item_company_access(
+                model_class=IamDepartment,
+                item_id=subject_id,
+                scope_field="company_id",
+                operator=operator,
+                label="department",
+            )
+            return
+
+        if subject_type == "SUBSIDIARY":
+            await cls.ensure_model_item_company_access(
+                model_class=IamSubsidiary,
+                item_id=subject_id,
+                scope_field="company_id",
+                operator=operator,
+                label="subsidiary",
+            )
+            return
+
+        if subject_type == "ORGANIZATION":
+            company_id = cls.get_operator_company_id_or_raise(operator)
+            if subject_id != company_id:
+                raise IamManagementAccessDeniedError(
+                    "Cannot operate organization ACL from another company.",
+                    details={
+                        "operator_company_id": company_id,
+                        "subject_id": subject_id,
+                    },
+                )
+            return
+
+        raise IamManagementRequestInvalidError(
+            "subject_type is invalid.",
+            details={
+                "subject_type": subject_type,
+            },
+        )
+
+    @classmethod
+    async def validate_resource_action_exists(cls, *, resource_type: str, action_code: str) -> None:
+        resource = await cls.repository_class.get_one_by_filters(
+            model_class=IamResource,
+            filters={
+                "resource_type": resource_type,
+            },
+        )
+
+        if resource is None:
+            raise IamInvalidRelationError(
+                "Resource type does not exist.",
+                details={
+                    "resource_type": resource_type,
+                },
+            )
+
+        action_exists = await cls.repository_class.exists_by_filters(
+            model_class=IamResourceAction,
+            filters={
+                "resource_id": resource.id,
+                "action_code": action_code,
+            },
+            exclude_id=None,
+        )
+
+        if not action_exists:
+            raise IamInvalidRelationError(
+                "Action code does not exist under resource type.",
+                details={
+                    "resource_type": resource_type,
+                    "action_code": action_code,
+                },
+            )
+
+    @classmethod
+    async def validate_acl_unique(cls, *, data: dict[str, Any]) -> None:
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=IamResourceAcl,
+            filters={
+                "subject_type": data.get("subject_type"),
+                "subject_id": data.get("subject_id"),
+                "resource_type": data.get("resource_type"),
+                "resource_id": data.get("resource_id"),
+                "action_code": data.get("action_code"),
+            },
+            exclude_id=None,
+        )
+
+        if exists:
+            raise IamResourceAlreadyExistsError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "fields": [
+                        "subject_type",
+                        "subject_id",
+                        "resource_type",
+                        "resource_id",
+                        "action_code",
+                    ],
+                    "subject_type": data.get("subject_type"),
+                    "subject_id": data.get("subject_id"),
+                    "resource_type": data.get("resource_type"),
+                    "resource_id": data.get("resource_id"),
+                    "action_code": data.get("action_code"),
+                },
+            )
+
+    @classmethod
+    async def delete_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        if data.get("id") not in (None, ""):
+            return await super().delete_item(
+                data=data,
+                operator=operator,
+            )
+
+        validated_data = cls.validator_class.validate_create(data)
+
+        acl = await cls.repository_class.get_one_by_filters(
+            model_class=cls.model_class,
+            filters={
+                "subject_type": validated_data.get("subject_type"),
+                "subject_id": validated_data.get("subject_id"),
+                "resource_type": validated_data.get("resource_type"),
+                "resource_id": validated_data.get("resource_id"),
+                "action_code": validated_data.get("action_code"),
+            },
+        )
+
+        if acl is None:
+            return {
+                "deleted": False,
+            }
+
+        await cls.validate_subject_company_boundary(
+            subject_type=acl.subject_type,
+            subject_id=acl.subject_id,
+            operator=operator,
+        )
+
+        deleted = await cls.repository_class.delete_item(
+            model_class=cls.model_class,
+            item_id=acl.id,
+        )
+
+        return {
+            "id": acl.id,
+            "deleted": bool(deleted),
+        }
+
+    @classmethod
+    async def validate_delete_business_rules(cls, *, item: Any, operator: Any) -> None:
+        await cls.validate_subject_company_boundary(
+            subject_type=getattr(item, "subject_type", None),
+            subject_id=getattr(item, "subject_id", None),
+            operator=operator,
+        )
 
 
 class RoleManagementService(IamManagementService):

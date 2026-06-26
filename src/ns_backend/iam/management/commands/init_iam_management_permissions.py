@@ -66,6 +66,10 @@ class Command(BaseCommand):
         SeedPermissionSpec(permission_code="iam:resource:update", permission_name="Update resources"),
         SeedPermissionSpec(permission_code="iam:resource:delete", permission_name="Delete resources"),
 
+        SeedPermissionSpec(permission_code="iam:resource_acl:read", permission_name="Read resource ACLs"),
+        SeedPermissionSpec(permission_code="iam:resource_acl:create", permission_name="Create resource ACLs"),
+        SeedPermissionSpec(permission_code="iam:resource_acl:delete", permission_name="Delete resource ACLs"),
+
         SeedPermissionSpec(permission_code="iam:resource_action:read", permission_name="Read resource actions"),
         SeedPermissionSpec(permission_code="iam:resource_action:create", permission_name="Create resource actions"),
         SeedPermissionSpec(permission_code="iam:resource_action:update", permission_name="Update resource actions"),

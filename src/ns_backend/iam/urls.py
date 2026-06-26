@@ -9,6 +9,7 @@ from ns_backend.iam.views import (
     DepartmentPermissionViewSet,
     DepartmentViewSet,
     PermissionViewSet,
+    ResourceAclViewSet,
     ResourceActionViewSet,
     ResourceRelationViewSet,
     ResourceViewSet,
@@ -74,6 +75,10 @@ urlpatterns = [
     path("resource_action/create/", ResourceActionViewSet.as_view({"post": "create"})),
     path("resource_action/update/", ResourceActionViewSet.as_view({"post": "update"})),
     path("resource_action/delete/", ResourceActionViewSet.as_view({"post": "delete"})),
+
+    path("resource_acl/list/", ResourceAclViewSet.as_view({"post": "list"})),
+    path("resource_acl/create/", ResourceAclViewSet.as_view({"post": "create"})),
+    path("resource_acl/delete/", ResourceAclViewSet.as_view({"post": "delete"})),
 
     path("resource_relation/list/", ResourceRelationViewSet.as_view({"post": "list"})),
     path("resource_relation/create/", ResourceRelationViewSet.as_view({"post": "create"})),

@@ -299,3 +299,21 @@ class IamManagementRepository(BaseRepository):
             data[field] = value
 
         return data
+
+    @classmethod
+    async def get_one_by_filters(cls, *, model_class: Any, filters: dict[str, Any]) -> Any | None:
+        db_alias = cls.resolve_db_alias(model_class=model_class)
+
+        return await sync_to_async(cls._get_one_by_filters_sync, thread_sensitive=True)(
+            model_class=model_class,
+            filters=filters,
+            db_alias=db_alias,
+        )
+
+    @staticmethod
+    def _get_one_by_filters_sync(*, model_class: Any, filters: dict[str, Any], db_alias: str) -> Any | None:
+        return (
+            model_class.objects.using(db_alias)
+            .filter(**filters)
+            .first()
+        )

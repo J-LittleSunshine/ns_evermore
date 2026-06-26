@@ -20,6 +20,7 @@ from ns_backend.iam.services import (
     IamManagementService,
     PermissionManagementService,
     PermissionService,
+    ResourceAclManagementService,
     ResourceActionManagementService,
     ResourceManagementService,
     ResourceRelationManagementService,
@@ -310,6 +311,23 @@ class ResourceActionViewSet(IamManagementViewSet):
         "create": ("iam:resource_action:create",),
         "update": ("iam:resource_action:update",),
         "delete": ("iam:resource_action:delete",),
+    }
+
+
+class ResourceAclViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.resource_acl.api"
+    service_class = ResourceAclManagementService
+
+    allowed_actions = {
+        "list",
+        "create",
+        "delete",
+    }
+
+    required_permissions = {
+        "list": ("iam:resource_acl:read",),
+        "create": ("iam:resource_acl:create",),
+        "delete": ("iam:resource_acl:delete",),
     }
 
 
