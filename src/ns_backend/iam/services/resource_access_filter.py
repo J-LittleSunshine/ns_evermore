@@ -288,8 +288,14 @@ class ResourceAccessFilterService:
                     "default_allow": True,
                     "access_mode": access_mode,
                     "reason": "SUPERUSER_BYPASS",
-                    "orm": {},
-                    "vector": {},
+                    "orm": {
+                        "include": {},
+                        "exclude": {},
+                    },
+                    "vector": {
+                        "must": {},
+                        "must_not": {},
+                    },
                     "data_scope": {},
                 },
             }
