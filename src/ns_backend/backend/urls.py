@@ -1,12 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from django.urls import (
-    include,
-    path
-)
+from backend.app_loader import build_urlpatterns
+from ns_common import ns_config
 
-urlpatterns = [
-    path("api/system/", include("ns_backend.system.urls")),
-    path("api/iam/", include("ns_backend.iam.urls")),
-]
+urlpatterns = build_urlpatterns(ns_config.backend.installed_apps)

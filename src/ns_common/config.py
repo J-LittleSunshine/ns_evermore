@@ -72,6 +72,12 @@ class NsBackendConfig:
 
     databases: dict[str, dict[str, Any]] = field(default_factory=dict)
     database_router_map: dict[str, str] = field(default_factory=dict)
+    installed_apps: list[str] = field(
+        default_factory=lambda: [
+            "system",
+            "iam",
+        ]
+    )
 
     jwt_secret_key: str = ""
     access_token_expire_minutes: int = 30
@@ -257,6 +263,40 @@ class NsConfig:
                     ],
                 },
             )
+        
+        if not isinstance(self.backend.installed_apps, list):
+            raise NsConfigError(
+                "backend.installed_apps must be a list.",
+                details={
+                    "field": "backend.installed_apps",
+                    "actual_type": type(self.backend.installed_apps).__name__,
+                },
+            )
+
+        seen_installed_apps: set[str] = set()
+
+        for app_key in self.backend.installed_apps:
+            if not isinstance(app_key, str) or not app_key.strip():
+                raise NsConfigError(
+                    "backend.installed_apps item must be a non-empty string.",
+                    details={
+                        "field": "backend.installed_apps",
+                        "value": app_key,
+                    },
+                )
+
+            normalized_app_key = app_key.strip()
+
+            if normalized_app_key in seen_installed_apps:
+                raise NsConfigError(
+                    "backend.installed_apps contains duplicated item.",
+                    details={
+                        "field": "backend.installed_apps",
+                        "value": normalized_app_key,
+                    },
+                )
+
+            seen_installed_apps.add(normalized_app_key)
 
     @staticmethod
     def _validate_positive_int(field_name: str, value: Any) -> None:

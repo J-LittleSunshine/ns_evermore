@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from backend.app_loader import build_installed_apps
 from ns_common import ns_config
 from ns_common.paths import (
     DATA_DIR,
@@ -16,12 +17,7 @@ DEBUG = ns_config.backend.debug
 
 ALLOWED_HOSTS = ns_config.backend.allowed_hosts
 
-INSTALLED_APPS = [
-    'rest_framework',
-    'adrf',
-
-    'ns_backend.iam.apps.IamConfig',
-]
+INSTALLED_APPS = build_installed_apps(ns_config.backend.installed_apps)
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
