@@ -12,19 +12,20 @@ from ns_backend.iam.views import (
     DepartmentViewSet,
     InternalIamViewSet,
     PermissionViewSet,
+    PolicyRuleViewSet,
+    PolicyViewSet,
     ResourceAclViewSet,
     ResourceActionViewSet,
     ResourceRelationViewSet,
     ResourceViewSet,
     RolePermissionViewSet,
     RoleViewSet,
+    SessionViewSet,
     SubsidiaryPermissionViewSet,
     SubsidiaryViewSet,
     UserPermissionViewSet,
     UserRoleViewSet,
-    UserViewSet,
-PolicyRuleViewSet,
-    PolicyViewSet,
+    UserViewSet
 )
 
 urlpatterns = [
@@ -36,6 +37,9 @@ urlpatterns = [
     path("auth/permissions/", AuthViewSet.as_view({"post": "permissions"})),
     path("auth/menus/", AuthViewSet.as_view({"post": "menus"})),
     path("auth/data_scopes/", AuthViewSet.as_view({"post": "data_scopes"})),
+
+    path("session/list/", SessionViewSet.as_view({"post": "list"})),
+    path("session/revoke/", SessionViewSet.as_view({"post": "revoke"})),
 
     path("access/check/", AccessViewSet.as_view({"post": "check"})),
     path("access/batch_check/", AccessViewSet.as_view({"post": "batch_check"})),

@@ -32,6 +32,7 @@ from ns_backend.iam.services.management import (
 )
 from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.policy_engine import PolicyEngineService
+from ns_backend.iam.services.session import SessionService
 
 if TYPE_CHECKING:
     pass
@@ -64,4 +65,5 @@ __all__ = [
     "PolicyManagementService",
     "PolicyRuleManagementService",
     "PolicyEngineService",
+    "SessionService",
 ]
