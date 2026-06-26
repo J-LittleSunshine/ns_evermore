@@ -6,7 +6,7 @@ from typing import Any
 
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.repositories import AuthUserRepository
-from ns_backend.iam.services.authorize import AuthorizeService
+from ns_backend.iam.services.access_decision import AccessDecisionService
 from ns_backend.iam.services.verify import VerifyService
 from ns_common.config import ns_config
 from ns_common.error_codes import NsErrorCode
@@ -129,7 +129,7 @@ class RuntimeIamInternalAuthService:
             )
 
         iam_payload = cls._build_authorize_payload(request_data=request_data, principal=principal)
-        decision = await AuthorizeService.check(user=user, data=iam_payload, trace_id=trace_id)
+        decision = await AccessDecisionService.check(user=user, data=iam_payload, trace_id=trace_id)
         return {
             "allowed": bool(decision.get("allowed")),
             "effect": str(decision.get("effect") or ("allow" if bool(decision.get("allowed")) else "deny")),

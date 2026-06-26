@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from ns_backend.iam.services.auth import AuthService
 from ns_backend.iam.services.auth_context import AuthContextService
-from ns_backend.iam.services.authorize import AuthorizeService
+from ns_backend.iam.services.access_decision import AccessDecisionService
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.management import (
     CompanyManagementService,
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 __all__ = [
     "AuthService",
     "AuthContextService",
-    "AuthorizeService",
+    "AccessDecisionService",
     "CompanyManagementService",
     "DataScopeService",
     "DepartmentManagementService",

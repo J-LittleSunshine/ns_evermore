@@ -7,7 +7,7 @@ from typing import Any, TYPE_CHECKING
 from ns_backend.backend.exceptions import BusinessError
 from ns_backend.iam.schemas import PermissionSpec
 from ns_backend.iam.services.authorization_context import AuthorizationContextService
-from ns_backend.iam.services.authorize import AuthorizeService
+from ns_backend.iam.services.access_decision import AccessDecisionService
 from ns_backend.iam.services.permission_sync import PermissionSyncService
 from ns_backend.iam.services.resource_registry import ResourceRegistryService
 from ns_common.error_codes import NsErrorCode
@@ -241,7 +241,7 @@ class AgentToolAuthorizationGuard:
             # Cache faults should not block online authorization fallback.
             pass
 
-        decision = await AuthorizeService.check(
+        decision = await AccessDecisionService.check(
             user=user,
             data={
                 "resource_type": tool_mapping.get("resource_type") or "agent.tool",

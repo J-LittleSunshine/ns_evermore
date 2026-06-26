@@ -8,7 +8,7 @@ from django.http import JsonResponse
 from ns_backend.backend.common.logger import iam_logger
 from ns_backend.backend.common.viewset import AuthenticatedRequestViewSet
 from ns_backend.iam.services import PermissionService, TenantService, VerifyService
-from ns_backend.iam.services.authorize import AuthorizeService
+from ns_backend.iam.services.access_decision import AccessDecisionService
 from ns_common.error_codes import NsErrorCode
 
 if TYPE_CHECKING:
@@ -365,7 +365,7 @@ class IamRequestViewSet(AuditRequestMixin, AuthenticatedRequestViewSet):
     authorize_resource_type = "iam.endpoint"
     verify_service = VerifyService
     permission_service = PermissionService
-    authorize_service = AuthorizeService
+    authorize_service = AccessDecisionService
     authentication_required = True
 
 

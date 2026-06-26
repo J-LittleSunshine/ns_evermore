@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ns_backend.iam.views.auth_views import AuthViewSet
-from ns_backend.iam.views.authorize_views import AuthorizeViewSet
+from ns_backend.iam.views.access_views import AccessViewSet
 from ns_backend.iam.views.management_views import (
     CompanyViewSet,
     DepartmentPermissionViewSet,
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AuthViewSet",
-    "AuthorizeViewSet",
+    "AccessViewSet",
     "CompanyViewSet",
     "DepartmentPermissionViewSet",
     "DepartmentViewSet",

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     pass
 
 
-class AuthorizeService:
+class AccessDecisionService:
     EFFECT_ALLOW = "allow"
     EFFECT_DENY = "deny"
 

@@ -8,16 +8,16 @@ from typing import (
 
 from backend.common import NsViewSet
 from ns_backend.iam.services import (
+    AccessDecisionService,
     AuthService,
-    AuthorizeService,
 )
 
 if TYPE_CHECKING:
     from rest_framework.request import Request
 
 
-class AuthorizeViewSet(NsViewSet):
-    logger_name = "ns_backend.iam.authorize.api"
+class AccessViewSet(NsViewSet):
+    logger_name = "ns_backend.iam.access.api"
 
     allowed_actions = {
         "check",
@@ -28,7 +28,7 @@ class AuthorizeViewSet(NsViewSet):
         user, _ = await AuthService.resolve_user_from_request(request)
         self.set_current_user(user)
 
-        return await AuthorizeService.check(
+        return await AccessDecisionService.check(
             user=user,
             data=self.get_request_data(request),
             trace_id=self.get_trace_id(request),
@@ -38,7 +38,7 @@ class AuthorizeViewSet(NsViewSet):
         user, _ = await AuthService.resolve_user_from_request(request)
         self.set_current_user(user)
 
-        return await AuthorizeService.batch_check(
+        return await AccessDecisionService.batch_check(
             user=user,
             data=self.get_request_data(request),
             trace_id=self.get_trace_id(request),

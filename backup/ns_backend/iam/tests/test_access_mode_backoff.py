@@ -50,7 +50,7 @@ from ns_backend.iam.constants import (
     RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW,
 )
 from ns_backend.iam.schemas import DataScopeFilterPlan, UserAuthorizationContext
-from ns_backend.iam.services.authorize import AuthorizeService
+from ns_backend.iam.services.access_decision import AccessDecisionService
 from ns_backend.iam.services.authorization_context import AuthorizationContextService
 from ns_backend.iam.services.resource_access_filter import ResourceAccessFilterService
 from ns_backend.iam.services.resource_acl import ResourceAclService
@@ -82,7 +82,7 @@ class AccessModeServiceTests(unittest.IsolatedAsyncioTestCase):
             patch("ns_backend.iam.services.authorize.DataScopeService.resolve_filter_plan", new=AsyncMock(return_value=DataScopeFilterPlan(allowed=True, filters={}))),
             patch("ns_backend.iam.services.authorize.DecisionAuditService.record_decision_safe", new=AsyncMock(return_value=None)),
         ):
-            decision = await AuthorizeService.check(
+            decision = await AccessDecisionService.check(
                 user=user,
                 data={
                     "resource_type": "knowledge.chunk",
@@ -93,7 +93,7 @@ class AccessModeServiceTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(decision["allowed"])
-        self.assertEqual(decision["matched_source"], AuthorizeService.MATCHED_SOURCE_RBAC)
+        self.assertEqual(decision["matched_source"], AccessDecisionService.MATCHED_SOURCE_RBAC)
         self.assertEqual(decision["access_mode"], RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW)
 
         with (
@@ -135,7 +135,7 @@ class AccessModeServiceTests(unittest.IsolatedAsyncioTestCase):
             patch("ns_backend.iam.services.authorize.PolicyEngineService.evaluate", new=AsyncMock(return_value=None)),
             patch("ns_backend.iam.services.authorize.DecisionAuditService.record_decision_safe", new=AsyncMock(return_value=None)),
         ):
-            decision = await AuthorizeService.check(
+            decision = await AccessDecisionService.check(
                 user=user,
                 data={
                     "resource_type": "knowledge.chunk",
@@ -189,7 +189,7 @@ class AccessModeServiceTests(unittest.IsolatedAsyncioTestCase):
             patch("ns_backend.iam.services.authorize.PermissionService.has_permission", new=AsyncMock(return_value=True)),
             patch("ns_backend.iam.services.authorize.DecisionAuditService.record_decision_safe", new=AsyncMock(return_value=None)),
         ):
-            decision = await AuthorizeService.check(
+            decision = await AccessDecisionService.check(
                 user=user,
                 data={
                     "resource_type": "knowledge.chunk",
@@ -245,7 +245,7 @@ class AccessModeServiceTests(unittest.IsolatedAsyncioTestCase):
             patch("ns_backend.iam.services.authorize.DataScopeService.resolve_filter_plan", new=AsyncMock(return_value=DataScopeFilterPlan(allowed=True, filters={}))),
             patch("ns_backend.iam.services.authorize.DecisionAuditService.record_decision_safe", new=AsyncMock(return_value=None)),
         ):
-            decision = await AuthorizeService.check(
+            decision = await AccessDecisionService.check(
                 user=user,
                 data={
                     "resource_type": "knowledge.chunk",
@@ -256,7 +256,7 @@ class AccessModeServiceTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(decision["allowed"])
-        self.assertEqual(decision["matched_source"], AuthorizeService.MATCHED_SOURCE_ACL)
+        self.assertEqual(decision["matched_source"], AccessDecisionService.MATCHED_SOURCE_ACL)
 
         with (
             patch("ns_backend.iam.services.resource_access_filter.ResourceRepository.get_resource_by_type", new=AsyncMock(return_value=SimpleNamespace(access_mode=RESOURCE_ACCESS_MODE_ACL_REQUIRED))),

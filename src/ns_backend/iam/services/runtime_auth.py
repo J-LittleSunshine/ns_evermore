@@ -16,7 +16,7 @@ from ns_backend.iam.errors import (
 )
 from ns_backend.iam.repositories import AuthUserRepository
 from ns_backend.iam.services.auth import AuthService
-from ns_backend.iam.services.authorize import AuthorizeService
+from ns_backend.iam.services.access_decision import AccessDecisionService
 
 if TYPE_CHECKING:
     pass
@@ -115,7 +115,7 @@ class RuntimeIamInternalAuthService:
                 trace_id=trace_id,
             )
 
-        return await AuthorizeService.check(
+        return await AccessDecisionService.check(
             user=user,
             data=request_data,
             trace_id=trace_id,

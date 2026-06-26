@@ -7,7 +7,7 @@ from django.urls import path
 
 from ns_backend.iam.views.acl_views import ResourceAclViewSet
 from ns_backend.iam.views.audit_views import DecisionAuditViewSet
-from ns_backend.iam.views.authorize_views import AuthorizeViewSet
+from ns_backend.iam.views.access_views import AccessViewSet
 from ns_backend.iam.views.auth_views import AuthViewSet
 from ns_backend.iam.views.base_views import (
     CompanyViewSet,
@@ -592,7 +592,7 @@ urlpatterns = [
     ),
 
     path(
-        "authorize/check", AuthorizeViewSet.as_view(
+        "authorize/check", AccessViewSet.as_view(
             {
                 "post": "check"
             }, required_permissions=(
@@ -601,7 +601,7 @@ urlpatterns = [
         )
     ),
     path(
-        "authorize/batch-check", AuthorizeViewSet.as_view(
+        "authorize/batch-check", AccessViewSet.as_view(
             {
                 "post": "batch_check"
             }, required_permissions=(
