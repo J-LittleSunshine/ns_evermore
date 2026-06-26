@@ -7,6 +7,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from django.db.utils import DatabaseError
 from django.utils import timezone
 
 from ns_backend.iam.constants import (
@@ -18,14 +19,20 @@ from ns_backend.iam.constants import (
 from ns_backend.iam.errors import IamRuntimeRequestInvalidError
 from ns_backend.iam.repositories import AccessDecisionRepository
 from ns_backend.iam.schemas import DataScopeFieldMap
+from ns_backend.iam.services.backoff import (
+    get_backoff_enabled,
+    retry_with_backoff,
+)
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.decision_audit import DecisionAuditService
 from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.policy_engine import PolicyEngineService
+from ns_common import get_ns_logger
 
 if TYPE_CHECKING:
     pass
 
+logger = get_ns_logger("ns_backend.iam.access_decision", True)
 
 class AccessDecisionService:
     EFFECT_ALLOW = "allow"
@@ -38,6 +45,14 @@ class AccessDecisionService:
     MATCHED_SOURCE_POLICY = "policy"
 
     ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+    RETRYABLE_EXCEPTIONS = (
+        DatabaseError,
+        ConnectionError,
+        TimeoutError,
+        OSError,
+        RuntimeError,
+    )
 
     @classmethod
     async def check_with_audit(cls, *, user: Any, data: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
@@ -88,6 +103,71 @@ class AccessDecisionService:
 
     @classmethod
     async def check(cls, *, user: Any, data: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
+        request_data = cls.ensure_dict(data)
+
+        resource_type = cls.normalize_resource_type(request_data.get("resource_type"))
+        resource_id = cls.normalize_required_text(request_data.get("resource_id"), "resource_id")
+        action_code = cls.normalize_action_code(request_data.get("action_code"))
+        permission_code = cls.resolve_permission_code(
+            request_data=request_data,
+            resource_type=resource_type,
+            action_code=action_code,
+        )
+
+        attempt_count = 0
+
+        async def operation() -> dict[str, Any]:
+            nonlocal attempt_count
+            attempt_count += 1
+
+            return await cls.check_once(
+                user=user,
+                data=request_data,
+                trace_id=trace_id,
+            )
+
+        try:
+            if get_backoff_enabled():
+                return await retry_with_backoff(
+                    operation,
+                    retryable_exceptions=cls.RETRYABLE_EXCEPTIONS,
+                    operation_name="iam_access_decision_check",
+                )
+
+            return await operation()
+
+        except IamRuntimeRequestInvalidError:
+            raise
+
+        except Exception as exc:  # noqa
+            retry_count = max(attempt_count - 1, 0)
+
+            logger.error(
+                "authorization check failed",
+                exc_info=True,
+                extra={
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "action_code": action_code,
+                    "permission_code": permission_code,
+                    "user_id": getattr(user, "id", None),
+                    "retry_count": retry_count,
+                    "exception_class": exc.__class__.__name__,
+                },
+            )
+
+            return cls.build_authorization_failed_decision(
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action_code=action_code,
+                permission_code=permission_code,
+                retry_count=retry_count,
+                error=exc,
+                trace_id=trace_id,
+            )
+
+    @classmethod
+    async def check_once(cls, *, user: Any, data: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
         request_data = cls.ensure_dict(data)
 
         resource_type = cls.normalize_resource_type(request_data.get("resource_type"))
@@ -845,6 +925,50 @@ class AccessDecisionService:
             )
 
         return dict(data)
+
+    @classmethod
+    def build_authorization_failed_decision(
+            cls,
+            *,
+            resource_type: str,
+            resource_id: str,
+            action_code: str,
+            permission_code: str | None,
+            retry_count: int,
+            error: Exception,
+            trace_id: str | None,
+    ) -> dict[str, Any]:
+        decision_chain: list[dict[str, Any]] = []
+
+        cls.append_chain(
+            decision_chain,
+            source="system",
+            effect=cls.EFFECT_DENY,
+            reason="AUTHORIZATION_CHECK_FAILED",
+            retry_count=max(retry_count, 0),
+        )
+
+        return cls.build_decision(
+            allowed=False,
+            reason="AUTHORIZATION_CHECK_FAILED",
+            matched_source=cls.MATCHED_SOURCE_NONE,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action_code=action_code,
+            permission_code=permission_code,
+            access_mode=None,
+            filters={},
+            matched_rbac_permission_code=permission_code,
+            hit_details={
+                "error": error.__class__.__name__,
+                "retry_count": max(retry_count, 0),
+                "resource": {
+                    "access_mode": None,
+                },
+            },
+            decision_chain=decision_chain,
+            trace_id=trace_id,
+        )
 
     @classmethod
     def build_decision(
