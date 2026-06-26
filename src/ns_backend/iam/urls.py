@@ -5,6 +5,7 @@ from django.urls import path
 
 from ns_backend.iam.views import (
     AuthViewSet,
+    AuthorizeViewSet,
     CompanyViewSet,
     DepartmentPermissionViewSet,
     DepartmentViewSet,
@@ -15,13 +16,13 @@ from ns_backend.iam.views import (
     ResourceViewSet,
     RolePermissionViewSet,
     RoleViewSet,
+    RuntimeIamInternalViewSet,
     SubsidiaryPermissionViewSet,
     SubsidiaryViewSet,
     UserPermissionViewSet,
     UserRoleViewSet,
     UserViewSet,
 )
-from ns_backend.iam.views import RuntimeIamInternalViewSet
 
 urlpatterns = [
     path("auth/login/", AuthViewSet.as_view({"post": "login"})),
@@ -32,6 +33,9 @@ urlpatterns = [
     path("auth/permissions/", AuthViewSet.as_view({"post": "permissions"})),
     path("auth/menus/", AuthViewSet.as_view({"post": "menus"})),
     path("auth/data_scopes/", AuthViewSet.as_view({"post": "data_scopes"})),
+
+    path("authorize/check/", AuthorizeViewSet.as_view({"post": "check"})),
+    path("authorize/batch_check/", AuthorizeViewSet.as_view({"post": "batch_check"})),
 
     path("company/list/", CompanyViewSet.as_view({"post": "list"})),
     path("company/detail/", CompanyViewSet.as_view({"post": "get_detail"})),
