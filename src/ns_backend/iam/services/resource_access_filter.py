@@ -461,24 +461,26 @@ class ResourceAccessFilterService:
 
     @classmethod
     async def resolve_retrieval_filter(cls, user: Any, resource_type: str, action_code: str, *, permission_code: str | None = None, field_map: dict[str, Any] | None = None) -> dict[str, Any]:
-        normalized_resource_type = cls.normalize_resource_type(resource_type)
-        normalized_action_code = cls.normalize_action_code(action_code)
-
         attempt_count = 0
-
-        async def operation() -> dict[str, Any]:
-            nonlocal attempt_count
-            attempt_count += 1
-
-            return await cls.resolve_retrieval_filter_once(
-                user=user,
-                resource_type=normalized_resource_type,
-                action_code=normalized_action_code,
-                permission_code=permission_code,
-                field_map=field_map,
-            )
+        normalized_resource_type = None
+        normalized_action_code = None
 
         try:
+            normalized_resource_type = cls.normalize_resource_type(resource_type)
+            normalized_action_code = cls.normalize_action_code(action_code)
+
+            async def operation() -> dict[str, Any]:
+                nonlocal attempt_count
+                attempt_count += 1
+
+                return await cls.resolve_retrieval_filter_once(
+                    user=user,
+                    resource_type=normalized_resource_type,
+                    action_code=normalized_action_code,
+                    permission_code=permission_code,
+                    field_map=field_map,
+                )
+
             if get_backoff_enabled():
                 result = await retry_with_backoff(
                     operation,
@@ -508,8 +510,8 @@ class ResourceAccessFilterService:
                 "resource access filter build failed",
                 exc_info=True,
                 extra={
-                    "resource_type": normalized_resource_type,
-                    "action_code": normalized_action_code,
+                    "resource_type": normalized_resource_type or str(resource_type or "").strip().lower(),
+                    "action_code": normalized_action_code or str(action_code or "").strip().lower(),
                     "user_id": getattr(user, "id", None),
                     "retry_count": retry_count,
                     "exception_class": exc.__class__.__name__,
@@ -518,5 +520,5 @@ class ResourceAccessFilterService:
 
             return cls.build_deny_all_filter(
                 reason="AUTH_FILTER_BUILD_FAILED",
-                retry_count=retry_count,
+                retry_count=retry_count
             )

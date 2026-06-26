@@ -204,7 +204,7 @@ class AgentToolAuthorizationGuard:
                 "resource_id": normalized_resource_id,
                 "action_code": tool_mapping.get("action_code") or cls.DEFAULT_ACTION_CODE,
                 "permission_code": tool_mapping.get("permission_code") or cls.DEFAULT_PERMISSION_CODE,
-                "context": {} if context is None else dict(context),
+                "context": cls.normalize_context(context),
             },
             trace_id=trace_id,
         )
@@ -219,3 +219,19 @@ class AgentToolAuthorizationGuard:
             )
 
         return decision
+
+    @staticmethod
+    def normalize_context(context: Any) -> dict[str, Any]:
+        if context is None:
+            return {}
+
+        if not isinstance(context, dict):
+            raise IamRuntimeRequestInvalidError(
+                "context must be an object.",
+                details={
+                    "field": "context",
+                    "actual_type": type(context).__name__,
+                },
+            )
+
+        return dict(context)
