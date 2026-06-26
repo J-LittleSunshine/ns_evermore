@@ -17,6 +17,7 @@ from ns_backend.iam.constants import (
 )
 from ns_backend.iam.errors import IamRuntimeRequestInvalidError
 from ns_backend.iam.repositories import RuntimeAuthorizeRepository
+from ns_backend.iam.services.decision_audit import DecisionAuditService
 from ns_backend.iam.services.permission import PermissionService
 
 if TYPE_CHECKING:
@@ -33,6 +34,53 @@ class AccessDecisionService:
     MATCHED_SOURCE_NONE = "none"
 
     ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+    @classmethod
+    async def check_with_audit(cls, *, user: Any, data: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
+        decision = await cls.check(
+            user=user,
+            data=data,
+            trace_id=trace_id,
+        )
+
+        await DecisionAuditService.record_from_decision_safe(
+            user=user,
+            decision=decision,
+            trace_id=trace_id,
+        )
+
+        return decision
+
+    @classmethod
+    async def batch_check_with_audit(cls, *, user: Any, data: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
+        request_data = cls.ensure_dict(data)
+        items = request_data.get("items")
+
+        if not isinstance(items, list) or not items:
+            raise IamRuntimeRequestInvalidError(
+                "items must be a non-empty list.",
+            )
+
+        decisions = []
+
+        for item in items:
+            if not isinstance(item, dict):
+                raise IamRuntimeRequestInvalidError(
+                    "items must contain object elements.",
+                )
+
+            decisions.append(
+                await cls.check_with_audit(
+                    user=user,
+                    data=item,
+                    trace_id=trace_id,
+                )
+            )
+
+        return {
+            "items": decisions,
+            "total": len(decisions),
+        }
 
     @classmethod
     async def check(cls, *, user: Any, data: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:

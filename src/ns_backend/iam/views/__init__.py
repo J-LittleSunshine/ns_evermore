@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ns_backend.iam.views.auth_views import AuthViewSet
 from ns_backend.iam.views.access_views import AccessViewSet
+from ns_backend.iam.views.audit_views import DecisionAuditViewSet
+from ns_backend.iam.views.auth_views import AuthViewSet
+from ns_backend.iam.views.internal_views import InternalIamViewSet
 from ns_backend.iam.views.management_views import (
     CompanyViewSet,
     DepartmentPermissionViewSet,
@@ -23,7 +25,6 @@ from ns_backend.iam.views.management_views import (
     UserRoleViewSet,
     UserViewSet
 )
-from ns_backend.iam.views.internal_views import InternalIamViewSet
 
 if TYPE_CHECKING:
     pass
@@ -32,6 +33,7 @@ __all__ = [
     "AuthViewSet",
     "AccessViewSet",
     "CompanyViewSet",
+    "DecisionAuditViewSet",
     "DepartmentPermissionViewSet",
     "DepartmentViewSet",
     "IamManagementViewSet",

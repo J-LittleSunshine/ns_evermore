@@ -115,7 +115,7 @@ class InternalIamService:
                 trace_id=trace_id,
             )
 
-        return await AccessDecisionService.check(
+        return await AccessDecisionService.check_with_audit(
             user=user,
             data=request_data,
             trace_id=trace_id,

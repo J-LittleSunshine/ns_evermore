@@ -28,7 +28,7 @@ class AccessViewSet(NsViewSet):
         user, _ = await AuthService.resolve_user_from_request(request)
         self.set_current_user(user)
 
-        return await AccessDecisionService.check(
+        return await AccessDecisionService.check_with_audit(
             user=user,
             data=self.get_request_data(request),
             trace_id=self.get_trace_id(request),
@@ -38,7 +38,7 @@ class AccessViewSet(NsViewSet):
         user, _ = await AuthService.resolve_user_from_request(request)
         self.set_current_user(user)
 
-        return await AccessDecisionService.batch_check(
+        return await AccessDecisionService.batch_check_with_audit(
             user=user,
             data=self.get_request_data(request),
             trace_id=self.get_trace_id(request),
