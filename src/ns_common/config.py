@@ -86,6 +86,7 @@ class NsBackendConfig:
     password_rsa_private_key: str = ""
     password_rsa_private_key_file: str = ""
     password_rsa_private_key_passphrase: str = ""
+    iam_internal_token: str = "change-me-iam-internal-token-at-least-32-chars"
 
 
 @dataclass(slots=True, kw_only=True)

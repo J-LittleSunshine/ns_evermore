@@ -85,8 +85,4 @@ PASSWORD_RSA_PRIVATE_KEY = ns_config.backend.password_rsa_private_key
 PASSWORD_RSA_PRIVATE_KEY_FILE = ns_config.backend.password_rsa_private_key_file
 PASSWORD_RSA_PRIVATE_KEY_PASSPHRASE = ns_config.backend.password_rsa_private_key_passphrase
 
-IAM_RUNTIME_INTERNAL_SERVICE_TOKEN = str(
-    getattr(ns_config.backend, "iam_runtime_internal_service_token", "")
-    or getattr(ns_config.backend, "iam_internal_service_token", "")
-    or ""
-).strip()
+IAM_INTERNAL_TOKEN = ns_config.backend.iam_internal_token
