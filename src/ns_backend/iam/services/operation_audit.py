@@ -9,13 +9,11 @@ from typing import (
 from django.conf import settings
 
 from ns_backend.iam.errors import IamManagementRequestInvalidError
+from ns_backend.iam.logger import IAM_LOGGER as logger
 from ns_backend.iam.repositories import OperationAuditRepository
-from ns_common import get_ns_logger
 
 if TYPE_CHECKING:
     from rest_framework.request import Request
-
-logger = get_ns_logger("ns_backend.iam.operation_audit", True)
 
 
 class OperationAuditService:

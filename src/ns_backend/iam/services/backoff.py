@@ -12,11 +12,9 @@ from typing import (
 
 from django.conf import settings
 
-from ns_common import get_ns_logger
+from ns_backend.iam.logger import IAM_LOGGER as logger
 
 T = TypeVar("T")
-
-logger = get_ns_logger("ns_backend.iam.backoff", True)
 
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BASE_DELAY_MS = 50

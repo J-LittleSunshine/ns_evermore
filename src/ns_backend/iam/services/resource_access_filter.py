@@ -15,6 +15,7 @@ from ns_backend.iam.constants import (
     RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW,
 )
 from ns_backend.iam.errors import IamRuntimeRequestInvalidError
+from ns_backend.iam.logger import IAM_LOGGER as logger
 from ns_backend.iam.repositories import AccessDecisionRepository
 from ns_backend.iam.schemas import DataScopeFieldMap
 from ns_backend.iam.services.backoff import (
@@ -23,12 +24,9 @@ from ns_backend.iam.services.backoff import (
 )
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.permission import PermissionService
-from ns_common import get_ns_logger
 
 if TYPE_CHECKING:
     pass
-
-logger = get_ns_logger("ns_backend.iam.resource_access_filter", True)
 
 
 class ResourceAccessFilterService:

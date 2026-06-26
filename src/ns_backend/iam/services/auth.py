@@ -27,6 +27,7 @@ from ns_backend.iam.errors import (
     IamUserNotLoggedInOrSessionExpiredError,
     IamUsernameEmptyError,
 )
+from ns_backend.iam.logger import IAM_LOGGER as logger
 from ns_backend.iam.repositories import (
     AuthLoginBundleRepository,
     AuthUserRepository,
@@ -43,12 +44,9 @@ from ns_backend.iam.utils import (
     get_bearer_token_from_request,
     sha256_text,
 )
-from ns_common import get_ns_logger
 
 if TYPE_CHECKING:
     from rest_framework.request import Request
-
-logger = get_ns_logger("ns_backend.iam.auth")
 
 
 class RefreshTokenRotationService:
