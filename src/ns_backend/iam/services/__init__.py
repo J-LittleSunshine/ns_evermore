@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from ns_backend.iam.services.auth import AuthService
 from ns_backend.iam.services.auth_context import AuthContextService
+from ns_backend.iam.services.authorize import AuthorizeService
 from ns_backend.iam.services.data_scope import DataScopeService
 from ns_backend.iam.services.management import (
     CompanyManagementService,
@@ -23,16 +24,18 @@ from ns_backend.iam.services.management import (
     SubsidiaryPermissionManagementService,
     UserManagementService,
     UserPermissionManagementService,
-    UserRoleManagementService
+    UserRoleManagementService,
 )
 from ns_backend.iam.services.permission import PermissionService
+from ns_backend.iam.services.runtime_auth import RuntimeIamInternalAuthService
 
 if TYPE_CHECKING:
     pass
 
 __all__ = [
-    "AuthContextService",
     "AuthService",
+    "AuthContextService",
+    "AuthorizeService",
     "CompanyManagementService",
     "DataScopeService",
     "DepartmentManagementService",
@@ -47,6 +50,7 @@ __all__ = [
     "ResourceRelationManagementService",
     "RoleManagementService",
     "RolePermissionManagementService",
+    "RuntimeIamInternalAuthService",
     "SubsidiaryManagementService",
     "SubsidiaryPermissionManagementService",
     "UserManagementService",

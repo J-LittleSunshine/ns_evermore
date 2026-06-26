@@ -81,6 +81,14 @@ class AuthService:
     @classmethod
     async def resolve_user_from_request(cls, request: "Request"):
         bearer_token = get_bearer_token_from_request(request)
+        user, token_record = await cls.resolve_user_from_access_token(
+            bearer_token,
+        )
+        request.current_user = user
+        return user, token_record
+
+    @classmethod
+    async def resolve_user_from_access_token(cls, bearer_token: str | None):
         if not bearer_token:
             raise IamUserNotLoggedInOrSessionExpiredError()
 
@@ -114,7 +122,6 @@ class AuthService:
         if user is None or not bool(getattr(user, "is_active", False)):
             raise IamUserDisabledOrNotFoundError()
 
-        request.current_user = user
         return user, token_record
 
     @classmethod

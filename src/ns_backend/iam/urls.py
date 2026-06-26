@@ -21,6 +21,7 @@ from ns_backend.iam.views import (
     UserRoleViewSet,
     UserViewSet,
 )
+from ns_backend.iam.views import RuntimeIamInternalViewSet
 
 urlpatterns = [
     path("auth/login/", AuthViewSet.as_view({"post": "login"})),
@@ -63,6 +64,10 @@ urlpatterns = [
     path("permission/menu_tree/", PermissionViewSet.as_view({"post": "menu_tree"})),
     path("permission/action_list/", PermissionViewSet.as_view({"post": "action_list"})),
     path("permission/data_list/", PermissionViewSet.as_view({"post": "data_list"})),
+
+    path("runtime/introspect_token/", RuntimeIamInternalViewSet.as_view({"post": "introspect_token"})),
+    path("runtime/authorize/", RuntimeIamInternalViewSet.as_view({"post": "authorize"})),
+    path("runtime/batch_authorize/", RuntimeIamInternalViewSet.as_view({"post": "batch_authorize"})),
 
     path("resource/list/", ResourceViewSet.as_view({"post": "list"})),
     path("resource/detail/", ResourceViewSet.as_view({"post": "get_detail"})),

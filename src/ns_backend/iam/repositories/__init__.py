@@ -8,6 +8,7 @@ from ns_backend.iam.repositories.auth import (
     AuthUserRepository,
     LoginFailureRepository,
 )
+from ns_backend.iam.repositories.authorize import RuntimeAuthorizeRepository
 from ns_backend.iam.repositories.data_scope import DataScopeRepository
 from ns_backend.iam.repositories.management import IamManagementRepository
 from ns_backend.iam.repositories.permission import PermissionRepository
@@ -27,6 +28,7 @@ __all__ = [
     "IamManagementRepository",
     "LoginFailureRepository",
     "PermissionRepository",
+    "RuntimeAuthorizeRepository",
     "UserSessionRepository",
     "UserTokenRepository",
     "UserTokenRotationRepository",

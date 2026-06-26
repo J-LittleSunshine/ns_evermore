@@ -22,6 +22,7 @@ from ns_backend.iam.views.management_views import (
     UserRoleViewSet,
     UserViewSet
 )
+from ns_backend.iam.views.runtime_auth_views import RuntimeIamInternalViewSet
 
 if TYPE_CHECKING:
     pass
@@ -39,6 +40,7 @@ __all__ = [
     "ResourceViewSet",
     "RolePermissionViewSet",
     "RoleViewSet",
+    "RuntimeIamInternalViewSet",
     "SubsidiaryPermissionViewSet",
     "SubsidiaryViewSet",
     "UserPermissionViewSet",

@@ -157,3 +157,21 @@ class IamManagementPersistenceError(IamManagementError):
     code = "IAM_MANAGEMENT_PERSISTENCE_ERROR"
     numeric_code = 200207
     default_message = "IAM management persistence error."
+
+
+class IamRuntimeError(IamError):
+    code = "IAM_RUNTIME_ERROR"
+    numeric_code = 200300
+    default_message = "IAM runtime error."
+
+
+class IamRuntimeRequestInvalidError(IamRuntimeError):
+    code = "IAM_RUNTIME_REQUEST_INVALID"
+    numeric_code = 200301
+    default_message = "IAM runtime request is invalid."
+
+
+class IamRuntimeAccessDeniedError(IamRuntimeError):
+    code = "IAM_RUNTIME_ACCESS_DENIED"
+    numeric_code = 200302
+    default_message = "IAM runtime access denied."
