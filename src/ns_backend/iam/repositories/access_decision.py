@@ -29,6 +29,191 @@ class AccessDecisionRepository:
     def active_time_filter(now) -> Q:
         return Q(expired_at__isnull=True) | Q(expired_at__gt=now)
 
+    @staticmethod
+    def normalize_resource_type(value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    @staticmethod
+    def normalize_resource_id(value: Any) -> str:
+        return str(value or "").strip()
+
+    @staticmethod
+    def build_pair_query(*, pairs: list[tuple[str, str]], left_field: str, right_field: str) -> Q:
+        query = Q(pk__in=[])
+        for left_value, right_value in pairs:
+            query |= Q(
+                **{
+                    left_field: left_value,
+                    right_field: right_value,
+                }
+            )
+        return query
+
+    @classmethod
+    async def list_active_acl_effects_for_resource_type_action(cls,*,subject_bindings: list[tuple[str, int]],resource_type: str,action_code: str, now) -> list[dict[str, Any]]:
+        if not subject_bindings:
+            return []
+
+        subject_query = Q(pk__in=[])
+        for subject_type, subject_id in subject_bindings:
+            subject_query |= Q(
+                subject_type=subject_type,
+                subject_id=subject_id,
+            )
+
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamResourceAcl)
+
+        queryset = IamResourceAcl.objects.using(db_alias).filter(
+            cls.active_time_filter(now),
+            subject_query,
+            resource_type=cls.normalize_resource_type(resource_type),
+            action_code=str(action_code or "").strip().lower(),
+        ).values(
+            "id",
+            "subject_type",
+            "subject_id",
+            "resource_type",
+            "resource_id",
+            "action_code",
+            "effect",
+            "data_scope",
+            "expired_at",
+        ).order_by(
+            "id",
+        )
+
+        return [
+            dict(row)
+            async for row in queryset
+        ]
+
+    @classmethod
+    async def list_descendant_resource_ids(cls,*,parent_resource_type: str,parent_resource_id: str,target_resource_type: str,max_depth: int | None = None,include_parent_when_target: bool = True) -> list[str]:
+        depth_limit = cls.MAX_RESOURCE_ANCESTOR_DEPTH if max_depth is None else max(int(max_depth), 1)
+
+        normalized_parent_type = cls.normalize_resource_type(parent_resource_type)
+        normalized_parent_id = cls.normalize_resource_id(parent_resource_id)
+        normalized_target_type = cls.normalize_resource_type(target_resource_type)
+
+        if not normalized_parent_type or not normalized_parent_id or not normalized_target_type:
+            return []
+
+        result_ids: list[str] = []
+        seen_result_ids: set[str] = set()
+
+        if include_parent_when_target and normalized_parent_type == normalized_target_type:
+            result_ids.append(normalized_parent_id)
+            seen_result_ids.add(normalized_parent_id)
+
+        seen_pairs: set[tuple[str, str]] = {
+            (
+                normalized_parent_type,
+                normalized_parent_id,
+            )
+        }
+        frontier_pairs: list[tuple[str, str]] = [
+            (
+                normalized_parent_type,
+                normalized_parent_id,
+            )
+        ]
+
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamResourceRelation)
+
+        for _ in range(depth_limit):
+            if not frontier_pairs:
+                break
+
+            pair_query = cls.build_pair_query(
+                pairs=frontier_pairs,
+                left_field="parent_resource_type",
+                right_field="parent_resource_id",
+            )
+
+            queryset = IamResourceRelation.objects.using(db_alias).filter(pair_query).values(
+                "resource_type",
+                "resource_id",
+            )
+
+            rows = [
+                item
+                async for item in queryset
+            ]
+
+            next_frontier: list[tuple[str, str]] = []
+            for row in rows:
+                child_type = cls.normalize_resource_type(row.get("resource_type"))
+                child_id = cls.normalize_resource_id(row.get("resource_id"))
+
+                if not child_type or not child_id:
+                    continue
+
+                child_pair = (
+                    child_type,
+                    child_id,
+                )
+
+                if child_pair in seen_pairs:
+                    continue
+
+                seen_pairs.add(child_pair)
+                next_frontier.append(child_pair)
+
+                if child_type == normalized_target_type and child_id not in seen_result_ids:
+                    seen_result_ids.add(child_id)
+                    result_ids.append(child_id)
+
+            frontier_pairs = next_frontier
+
+        return result_ids
+
+    @classmethod
+    async def list_ancestor_resource_types(cls,*,resource_type: str,max_depth: int | None = None) -> list[str]:
+        depth_limit = cls.MAX_RESOURCE_ANCESTOR_DEPTH if max_depth is None else max(int(max_depth), 1)
+        normalized_resource_type = cls.normalize_resource_type(resource_type)
+
+        if not normalized_resource_type:
+            return []
+
+        result_types: list[str] = []
+        seen_types: set[str] = {
+            normalized_resource_type,
+        }
+        frontier_types: list[str] = [
+            normalized_resource_type,
+        ]
+
+        db_alias = BaseRepository.resolve_db_alias(model_class=IamResourceRelation)
+
+        for _ in range(depth_limit):
+            if not frontier_types:
+                break
+
+            queryset = IamResourceRelation.objects.using(db_alias).filter(
+                resource_type__in=frontier_types,
+            ).values_list(
+                "parent_resource_type",
+                flat=True,
+            )
+
+            parent_types = [
+                cls.normalize_resource_type(value)
+                async for value in queryset
+            ]
+
+            next_frontier: list[str] = []
+            for parent_type in parent_types:
+                if not parent_type or parent_type in seen_types:
+                    continue
+
+                seen_types.add(parent_type)
+                result_types.append(parent_type)
+                next_frontier.append(parent_type)
+
+            frontier_types = next_frontier
+
+        return result_types
+
     @classmethod
     async def get_resource_by_type(cls, *, resource_type: str) -> IamResource | None:
         db_alias = BaseRepository.resolve_db_alias(model_class=IamResource)

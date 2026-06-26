@@ -33,6 +33,7 @@ from ns_backend.iam.services.management import (
 from ns_backend.iam.services.operation_audit import OperationAuditService
 from ns_backend.iam.services.permission import PermissionService
 from ns_backend.iam.services.policy_engine import PolicyEngineService
+from ns_backend.iam.services.resource_access_filter import ResourceAccessFilterService
 from ns_backend.iam.services.session import SessionService
 from ns_backend.iam.services.sync import IamSyncService
 
@@ -70,4 +71,5 @@ __all__ = [
     "OperationAuditService",
     "SessionService",
     "IamSyncService",
+    "ResourceAccessFilterService",
 ]
