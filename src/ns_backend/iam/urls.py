@@ -9,6 +9,9 @@ from ns_backend.iam.views import (
     DepartmentPermissionViewSet,
     DepartmentViewSet,
     PermissionViewSet,
+    ResourceActionViewSet,
+    ResourceRelationViewSet,
+    ResourceViewSet,
     RolePermissionViewSet,
     RoleViewSet,
     SubsidiaryPermissionViewSet,
@@ -59,6 +62,22 @@ urlpatterns = [
     path("permission/menu_tree/", PermissionViewSet.as_view({"post": "menu_tree"})),
     path("permission/action_list/", PermissionViewSet.as_view({"post": "action_list"})),
     path("permission/data_list/", PermissionViewSet.as_view({"post": "data_list"})),
+
+    path("resource/list/", ResourceViewSet.as_view({"post": "list"})),
+    path("resource/detail/", ResourceViewSet.as_view({"post": "get_detail"})),
+    path("resource/create/", ResourceViewSet.as_view({"post": "create"})),
+    path("resource/update/", ResourceViewSet.as_view({"post": "update"})),
+    path("resource/delete/", ResourceViewSet.as_view({"post": "delete"})),
+
+    path("resource_action/list/", ResourceActionViewSet.as_view({"post": "list"})),
+    path("resource_action/detail/", ResourceActionViewSet.as_view({"post": "get_detail"})),
+    path("resource_action/create/", ResourceActionViewSet.as_view({"post": "create"})),
+    path("resource_action/update/", ResourceActionViewSet.as_view({"post": "update"})),
+    path("resource_action/delete/", ResourceActionViewSet.as_view({"post": "delete"})),
+
+    path("resource_relation/list/", ResourceRelationViewSet.as_view({"post": "list"})),
+    path("resource_relation/create/", ResourceRelationViewSet.as_view({"post": "create"})),
+    path("resource_relation/delete/", ResourceRelationViewSet.as_view({"post": "delete"})),
 
     path("role/list/", RoleViewSet.as_view({"post": "list"})),
     path("role/detail/", RoleViewSet.as_view({"post": "get_detail"})),

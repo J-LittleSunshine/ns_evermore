@@ -20,6 +20,9 @@ from ns_backend.iam.services import (
     IamManagementService,
     PermissionManagementService,
     PermissionService,
+    ResourceActionManagementService,
+    ResourceManagementService,
+    ResourceRelationManagementService,
     RoleManagementService,
     RolePermissionManagementService,
     SubsidiaryManagementService,
@@ -282,6 +285,49 @@ class PermissionViewSet(IamManagementViewSet):
             data=self.get_request_data(request),
             operator=operator,
         )
+
+
+class ResourceViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.resource.api"
+    service_class = ResourceManagementService
+
+    required_permissions = {
+        "list": ("iam:resource:read",),
+        "get_detail": ("iam:resource:read",),
+        "create": ("iam:resource:create",),
+        "update": ("iam:resource:update",),
+        "delete": ("iam:resource:delete",),
+    }
+
+
+class ResourceActionViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.resource_action.api"
+    service_class = ResourceActionManagementService
+
+    required_permissions = {
+        "list": ("iam:resource_action:read",),
+        "get_detail": ("iam:resource_action:read",),
+        "create": ("iam:resource_action:create",),
+        "update": ("iam:resource_action:update",),
+        "delete": ("iam:resource_action:delete",),
+    }
+
+
+class ResourceRelationViewSet(IamManagementViewSet):
+    logger_name = "ns_backend.iam.resource_relation.api"
+    service_class = ResourceRelationManagementService
+
+    allowed_actions = {
+        "list",
+        "create",
+        "delete",
+    }
+
+    required_permissions = {
+        "list": ("iam:resource_relation:read",),
+        "create": ("iam:resource_relation:create",),
+        "delete": ("iam:resource_relation:delete",),
+    }
 
 
 class RoleViewSet(IamManagementViewSet):

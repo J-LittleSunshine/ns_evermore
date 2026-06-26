@@ -33,13 +33,16 @@ from ns_backend.iam.models import (
     IamDepartment,
     IamDepartmentPermission,
     IamPermission,
+    IamResource,
+    IamResourceAction,
+    IamResourceRelation,
     IamRole,
     IamRolePermission,
     IamSubsidiary,
     IamSubsidiaryPermission,
     IamUser,
     IamUserPermission,
-    IamUserRole,
+    IamUserRole
 )
 from ns_backend.iam.repositories import (
     IamManagementRepository,
@@ -51,13 +54,16 @@ from ns_backend.iam.validators import (
     DepartmentValidator,
     IamManagementValidator,
     PermissionValidator,
+    ResourceActionValidator,
+    ResourceRelationValidator,
+    ResourceValidator,
     RolePermissionValidator,
     RoleValidator,
     SubsidiaryPermissionValidator,
     SubsidiaryValidator,
     UserPermissionValidator,
     UserRoleValidator,
-    UserValidator,
+    UserValidator
 )
 
 if TYPE_CHECKING:
@@ -1467,6 +1473,319 @@ class PermissionManagementService(IamManagementService):
             built_root_ids.add(root_id)
 
         return tree
+
+
+class ResourceManagementService(IamManagementService):
+    model_class = IamResource
+    validator_class = ResourceValidator
+
+    list_fields = detail_fields = (
+        "id",
+        "resource_type",
+        "resource_name",
+        "module_code",
+        "access_mode",
+        "status",
+    )
+    filter_fields = (
+        "id",
+        "resource_type",
+        "resource_name",
+        "module_code",
+        "access_mode",
+        "status",
+    )
+    keyword_fields = (
+        "resource_type",
+        "resource_name",
+        "module_code",
+    )
+    order_fields = (
+        "id",
+        "resource_type",
+        "resource_name",
+        "module_code",
+        "access_mode",
+        "status",
+        "created_at",
+        "updated_at",
+    )
+    unique_fields = (
+        "resource_type",
+    )
+
+    @classmethod
+    async def detail_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        item = await super().detail_item(
+            data=data,
+            operator=operator,
+        )
+
+        item["actions"] = await ResourceActionManagementService.list_actions_by_resource_id(
+            resource_id=item["id"],
+        )
+
+        return item
+
+    @classmethod
+    async def list_items(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
+        result = await super().list_items(
+            data=data,
+            operator=operator,
+        )
+
+        items = result.get("items", [])
+        resource_ids = [
+            item["id"]
+            for item in items
+            if isinstance(item.get("id"), int)
+        ]
+
+        action_rows = await ResourceActionManagementService.list_actions_by_resource_ids(
+            resource_ids=resource_ids,
+        )
+
+        action_map: dict[int, list[dict[str, Any]]] = {}
+        for action in action_rows:
+            resource_id = action.get("resource_id")
+            if isinstance(resource_id, int):
+                action_map.setdefault(resource_id, []).append(action)
+
+        for item in items:
+            resource_id = item.get("id")
+            if isinstance(resource_id, int):
+                item["actions"] = action_map.get(resource_id, [])
+
+        return result
+
+    @classmethod
+    async def validate_delete_business_rules(cls, *, item: Any, operator: Any) -> None:
+        has_actions = await cls.repository_class.exists_by_filters(
+            model_class=IamResourceAction,
+            filters={
+                "resource_id": item.id,
+            },
+            exclude_id=None,
+        )
+
+        if has_actions:
+            raise IamInvalidRelationError(
+                "Resource has actions and cannot be deleted.",
+                details={
+                    "resource_id": item.id,
+                },
+            )
+
+
+class ResourceActionManagementService(IamManagementService):
+    model_class = IamResourceAction
+    validator_class = ResourceActionValidator
+
+    list_fields = detail_fields = (
+        "id",
+        "resource_id",
+        "action_code",
+        "action_name",
+        "status",
+    )
+    filter_fields = (
+        "id",
+        "resource_id",
+        "action_code",
+        "action_name",
+        "status",
+    )
+    keyword_fields = (
+        "action_code",
+        "action_name",
+    )
+    order_fields = (
+        "id",
+        "resource_id",
+        "action_code",
+        "action_name",
+        "status",
+        "created_at",
+        "updated_at",
+    )
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
+        resource_id = data.get("resource_id")
+
+        resource = await cls.repository_class.get_by_id(
+            model_class=IamResource,
+            item_id=resource_id,
+        )
+
+        if resource is None:
+            raise IamInvalidRelationError(
+                "Resource does not exist.",
+                details={
+                    "resource_id": resource_id,
+                },
+            )
+
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=IamResourceAction,
+            filters={
+                "resource_id": resource_id,
+                "action_code": data.get("action_code"),
+            },
+            exclude_id=None,
+        )
+
+        if exists:
+            raise IamResourceAlreadyExistsError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "fields": [
+                        "resource_id",
+                        "action_code",
+                    ],
+                    "resource_id": resource_id,
+                    "action_code": data.get("action_code"),
+                },
+            )
+
+    @classmethod
+    async def validate_update_business_rules(cls, *, item: Any, data: dict[str, Any], operator: Any) -> None:
+        return None
+
+    @classmethod
+    async def list_actions_by_resource_id(cls, *, resource_id: int) -> list[dict[str, Any]]:
+        return await cls.list_actions_by_resource_ids(
+            resource_ids=[
+                resource_id
+            ],
+        )
+
+    @classmethod
+    async def list_actions_by_resource_ids(cls, *, resource_ids: list[int]) -> list[dict[str, Any]]:
+        if not resource_ids:
+            return []
+
+        return await cls.repository_class.list_all_items(
+            model_class=cls.model_class,
+            fields=cls.detail_fields,
+            filters={
+                "resource_id__in": resource_ids,
+            },
+            keyword_conditions=[],
+            order_by=(
+                "resource_id",
+                "action_code",
+                "id",
+            ),
+        )
+
+
+class ResourceRelationManagementService(IamManagementService):
+    model_class = IamResourceRelation
+    validator_class = ResourceRelationValidator
+
+    list_fields = detail_fields = (
+        "id",
+        "resource_type",
+        "resource_id",
+        "parent_resource_type",
+        "parent_resource_id",
+        "relation_type",
+    )
+    filter_fields = (
+        "id",
+        "resource_type",
+        "resource_id",
+        "parent_resource_type",
+        "parent_resource_id",
+        "relation_type",
+    )
+    keyword_fields = (
+        "resource_type",
+        "resource_id",
+        "parent_resource_type",
+        "parent_resource_id",
+    )
+    order_fields = (
+        "id",
+        "resource_type",
+        "resource_id",
+        "parent_resource_type",
+        "parent_resource_id",
+        "relation_type",
+        "created_at",
+        "updated_at",
+    )
+
+    @classmethod
+    async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
+        resource_type = data.get("resource_type")
+        resource_id = data.get("resource_id")
+        parent_resource_type = data.get("parent_resource_type")
+        parent_resource_id = data.get("parent_resource_id")
+
+        if resource_type == parent_resource_type and resource_id == parent_resource_id:
+            raise IamInvalidRelationError(
+                "Resource cannot inherit from itself.",
+                details={
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                },
+            )
+
+        resource_exists = await cls.repository_class.exists_by_filters(
+            model_class=IamResource,
+            filters={
+                "resource_type": resource_type,
+            },
+            exclude_id=None,
+        )
+
+        if not resource_exists:
+            raise IamInvalidRelationError(
+                "Resource type does not exist.",
+                details={
+                    "resource_type": resource_type,
+                },
+            )
+
+        parent_resource_exists = await cls.repository_class.exists_by_filters(
+            model_class=IamResource,
+            filters={
+                "resource_type": parent_resource_type,
+            },
+            exclude_id=None,
+        )
+
+        if not parent_resource_exists:
+            raise IamInvalidRelationError(
+                "Parent resource type does not exist.",
+                details={
+                    "parent_resource_type": parent_resource_type,
+                },
+            )
+
+        exists = await cls.repository_class.exists_by_filters(
+            model_class=IamResourceRelation,
+            filters={
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                "parent_resource_type": parent_resource_type,
+                "parent_resource_id": parent_resource_id,
+            },
+            exclude_id=None,
+        )
+
+        if exists:
+            raise IamResourceAlreadyExistsError(
+                details={
+                    "model": cls.model_class.__name__,
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "parent_resource_type": parent_resource_type,
+                    "parent_resource_id": parent_resource_id,
+                },
+            )
 
 
 class RoleManagementService(IamManagementService):

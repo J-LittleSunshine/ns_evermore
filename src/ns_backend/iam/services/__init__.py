@@ -13,13 +13,16 @@ from ns_backend.iam.services.management import (
     DirectPermissionGrantManagementService,
     IamManagementService,
     PermissionManagementService,
+    ResourceActionManagementService,
+    ResourceManagementService,
+    ResourceRelationManagementService,
     RoleManagementService,
     RolePermissionManagementService,
     SubsidiaryManagementService,
     SubsidiaryPermissionManagementService,
     UserManagementService,
     UserPermissionManagementService,
-    UserRoleManagementService,
+    UserRoleManagementService
 )
 from ns_backend.iam.services.permission import PermissionService
 
@@ -37,6 +40,9 @@ __all__ = [
     "IamManagementService",
     "PermissionManagementService",
     "PermissionService",
+    "ResourceActionManagementService",
+    "ResourceManagementService",
+    "ResourceRelationManagementService",
     "RoleManagementService",
     "RolePermissionManagementService",
     "SubsidiaryManagementService",

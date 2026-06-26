@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import (
     Any,
@@ -18,10 +19,12 @@ from ns_backend.iam.constants import (
     PERMISSION_TYPE_ACTION,
     PERMISSION_TYPE_DATA,
     PERMISSION_TYPE_MENU,
+    RESOURCE_ACCESS_MODE_ACL_REQUIRED,
+    RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW,
     ROLE_SCOPE_ENTERPRISE,
     ROLE_SCOPE_PERSONAL,
     USER_TYPE_ENTERPRISE,
-    USER_TYPE_PERSONAL,
+    USER_TYPE_PERSONAL
 )
 from ns_backend.iam.errors import IamManagementRequestInvalidError
 
@@ -642,3 +645,216 @@ class SubsidiaryPermissionValidator(DirectPermissionGrantValidator):
         "subsidiary_id",
         "permission_id",
     )
+
+
+class ResourceValidator(IamManagementValidator):
+    required_create_fields = (
+        "resource_type",
+        "resource_name",
+    )
+    allowed_create_fields = (
+        "resource_type",
+        "resource_name",
+        "module_code",
+        "access_mode",
+        "status",
+    )
+    allowed_update_fields = (
+        "resource_name",
+        "module_code",
+        "access_mode",
+        "status",
+    )
+    integer_fields = (
+        "status",
+    )
+    enum_fields = {
+        "access_mode": (
+            RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW,
+            RESOURCE_ACCESS_MODE_ACL_REQUIRED,
+        ),
+    }
+    max_lengths = {
+        "resource_type": 128,
+        "resource_name": 128,
+        "module_code": 64,
+        "access_mode": 32,
+    }
+    defaults = {
+        "access_mode": RESOURCE_ACCESS_MODE_RBAC_DEFAULT_ALLOW,
+        "status": 1,
+    }
+
+    @classmethod
+    def validate_create(cls, data: dict[str, Any]) -> dict[str, Any]:
+        payload = cls.ensure_dict(data)
+
+        if payload.get("resource_type") not in (None, ""):
+            payload["resource_type"] = cls.normalize_resource_key(
+                value=payload.get("resource_type"),
+                field="resource_type",
+            )
+
+        if payload.get("module_code") in (None, "") and payload.get("resource_type") not in (None, ""):
+            payload["module_code"] = cls.resolve_default_module_code(
+                str(payload["resource_type"])
+            )
+
+        return super().validate_create(payload)
+
+    @classmethod
+    def validate_update(cls, data: dict[str, Any]) -> dict[str, Any]:
+        payload = cls.ensure_dict(data)
+
+        if payload.get("module_code") not in (None, ""):
+            payload["module_code"] = cls.normalize_resource_key(
+                value=payload.get("module_code"),
+                field="module_code",
+            )
+
+        if payload.get("access_mode") not in (None, ""):
+            payload["access_mode"] = str(payload["access_mode"]).strip().upper()
+
+        return super().validate_update(payload)
+
+    @classmethod
+    def normalize_field_value(cls, *, field: str, value: Any) -> Any:
+        if field in ("resource_type", "module_code"):
+            return cls.normalize_resource_key(value=value, field=field)
+
+        if field == "access_mode" and not cls.is_empty_value(value):
+            value = str(value).strip().upper()
+
+        return super().normalize_field_value(field=field, value=value)
+
+    @classmethod
+    def normalize_resource_key(cls, *, value: Any, field: str) -> str:
+        normalized = str(value or "").strip().lower()
+
+        if not normalized:
+            return ""
+
+        if " " in normalized:
+            raise IamManagementRequestInvalidError(
+                f"{field} cannot contain spaces.",
+                details={
+                    "field": field,
+                    "value": normalized,
+                },
+            )
+
+        return normalized
+
+    @staticmethod
+    def resolve_default_module_code(resource_type: str) -> str:
+        if "." in resource_type:
+            return resource_type.split(".", 1)[0]
+
+        if ":" in resource_type:
+            return resource_type.split(":", 1)[0]
+
+        return resource_type
+
+
+class ResourceActionValidator(IamManagementValidator):
+    ACTION_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+    required_create_fields = (
+        "resource_id",
+        "action_code",
+        "action_name",
+    )
+    allowed_create_fields = (
+        "resource_id",
+        "action_code",
+        "action_name",
+        "status",
+    )
+    allowed_update_fields = (
+        "action_name",
+        "status",
+    )
+    integer_fields = (
+        "resource_id",
+        "status",
+    )
+    max_lengths = {
+        "action_code": 64,
+        "action_name": 128,
+    }
+    defaults = {
+        "status": 1,
+    }
+
+    @classmethod
+    def normalize_field_value(cls, *, field: str, value: Any) -> Any:
+        if field == "action_code":
+            normalized = str(value or "").strip().lower()
+
+            if cls.ACTION_CODE_PATTERN.fullmatch(normalized) is None:
+                raise IamManagementRequestInvalidError(
+                    "action_code is invalid.",
+                    details={
+                        "field": field,
+                        "value": normalized,
+                        "pattern": cls.ACTION_CODE_PATTERN.pattern,
+                    },
+                )
+
+            return normalized
+
+        return super().normalize_field_value(field=field, value=value)
+
+
+class ResourceRelationValidator(IamManagementValidator):
+    required_create_fields = (
+        "resource_type",
+        "resource_id",
+        "parent_resource_type",
+        "parent_resource_id",
+    )
+    allowed_create_fields = (
+        "resource_type",
+        "resource_id",
+        "parent_resource_type",
+        "parent_resource_id",
+        "relation_type",
+    )
+    allowed_update_fields = ()
+    max_lengths = {
+        "resource_type": 128,
+        "resource_id": 128,
+        "parent_resource_type": 128,
+        "parent_resource_id": 128,
+        "relation_type": 32,
+    }
+    defaults = {
+        "relation_type": "PARENT",
+    }
+
+    @classmethod
+    def normalize_field_value(cls, *, field: str, value: Any) -> Any:
+        if field in ("resource_type", "parent_resource_type"):
+            return ResourceValidator.normalize_resource_key(
+                value=value,
+                field=field,
+            )
+
+        if field == "relation_type":
+            normalized = str(value or "PARENT").strip().upper()
+
+            if normalized != "PARENT":
+                raise IamManagementRequestInvalidError(
+                    "relation_type is invalid.",
+                    details={
+                        "field": field,
+                        "value": normalized,
+                        "allowed_values": [
+                            "PARENT"
+                        ],
+                    },
+                )
+
+            return normalized
+
+        return super().normalize_field_value(field=field, value=value)

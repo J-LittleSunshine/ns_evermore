@@ -61,6 +61,20 @@ class Command(BaseCommand):
         SeedPermissionSpec(permission_code="iam:permission:update", permission_name="Update permissions"),
         SeedPermissionSpec(permission_code="iam:permission:delete", permission_name="Delete permissions"),
 
+        SeedPermissionSpec(permission_code="iam:resource:read", permission_name="Read resources"),
+        SeedPermissionSpec(permission_code="iam:resource:create", permission_name="Create resources"),
+        SeedPermissionSpec(permission_code="iam:resource:update", permission_name="Update resources"),
+        SeedPermissionSpec(permission_code="iam:resource:delete", permission_name="Delete resources"),
+
+        SeedPermissionSpec(permission_code="iam:resource_action:read", permission_name="Read resource actions"),
+        SeedPermissionSpec(permission_code="iam:resource_action:create", permission_name="Create resource actions"),
+        SeedPermissionSpec(permission_code="iam:resource_action:update", permission_name="Update resource actions"),
+        SeedPermissionSpec(permission_code="iam:resource_action:delete", permission_name="Delete resource actions"),
+
+        SeedPermissionSpec(permission_code="iam:resource_relation:read", permission_name="Read resource relations"),
+        SeedPermissionSpec(permission_code="iam:resource_relation:create", permission_name="Create resource relations"),
+        SeedPermissionSpec(permission_code="iam:resource_relation:delete", permission_name="Delete resource relations"),
+
         SeedPermissionSpec(permission_code="iam:role:read", permission_name="Read roles"),
         SeedPermissionSpec(permission_code="iam:role:create", permission_name="Create roles"),
         SeedPermissionSpec(permission_code="iam:role:update", permission_name="Update roles"),
