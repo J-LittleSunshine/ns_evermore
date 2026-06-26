@@ -21,6 +21,7 @@ class InternalIamViewSet(NsViewSet):
         "introspect_token",
         "access_check",
         "batch_access_check",
+        "resolve_resource_filter",
     }
 
     service_class = InternalIamService
@@ -46,6 +47,12 @@ class InternalIamViewSet(NsViewSet):
 
     async def batch_access_check(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         return await self.service_class.batch_access_check(
+            self.get_request_data(request),
+            trace_id=self.get_trace_id(request),
+        )
+
+    async def resolve_resource_filter(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.service_class.resolve_resource_filter(
             self.get_request_data(request),
             trace_id=self.get_trace_id(request),
         )

@@ -99,6 +99,7 @@ urlpatterns = [
     path("internal/introspect_token/", InternalIamViewSet.as_view({"post": "introspect_token"})),
     path("internal/access_check/", InternalIamViewSet.as_view({"post": "access_check"})),
     path("internal/batch_access_check/", InternalIamViewSet.as_view({"post": "batch_access_check"})),
+    path("internal/resolve_resource_filter/", InternalIamViewSet.as_view({"post": "resolve_resource_filter"})),
 
     path("resource/list/", ResourceViewSet.as_view({"post": "list"})),
     path("resource/detail/", ResourceViewSet.as_view({"post": "get_detail"})),

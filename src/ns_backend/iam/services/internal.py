@@ -17,6 +17,7 @@ from ns_backend.iam.errors import (
 from ns_backend.iam.repositories import AuthUserRepository
 from ns_backend.iam.services.access_decision import AccessDecisionService
 from ns_backend.iam.services.auth import AuthService
+from ns_backend.iam.services.resource_access_filter import ResourceAccessFilterService
 
 if TYPE_CHECKING:
     pass
@@ -115,9 +116,14 @@ class InternalIamService:
                 trace_id=trace_id,
             )
 
+        access_data = cls.attach_runtime_context(
+            request_data=request_data,
+            principal=principal,
+        )
+
         return await AccessDecisionService.check_with_audit(
             user=user,
-            data=request_data,
+            data=access_data,
             trace_id=trace_id,
         )
 
@@ -161,6 +167,69 @@ class InternalIamService:
             "items": results,
             "total": len(results),
         }
+
+    @classmethod
+    async def resolve_resource_filter(cls, data: dict[str, Any], *, trace_id: str | None = None) -> dict[str, Any]:
+        request_data = cls.ensure_dict(data)
+        principal = cls.ensure_principal(request_data.get("principal"))
+
+        user_id = cls.resolve_user_id_from_principal(principal)
+
+        user = await AuthUserRepository.get_user_by_id(user_id)
+        if user is None or not bool(getattr(user, "is_active", False)):
+            result = ResourceAccessFilterService.build_deny_all_filter(
+                reason="USER_INACTIVE",
+            )
+            result["trace_id"] = trace_id
+            return result
+
+        raw_field_map = request_data.get("field_map")
+        field_map = raw_field_map if isinstance(raw_field_map, dict) else None
+
+        result = await ResourceAccessFilterService.resolve_retrieval_filter(
+            user=user,
+            resource_type=request_data.get("resource_type"),
+            action_code=request_data.get("action_code"),
+            permission_code=cls.normalize_optional(request_data.get("permission_code")),
+            field_map=field_map,
+        )
+
+        result["trace_id"] = trace_id
+        return result
+
+    @classmethod
+    def attach_runtime_context(cls, *, request_data: dict[str, Any], principal: dict[str, Any]) -> dict[str, Any]:
+        access_data = dict(request_data)
+
+        raw_context = access_data.get("context")
+        if isinstance(raw_context, dict):
+            context = dict(raw_context)
+        else:
+            context = {}
+
+        context.setdefault(
+            "runtime_principal",
+            dict(principal),
+        )
+        context.setdefault(
+            "runtime_principal_type",
+            cls.normalize_optional(principal.get("principal_type")),
+        )
+        context.setdefault(
+            "runtime_principal_id",
+            cls.normalize_optional(principal.get("principal_id")),
+        )
+        context.setdefault(
+            "runtime_client_id",
+            cls.normalize_optional(principal.get("client_id")),
+        )
+        context.setdefault(
+            "runtime_session_id",
+            cls.normalize_optional(principal.get("session_id")),
+        )
+
+        access_data["context"] = context
+        return access_data
 
     @classmethod
     def resolve_user_id_from_principal(cls, principal: dict[str, Any]) -> int:
