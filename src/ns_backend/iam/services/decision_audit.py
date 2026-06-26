@@ -247,7 +247,10 @@ class DecisionAuditService:
         if value in (None, ""):
             return None
 
-        return int(value)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def normalize_optional_source(value: Any) -> str | None:
