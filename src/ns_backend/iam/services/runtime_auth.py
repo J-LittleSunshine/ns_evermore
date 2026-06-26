@@ -27,7 +27,7 @@ class RuntimeIamInternalAuthService:
 
     @classmethod
     def verify_internal_service_token(cls, token: str | None) -> bool:
-        expected_token = str(getattr(settings, "IAM_RUNTIME_INTERNAL_SERVICE_TOKEN", "") or "").strip()
+        expected_token = str(getattr(settings, "IAM_INTERNAL_TOKEN", "") or "").strip()
 
         if not expected_token:
             return False
