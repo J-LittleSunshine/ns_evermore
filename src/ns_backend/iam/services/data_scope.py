@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import (
     Any,
     TYPE_CHECKING,
@@ -24,6 +25,7 @@ from ns_backend.iam.schemas import (
     DataScopeFilterPlan,
     DataScopeResult,
 )
+from ns_backend.iam.services.cache import IamCacheService
 from ns_backend.iam.services.permission import PermissionService
 
 if TYPE_CHECKING:
@@ -48,6 +50,34 @@ class DataScopeService:
         if not permission_code:
             return DataScopePolicy.denied_result()
 
+        cache_key = {
+            "kind": "user_data_scope",
+            "user": IamCacheService.build_user_fingerprint(user),
+            "permission_code": permission_code,
+        }
+
+        cached_payload = await IamCacheService.aget(
+            cache_key,
+            default=None,
+        )
+        cached_result = cls._data_scope_result_from_cache_payload(cached_payload)
+        if cached_result is not None:
+            return cached_result
+
+        result = await cls._resolve_scope_from_db(
+            user=user,
+            permission_code=permission_code,
+        )
+
+        await IamCacheService.aset(
+            cache_key,
+            cls._data_scope_result_to_cache_payload(result),
+            ttl=IamCacheService.user_cache_ttl_seconds(),
+        )
+        return result
+
+    @classmethod
+    async def _resolve_scope_from_db(cls, *, user: Any, permission_code: str) -> DataScopeResult:
         if bool(getattr(user, "is_superuser", False)):
             return DataScopePolicy.platform_all_result()
 
@@ -73,6 +103,75 @@ class DataScopeService:
             )
 
         return DataScopePolicy.denied_result()
+
+    @staticmethod
+    def _data_scope_result_to_cache_payload(result: DataScopeResult) -> dict[str, Any]:
+        return asdict(result)
+
+    @classmethod
+    def _data_scope_result_from_cache_payload(cls, payload: Any) -> DataScopeResult | None:
+        if not isinstance(payload, dict):
+            return None
+
+        allowed = payload.get("allowed")
+        if not isinstance(allowed, bool):
+            return None
+
+        department_ids = cls._cached_int_list_or_none(payload.get("department_ids"))
+        if department_ids is None:
+            department_ids = []
+
+        return DataScopeResult(
+            allowed=allowed,
+            scope=cls._optional_str(payload.get("scope")),
+            company_id=cls._optional_int(payload.get("company_id")),
+            subsidiary_id=cls._optional_int(payload.get("subsidiary_id")),
+            department_id=cls._optional_int(payload.get("department_id")),
+            department_ids=department_ids,
+            user_id=cls._optional_int(payload.get("user_id")),
+            is_platform_scope=bool(payload.get("is_platform_scope", False)),
+        )
+
+    @staticmethod
+    def _optional_str(value: Any) -> str | None:
+        if value is None:
+            return None
+
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+
+        if isinstance(value, bool):
+            return None
+
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _cached_int_list_or_none(value: Any) -> list[int] | None:
+        if value is None:
+            return []
+
+        if not isinstance(value, list):
+            return None
+
+        result: list[int] = []
+        for item in value:
+            if isinstance(item, bool):
+                return None
+
+            try:
+                result.append(int(item))
+            except (TypeError, ValueError):
+                return None
+
+        return result
 
     @classmethod
     async def _resolve_personal_scope(cls, *, user: Any, permission_ids: list[int], now) -> DataScopeResult:
@@ -239,9 +338,33 @@ class DataScopeService:
             company_id=company_id,
         )
 
-    @staticmethod
-    async def _get_descendant_department_ids(*, company_id: int | None, department_id: int | None) -> list[int]:
-        return await DataScopeRepository.list_descendant_department_ids(
+    @classmethod
+    async def _get_descendant_department_ids(cls, *, company_id: int | None, department_id: int | None) -> list[int]:
+        if not company_id or not department_id:
+            return []
+
+        cache_key = {
+            "kind": "descendant_department_ids",
+            "company_id": company_id,
+            "department_id": department_id,
+        }
+
+        cached_ids = await IamCacheService.aget(
+            cache_key,
+            default=None,
+        )
+        normalized_ids = cls._cached_int_list_or_none(cached_ids)
+        if normalized_ids is not None:
+            return normalized_ids
+
+        department_ids = await DataScopeRepository.list_descendant_department_ids(
             company_id=company_id,
             department_id=department_id,
         )
+
+        await IamCacheService.aset(
+            cache_key,
+            department_ids,
+            ttl=IamCacheService.cache_ttl_seconds(),
+        )
+        return department_ids

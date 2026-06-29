@@ -272,7 +272,24 @@ class PermissionService:
 
     @classmethod
     async def list_permission_codes(cls, user: Any) -> list[str]:
+        if not user or not bool(getattr(user, "is_active", False)):
+            return []
+
         active_permissions = await cls._list_active_permissions()
+        cache_key = {
+            "kind": "user_permission_codes",
+            "user": IamCacheService.build_user_fingerprint(user),
+            "active_permissions": cls._active_permissions_cache_part(active_permissions),
+        }
+
+        cached_codes = await IamCacheService.aget(
+            cache_key,
+            default=None,
+        )
+        normalized_codes = cls._cached_str_list_or_none(cached_codes)
+        if normalized_codes is not None:
+            return normalized_codes
+
         effective_ids = await cls.resolve_effective_permission_ids(
             user=user,
             active_permissions=active_permissions,
@@ -283,18 +300,48 @@ class PermissionService:
             for item in active_permissions
             if item["id"] in effective_ids
         ]
+        result = sorted(codes)
 
-        return sorted(codes)
+        await IamCacheService.aset(
+            cache_key,
+            result,
+            ttl=IamCacheService.user_cache_ttl_seconds(),
+        )
+        return result
 
     @classmethod
     async def list_menu_tree(cls, user: Any) -> list[dict[str, Any]]:
+        if not user or not bool(getattr(user, "is_active", False)):
+            return []
+
         active_permissions = await cls._list_active_permissions()
+        cache_key = {
+            "kind": "user_menu_tree",
+            "user": IamCacheService.build_user_fingerprint(user),
+            "active_permissions": cls._active_permissions_cache_part(active_permissions),
+        }
+
+        cached_tree = await IamCacheService.aget(
+            cache_key,
+            default=None,
+        )
+        normalized_tree = cls._cached_menu_tree_or_none(cached_tree)
+        if normalized_tree is not None:
+            return normalized_tree
+
         effective_ids = await cls.resolve_effective_permission_ids(
             user=user,
             active_permissions=active_permissions,
         )
 
-        return cls.build_menu_tree(active_permissions, effective_ids)
+        tree = cls.build_menu_tree(active_permissions, effective_ids)
+
+        await IamCacheService.aset(
+            cache_key,
+            tree,
+            ttl=IamCacheService.user_cache_ttl_seconds(),
+        )
+        return tree
 
     @staticmethod
     async def _list_active_permissions() -> list[dict[str, Any]]:
@@ -330,6 +377,34 @@ class PermissionService:
         if active_permissions is None:
             active_permissions = await cls._list_active_permissions()
 
+        cache_key = {
+            "kind": "effective_permission_ids",
+            "user": IamCacheService.build_user_fingerprint(user),
+            "active_permissions": cls._active_permissions_cache_part(active_permissions),
+        }
+
+        cached_ids = await IamCacheService.aget(
+            cache_key,
+            default=None,
+        )
+        normalized_ids = cls._cached_int_set_or_none(cached_ids)
+        if normalized_ids is not None:
+            return normalized_ids
+
+        effective_ids = await cls._resolve_effective_permission_ids_from_db(
+            user=user,
+            active_permissions=active_permissions,
+        )
+
+        await IamCacheService.aset(
+            cache_key,
+            sorted(effective_ids),
+            ttl=IamCacheService.user_cache_ttl_seconds(),
+        )
+        return effective_ids
+
+    @classmethod
+    async def _resolve_effective_permission_ids_from_db(cls, *, user: Any, active_permissions: list[dict[str, Any]]) -> set[int]:
         active_ids = {
             item["id"]
             for item in active_permissions
@@ -434,6 +509,54 @@ class PermissionService:
             )
 
         return set()
+
+    @staticmethod
+    def _active_permissions_cache_part(active_permissions: list[dict[str, Any]]) -> str:
+        return IamCacheService.build_hash_key_part(active_permissions)
+
+    @staticmethod
+    def _cached_int_set_or_none(value: Any) -> set[int] | None:
+        if not isinstance(value, list):
+            return None
+
+        result: set[int] = set()
+        for item in value:
+            if isinstance(item, bool):
+                return None
+
+            try:
+                result.add(int(item))
+            except (TypeError, ValueError):
+                return None
+
+        return result
+
+    @staticmethod
+    def _cached_str_list_or_none(value: Any) -> list[str] | None:
+        if not isinstance(value, list):
+            return None
+
+        result: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                return None
+
+            result.append(item)
+
+        return result
+
+    @staticmethod
+    def _cached_menu_tree_or_none(value: Any) -> list[dict[str, Any]] | None:
+        if not isinstance(value, list):
+            return None
+
+        if not all(isinstance(item, dict) for item in value):
+            return None
+
+        return [
+            dict(item)
+            for item in value
+        ]
 
     @staticmethod
     async def _list_user_permission_ids(user_id: int, now, *, effect: str) -> set[int]:
