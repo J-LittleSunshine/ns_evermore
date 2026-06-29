@@ -18,6 +18,7 @@ from ns_backend.iam.constants import (
     USER_TYPE_PERSONAL,
 )
 from ns_backend.iam.repositories import PermissionRepository
+from ns_backend.iam.services.cache import IamCacheService
 
 if TYPE_CHECKING:
     pass
@@ -32,6 +33,35 @@ class PermissionService:
 
     @classmethod
     async def get_active_permission_ids_with_ancestors(cls, permission_code: str) -> list[int]:
+        cache_key = {
+            "kind": "permission_ancestor_ids",
+            "permission_code": permission_code,
+        }
+
+        cached_ids = await IamCacheService.aget_or_set(
+            cache_key,
+            lambda: cls._get_active_permission_ids_with_ancestors_from_db(permission_code),
+            ttl=IamCacheService.cache_ttl_seconds(),
+        )
+
+        if isinstance(cached_ids, list):
+            normalized_ids: list[int] = []
+
+            for item in cached_ids:
+                if isinstance(item, bool):
+                    return await cls._get_active_permission_ids_with_ancestors_from_db(permission_code)
+
+                try:
+                    normalized_ids.append(int(item))
+                except (TypeError, ValueError):
+                    return await cls._get_active_permission_ids_with_ancestors_from_db(permission_code)
+
+            return normalized_ids
+
+        return await cls._get_active_permission_ids_with_ancestors_from_db(permission_code)
+
+    @classmethod
+    async def _get_active_permission_ids_with_ancestors_from_db(cls, permission_code: str) -> list[int]:
         permission = await PermissionRepository.get_active_permission_by_code(permission_code)
         if not permission:
             return []
@@ -258,11 +288,6 @@ class PermissionService:
 
     @classmethod
     async def list_menu_tree(cls, user: Any) -> list[dict[str, Any]]:
-        """
-        先保留给下一步 menus 使用。
-
-        本 Step 不开放 menus API。
-        """
         active_permissions = await cls._list_active_permissions()
         effective_ids = await cls.resolve_effective_permission_ids(
             user=user,
@@ -273,7 +298,29 @@ class PermissionService:
 
     @staticmethod
     async def _list_active_permissions() -> list[dict[str, Any]]:
-        return await PermissionRepository.list_active_permissions()
+        cache_key = {
+            "kind": "active_permissions",
+        }
+
+        cached_rows = await IamCacheService.aget_or_set(
+            cache_key,
+            PermissionRepository.list_active_permissions,
+            ttl=IamCacheService.cache_ttl_seconds(),
+        )
+
+        if isinstance(cached_rows, list) and all(isinstance(item, dict) for item in cached_rows):
+            return [
+                dict(item)
+                for item in cached_rows
+            ]
+
+        rows = await PermissionRepository.list_active_permissions()
+        await IamCacheService.aset(
+            cache_key,
+            rows,
+            ttl=IamCacheService.cache_ttl_seconds(),
+        )
+        return rows
 
     @classmethod
     async def resolve_effective_permission_ids(cls, *, user: Any, active_permissions: list[dict[str, Any]] | None = None) -> set[int]:

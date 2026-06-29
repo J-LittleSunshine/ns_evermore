@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from datetime import datetime
 from typing import (
     Any,
     TYPE_CHECKING,
@@ -17,6 +18,7 @@ from ns_backend.iam.models import (
     IamResourceRelation,
     IamUserRole
 )
+from ns_backend.iam.services.cache import IamCacheService
 
 if TYPE_CHECKING:
     pass
@@ -50,7 +52,7 @@ class AccessDecisionRepository:
         return query
 
     @classmethod
-    async def list_active_acl_effects_for_resource_type_action(cls,*,subject_bindings: list[tuple[str, int]],resource_type: str,action_code: str, now) -> list[dict[str, Any]]:
+    async def list_active_acl_effects_for_resource_type_action(cls, *, subject_bindings: list[tuple[str, int]], resource_type: str, action_code: str, now) -> list[dict[str, Any]]:
         if not subject_bindings:
             return []
 
@@ -88,7 +90,7 @@ class AccessDecisionRepository:
         ]
 
     @classmethod
-    async def list_descendant_resource_ids(cls,*,parent_resource_type: str,parent_resource_id: str,target_resource_type: str,max_depth: int | None = None,include_parent_when_target: bool = True) -> list[str]:
+    async def list_descendant_resource_ids(cls, *, parent_resource_type: str, parent_resource_id: str, target_resource_type: str, max_depth: int | None = None, include_parent_when_target: bool = True) -> list[str]:
         depth_limit = cls.MAX_RESOURCE_ANCESTOR_DEPTH if max_depth is None else max(int(max_depth), 1)
 
         normalized_parent_type = cls.normalize_resource_type(parent_resource_type)
@@ -168,7 +170,7 @@ class AccessDecisionRepository:
         return result_ids
 
     @classmethod
-    async def list_ancestor_resource_types(cls,*,resource_type: str,max_depth: int | None = None) -> list[str]:
+    async def list_ancestor_resource_types(cls, *, resource_type: str, max_depth: int | None = None) -> list[str]:
         depth_limit = cls.MAX_RESOURCE_ANCESTOR_DEPTH if max_depth is None else max(int(max_depth), 1)
         normalized_resource_type = cls.normalize_resource_type(resource_type)
 
@@ -216,26 +218,177 @@ class AccessDecisionRepository:
 
     @classmethod
     async def get_resource_by_type(cls, *, resource_type: str) -> IamResource | None:
+        cache_key = {
+            "kind": "resource_by_type",
+            "resource_type": resource_type,
+        }
+
+        payload = await IamCacheService.aget_or_set(
+            cache_key,
+            lambda: cls._get_resource_payload_by_type_from_db(resource_type=resource_type),
+            ttl=IamCacheService.cache_ttl_seconds(),
+        )
+
+        resource = cls._resource_from_cache_payload(payload)
+        if resource is not None or payload is None:
+            return resource
+
+        payload = await cls._get_resource_payload_by_type_from_db(
+            resource_type=resource_type,
+        )
+        await IamCacheService.aset(
+            cache_key,
+            payload,
+            ttl=IamCacheService.cache_ttl_seconds(),
+        )
+        return cls._resource_from_cache_payload(payload)
+
+    @classmethod
+    async def _get_resource_payload_by_type_from_db(cls, *, resource_type: str) -> dict[str, Any] | None:
         db_alias = BaseRepository.resolve_db_alias(model_class=IamResource)
 
-        return await IamResource.objects.using(db_alias).filter(
+        row = await IamResource.objects.using(db_alias).filter(
             resource_type=resource_type,
             status=1,
+        ).values(
+            "id",
+            "resource_type",
+            "resource_name",
+            "module_code",
+            "access_mode",
+            "status",
+            "created_by",
+            "updated_by",
+            "created_at",
+            "updated_at",
         ).afirst()
+
+        if row is None:
+            return None
+
+        payload = dict(row)
+        payload["created_at"] = cls._datetime_to_cache_value(payload.get("created_at"))
+        payload["updated_at"] = cls._datetime_to_cache_value(payload.get("updated_at"))
+        return payload
+
+    @classmethod
+    def _resource_from_cache_payload(cls, payload: Any) -> IamResource | None:
+        if payload is None:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        try:
+            resource_id = cls._required_int(payload.get("id"))
+            status = cls._required_int(payload.get("status"))
+        except (TypeError, ValueError):
+            return None
+
+        return IamResource(
+            id=resource_id,
+            resource_type=str(payload.get("resource_type") or ""),
+            resource_name=str(payload.get("resource_name") or ""),
+            module_code=str(payload.get("module_code") or ""),
+            access_mode=str(payload.get("access_mode") or ""),
+            status=status,
+            created_by=cls._optional_int(payload.get("created_by")),
+            updated_by=cls._optional_int(payload.get("updated_by")),
+            created_at=cls._datetime_from_cache_value(payload.get("created_at")),
+            updated_at=cls._datetime_from_cache_value(payload.get("updated_at")),
+        )
+
+    @staticmethod
+    def _required_int(value: Any) -> int:
+        if isinstance(value, bool):
+            raise TypeError("boolean is not a valid integer value.")
+
+        return int(value)
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+
+        if isinstance(value, bool):
+            return None
+
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _datetime_to_cache_value(value: Any) -> str | None:
+        if value is None:
+            return None
+
+        if isinstance(value, datetime):
+            return value.isoformat()
+
+        return str(value)
+
+    @staticmethod
+    def _datetime_from_cache_value(value: Any) -> datetime | None:
+        if isinstance(value, datetime):
+            return value
+
+        if not isinstance(value, str):
+            return None
+
+        text = value.strip()
+        if not text:
+            return None
+
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            return None
 
     @classmethod
     async def has_action_for_resource_type(cls, *, resource_type: str, action_code: str) -> bool:
-        resource = await cls.get_resource_by_type(
-            resource_type=resource_type,
+        cache_key = {
+            "kind": "resource_action_exists",
+            "resource_type": resource_type,
+            "action_code": action_code,
+        }
+
+        async def load_from_db() -> bool:
+            resource = await cls.get_resource_by_type(
+                resource_type=resource_type,
+            )
+
+            if resource is None:
+                return False
+
+            return await cls._has_action_for_resource_id(
+                resource_id=int(resource.id),
+                action_code=action_code,
+            )
+
+        cached_value = await IamCacheService.aget_or_set(
+            cache_key,
+            load_from_db,
+            ttl=IamCacheService.cache_ttl_seconds(),
         )
 
-        if resource is None:
-            return False
+        if isinstance(cached_value, bool):
+            return cached_value
 
+        result = await load_from_db()
+        await IamCacheService.aset(
+            cache_key,
+            result,
+            ttl=IamCacheService.cache_ttl_seconds(),
+        )
+        return result
+
+    @classmethod
+    async def _has_action_for_resource_id(cls, *, resource_id: int, action_code: str) -> bool:
         db_alias = BaseRepository.resolve_db_alias(model_class=IamResourceAction)
 
         return await IamResourceAction.objects.using(db_alias).filter(
-            resource_id=resource.id,
+            resource_id=resource_id,
             action_code=action_code,
             status=1,
         ).aexists()
@@ -385,6 +538,35 @@ class AccessDecisionRepository:
 
     @classmethod
     async def list_active_policy_rules_for_action(cls, *, action_code: str) -> list[dict[str, Any]]:
+        cache_key = {
+            "kind": "active_policy_rules_for_action",
+            "action_code": action_code,
+        }
+
+        cached_rows = await IamCacheService.aget_or_set(
+            cache_key,
+            lambda: cls._list_active_policy_rules_for_action_from_db(action_code=action_code),
+            ttl=IamCacheService.cache_ttl_seconds(),
+        )
+
+        if isinstance(cached_rows, list) and all(isinstance(item, dict) for item in cached_rows):
+            return [
+                dict(item)
+                for item in cached_rows
+            ]
+
+        rows = await cls._list_active_policy_rules_for_action_from_db(
+            action_code=action_code,
+        )
+        await IamCacheService.aset(
+            cache_key,
+            rows,
+            ttl=IamCacheService.cache_ttl_seconds(),
+        )
+        return rows
+
+    @classmethod
+    async def _list_active_policy_rules_for_action_from_db(cls, *, action_code: str) -> list[dict[str, Any]]:
         db_alias = BaseRepository.resolve_db_alias(model_class=IamPolicyRule)
 
         queryset = IamPolicyRule.objects.using(db_alias).filter(
