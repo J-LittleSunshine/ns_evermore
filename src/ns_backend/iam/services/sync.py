@@ -13,6 +13,7 @@ from ns_backend.iam.constants import (
 from ns_backend.iam.errors import IamManagementRequestInvalidError
 from ns_backend.iam.repositories import IamSyncRepository
 from ns_backend.iam.schemas import PermissionSpec
+from ns_backend.iam.services.cache import IamCacheService
 from ns_backend.iam.validators import (
     ResourceActionValidator,
     ResourceValidator,
@@ -39,12 +40,15 @@ class IamSyncService:
     async def sync_resource(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
         spec = cls.normalize_resource_spec(data)
 
-        return await cls.repository_class.sync_resources(
+        result = await cls.repository_class.sync_resources(
             resources=[
                 spec,
             ],
             operator_id=cls.get_operator_id(operator),
         )
+
+        await cls.bump_authz_version_after_sync_result(result)
+        return result
 
     @classmethod
     async def batch_sync_resources(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
@@ -54,7 +58,7 @@ class IamSyncService:
             field="resources",
         )
 
-        return await cls.repository_class.sync_resources(
+        result = await cls.repository_class.sync_resources(
             resources=[
                 cls.normalize_resource_spec(item)
                 for item in resources
@@ -62,16 +66,22 @@ class IamSyncService:
             operator_id=cls.get_operator_id(operator),
         )
 
+        await cls.bump_authz_version_after_sync_result(result)
+        return result
+
     @classmethod
     async def sync_permission(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
         spec = cls.normalize_permission_spec(data)
 
-        return await cls.repository_class.sync_permissions(
+        result = await cls.repository_class.sync_permissions(
             permissions=[
                 spec,
             ],
             operator_id=cls.get_operator_id(operator),
         )
+
+        await cls.bump_authz_version_after_sync_result(result)
+        return result
 
     @classmethod
     async def batch_sync_permissions(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
@@ -81,13 +91,16 @@ class IamSyncService:
             field="permissions",
         )
 
-        return await cls.repository_class.sync_permissions(
+        result = await cls.repository_class.sync_permissions(
             permissions=[
                 cls.normalize_permission_spec(item)
                 for item in permissions
             ],
             operator_id=cls.get_operator_id(operator),
         )
+
+        await cls.bump_authz_version_after_sync_result(result)
+        return result
 
     @classmethod
     async def sync_registered_permissions(cls, *, operator: Any) -> dict[str, Any]:
@@ -100,13 +113,36 @@ class IamSyncService:
 
         specs = PermissionModuleRegistry.list_specs()
 
-        return await cls.repository_class.sync_permissions(
+        result = await cls.repository_class.sync_permissions(
             permissions=[
                 cls.permission_spec_to_payload(spec)
                 for spec in specs
             ],
             operator_id=cls.get_operator_id(operator),
         )
+
+        await cls.bump_authz_version_after_sync_result(result)
+        return result
+
+    @classmethod
+    async def bump_authz_version_after_sync_result(cls, result: dict[str, Any]) -> None:
+        if not cls.sync_result_has_changes(result):
+            return
+
+        try:
+            await IamCacheService.abump_authz_version()
+        except Exception:  # noqa
+            return
+
+    @staticmethod
+    def sync_result_has_changes(result: dict[str, Any]) -> bool:
+        try:
+            created_count = int(result.get("created", 0))
+            updated_count = int(result.get("updated", 0))
+        except (TypeError, ValueError):
+            return True
+
+        return created_count > 0 or updated_count > 0
 
     @staticmethod
     def permission_spec_to_payload(spec: PermissionSpec) -> dict[str, Any]:

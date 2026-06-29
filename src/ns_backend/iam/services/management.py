@@ -51,6 +51,7 @@ from ns_backend.iam.repositories import (
     IamManagementRepository,
     UserSessionRepository,
 )
+from ns_backend.iam.services.cache import IamCacheService
 from ns_backend.iam.validators import (
     CompanyValidator,
     DepartmentPermissionValidator,
@@ -208,12 +209,17 @@ class IamManagementService:
             exclude_id=None,
         )
 
-        return await cls.repository_class.create_item(
+        item = await cls.repository_class.create_item(
             model_class=cls.model_class,
             data=validated_data,
             fields=cls.detail_fields,
             operator_id=cls.get_operator_id(operator),
         )
+
+        await cls.bump_authz_version_after_write(
+            action_name="create",
+        )
+        return item
 
     @classmethod
     async def update_item(cls, *, data: dict[str, Any], operator: Any) -> dict[str, Any]:
@@ -274,6 +280,9 @@ class IamManagementService:
                 },
             )
 
+        await cls.bump_authz_version_after_write(
+            action_name="update",
+        )
         return item
 
     @classmethod
@@ -321,10 +330,21 @@ class IamManagementService:
                 },
             )
 
+        await cls.bump_authz_version_after_write(
+            action_name="delete",
+        )
+
         return {
             "id": item_id,
             "deleted": True,
         }
+
+    @classmethod
+    async def bump_authz_version_after_write(cls, *, action_name: str) -> None:
+        try:
+            await IamCacheService.abump_authz_version()
+        except Exception:  # noqa
+            return
 
     @classmethod
     async def validate_create_business_rules(cls, *, data: dict[str, Any], operator: Any) -> None:
