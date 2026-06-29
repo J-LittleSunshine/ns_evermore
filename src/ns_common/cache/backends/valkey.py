@@ -5,11 +5,11 @@ import importlib
 from typing import (
     Any,
     Literal,
-    TYPE_CHECKING
+    TYPE_CHECKING,
 )
 from urllib.parse import (
     urlparse,
-    urlunparse
+    urlunparse,
 )
 
 from ns_common.cache.backends.redis import RedisCacheBackend
@@ -26,6 +26,7 @@ class ValkeyCacheBackend(RedisCacheBackend):
 
     def initialize(self) -> None:
         valkey_module = self._load_valkey_module()
+        async_valkey_module = self._load_async_valkey_module()
         cache_url = self._normalize_valkey_url(self._config.cache_url)
 
         self._client = valkey_module.from_url(
@@ -34,6 +35,11 @@ class ValkeyCacheBackend(RedisCacheBackend):
         )
 
         self._client.ping()
+
+        self._async_client = async_valkey_module.from_url(
+            cache_url,
+            decode_responses=True,
+        )
 
     @staticmethod
     def _load_valkey_module() -> Any:
@@ -44,6 +50,18 @@ class ValkeyCacheBackend(RedisCacheBackend):
                 "Python package 'valkey' is required.",
                 details={
                     "package": "valkey",
+                },
+            ) from exc
+
+    @staticmethod
+    def _load_async_valkey_module() -> Any:
+        try:
+            return importlib.import_module("valkey.asyncio")
+        except ImportError as exc:
+            raise NsDependencyError(
+                "Python package 'valkey' with asyncio support is required.",
+                details={
+                    "package": "valkey.asyncio",
                 },
             ) from exc
 

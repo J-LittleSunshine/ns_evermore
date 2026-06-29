@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from threading import RLock
 from typing import (
@@ -111,6 +110,21 @@ def close_cache_clients() -> None:
         if _BACKEND is not None:
             _BACKEND.close()
             _BACKEND = None
+
+
+async def aclose_cache_clients() -> None:
+    global _BACKEND
+
+    with _CLIENT_LOCK:
+        _CLIENTS.clear()
+        _ASYNC_CLIENTS.clear()
+
+    with _BACKEND_LOCK:
+        backend = _BACKEND
+        _BACKEND = None
+
+    if backend is not None:
+        await backend.aclose()
 
 
 def get_cache_client(*, namespace: str) -> "CacheClient":
@@ -379,40 +393,159 @@ class AsyncCacheClient:
         return self._sync_client.namespace
 
     async def get(self, key: str, default: Any = None) -> Any:
-        return await asyncio.to_thread(self._sync_client.get, key, default)
+        full_key = self._sync_client._full_key(key)  # noqa
+
+        try:
+            raw_value = await self._sync_client._backend.aget(full_key)  # noqa
+            if raw_value is None:
+                return default
+
+            return loads_cache_value(raw_value)
+        except NsValidationError:
+            raise
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("aget", exc, key=key)  # noqa
+            return default
 
     async def get_many(self, keys: list[str]) -> dict[str, Any]:
-        return await asyncio.to_thread(self._sync_client.get_many, keys)
+        full_key_map = {
+            self._sync_client._full_key(key): key  # noqa
+            for key in keys
+        }
+
+        try:
+            raw_values = await self._sync_client._backend.aget_many(list(full_key_map.keys()))  # noqa
+            result: dict[str, Any] = {}
+
+            for full_key, raw_value in raw_values.items():
+                original_key = full_key_map.get(full_key)
+                if original_key is None:
+                    continue
+
+                result[original_key] = loads_cache_value(raw_value)
+
+            return result
+        except NsValidationError:
+            raise
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("aget_many", exc)  # noqa
+            return {}
 
     async def set(self, key: str, value: Any, ttl: Any = _TTL_UNSET) -> bool:
-        return await asyncio.to_thread(self._sync_client.set, key, value, ttl)
+        full_key = self._sync_client._full_key(key)  # noqa
+        raw_value = dumps_cache_value(value)
+        resolved_ttl = self._sync_client._resolve_ttl(ttl)  # noqa
+
+        try:
+            return await self._sync_client._backend.aset(full_key, raw_value, resolved_ttl)  # noqa
+        except NsValidationError:
+            raise
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("aset", exc, key=key)  # noqa
+            return False
 
     async def set_many(self, mapping: dict[str, Any], ttl: Any = _TTL_UNSET) -> bool:
-        return await asyncio.to_thread(self._sync_client.set_many, mapping, ttl)
+        full_mapping = {
+            self._sync_client._full_key(key): dumps_cache_value(value)  # noqa
+            for key, value in mapping.items()
+        }
+        resolved_ttl = self._sync_client._resolve_ttl(ttl)  # noqa
+
+        try:
+            return await self._sync_client._backend.aset_many(full_mapping, resolved_ttl)  # noqa
+        except NsValidationError:
+            raise
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("aset_many", exc)  # noqa
+            return False
 
     async def add(self, key: str, value: Any, ttl: Any = _TTL_UNSET) -> bool:
-        return await asyncio.to_thread(self._sync_client.add, key, value, ttl)
+        full_key = self._sync_client._full_key(key)  # noqa
+        raw_value = dumps_cache_value(value)
+        resolved_ttl = self._sync_client._resolve_ttl(ttl)  # noqa
+
+        try:
+            return await self._sync_client._backend.aadd(full_key, raw_value, resolved_ttl)  # noqa
+        except NsValidationError:
+            raise
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("aadd", exc, key=key)  # noqa
+            return False
 
     async def touch(self, key: str, ttl: Any = _TTL_UNSET) -> bool:
-        return await asyncio.to_thread(self._sync_client.touch, key, ttl)
+        full_key = self._sync_client._full_key(key)  # noqa
+        resolved_ttl = self._sync_client._resolve_ttl(ttl)  # noqa
+
+        try:
+            return await self._sync_client._backend.atouch(full_key, resolved_ttl)  # noqa
+        except NsValidationError:
+            raise
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("atouch", exc, key=key)  # noqa
+            return False
 
     async def delete(self, key: str) -> bool:
-        return await asyncio.to_thread(self._sync_client.delete, key)
+        full_key = self._sync_client._full_key(key)  # noqa
+
+        try:
+            return await self._sync_client._backend.adelete(full_key)  # noqa
+        except NsValidationError:
+            raise
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("adelete", exc, key=key)  # noqa
+            return False
 
     async def delete_many(self, keys: list[str]) -> int:
-        return await asyncio.to_thread(self._sync_client.delete_many, keys)
+        full_keys = [
+            self._sync_client._full_key(key)  # noqa
+            for key in keys
+        ]
+
+        try:
+            return await self._sync_client._backend.adelete_many(full_keys)  # noqa
+        except NsValidationError:
+            raise
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("adelete_many", exc)  # noqa
+            return 0
 
     async def exists(self, key: str) -> bool:
-        return await asyncio.to_thread(self._sync_client.exists, key)
+        full_key = self._sync_client._full_key(key)  # noqa
+
+        try:
+            return await self._sync_client._backend.aexists(full_key)  # noqa
+        except NsValidationError:
+            raise
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("aexists", exc, key=key)  # noqa
+            return False
 
     async def clear(self) -> bool:
-        return await asyncio.to_thread(self._sync_client.clear)
+        try:
+            return await self._sync_client._backend.aclear(self._sync_client._namespace_prefix())  # noqa
+        except NsValidationError:
+            raise
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("aclear", exc)  # noqa
+            return False
 
     async def incr(self, key: str, delta: int = 1) -> int:
-        return await asyncio.to_thread(self._sync_client.incr, key, delta)
+        full_key = self._sync_client._full_key(key)  # noqa
+        return await self._sync_client._backend.aincr(  # noqa
+            full_key,
+            self._sync_client._validate_delta(delta),  # noqa
+        )
 
     async def decr(self, key: str, delta: int = 1) -> int:
-        return await asyncio.to_thread(self._sync_client.decr, key, delta)
+        full_key = self._sync_client._full_key(key)  # noqa
+        return await self._sync_client._backend.adecr(  # noqa
+            full_key,
+            self._sync_client._validate_delta(delta),  # noqa
+        )
 
     async def cleanup_expired(self) -> int:
-        return await asyncio.to_thread(self._sync_client.cleanup_expired)
+        try:
+            return await self._sync_client._backend.acleanup_expired()  # noqa
+        except Exception as exc:  # noqa
+            self._sync_client._log_soft_failure("acleanup_expired", exc)  # noqa
+            return 0

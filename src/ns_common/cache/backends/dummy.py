@@ -55,3 +55,42 @@ class DummyCacheBackend(BaseCacheBackend):
                 "delta": delta,
             },
         )
+
+    async def aget(self, key: str) -> str | None:
+        return None
+
+    async def aget_many(self, keys: list[str]) -> dict[str, str]:
+        return {}
+
+    async def aset(self, key: str, value: str, ttl: int | None) -> bool:
+        return True
+
+    async def aset_many(self, mapping: dict[str, str], ttl: int | None) -> bool:
+        return True
+
+    async def aadd(self, key: str, value: str, ttl: int | None) -> bool:
+        return True
+
+    async def atouch(self, key: str, ttl: int | None) -> bool:
+        return False
+
+    async def adelete(self, key: str) -> bool:
+        return False
+
+    async def adelete_many(self, keys: list[str]) -> int:
+        return 0
+
+    async def aexists(self, key: str) -> bool:
+        return False
+
+    async def aclear(self, namespace_prefix: str) -> bool:
+        return True
+
+    async def aincr(self, key: str, delta: int = 1) -> int:
+        raise NsStateError(
+            "dummy cache backend does not support incr/decr.",
+            details={
+                "key": key,
+                "delta": delta,
+            },
+        )

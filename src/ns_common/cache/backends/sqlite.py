@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import time
@@ -516,3 +517,39 @@ class SQLiteCacheBackend(BaseCacheBackend):
             return int(cursor.rowcount)
 
         return int(self._execute_write_with_retry(operation))
+
+    async def aget(self, key: str) -> str | None:
+        return await asyncio.to_thread(self.get, key)
+
+    async def aget_many(self, keys: list[str]) -> dict[str, str]:
+        return await asyncio.to_thread(self.get_many, keys)
+
+    async def aset(self, key: str, value: str, ttl: int | None) -> bool:
+        return await asyncio.to_thread(self.set, key, value, ttl)
+
+    async def aset_many(self, mapping: dict[str, str], ttl: int | None) -> bool:
+        return await asyncio.to_thread(self.set_many, mapping, ttl)
+
+    async def aadd(self, key: str, value: str, ttl: int | None) -> bool:
+        return await asyncio.to_thread(self.add, key, value, ttl)
+
+    async def atouch(self, key: str, ttl: int | None) -> bool:
+        return await asyncio.to_thread(self.touch, key, ttl)
+
+    async def adelete(self, key: str) -> bool:
+        return await asyncio.to_thread(self.delete, key)
+
+    async def adelete_many(self, keys: list[str]) -> int:
+        return await asyncio.to_thread(self.delete_many, keys)
+
+    async def aexists(self, key: str) -> bool:
+        return await asyncio.to_thread(self.exists, key)
+
+    async def aclear(self, namespace_prefix: str) -> bool:
+        return await asyncio.to_thread(self.clear, namespace_prefix)
+
+    async def aincr(self, key: str, delta: int = 1) -> int:
+        return await asyncio.to_thread(self.incr, key, delta)
+
+    async def acleanup_expired(self) -> int:
+        return await asyncio.to_thread(self.cleanup_expired)

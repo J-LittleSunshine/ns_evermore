@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from ns_common.cache.clients import (
     AsyncCacheClient,
     CacheClient,
+    aclose_cache_clients,
     close_cache_clients,
     get_async_cache_client,
     get_cache_client,
@@ -22,4 +23,5 @@ __all__ = [
     "get_async_cache_client",
     "get_cache_client",
     "validate_cache_backend",
+    "aclose_cache_clients",
 ]

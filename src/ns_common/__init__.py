@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ns_common.cache import (
+    aclose_cache_clients,
     close_cache_clients,
     get_async_cache_client,
     get_cache_client,
@@ -61,6 +62,7 @@ __all__ = [
     "get_async_cache_client",
     "get_cache_client",
     "validate_cache_backend",
+    "aclose_cache_clients",
 ]
 
 __version__ = "0.0.1"
