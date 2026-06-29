@@ -2,6 +2,7 @@ from pathlib import Path
 
 from backend.app_loader import build_installed_apps
 from ns_common import ns_config
+from ns_common.cache import validate_cache_backend
 from ns_common.paths import (
     DATA_DIR,
     ensure_runtime_dirs
@@ -54,6 +55,17 @@ DATABASE_ROUTER_MAP = ns_config.backend.database_router_map
 DATABASE_ROUTERS = [
     "backend.db.routers.AppDatabaseRouter",
 ]
+
+CACHES = {
+    "default": {
+        "BACKEND": "ns_common.cache.django.NsDjangoCacheBackend",
+        "LOCATION": "default",
+        "TIMEOUT": ns_config.backend.cache.default_ttl_seconds,
+        "OPTIONS": {},
+    }
+}
+
+validate_cache_backend()
 
 LANGUAGE_CODE = ns_config.backend.language_code
 

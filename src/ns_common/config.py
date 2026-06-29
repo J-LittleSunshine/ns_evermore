@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import re
 from dataclasses import (
     asdict,
     dataclass,
@@ -15,8 +17,12 @@ from typing import (
     Literal,
     TYPE_CHECKING
 )
+from urllib.parse import urlparse
 
-from ns_common.exceptions import NsConfigError
+from ns_common.exceptions import (
+    NsConfigError,
+    NsDependencyError,
+)
 from ns_common.paths import (
     ETC_DIR,
     TMP_DIR,
@@ -54,6 +60,31 @@ NS_CONFIG_FILE_PATH = get_default_config_path()
 
 
 @dataclass(slots=True, kw_only=True)
+class NsCacheConfig:
+    backend: Literal["sqlite", "redis", "valkey", "dummy"] = "sqlite"
+
+    key_prefix: str = "ns_evermore"
+
+    django_namespace: str = "ns_backend"
+
+    cache_url: str = ""
+
+    default_ttl_seconds: int = 300
+
+    none_ttl_means_forever: bool = False
+
+    sqlite_path: str = "data/ns_cache.sqlite3"
+
+    sqlite_busy_timeout_ms: int = 5000
+    sqlite_write_max_retries: int = 3
+    sqlite_write_retry_base_delay_ms: int = 50
+    sqlite_write_retry_max_delay_ms: int = 500
+
+    cleanup_interval_seconds: int = 300
+    cleanup_batch_size: int = 500
+
+
+@dataclass(slots=True, kw_only=True)
 class NsBackendConfig:
     debug: bool = True
     secret_key: str = "change-me-secret-key-at-least-32-chars"
@@ -72,6 +103,7 @@ class NsBackendConfig:
 
     databases: dict[str, dict[str, Any]] = field(default_factory=dict)
     database_router_map: dict[str, str] = field(default_factory=dict)
+    cache: NsCacheConfig = field(default_factory=NsCacheConfig)
     installed_apps: list[str] = field(
         default_factory=lambda: [
             "system",
@@ -161,7 +193,27 @@ class NsConfig:
             backend_raw = cls._get_section(raw_config, preferred_key="backend", compatible_key="backend_config")
             log_raw = cls._get_section(raw_config, preferred_key="log", compatible_key="log_config")
 
-            config = cls(backend=NsBackendConfig(**backend_raw), log=NsLogConfig(**log_raw))
+            backend_raw = dict(backend_raw)
+
+            cache_raw = backend_raw.get("cache", {})
+            if cache_raw is None:
+                cache_raw = {}
+
+            if not isinstance(cache_raw, dict):
+                raise NsConfigError(
+                    "backend.cache must be a JSON object.",
+                    details={
+                        "field": "backend.cache",
+                        "actual_type": type(cache_raw).__name__,
+                    },
+                )
+
+            backend_raw["cache"] = NsCacheConfig(**cache_raw)
+
+            config = cls(
+                backend=NsBackendConfig(**backend_raw),
+                log=NsLogConfig(**log_raw),
+            )
             config.validate()
             return config
 
@@ -263,7 +315,7 @@ class NsConfig:
                     ],
                 },
             )
-        
+
         if not isinstance(self.backend.installed_apps, list):
             raise NsConfigError(
                 "backend.installed_apps must be a list.",
@@ -297,6 +349,148 @@ class NsConfig:
                 )
 
             seen_installed_apps.add(normalized_app_key)
+
+        self._validate_cache_config()
+
+    def _validate_cache_config(self) -> None:
+        cache = self.backend.cache
+
+        if not isinstance(cache, NsCacheConfig):
+            raise NsConfigError(
+                "backend.cache must be NsCacheConfig.",
+                details={
+                    "field": "backend.cache",
+                    "actual_type": type(cache).__name__,
+                },
+            )
+
+        if cache.backend not in {
+            "sqlite",
+            "redis",
+            "valkey",
+            "dummy",
+        }:
+            raise NsConfigError(
+                "backend.cache.backend is invalid.",
+                details={
+                    "field": "backend.cache.backend",
+                    "value": cache.backend,
+                    "allowed_values": [
+                        "sqlite",
+                        "redis",
+                        "valkey",
+                        "dummy",
+                    ],
+                },
+            )
+
+        self._validate_cache_key_part("backend.cache.key_prefix", cache.key_prefix)
+        self._validate_cache_key_part("backend.cache.django_namespace", cache.django_namespace)
+
+        self._validate_positive_int("backend.cache.default_ttl_seconds", cache.default_ttl_seconds)
+        self._validate_bool("backend.cache.none_ttl_means_forever", cache.none_ttl_means_forever)
+        self._validate_positive_int("backend.cache.sqlite_busy_timeout_ms", cache.sqlite_busy_timeout_ms)
+        self._validate_non_negative_int("backend.cache.sqlite_write_max_retries", cache.sqlite_write_max_retries)
+        self._validate_non_negative_int("backend.cache.sqlite_write_retry_base_delay_ms", cache.sqlite_write_retry_base_delay_ms)
+        self._validate_non_negative_int("backend.cache.sqlite_write_retry_max_delay_ms", cache.sqlite_write_retry_max_delay_ms)
+        self._validate_positive_int("backend.cache.cleanup_interval_seconds", cache.cleanup_interval_seconds)
+        self._validate_positive_int("backend.cache.cleanup_batch_size", cache.cleanup_batch_size)
+
+        if cache.backend == "redis":
+            self._validate_cache_url(
+                field_name="backend.cache.cache_url",
+                cache_url=cache.cache_url,
+                allowed_schemes={
+                    "redis",
+                    "rediss",
+                },
+            )
+            self._validate_python_dependency(
+                field_name="backend.cache.backend",
+                package_name="redis",
+            )
+
+        if cache.backend == "valkey":
+            self._validate_cache_url(
+                field_name="backend.cache.cache_url",
+                cache_url=cache.cache_url,
+                allowed_schemes={
+                    "redis",
+                    "rediss",
+                    "valkey",
+                    "valkeys",
+                },
+            )
+            self._validate_python_dependency(
+                field_name="backend.cache.backend",
+                package_name="valkey",
+            )
+
+    @staticmethod
+    def _validate_cache_key_part(field_name: str, value: Any) -> None:
+        if not isinstance(value, str) or not value.strip():
+            raise NsConfigError(
+                f"{field_name} must be a non-empty string.",
+                details={
+                    "field": field_name,
+                    "value": value,
+                    "actual_type": type(value).__name__,
+                },
+            )
+
+        text = value.strip()
+        if re.fullmatch(r"[a-zA-Z0-9_.:-]+", text) is None:
+            raise NsConfigError(
+                f"{field_name} contains invalid characters.",
+                details={
+                    "field": field_name,
+                    "value": value,
+                    "allowed_pattern": r"[a-zA-Z0-9_.:-]+",
+                },
+            )
+
+    @staticmethod
+    def _validate_cache_url(field_name: str, cache_url: Any, allowed_schemes: set[str]) -> None:
+        if not isinstance(cache_url, str) or not cache_url.strip():
+            raise NsConfigError(
+                f"{field_name} must be configured.",
+                details={
+                    "field": field_name,
+                    "value": cache_url,
+                    "actual_type": type(cache_url).__name__,
+                },
+            )
+
+        parsed = urlparse(cache_url.strip())
+        if parsed.scheme not in allowed_schemes:
+            raise NsConfigError(
+                f"{field_name} scheme is invalid.",
+                details={
+                    "field": field_name,
+                    "scheme": parsed.scheme,
+                    "allowed_schemes": sorted(allowed_schemes),
+                },
+            )
+
+        if not parsed.hostname:
+            raise NsConfigError(
+                f"{field_name} host is required.",
+                details={
+                    "field": field_name,
+                    "value": cache_url,
+                },
+            )
+
+    @staticmethod
+    def _validate_python_dependency(field_name: str, package_name: str) -> None:
+        if importlib.util.find_spec(package_name) is None:
+            raise NsDependencyError(
+                f"Python package '{package_name}' is required.",
+                details={
+                    "field": field_name,
+                    "package": package_name,
+                },
+            )
 
     @staticmethod
     def _validate_positive_int(field_name: str, value: Any) -> None:

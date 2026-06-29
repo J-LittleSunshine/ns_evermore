@@ -3,6 +3,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ns_common.cache import (
+    close_cache_clients,
+    get_async_cache_client,
+    get_cache_client,
+    validate_cache_backend,
+)
 from ns_common.config import (
     NS_CONFIG_FILE_PATH,
     NS_ENV,
@@ -51,6 +57,10 @@ __all__ = [
     "NsRuntimeError",
     "NsStateError",
     "NsValidationError",
+    "close_cache_clients",
+    "get_async_cache_client",
+    "get_cache_client",
+    "validate_cache_backend",
 ]
 
 __version__ = "0.0.1"
