@@ -50,6 +50,17 @@ class IamCacheService:
     _availability_checked: bool = False
     _available: bool = False
 
+    EVENT_HIT = "hit"
+    EVENT_MISS = "miss"
+    EVENT_BYPASS = "bypass"
+
+    _stats_lock = RLock()
+    _stats: dict[str, int] = {
+        EVENT_HIT: 0,
+        EVENT_MISS: 0,
+        EVENT_BYPASS: 0,
+    }
+
     @classmethod
     def enabled(cls) -> bool:
         return bool(getattr(ns_config.backend, "iam_cache_enabled", False))
@@ -169,6 +180,12 @@ class IamCacheService:
             cls._availability_checked = True
             cls._available = False
 
+        cls._record_cache_event(
+            cls.EVENT_BYPASS,
+            operation=operation,
+            reason="operation_failed",
+        )
+
         logger.warning(
             "iam cache operation failed and cache will be bypassed",
             exc_info=True,
@@ -178,6 +195,75 @@ class IamCacheService:
                 "exception_class": exc.__class__.__name__,
             },
         )
+
+    @classmethod
+    def _record_cache_event(cls, event: str, *, operation: str, key: Any = None, reason: str | None = None, authz_version: int | None = None) -> None:
+        if event in cls._stats:
+            with cls._stats_lock:
+                cls._stats[event] = cls._stats.get(event, 0) + 1
+
+        logger.debug(
+            "iam cache %s",
+            event,
+            extra={
+                "event": event,
+                "operation": operation,
+                "reason": reason,
+                "namespace": cls.NAMESPACE,
+                "key_hash": cls._build_observable_key_hash(key),
+                "authz_version": authz_version,
+            },
+        )
+
+    @classmethod
+    def _record_cache_bypass(cls, *, operation: str, key: Any = None, reason: str, authz_version: int | None = None) -> None:
+        cls._record_cache_event(
+            cls.EVENT_BYPASS,
+            operation=operation,
+            key=key,
+            reason=reason,
+            authz_version=authz_version,
+        )
+
+    @classmethod
+    def _build_observable_key_hash(cls, key: Any) -> str | None:
+        if key is None:
+            return None
+
+        try:
+            return cls.build_hash_key_part(key)[:16]
+        except Exception:  # noqa
+            return None
+
+    @classmethod
+    def get_stats(cls) -> dict[str, Any]:
+        with cls._stats_lock:
+            hit_count = int(cls._stats.get(cls.EVENT_HIT, 0))
+            miss_count = int(cls._stats.get(cls.EVENT_MISS, 0))
+            bypass_count = int(cls._stats.get(cls.EVENT_BYPASS, 0))
+
+        total = hit_count + miss_count + bypass_count
+        cache_lookup_total = hit_count + miss_count
+
+        return {
+            "hit": hit_count,
+            "miss": miss_count,
+            "bypass": bypass_count,
+            "total": total,
+            "cache_lookup_total": cache_lookup_total,
+            "hit_rate": round(hit_count / cache_lookup_total, 6) if cache_lookup_total else 0.0,
+            "miss_rate": round(miss_count / cache_lookup_total, 6) if cache_lookup_total else 0.0,
+            "bypass_rate": round(bypass_count / total, 6) if total else 0.0,
+        }
+
+    @classmethod
+    def reset_stats(cls) -> None:
+        with cls._stats_lock:
+            cls._stats = {
+                cls.EVENT_HIT: 0,
+                cls.EVENT_MISS: 0,
+                cls.EVENT_BYPASS: 0,
+            }
 
     @staticmethod
     def build_hash_key_part(value: Any) -> str:
@@ -381,37 +467,107 @@ class IamCacheService:
 
     @classmethod
     def get(cls, key: Any, default: Any = None) -> Any:
+        operation = "get"
+
+        if not cls.enabled():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="disabled",
+            )
+            return default
+
         if not cls.is_available():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="unavailable",
+            )
             return default
 
         authz_version = cls.get_authz_version()
         if authz_version is None:
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="authz_version_unavailable",
+            )
             return default
 
         client = cls.get_client()
         if client is None:
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="client_unavailable",
+                authz_version=authz_version,
+            )
             return default
 
         try:
-            return client.get(
-                cls._build_versioned_key(key, authz_version),
-                default=default,
+            cache_key = cls._build_versioned_key(key, authz_version)
+            cached_value = client.get(
+                cache_key,
+                default=cls._MISS,
             )
+
+            if cached_value is cls._MISS:
+                cls._record_cache_event(
+                    cls.EVENT_MISS,
+                    operation=operation,
+                    key=key,
+                    authz_version=authz_version,
+                )
+                return default
+
+            cls._record_cache_event(
+                cls.EVENT_HIT,
+                operation=operation,
+                key=key,
+                authz_version=authz_version,
+            )
+            return cached_value
         except Exception as exc:  # noqa
-            cls._mark_unavailable(operation="get", exc=exc)
+            cls._mark_unavailable(operation=operation, exc=exc)
             return default
 
     @classmethod
     def set(cls, key: Any, value: Any, *, ttl: int | None = None) -> bool:
+        operation = "set"
+
+        if not cls.enabled():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="disabled",
+            )
+            return False
+
         if not cls.is_available():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="unavailable",
+            )
             return False
 
         authz_version = cls.get_authz_version()
         if authz_version is None:
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="authz_version_unavailable",
+            )
             return False
 
         client = cls.get_client()
         if client is None:
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="client_unavailable",
+                authz_version=authz_version,
+            )
             return False
 
         resolved_ttl = cls._resolve_ttl(ttl, default_ttl=cls.cache_ttl_seconds())
@@ -423,12 +579,27 @@ class IamCacheService:
                 ttl=resolved_ttl,
             )
         except Exception as exc:  # noqa
-            cls._mark_unavailable(operation="set", exc=exc)
+            cls._mark_unavailable(operation=operation, exc=exc)
             return False
 
     @classmethod
     def get_or_set(cls, key: Any, factory: Callable[[], T], *, ttl: int | None = None) -> T:
+        operation = "get_or_set"
+
+        if not cls.enabled():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="disabled",
+            )
+            return factory()
+
         if not cls.is_available():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="unavailable",
+            )
             return factory()
 
         cached_value = cls.get(key, default=cls._MISS)
@@ -441,37 +612,107 @@ class IamCacheService:
 
     @classmethod
     async def aget(cls, key: Any, default: Any = None) -> Any:
+        operation = "aget"
+
+        if not cls.enabled():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="disabled",
+            )
+            return default
+
         if not cls.is_available():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="unavailable",
+            )
             return default
 
         authz_version = await cls.aget_authz_version()
         if authz_version is None:
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="authz_version_unavailable",
+            )
             return default
 
         client = cls.get_async_client()
         if client is None:
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="client_unavailable",
+                authz_version=authz_version,
+            )
             return default
 
         try:
-            return await client.get(
-                cls._build_versioned_key(key, authz_version),
-                default=default,
+            cache_key = cls._build_versioned_key(key, authz_version)
+            cached_value = await client.get(
+                cache_key,
+                default=cls._MISS,
             )
+
+            if cached_value is cls._MISS:
+                cls._record_cache_event(
+                    cls.EVENT_MISS,
+                    operation=operation,
+                    key=key,
+                    authz_version=authz_version,
+                )
+                return default
+
+            cls._record_cache_event(
+                cls.EVENT_HIT,
+                operation=operation,
+                key=key,
+                authz_version=authz_version,
+            )
+            return cached_value
         except Exception as exc:  # noqa
-            cls._mark_unavailable(operation="aget", exc=exc)
+            cls._mark_unavailable(operation=operation, exc=exc)
             return default
 
     @classmethod
     async def aset(cls, key: Any, value: Any, *, ttl: int | None = None) -> bool:
+        operation = "aset"
+
+        if not cls.enabled():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="disabled",
+            )
+            return False
+
         if not cls.is_available():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="unavailable",
+            )
             return False
 
         authz_version = await cls.aget_authz_version()
         if authz_version is None:
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="authz_version_unavailable",
+            )
             return False
 
         client = cls.get_async_client()
         if client is None:
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="client_unavailable",
+                authz_version=authz_version,
+            )
             return False
 
         resolved_ttl = cls._resolve_ttl(ttl, default_ttl=cls.cache_ttl_seconds())
@@ -483,12 +724,27 @@ class IamCacheService:
                 ttl=resolved_ttl,
             )
         except Exception as exc:  # noqa
-            cls._mark_unavailable(operation="aset", exc=exc)
+            cls._mark_unavailable(operation=operation, exc=exc)
             return False
 
     @classmethod
     async def aget_or_set(cls, key: Any, factory: Callable[[], T | Awaitable[T]], *, ttl: int | None = None) -> T:
+        operation = "aget_or_set"
+
+        if not cls.enabled():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="disabled",
+            )
+            return await cls._resolve_async_factory(factory)
+
         if not cls.is_available():
+            cls._record_cache_bypass(
+                operation=operation,
+                key=key,
+                reason="unavailable",
+            )
             return await cls._resolve_async_factory(factory)
 
         cached_value = await cls.aget(key, default=cls._MISS)
