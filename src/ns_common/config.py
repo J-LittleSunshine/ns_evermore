@@ -142,8 +142,8 @@ class NsLogConfig:
     console_level: str = "INFO"
     console: bool = True
 
-    format_type: Literal["json", "text"] = "json"
-    console_format_type: Literal["json", "text"] | None = "text"
+    format_type: Literal["json", "text", "color_text"] = "json"
+    console_format_type: Literal["json", "text", "color_text"] | None = "color_text"
     file_format_type: Literal["json", "text"] | None = "json"
 
     format: str = (

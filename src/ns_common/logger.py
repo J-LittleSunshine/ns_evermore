@@ -138,6 +138,50 @@ class _JsonLogFormatter(logging.Formatter):
             return value
         return str(value)
 
+class _ConsoleTextLogFormatter(logging.Formatter):
+    RESET = "\033[0m"
+
+    LEVEL_COLORS: dict[int, str] = {
+        logging.DEBUG: "\033[36m",
+        logging.INFO: "\033[32m",
+        logging.WARNING: "\033[33m",
+        logging.ERROR: "\033[31m",
+        logging.CRITICAL: "\033[35m",
+    }
+
+    STATUS_COLORS: tuple[tuple[int, int, str], ...] = (
+        (200, 299, "\033[32m"),
+        (300, 399, "\033[36m"),
+        (400, 499, "\033[33m"),
+        (500, 599, "\033[31m"),
+    )
+
+    def __init__(self, *, fmt: str, datefmt: str | None = None, color_enabled: bool = True) -> None:
+        super().__init__(fmt=fmt, datefmt=datefmt)
+        self.color_enabled = color_enabled
+
+    def format(self, record: logging.LogRecord) -> str:
+        message = super().format(record)
+
+        if not self.color_enabled:
+            return message
+
+        color = self._resolve_color(record)
+
+        if not color:
+            return message
+
+        return f"{color}{message}{self.RESET}"
+
+    def _resolve_color(self, record: logging.LogRecord) -> str | None:
+        status_code = getattr(record, "status_code", None)
+
+        if isinstance(status_code, int):
+            for min_code, max_code, color in self.STATUS_COLORS:
+                if min_code <= status_code <= max_code:
+                    return color
+
+        return self.LEVEL_COLORS.get(record.levelno)
 
 class _BackupTimedRotatingFileHandler(TimedRotatingFileHandler):
 
@@ -256,6 +300,13 @@ class NsLogger(logging.Logger):
 
             if _format_type == "text":
                 return logging.Formatter(fmt=text_format, datefmt=datefmt)
+
+            if _format_type == "color_text":
+                return _ConsoleTextLogFormatter(
+                    fmt=text_format,
+                    datefmt=datefmt,
+                    color_enabled=True,
+                )
 
             raise ValueError("log format type must be json or text")
 
