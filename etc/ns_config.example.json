@@ -24,7 +24,11 @@
     "database_router_map": {
       "iam": "iam"
     },
-    "jwt_secret_key": "change-me-jwt-secret",
+    "installed_apps": [
+      "system",
+      "iam"
+    ],
+    "jwt_secret_key": "",
     "access_token_expire_minutes": 30,
     "refresh_token_expire_days": 14,
     "jwt_issuer": "ns_evermore",
@@ -36,13 +40,58 @@
     "password_rsa_private_key": "",
     "password_rsa_private_key_file": "",
     "password_rsa_private_key_passphrase": "",
-    "login_max_failed_count": 5,
-    "login_lock_minutes": 15
+    "iam_internal_token": "change-me-iam-internal-token-at-least-32-chars",
+    "iam_decision_audit_enabled": true,
+    "iam_decision_audit_strict_mode": false,
+    "iam_operation_audit_enabled": true,
+    "iam_operation_audit_strict_mode": false,
+    "iam_auth_backoff_enabled": true,
+    "iam_auth_backoff_max_retries": 3,
+    "iam_auth_backoff_base_delay_ms": 50,
+    "iam_auth_backoff_max_delay_ms": 1000,
+    "iam_auth_backoff_jitter_ratio": 0.5
+  },
+  "cache": {
+    "backend": "sqlite",
+    "key_prefix": "ns_evermore",
+    "django_namespace": "ns_backend",
+    "cache_url": "",
+    "default_ttl_seconds": 300,
+    "none_ttl_means_forever": false,
+    "sqlite_path": "data/ns_cache.sqlite3",
+    "sqlite_busy_timeout_ms": 5000,
+    "sqlite_write_max_retries": 3,
+    "sqlite_write_retry_base_delay_ms": 50,
+    "sqlite_write_retry_max_delay_ms": 500,
+    "cleanup_interval_seconds": 300,
+    "cleanup_batch_size": 500
   },
   "log": {
     "level": "INFO",
+    "file_level": "INFO",
+    "console_level": "INFO",
     "console": true,
-    "format_type": "text",
-    "datefmt": "%Y-%m-%d %H:%M:%S"
+    "format_type": "json",
+    "console_format_type": "text",
+    "file_format_type": "json",
+    "format": "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s",
+    "datefmt": "%Y-%m-%d %H:%M:%S",
+    "when": "midnight",
+    "interval": 1,
+    "backup_count": 14,
+    "encoding": "utf-8",
+    "delay": true,
+    "utc": false,
+    "at_time": null,
+    "max_bytes": 0,
+    "use_gzip": false,
+    "lock_file_directory": null,
+    "level_files": [
+      "DEBUG",
+      "INFO",
+      "WARNING",
+      "ERROR",
+      "CRITICAL"
+    ]
   }
 }

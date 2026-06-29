@@ -28,7 +28,7 @@ class NsDjangoCacheBackend(BaseCache):
 
         self._location = location
         self._client = get_cache_client(
-            namespace=ns_config.backend.cache.django_namespace,
+            namespace=ns_config.cache.django_namespace,
         )
 
     def _build_django_key(self, key: str, version: int | None = None) -> str:

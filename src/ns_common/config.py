@@ -60,31 +60,6 @@ NS_CONFIG_FILE_PATH = get_default_config_path()
 
 
 @dataclass(slots=True, kw_only=True)
-class NsCacheConfig:
-    backend: Literal["sqlite", "redis", "valkey", "dummy"] = "sqlite"
-
-    key_prefix: str = "ns_evermore"
-
-    django_namespace: str = "ns_backend"
-
-    cache_url: str = ""
-
-    default_ttl_seconds: int = 300
-
-    none_ttl_means_forever: bool = False
-
-    sqlite_path: str = "data/ns_cache.sqlite3"
-
-    sqlite_busy_timeout_ms: int = 5000
-    sqlite_write_max_retries: int = 3
-    sqlite_write_retry_base_delay_ms: int = 50
-    sqlite_write_retry_max_delay_ms: int = 500
-
-    cleanup_interval_seconds: int = 300
-    cleanup_batch_size: int = 500
-
-
-@dataclass(slots=True, kw_only=True)
 class NsBackendConfig:
     debug: bool = True
     secret_key: str = "change-me-secret-key-at-least-32-chars"
@@ -103,7 +78,6 @@ class NsBackendConfig:
 
     databases: dict[str, dict[str, Any]] = field(default_factory=dict)
     database_router_map: dict[str, str] = field(default_factory=dict)
-    cache: NsCacheConfig = field(default_factory=NsCacheConfig)
     installed_apps: list[str] = field(
         default_factory=lambda: [
             "system",
@@ -135,6 +109,31 @@ class NsBackendConfig:
     iam_auth_backoff_base_delay_ms: int = 50
     iam_auth_backoff_max_delay_ms: int = 1000
     iam_auth_backoff_jitter_ratio: float = 0.5
+
+
+@dataclass(slots=True, kw_only=True)
+class NsCacheConfig:
+    backend: Literal["sqlite", "redis", "valkey", "dummy"] = "sqlite"
+
+    key_prefix: str = "ns_evermore"
+
+    django_namespace: str = "ns_backend"
+
+    cache_url: str = ""
+
+    default_ttl_seconds: int = 300
+
+    none_ttl_means_forever: bool = False
+
+    sqlite_path: str = "data/ns_cache.sqlite3"
+
+    sqlite_busy_timeout_ms: int = 5000
+    sqlite_write_max_retries: int = 3
+    sqlite_write_retry_base_delay_ms: int = 50
+    sqlite_write_retry_max_delay_ms: int = 500
+
+    cleanup_interval_seconds: int = 300
+    cleanup_batch_size: int = 500
 
 
 @dataclass(slots=True, kw_only=True)
@@ -177,6 +176,7 @@ class NsLogConfig:
 @dataclass(slots=True, kw_only=True)
 class NsConfig:
     backend: NsBackendConfig = field(default_factory=NsBackendConfig)
+    cache: NsCacheConfig = field(default_factory=NsCacheConfig)
     log: NsLogConfig = field(default_factory=NsLogConfig)
 
     _lock = RLock()
@@ -195,23 +195,31 @@ class NsConfig:
 
             backend_raw = dict(backend_raw)
 
-            cache_raw = backend_raw.get("cache", {})
+            cache_raw = raw_config.get("cache", raw_config.get("cache_config", {}))
             if cache_raw is None:
                 cache_raw = {}
 
             if not isinstance(cache_raw, dict):
                 raise NsConfigError(
-                    "backend.cache must be a JSON object.",
+                    "cache must be a JSON object.",
                     details={
-                        "field": "backend.cache",
+                        "field": "cache",
                         "actual_type": type(cache_raw).__name__,
                     },
                 )
 
-            backend_raw["cache"] = NsCacheConfig(**cache_raw)
+            if "cache" in backend_raw:
+                raise NsConfigError(
+                    "backend.cache is deprecated. Move cache config to top-level cache.",
+                    details={
+                        "field": "backend.cache",
+                        "expected_field": "cache",
+                    },
+                )
 
             config = cls(
                 backend=NsBackendConfig(**backend_raw),
+                cache=NsCacheConfig(**cache_raw),
                 log=NsLogConfig(**log_raw),
             )
             config.validate()
@@ -353,13 +361,13 @@ class NsConfig:
         self._validate_cache_config()
 
     def _validate_cache_config(self) -> None:
-        cache = self.backend.cache
+        cache = self.cache
 
         if not isinstance(cache, NsCacheConfig):
             raise NsConfigError(
-                "backend.cache must be NsCacheConfig.",
+                "cache must be NsCacheConfig.",
                 details={
-                    "field": "backend.cache",
+                    "field": "cache",
                     "actual_type": type(cache).__name__,
                 },
             )
@@ -371,9 +379,9 @@ class NsConfig:
             "dummy",
         }:
             raise NsConfigError(
-                "backend.cache.backend is invalid.",
+                "cache.backend is invalid.",
                 details={
-                    "field": "backend.cache.backend",
+                    "field": "cache.backend",
                     "value": cache.backend,
                     "allowed_values": [
                         "sqlite",
@@ -384,21 +392,21 @@ class NsConfig:
                 },
             )
 
-        self._validate_cache_key_part("backend.cache.key_prefix", cache.key_prefix)
-        self._validate_cache_key_part("backend.cache.django_namespace", cache.django_namespace)
+        self._validate_cache_key_part("cache.key_prefix", cache.key_prefix)
+        self._validate_cache_key_part("cache.django_namespace", cache.django_namespace)
 
-        self._validate_positive_int("backend.cache.default_ttl_seconds", cache.default_ttl_seconds)
-        self._validate_bool("backend.cache.none_ttl_means_forever", cache.none_ttl_means_forever)
-        self._validate_positive_int("backend.cache.sqlite_busy_timeout_ms", cache.sqlite_busy_timeout_ms)
-        self._validate_non_negative_int("backend.cache.sqlite_write_max_retries", cache.sqlite_write_max_retries)
-        self._validate_non_negative_int("backend.cache.sqlite_write_retry_base_delay_ms", cache.sqlite_write_retry_base_delay_ms)
-        self._validate_non_negative_int("backend.cache.sqlite_write_retry_max_delay_ms", cache.sqlite_write_retry_max_delay_ms)
-        self._validate_positive_int("backend.cache.cleanup_interval_seconds", cache.cleanup_interval_seconds)
-        self._validate_positive_int("backend.cache.cleanup_batch_size", cache.cleanup_batch_size)
+        self._validate_positive_int("cache.default_ttl_seconds", cache.default_ttl_seconds)
+        self._validate_bool("cache.none_ttl_means_forever", cache.none_ttl_means_forever)
+        self._validate_positive_int("cache.sqlite_busy_timeout_ms", cache.sqlite_busy_timeout_ms)
+        self._validate_non_negative_int("cache.sqlite_write_max_retries", cache.sqlite_write_max_retries)
+        self._validate_non_negative_int("cache.sqlite_write_retry_base_delay_ms", cache.sqlite_write_retry_base_delay_ms)
+        self._validate_non_negative_int("cache.sqlite_write_retry_max_delay_ms", cache.sqlite_write_retry_max_delay_ms)
+        self._validate_positive_int("cache.cleanup_interval_seconds", cache.cleanup_interval_seconds)
+        self._validate_positive_int("cache.cleanup_batch_size", cache.cleanup_batch_size)
 
         if cache.backend == "redis":
             self._validate_cache_url(
-                field_name="backend.cache.cache_url",
+                field_name="cache.cache_url",
                 cache_url=cache.cache_url,
                 allowed_schemes={
                     "redis",
@@ -406,13 +414,13 @@ class NsConfig:
                 },
             )
             self._validate_python_dependency(
-                field_name="backend.cache.backend",
+                field_name="cache.backend",
                 package_name="redis",
             )
 
         if cache.backend == "valkey":
             self._validate_cache_url(
-                field_name="backend.cache.cache_url",
+                field_name="cache.cache_url",
                 cache_url=cache.cache_url,
                 allowed_schemes={
                     "redis",
@@ -422,7 +430,7 @@ class NsConfig:
                 },
             )
             self._validate_python_dependency(
-                field_name="backend.cache.backend",
+                field_name="cache.backend",
                 package_name="valkey",
             )
 

@@ -58,7 +58,7 @@ def resolve_sqlite_cache_path(cache_config: NsCacheConfig) -> Path:
 
 
 def build_cache_backend(cache_config: NsCacheConfig | None = None) -> BaseCacheBackend:
-    config = cache_config or ns_config.backend.cache
+    config = cache_config or ns_config.cache
 
     if config.backend == "sqlite":
         return SQLiteCacheBackend(
@@ -88,7 +88,7 @@ def get_cache_backend() -> BaseCacheBackend:
 
     with _BACKEND_LOCK:
         if _BACKEND is None:
-            backend = build_cache_backend(ns_config.backend.cache)
+            backend = build_cache_backend(ns_config.cache)
             backend.initialize()
             _BACKEND = backend
 
@@ -136,7 +136,7 @@ def get_cache_client(*, namespace: str) -> "CacheClient":
             client = CacheClient(
                 namespace=normalized_namespace,
                 backend=get_cache_backend(),
-                cache_config=ns_config.backend.cache,
+                cache_config=ns_config.cache,
             )
             _CLIENTS[normalized_namespace] = client
 

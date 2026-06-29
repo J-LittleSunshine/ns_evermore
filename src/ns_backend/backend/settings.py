@@ -60,7 +60,7 @@ CACHES = {
     "default": {
         "BACKEND": "ns_common.cache.django.NsDjangoCacheBackend",
         "LOCATION": "default",
-        "TIMEOUT": ns_config.backend.cache.default_ttl_seconds,
+        "TIMEOUT": ns_config.cache.default_ttl_seconds,
         "OPTIONS": {},
     }
 }
