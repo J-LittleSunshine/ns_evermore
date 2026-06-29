@@ -80,7 +80,6 @@ class NsBackendConfig:
     database_router_map: dict[str, str] = field(default_factory=dict)
     installed_apps: list[str] = field(
         default_factory=lambda: [
-            "system",
             "iam",
         ]
     )

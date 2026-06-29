@@ -25,6 +25,10 @@ BASE_DJANGO_APPS: tuple[str, ...] = (
     "adrf",
 )
 
+BASE_BACKEND_APPS: tuple[str, ...] = (
+    "system",
+)
+
 
 def normalize_backend_app_keys(app_keys: list[str]) -> list[str]:
     normalized: list[str] = []
@@ -46,6 +50,21 @@ def normalize_backend_app_keys(app_keys: list[str]) -> list[str]:
         normalized.append(normalized_app_key)
 
     return normalized
+
+
+def build_effective_backend_app_keys(app_keys: list[str]) -> list[str]:
+    configured_app_keys = normalize_backend_app_keys(app_keys)
+    effective_app_keys = list(BASE_BACKEND_APPS)
+    base_backend_app_set = set(BASE_BACKEND_APPS)
+
+    for app_key in configured_app_keys:
+        if app_key in base_backend_app_set:
+            # 兼容旧配置：system 已经是基础 app，配置里再写不报错，但不重复加载。
+            continue
+
+        effective_app_keys.append(app_key)
+
+    return effective_app_keys
 
 
 def assert_backend_app_package_exists(app_key: str) -> None:
@@ -124,7 +143,7 @@ def discover_urlconf(app_key: str) -> str | None:
 def build_installed_apps(app_keys: list[str]) -> list[str]:
     installed_apps = list(BASE_DJANGO_APPS)
 
-    for app_key in normalize_backend_app_keys(app_keys):
+    for app_key in build_effective_backend_app_keys(app_keys):
         assert_backend_app_package_exists(app_key)
 
         app_config_path = discover_app_config_path(app_key)
@@ -138,7 +157,7 @@ def build_installed_apps(app_keys: list[str]) -> list[str]:
 def build_urlpatterns(app_keys: list[str]) -> list["URLPattern | URLResolver"]:
     urlpatterns: list[URLPattern | URLResolver] = []
 
-    for app_key in normalize_backend_app_keys(app_keys):
+    for app_key in build_effective_backend_app_keys(app_keys):
         assert_backend_app_package_exists(app_key)
 
         urlconf = discover_urlconf(app_key)
