@@ -105,3 +105,8 @@ IAM_AUTH_BACKOFF_MAX_RETRIES = ns_config.backend.iam_auth_backoff_max_retries
 IAM_AUTH_BACKOFF_BASE_DELAY_MS = ns_config.backend.iam_auth_backoff_base_delay_ms
 IAM_AUTH_BACKOFF_MAX_DELAY_MS = ns_config.backend.iam_auth_backoff_max_delay_ms
 IAM_AUTH_BACKOFF_JITTER_RATIO = ns_config.backend.iam_auth_backoff_jitter_ratio
+
+IAM_CACHE_ENABLED = ns_config.backend.iam_cache_enabled
+IAM_CACHE_TTL_SECONDS = ns_config.backend.iam_cache_ttl_seconds
+IAM_USER_CACHE_TTL_SECONDS = ns_config.backend.iam_user_cache_ttl_seconds
+IAM_AUTHZ_CACHE_TTL_SECONDS = ns_config.backend.iam_authz_cache_ttl_seconds

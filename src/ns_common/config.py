@@ -109,6 +109,11 @@ class NsBackendConfig:
     iam_auth_backoff_max_delay_ms: int = 1000
     iam_auth_backoff_jitter_ratio: float = 0.5
 
+    iam_cache_enabled: bool = True
+    iam_cache_ttl_seconds: int = 300
+    iam_user_cache_ttl_seconds: int = 120
+    iam_authz_cache_ttl_seconds: int = 300
+
 
 @dataclass(slots=True, kw_only=True)
 class NsCacheConfig:
@@ -310,6 +315,11 @@ class NsConfig:
         self._validate_non_negative_int("backend.iam_auth_backoff_base_delay_ms", self.backend.iam_auth_backoff_base_delay_ms)
         self._validate_non_negative_int("backend.iam_auth_backoff_max_delay_ms", self.backend.iam_auth_backoff_max_delay_ms)
         self._validate_float_range("backend.iam_auth_backoff_jitter_ratio", self.backend.iam_auth_backoff_jitter_ratio, min_value=0.0, max_value=1.0)
+
+        self._validate_bool("backend.iam_cache_enabled", self.backend.iam_cache_enabled)
+        self._validate_positive_int("backend.iam_cache_ttl_seconds", self.backend.iam_cache_ttl_seconds)
+        self._validate_positive_int("backend.iam_user_cache_ttl_seconds", self.backend.iam_user_cache_ttl_seconds)
+        self._validate_positive_int("backend.iam_authz_cache_ttl_seconds", self.backend.iam_authz_cache_ttl_seconds)
 
         if self.backend.password_transport_mode not in {"plain", "rsa_oaep"}:
             raise NsConfigError("backend.password_transport_mode is invalid.",

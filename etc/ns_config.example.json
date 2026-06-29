@@ -48,7 +48,11 @@
     "iam_auth_backoff_max_retries": 3,
     "iam_auth_backoff_base_delay_ms": 50,
     "iam_auth_backoff_max_delay_ms": 1000,
-    "iam_auth_backoff_jitter_ratio": 0.5
+    "iam_auth_backoff_jitter_ratio": 0.5,
+    "iam_cache_enabled": true,
+    "iam_cache_ttl_seconds": 300,
+    "iam_user_cache_ttl_seconds": 120,
+    "iam_authz_cache_ttl_seconds": 300
   },
   "cache": {
     "backend": "sqlite",
