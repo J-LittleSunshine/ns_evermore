@@ -22,6 +22,7 @@ from ns_runtime.protocol import (
 )
 from ns_runtime.ws_server import (
     NsRuntimeAcceptedConnection,
+    NsRuntimeConnectionRegistry,
     NsRuntimeWebSocketServer,
 )
 
@@ -43,5 +44,6 @@ __all__ = [
     "NsRuntimeIamIntrospectionResult",
     "get_runtime_iam_adapter",
     "NsRuntimeAcceptedConnection",
+    "NsRuntimeConnectionRegistry",
     "NsRuntimeWebSocketServer",
 ]

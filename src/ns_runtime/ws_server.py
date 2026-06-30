@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import (
+    dataclass,
+    field,
+)
 from typing import (
     Any,
     Mapping,
@@ -50,6 +53,192 @@ class NsRuntimeAcceptedConnection:
     principal: dict[str, Any]
     introspection: NsRuntimeIamIntrospectionResult
     access_decision: NsRuntimeIamAccessDecision
+    websocket: ServerConnection = field(repr=False)
+    connected_at_epoch_ms: int
+    last_seen_epoch_ms: int
+    remote_address: str | None = None
+    request_path: str | None = None
+
+    def touch(self) -> None:
+        self.last_seen_epoch_ms = current_epoch_ms()
+
+    @property
+    def client_type(self) -> str:
+        return self.peer.client_type
+
+    @property
+    def client_id(self) -> str | None:
+        return self.peer.client_id
+
+    @property
+    def node_id(self) -> str | None:
+        return self.peer.node_id
+
+    @property
+    def node_group(self) -> str | None:
+        return self.peer.node_group
+
+    @property
+    def principal_id(self) -> str | None:
+        return self.peer.principal_id
+
+    @property
+    def principal_type(self) -> str | None:
+        return self.peer.principal_type
+
+    def to_summary(self) -> dict[str, Any]:
+        return {
+            "connection_id": self.connection_id,
+            "client_type": self.client_type,
+            "client_id": self.client_id,
+            "node_id": self.node_id,
+            "node_group": self.node_group,
+            "principal_id": self.principal_id,
+            "principal_type": self.principal_type,
+            "connected_at_epoch_ms": self.connected_at_epoch_ms,
+            "last_seen_epoch_ms": self.last_seen_epoch_ms,
+            "remote_address": self.remote_address,
+            "request_path": self.request_path,
+        }
+
+
+class NsRuntimeConnectionRegistry:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._connections: dict[str, NsRuntimeAcceptedConnection] = {}
+        self._client_id_index: dict[str, set[str]] = {}
+        self._node_id_index: dict[str, set[str]] = {}
+        self._principal_id_index: dict[str, set[str]] = {}
+
+    async def register(self, connection: NsRuntimeAcceptedConnection) -> None:
+        async with self._lock:
+            old_connection = self._connections.get(connection.connection_id)
+            if old_connection is not None:
+                self._remove_indexes(old_connection)
+
+            self._connections[connection.connection_id] = connection
+            self._add_indexes(connection)
+
+    async def unregister(self, connection_id: str) -> NsRuntimeAcceptedConnection | None:
+        async with self._lock:
+            connection = self._connections.pop(connection_id, None)
+            if connection is not None:
+                self._remove_indexes(connection)
+
+            return connection
+
+    async def touch(self, connection_id: str) -> bool:
+        async with self._lock:
+            connection = self._connections.get(connection_id)
+            if connection is None:
+                return False
+
+            connection.touch()
+            return True
+
+    async def get_by_connection_id(self, connection_id: str) -> NsRuntimeAcceptedConnection | None:
+        async with self._lock:
+            return self._connections.get(connection_id)
+
+    async def list_by_client_id(self, client_id: str) -> list[NsRuntimeAcceptedConnection]:
+        return await self._list_by_index(self._client_id_index, client_id)
+
+    async def list_by_node_id(self, node_id: str) -> list[NsRuntimeAcceptedConnection]:
+        return await self._list_by_index(self._node_id_index, node_id)
+
+    async def list_by_principal_id(self, principal_id: str) -> list[NsRuntimeAcceptedConnection]:
+        return await self._list_by_index(self._principal_id_index, principal_id)
+
+    async def list_all(self) -> list[NsRuntimeAcceptedConnection]:
+        async with self._lock:
+            return list(self._connections.values())
+
+    async def count(self) -> int:
+        async with self._lock:
+            return len(self._connections)
+
+    async def snapshot(self) -> dict[str, Any]:
+        async with self._lock:
+            connections = list(self._connections.values())
+
+            return {
+                "total": len(connections),
+                "by_client_id": {
+                    key: sorted(value)
+                    for key, value in self._client_id_index.items()
+                },
+                "by_node_id": {
+                    key: sorted(value)
+                    for key, value in self._node_id_index.items()
+                },
+                "by_principal_id": {
+                    key: sorted(value)
+                    for key, value in self._principal_id_index.items()
+                },
+                "connections": [
+                    connection.to_summary()
+                    for connection in connections
+                ],
+            }
+
+    async def close_all(self, *, code: int = 1001, reason: str = "runtime server stopping") -> None:
+        connections = await self.list_all()
+
+        for connection in connections:
+            try:
+                await connection.websocket.close(
+                    code=code,
+                    reason=reason[:120],
+                )
+            except Exception:  # noqa
+                pass
+
+    async def _list_by_index(self, index: dict[str, set[str]], value: str) -> list[NsRuntimeAcceptedConnection]:
+        normalized = _normalize_optional_text(value)
+        if not normalized:
+            return []
+
+        async with self._lock:
+            connection_ids = set(index.get(normalized, set()))
+            result: list[NsRuntimeAcceptedConnection] = []
+
+            for connection_id in connection_ids:
+                connection = self._connections.get(connection_id)
+                if connection is not None:
+                    result.append(connection)
+
+            return result
+
+    def _add_indexes(self, connection: NsRuntimeAcceptedConnection) -> None:
+        self._add_index(self._client_id_index, connection.client_id, connection.connection_id)
+        self._add_index(self._node_id_index, connection.node_id, connection.connection_id)
+        self._add_index(self._principal_id_index, connection.principal_id, connection.connection_id)
+
+    def _remove_indexes(self, connection: NsRuntimeAcceptedConnection) -> None:
+        self._remove_index(self._client_id_index, connection.client_id, connection.connection_id)
+        self._remove_index(self._node_id_index, connection.node_id, connection.connection_id)
+        self._remove_index(self._principal_id_index, connection.principal_id, connection.connection_id)
+
+    @staticmethod
+    def _add_index(index: dict[str, set[str]], value: str | None, connection_id: str) -> None:
+        if not value:
+            return
+
+        index.setdefault(value, set()).add(connection_id)
+
+    @staticmethod
+    def _remove_index(index: dict[str, set[str]], value: str | None, connection_id: str) -> None:
+        if not value:
+            return
+
+        bucket = index.get(value)
+        if bucket is None:
+            return
+
+        bucket.discard(connection_id)
+
+        if not bucket:
+            index.pop(value, None)
 
 
 class NsRuntimeWebSocketServer:
@@ -60,10 +249,12 @@ class NsRuntimeWebSocketServer:
             *,
             runtime_config: NsRuntimeConfig,
             iam_adapter: NsRuntimeIamAdapter | None = None,
+            connection_registry: NsRuntimeConnectionRegistry | None = None,
     ) -> None:
         self.runtime_config: NsRuntimeConfig = runtime_config
         self.ws_config = runtime_config.server.websocket
         self.iam_adapter: NsRuntimeIamAdapter = iam_adapter or get_runtime_iam_adapter(runtime_config)
+        self.connection_registry: NsRuntimeConnectionRegistry = connection_registry or NsRuntimeConnectionRegistry()
         self.logger = get_ns_logger("ns_runtime.ws_server")
         self._server: Server | None = None
         self._started: bool = False
@@ -108,9 +299,16 @@ class NsRuntimeWebSocketServer:
         self._server = None
         self._started = False
 
+        await self.connection_registry.close_all(
+            code=1001,
+            reason=reason,
+        )
+
         if server is not None:
             server.close()
             await server.wait_closed()
+
+        snapshot = await self.connection_registry.snapshot()
 
         self.logger.info(
             "Runtime WebSocket server stopped.",
@@ -119,12 +317,14 @@ class NsRuntimeWebSocketServer:
                 "cluster_id": self.runtime_config.cluster_id,
                 "mode": self.runtime_config.mode,
                 "reason": reason,
+                "connection_total": snapshot["total"],
             },
         )
 
     async def _process_connection(self, websocket: ServerConnection) -> None:
         connection_id = self._resolve_connection_id(websocket)
         remote_address = str(getattr(websocket, "remote_address", "") or "")
+        request_path = self._resolve_request_path(websocket)
 
         accepted: NsRuntimeAcceptedConnection | None = None
 
@@ -136,7 +336,7 @@ class NsRuntimeWebSocketServer:
                     reason="INVALID_WEBSOCKET_PATH",
                     details={
                         "expected_path": self.ws_config.path,
-                        "actual_path": self._resolve_request_path(websocket),
+                        "actual_path": request_path,
                     },
                 )
                 return
@@ -151,7 +351,10 @@ class NsRuntimeWebSocketServer:
                 websocket,
                 hello,
                 connection_id=connection_id,
+                remote_address=remote_address,
+                request_path=request_path,
             )
+            await self.connection_registry.register(accepted)
 
             self.logger.info(
                 "Runtime WebSocket connection accepted.",
@@ -165,10 +368,12 @@ class NsRuntimeWebSocketServer:
                     "principal_type": accepted.peer.principal_type,
                     "principal_id": accepted.peer.principal_id,
                     "remote_address": remote_address,
+                    "active_connection_count": await self.connection_registry.count(),
                 },
             )
 
             async for raw_message in websocket:
+                await self.connection_registry.touch(accepted.connection_id)
                 await self._process_runtime_message(
                     websocket,
                     raw_message,
@@ -243,6 +448,8 @@ class NsRuntimeWebSocketServer:
                 pass
         finally:
             if accepted is not None:
+                await self.connection_registry.unregister(accepted.connection_id)
+
                 self.logger.info(
                     "Runtime WebSocket connection released.",
                     extra={
@@ -252,6 +459,7 @@ class NsRuntimeWebSocketServer:
                         "client_id": accepted.peer.client_id,
                         "node_id": accepted.peer.node_id,
                         "node_group": accepted.peer.node_group,
+                        "active_connection_count": await self.connection_registry.count(),
                     },
                 )
 
@@ -261,6 +469,8 @@ class NsRuntimeWebSocketServer:
             hello: NsRuntimeEnvelope,
             *,
             connection_id: str,
+            remote_address: str | None,
+            request_path: str | None,
     ) -> NsRuntimeAcceptedConnection:
         if hello.message_type != NsRuntimeMessageType.CONNECTION_HELLO:
             raise NsRuntimeProtocolError(
@@ -323,7 +533,7 @@ class NsRuntimeWebSocketServer:
             trace_id=hello.trace_id,
             extra_context={
                 "connection_id": connection_id,
-                "remote_address": str(getattr(websocket, "remote_address", "") or ""),
+                "remote_address": str(remote_address or ""),
             },
         )
 
@@ -365,12 +575,18 @@ class NsRuntimeWebSocketServer:
         )
         peer.validate("peer")
 
+        now_epoch_ms = current_epoch_ms()
         accepted = NsRuntimeAcceptedConnection(
             connection_id=connection_id,
             peer=peer,
             principal=principal,
             introspection=introspection,
             access_decision=access_decision,
+            websocket=websocket,
+            connected_at_epoch_ms=now_epoch_ms,
+            last_seen_epoch_ms=now_epoch_ms,
+            remote_address=remote_address,
+            request_path=request_path,
         )
 
         response = NsRuntimeEnvelope.new(
@@ -456,10 +672,23 @@ class NsRuntimeWebSocketServer:
             details={
                 "message_id": envelope.message_id,
                 "message_type": envelope.message_type,
-                "phase": "1.5",
+                "phase": "1.6",
             },
             reply_to=envelope,
         )
+
+    async def send_to_connection(
+            self,
+            connection_id: str,
+            envelope: NsRuntimeEnvelope,
+    ) -> bool:
+        connection = await self.connection_registry.get_by_connection_id(connection_id)
+        if connection is None:
+            return False
+
+        await connection.websocket.send(NsRuntimeJsonCodec.encode(envelope))
+        await self.connection_registry.touch(connection_id)
+        return True
 
     async def _send_error_response(
             self,
