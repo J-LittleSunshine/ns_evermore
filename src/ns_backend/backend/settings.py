@@ -1,8 +1,10 @@
 from pathlib import Path
+from typing import Any
 
 from backend.app_loader import build_installed_apps
 from ns_common import ns_config
 from ns_common.cache import validate_cache_backend
+from ns_common.exceptions import NsConfigError
 from ns_common.paths import (
     DATA_DIR,
     ensure_runtime_dirs
@@ -11,6 +13,107 @@ from ns_common.paths import (
 ensure_runtime_dirs()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _is_sqlite_engine(engine: Any) -> bool:
+    return str(engine or "").strip().lower() == "django.db.backends.sqlite3"
+
+
+def _normalize_sqlite_name(*, alias: str, name: Any) -> Path:
+    raw_name = str(name or "").strip()
+
+    if not raw_name:
+        raise NsConfigError(
+            "SQLite database NAME must be configured as a filename.",
+            details={
+                "field": f"backend.databases.{alias}.NAME",
+                "alias": alias,
+            },
+        )
+
+    if raw_name in {
+        ".",
+        "..",
+    }:
+        raise NsConfigError(
+            "SQLite database NAME must be a filename, not a relative directory reference.",
+            details={
+                "field": f"backend.databases.{alias}.NAME",
+                "alias": alias,
+                "value": raw_name,
+            },
+        )
+
+    if "/" in raw_name or "\\" in raw_name:
+        raise NsConfigError(
+            "SQLite database NAME must be a filename only. Do not include directory paths.",
+            details={
+                "field": f"backend.databases.{alias}.NAME",
+                "alias": alias,
+                "value": raw_name,
+                "expected": "filename only, for example: iam.sqlite3",
+            },
+        )
+
+    candidate = Path(raw_name)
+    if candidate.is_absolute() or candidate.name != raw_name:
+        raise NsConfigError(
+            "SQLite database NAME must be a filename only. Absolute or relative paths are not allowed.",
+            details={
+                "field": f"backend.databases.{alias}.NAME",
+                "alias": alias,
+                "value": raw_name,
+                "expected": "filename only, for example: iam.sqlite3",
+            },
+        )
+
+    return DATA_DIR / raw_name
+
+
+def _build_django_databases(raw_databases: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    if not raw_databases:
+        return {
+            "default": {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": DATA_DIR / "ns_db.sqlite3",
+            }
+        }
+
+    databases: dict[str, dict[str, Any]] = {}
+
+    for alias, raw_database_config in raw_databases.items():
+        alias_text = str(alias or "").strip()
+        if not alias_text:
+            raise NsConfigError(
+                "Database alias must not be empty.",
+                details={
+                    "field": "backend.databases",
+                    "alias": alias,
+                },
+            )
+
+        if not isinstance(raw_database_config, dict):
+            raise NsConfigError(
+                "Database config must be a JSON object.",
+                details={
+                    "field": f"backend.databases.{alias_text}",
+                    "actual_type": type(raw_database_config).__name__,
+                },
+            )
+
+        database_config = dict(raw_database_config)
+        engine = database_config.get("ENGINE")
+
+        if _is_sqlite_engine(engine):
+            database_config["NAME"] = _normalize_sqlite_name(
+                alias=alias_text,
+                name=database_config.get("NAME"),
+            )
+
+        databases[alias_text] = database_config
+
+    return databases
+
 
 SECRET_KEY = ns_config.backend.secret_key
 
@@ -43,12 +146,7 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 
 ASGI_APPLICATION = 'backend.asgi.application'
 
-DATABASES = ns_config.backend.databases or {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": DATA_DIR / "ns_db.sqlite3",
-    }
-}
+DATABASES = _build_django_databases(ns_config.backend.databases)
 
 DATABASE_ROUTER_MAP = ns_config.backend.database_router_map
 

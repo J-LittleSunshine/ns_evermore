@@ -479,7 +479,40 @@ class NsRuntimeIamAdapter:
                 },
             )
 
-        return dict(response_data)
+        response_mapping = dict(response_data)
+
+        if "success" in response_mapping or "data" in response_mapping or "code" in response_mapping:
+            success = response_mapping.get("success")
+            if success is not True:
+                raise NsRuntimeCodecError(
+                    "Runtime IAM response indicates failure.",
+                    details={
+                        "path": path,
+                        "status_code": response.status_code,
+                        "success": success,
+                        "code": response_mapping.get("code"),
+                        "error": response_mapping.get("error"),
+                        "message": response_mapping.get("message"),
+                        "details": response_mapping.get("details"),
+                        "request_id": response_mapping.get("request_id"),
+                    },
+                )
+
+            payload = response_mapping.get("data")
+            if not isinstance(payload, Mapping):
+                raise NsRuntimeCodecError(
+                    "Runtime IAM response.data must be a JSON object.",
+                    details={
+                        "path": path,
+                        "status_code": response.status_code,
+                        "actual_type": type(payload).__name__,
+                        "request_id": response_mapping.get("request_id"),
+                    },
+                )
+
+            return dict(payload)
+
+        return response_mapping
 
     def _build_url(self, path: str) -> str:
         base_url = self.iam_config.base_url.rstrip("/")
