@@ -33,6 +33,12 @@ from ns_common.exceptions import (
     NsStateError,
     NsValidationError,
 )
+from ns_common.http_client import (
+    NsAsyncHttpClient,
+    NsHttpResponse,
+    aclose_http_clients,
+    get_async_http_client,
+)
 from ns_common.logger import (
     close_ns_loggers,
     get_ns_logger
@@ -106,6 +112,10 @@ __all__ = [
     "NsRuntimeServerConfig",
     "NsRuntimeStoreConfig",
     "NsRuntimeWebSocketConfig",
+    "NsAsyncHttpClient",
+    "NsHttpResponse",
+    "get_async_http_client",
+    "aclose_http_clients",
     "close_cache_clients",
     "get_async_cache_client",
     "get_cache_client",

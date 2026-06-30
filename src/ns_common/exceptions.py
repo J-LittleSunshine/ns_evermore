@@ -127,3 +127,9 @@ class NsRuntimeAdminError(NsEvermoreError):
     code = "RUNTIME_ADMIN_ERROR"
     numeric_code = 209000
     default_message = "Runtime admin API error."
+
+
+class NsHttpClientError(NsEvermoreError):
+    code = "NS_HTTP_CLIENT_ERROR"
+    numeric_code = 100600
+    default_message = "NsEvermore HTTP client error."
