@@ -12,7 +12,6 @@ from typing import (
 )
 
 from adrf.viewsets import ViewSet
-from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 
 from backend.common.responses import (
@@ -22,7 +21,6 @@ from backend.common.responses import (
 )
 from ns_common import (
     NsEvermoreError,
-    NsRuntimeError,
     NsValidationError,
     get_ns_logger,
 )
@@ -91,25 +89,6 @@ class NsAPIView(ViewSet):
                 }
             )
             return error_response(exc, status=self.get_error_status(exc), request_id=request_id)
-
-        if isinstance(exc, APIException):
-            error = NsRuntimeError(str(exc.detail), code="NS_API_ERROR", numeric_code=100300,
-                details={
-                    "drf_code": getattr(exc, "default_code", None),
-                    "status_code": getattr(exc, "status_code", None),
-                },
-            )
-            logger.warning("api framework error",
-                extra={
-                    "request_id": request_id,
-                    "error": error.code,
-                    "numeric_code": error.numeric_code,
-                    "details": error.details,
-                    "view": self.__class__.__name__,
-                    "action": getattr(self, "action", None),
-                },
-            )
-            return error_response(error, status=getattr(exc, "status_code", 400), request_id=request_id, )
 
         logger.error("api unexpected error", exc_info=True,
             extra={

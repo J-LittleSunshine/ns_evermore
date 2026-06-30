@@ -18,8 +18,6 @@ from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import OctKey
 
-from ns_common import NsRuntimeError
-
 if TYPE_CHECKING:
     pass
 
@@ -166,19 +164,6 @@ class JwtService:
     @classmethod
     def _validate_secret_key(cls) -> None:
         secret_key = cls._secret_key()
-
-        if not isinstance(secret_key, str) or not secret_key:
-            raise NsRuntimeError(
-                "jwt_secret_key is not set.",
-                code="NS_JWT_SECRET_KEY_NOT_SET",
-                numeric_code=100310,
-            )
-
-        if not settings.DEBUG and len(secret_key.encode("utf-8")) < cls._min_secret_length():
-            raise NsRuntimeError(f"jwt_secret_key must be at least {cls._min_secret_length()} bytes when DEBUG is false.",
-                code="NS_JWT_SECRET_KEY_TOO_SHORT",
-                numeric_code=100311,
-            )
 
     @classmethod
     def _validate_registered_claims(cls, payload: dict[str, Any]) -> bool:
