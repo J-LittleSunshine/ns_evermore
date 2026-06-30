@@ -67,3 +67,63 @@ class NsStateError(NsEvermoreError):
     code = "NS_STATE_ERROR"
     numeric_code = 100500
     default_message = "Invalid ns_evermore internal state."
+
+
+class NsRuntimeProtocolError(NsEvermoreError):
+    code = "RUNTIME_PROTOCOL_ERROR"
+    numeric_code = 201000
+    default_message = "Runtime protocol error."
+
+
+class NsRuntimeCodecError(NsEvermoreError):
+    code = "RUNTIME_CODEC_ERROR"
+    numeric_code = 201100
+    default_message = "Runtime codec error."
+
+
+class NsRuntimeAuthError(NsEvermoreError):
+    code = "RUNTIME_AUTH_ERROR"
+    numeric_code = 202000
+    default_message = "Runtime authentication or authorization error."
+
+
+class NsRuntimeRoutingError(NsEvermoreError):
+    code = "RUNTIME_ROUTING_ERROR"
+    numeric_code = 203000
+    default_message = "Runtime routing error."
+
+
+class NsRuntimeNodeError(NsEvermoreError):
+    code = "RUNTIME_NODE_ERROR"
+    numeric_code = 204000
+    default_message = "Runtime node or connection error."
+
+
+class NsRuntimeMessageError(NsEvermoreError):
+    code = "RUNTIME_MESSAGE_ERROR"
+    numeric_code = 205000
+    default_message = "Runtime message lifecycle error."
+
+
+class NsRuntimeStateStoreError(NsEvermoreError):
+    code = "RUNTIME_STATE_STORE_ERROR"
+    numeric_code = 206000
+    default_message = "Runtime state store error."
+
+
+class NsRuntimeMessageStoreError(NsEvermoreError):
+    code = "RUNTIME_MESSAGE_STORE_ERROR"
+    numeric_code = 207000
+    default_message = "Runtime message store error."
+
+
+class NsRuntimePluginError(NsEvermoreError):
+    code = "RUNTIME_PLUGIN_ERROR"
+    numeric_code = 208000
+    default_message = "Runtime plugin error."
+
+
+class NsRuntimeAdminError(NsEvermoreError):
+    code = "RUNTIME_ADMIN_ERROR"
+    numeric_code = 209000
+    default_message = "Runtime admin API error."

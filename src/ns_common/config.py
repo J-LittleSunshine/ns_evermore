@@ -28,6 +28,7 @@ from ns_common.paths import (
     TMP_DIR,
     ensure_runtime_dirs
 )
+from ns_common.runtime_config import NsRuntimeConfig
 
 if TYPE_CHECKING:
     pass
@@ -181,6 +182,7 @@ class NsLogConfig:
 class NsConfig:
     backend: NsBackendConfig = field(default_factory=NsBackendConfig)
     cache: NsCacheConfig = field(default_factory=NsCacheConfig)
+    runtime: NsRuntimeConfig = field(default_factory=NsRuntimeConfig)
     log: NsLogConfig = field(default_factory=NsLogConfig)
 
     _lock = RLock()
@@ -198,19 +200,18 @@ class NsConfig:
             log_raw = cls._get_section(raw_config, preferred_key="log", compatible_key="log_config")
 
             backend_raw = dict(backend_raw)
+            cache_raw = cls._get_top_level_object(
+                raw_config,
+                preferred_key="cache",
+                compatible_key="cache_config",
+            )
+            runtime_raw = cls._get_top_level_object(
+                raw_config,
+                preferred_key="runtime",
+                compatible_key="runtime_config",
+            )
 
-            cache_raw = raw_config.get("cache", raw_config.get("cache_config", {}))
-            if cache_raw is None:
-                cache_raw = {}
-
-            if not isinstance(cache_raw, dict):
-                raise NsConfigError(
-                    "cache must be a JSON object.",
-                    details={
-                        "field": "cache",
-                        "actual_type": type(cache_raw).__name__,
-                    },
-                )
+            cls._normalize_runtime_compatible_fields(runtime_raw)
 
             if "cache" in backend_raw:
                 raise NsConfigError(
@@ -221,9 +222,19 @@ class NsConfig:
                     },
                 )
 
+            if "runtime" in backend_raw:
+                raise NsConfigError(
+                    "backend.runtime is deprecated. Move runtime config to top-level runtime.",
+                    details={
+                        "field": "backend.runtime",
+                        "expected_field": "runtime",
+                    },
+                )
+
             config = cls(
                 backend=NsBackendConfig(**backend_raw),
                 cache=NsCacheConfig(**cache_raw),
+                runtime=NsRuntimeConfig.from_mapping(runtime_raw),
                 log=NsLogConfig(**log_raw),
             )
             config.validate()
@@ -368,6 +379,7 @@ class NsConfig:
             seen_installed_apps.add(normalized_app_key)
 
         self._validate_cache_config()
+        self._validate_runtime_config()
 
     def _validate_cache_config(self) -> None:
         cache = self.cache
@@ -442,6 +454,20 @@ class NsConfig:
                 field_name="cache.backend",
                 package_name="valkey",
             )
+
+    def _validate_runtime_config(self) -> None:
+        runtime = self.runtime
+
+        if not isinstance(runtime, NsRuntimeConfig):
+            raise NsConfigError(
+                "runtime must be NsRuntimeConfig.",
+                details={
+                    "field": "runtime",
+                    "actual_type": type(runtime).__name__,
+                },
+            )
+
+        runtime.validate()
 
     @staticmethod
     def _validate_cache_key_part(field_name: str, value: Any) -> None:
@@ -581,6 +607,47 @@ class NsConfig:
             )
 
         return section
+
+    @staticmethod
+    def _get_top_level_object(raw_config: dict[str, Any], *, preferred_key: str, compatible_key: str) -> dict[str, Any]:
+        section = raw_config.get(preferred_key)
+
+        if section is None:
+            section = raw_config.get(compatible_key, {})
+
+        if section is None:
+            section = {}
+
+        if not isinstance(section, dict):
+            raise NsConfigError(
+                f"{preferred_key}/{compatible_key} must be a JSON object.",
+                details={
+                    "preferred_key": preferred_key,
+                    "compatible_key": compatible_key,
+                    "actual_type": type(section).__name__,
+                },
+            )
+
+        return dict(section)
+
+    @staticmethod
+    def _normalize_runtime_compatible_fields(runtime_raw: dict[str, Any]) -> None:
+        legacy_field = "default_handler_max_concurrency"
+        current_field = "default_processor_max_concurrency"
+
+        if legacy_field not in runtime_raw:
+            return
+
+        if current_field in runtime_raw:
+            raise NsConfigError(
+                "runtime config contains both deprecated and current processor concurrency fields.",
+                details={
+                    "deprecated_field": f"runtime.{legacy_field}",
+                    "current_field": f"runtime.{current_field}",
+                },
+            )
+
+        runtime_raw[current_field] = runtime_raw.pop(legacy_field)
 
     @staticmethod
     def _load_json_config(config_path: Path) -> dict[str, Any]:
