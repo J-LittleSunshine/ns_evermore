@@ -990,6 +990,7 @@ class NsRuntimeConfig:
                 "global_max_concurrency",
                 "default_processor_max_concurrency",
                 "default_processor_timeout_ms",
+                "ack_sweep_interval_ms",
                 "default_connection_max_inflight",
                 "default_backpressure_policy",
             },
