@@ -952,6 +952,7 @@ class NsRuntimeConfig:
 
     global_max_concurrency: int = 1000
     default_processor_max_concurrency: int = 100
+    default_processor_timeout_ms: int = 30_000
     default_connection_max_inflight: int = 32
     default_backpressure_policy: RuntimeBackpressurePolicy = "timeout_queue"
 
@@ -987,6 +988,7 @@ class NsRuntimeConfig:
                 "admin",
                 "global_max_concurrency",
                 "default_processor_max_concurrency",
+                "default_processor_timeout_ms",
                 "default_connection_max_inflight",
                 "default_backpressure_policy",
             },
@@ -1018,6 +1020,7 @@ class NsRuntimeConfig:
             admin=NsRuntimeAdminConfig.from_mapping(data.get("admin")),
             global_max_concurrency=int(data.get("global_max_concurrency", 1000)),
             default_processor_max_concurrency=int(data.get("default_processor_max_concurrency", 100)),
+            default_processor_timeout_ms=int(data.get("default_processor_timeout_ms", 30_000)),
             default_connection_max_inflight=int(data.get("default_connection_max_inflight", 32)),
             default_backpressure_policy=data.get("default_backpressure_policy", "timeout_queue"),
         )
@@ -1055,8 +1058,9 @@ class NsRuntimeConfig:
 
         _validate_positive_int("runtime.global_max_concurrency", self.global_max_concurrency)
         _validate_positive_int("runtime.default_processor_max_concurrency", self.default_processor_max_concurrency)
+        _validate_positive_int("runtime.default_processor_timeout_ms", self.default_processor_timeout_ms)
         _validate_positive_int("runtime.default_connection_max_inflight", self.default_connection_max_inflight)
-
+        
         if self.default_processor_max_concurrency > self.global_max_concurrency:
             raise NsConfigError(
                 "runtime.default_processor_max_concurrency must be less than or equal to runtime.global_max_concurrency.",

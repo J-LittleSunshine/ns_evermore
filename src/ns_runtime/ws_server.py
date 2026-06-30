@@ -506,6 +506,7 @@ class NsRuntimeWebSocketServer:
                 "processors": self.processor_registry.list_processors(),
                 "default_connection_max_inflight": self.runtime_config.default_connection_max_inflight,
                 "default_backpressure_policy": self.runtime_config.default_backpressure_policy,
+                "default_processor_timeout_ms": self.runtime_config.default_processor_timeout_ms,
                 "default_ack_timeout_ms": self.DEFAULT_ACK_TIMEOUT_MS,
             },
         )
@@ -1088,8 +1089,44 @@ class NsRuntimeWebSocketServer:
             connection_summary=connection.to_summary(),
         )
 
+        timeout_ms = self.runtime_config.default_processor_timeout_ms
+        timeout_seconds = timeout_ms / 1000.0
+
         try:
-            result = await self.processor_registry.dispatch(context)
+            result = await asyncio.wait_for(
+                self.processor_registry.dispatch(context),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            processor_name = self._resolve_processor_name_for_error(envelope)
+
+            self.logger.warning(
+                "Runtime processor request timed out.",
+                extra={
+                    "runtime_id": self.runtime_config.runtime_id,
+                    "connection_id": connection.connection_id,
+                    "message_id": envelope.message_id,
+                    "message_type": envelope.message_type,
+                    "processor_name": processor_name,
+                    "timeout_ms": timeout_ms,
+                    "trace_id": envelope.trace_id,
+                },
+            )
+
+            await self._send_error_response(
+                connection=connection,
+                code="RUNTIME_PROCESSOR_TIMEOUT",
+                message="Runtime processor execution timed out.",
+                details={
+                    "message_id": envelope.message_id,
+                    "message_type": envelope.message_type,
+                    "processor_name": processor_name,
+                    "timeout_ms": timeout_ms,
+                    "trace_id": envelope.trace_id,
+                },
+                reply_to=envelope,
+            )
+            return
         except NsEvermoreError as exc:
             await self._send_error_response(
                 connection=connection,
@@ -1129,6 +1166,12 @@ class NsRuntimeWebSocketServer:
             requires_ack=response_requires_ack,
         )
         await connection.send_envelope(response)
+
+    def _resolve_processor_name_for_error(self, envelope: NsRuntimeEnvelope) -> str | None:
+        try:
+            return self.processor_registry.resolve_processor_name(envelope)
+        except Exception:  # noqa
+            return None
 
     async def send_to_connection(
             self,

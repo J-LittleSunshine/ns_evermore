@@ -190,6 +190,7 @@
     },
     "global_max_concurrency": 1000,
     "default_processor_max_concurrency": 100,
+    "default_processor_timeout_ms": 30000,
     "default_connection_max_inflight": 32,
     "default_backpressure_policy": "timeout_queue"
   },
