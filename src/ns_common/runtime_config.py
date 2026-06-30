@@ -35,7 +35,7 @@ def _as_dict(value: Any, *, field_name: str) -> dict[str, Any]:
             },
         )
 
-    return value
+    return dict(value)
 
 
 @dataclass(slots=True, kw_only=True)
