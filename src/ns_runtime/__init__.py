@@ -9,6 +9,14 @@ from ns_runtime.iam_adapter import (
     NsRuntimeIamIntrospectionResult,
     get_runtime_iam_adapter,
 )
+from ns_runtime.processor import (
+    NsRuntimeLocalProcessorRegistry,
+    NsRuntimeProcessorContext,
+    NsRuntimeProcessorResult,
+    NsRuntimeRegisteredProcessor,
+    build_default_processor_registry,
+    runtime_echo_processor,
+)
 from ns_runtime.protocol import (
     NsRuntimeClientType,
     NsRuntimeEnvelope,
@@ -43,6 +51,12 @@ __all__ = [
     "NsRuntimeIamAdapter",
     "NsRuntimeIamIntrospectionResult",
     "get_runtime_iam_adapter",
+    "NsRuntimeLocalProcessorRegistry",
+    "NsRuntimeProcessorContext",
+    "NsRuntimeProcessorResult",
+    "NsRuntimeRegisteredProcessor",
+    "build_default_processor_registry",
+    "runtime_echo_processor",
     "NsRuntimeAcceptedConnection",
     "NsRuntimeConnectionRegistry",
     "NsRuntimeWebSocketServer",

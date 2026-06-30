@@ -23,8 +23,10 @@ from websockets.exceptions import (
 )
 
 from ns_common.exceptions import (
+    NsEvermoreError,
     NsRuntimeAuthError,
     NsRuntimeCodecError,
+    NsRuntimeMessageError,
     NsRuntimeProtocolError,
 )
 from ns_common.logger import get_ns_logger
@@ -34,6 +36,11 @@ from ns_runtime.iam_adapter import (
     NsRuntimeIamAdapter,
     NsRuntimeIamIntrospectionResult,
     get_runtime_iam_adapter,
+)
+from ns_runtime.processor import (
+    NsRuntimeLocalProcessorRegistry,
+    NsRuntimeProcessorContext,
+    build_default_processor_registry,
 )
 from ns_runtime.protocol import (
     NsRuntimeClientType,
@@ -250,11 +257,13 @@ class NsRuntimeWebSocketServer:
             runtime_config: NsRuntimeConfig,
             iam_adapter: NsRuntimeIamAdapter | None = None,
             connection_registry: NsRuntimeConnectionRegistry | None = None,
+            processor_registry: NsRuntimeLocalProcessorRegistry | None = None,
     ) -> None:
         self.runtime_config: NsRuntimeConfig = runtime_config
         self.ws_config = runtime_config.server.websocket
         self.iam_adapter: NsRuntimeIamAdapter = iam_adapter or get_runtime_iam_adapter(runtime_config)
         self.connection_registry: NsRuntimeConnectionRegistry = connection_registry or NsRuntimeConnectionRegistry()
+        self.processor_registry: NsRuntimeLocalProcessorRegistry = processor_registry or build_default_processor_registry(runtime_config)
         self.logger = get_ns_logger("ns_runtime.ws_server")
         self._server: Server | None = None
         self._started: bool = False
@@ -288,6 +297,7 @@ class NsRuntimeWebSocketServer:
                 "ping_interval_seconds": self.ws_config.ping_interval_seconds,
                 "ping_timeout_seconds": self.ws_config.ping_timeout_seconds,
                 "max_message_size_bytes": self.ws_config.max_message_size_bytes,
+                "processors": self.processor_registry.list_processors(),
             },
         )
 
@@ -664,18 +674,84 @@ class NsRuntimeWebSocketServer:
             )
             return
 
+        if envelope.message_type == NsRuntimeMessageType.PROCESSOR_REQUEST:
+            await self._process_processor_request(
+                websocket,
+                envelope,
+                connection=connection,
+            )
+            return
+
         await self._send_error_response(
             websocket,
             connection=connection,
-            code="RUNTIME_PROCESSOR_NOT_IMPLEMENTED",
-            message="Runtime processors are not implemented in this phase.",
+            code=NsRuntimeMessageError.code,
+            message="Runtime message type is not supported in local WebSocket server.",
+            numeric_code=NsRuntimeMessageError.numeric_code,
             details={
                 "message_id": envelope.message_id,
                 "message_type": envelope.message_type,
-                "phase": "1.6",
+                "phase": "1.7",
             },
             reply_to=envelope,
         )
+
+    async def _process_processor_request(
+            self,
+            websocket: ServerConnection,
+            envelope: NsRuntimeEnvelope,
+            *,
+            connection: NsRuntimeAcceptedConnection,
+    ) -> None:
+        context = NsRuntimeProcessorContext(
+            runtime_config=self.runtime_config,
+            connection_id=connection.connection_id,
+            peer=connection.peer,
+            principal=dict(connection.principal),
+            request=envelope,
+            connection_summary=connection.to_summary(),
+        )
+
+        try:
+            result = await self.processor_registry.dispatch(context)
+        except NsEvermoreError as exc:
+            await self._send_error_response(
+                websocket,
+                connection=connection,
+                code=exc.code,
+                message=exc.message,
+                numeric_code=exc.numeric_code,
+                details=exc.details,
+                reply_to=envelope,
+            )
+            return
+        except Exception as exc:  # noqa
+            await self._send_error_response(
+                websocket,
+                connection=connection,
+                code="RUNTIME_PROCESSOR_ERROR",
+                message="Runtime processor failed unexpectedly.",
+                details={
+                    "message_id": envelope.message_id,
+                    "message_type": envelope.message_type,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+                reply_to=envelope,
+            )
+            return
+
+        response = NsRuntimeEnvelope.new(
+            message_type=NsRuntimeMessageType.PROCESSOR_RESPONSE,
+            source=self._build_runtime_peer(),
+            target=connection.peer,
+            trace_id=envelope.trace_id,
+            correlation_id=envelope.correlation_id or envelope.message_id,
+            reply_to_message_id=envelope.message_id,
+            payload=result.payload,
+            metadata=result.metadata,
+        )
+        await websocket.send(NsRuntimeJsonCodec.encode(response))
 
     async def send_to_connection(
             self,
