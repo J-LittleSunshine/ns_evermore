@@ -78,144 +78,147 @@
       "websocket": {
         "host": "127.0.0.1",
         "port": 8765,
-        "path": "/runtime/ws"
+        "path": "/runtime/ws",
+        "ping_interval_seconds": 20,
+        "ping_timeout_seconds": 20,
+        "max_message_size_bytes": 1048576
+      },
+      "admin_http": {
+        "host": "127.0.0.1",
+        "port": 8766,
+        "path": "/admin/action"
+      },
+      "trusted_proxies": [
+        "127.0.0.1",
+        "10.0.0.0/8",
+        "192.168.0.0/16"
+      ]
+    },
+    "iam": {
+      "base_url": "http://127.0.0.1:8080/api/iam",
+      "internal_token": "change-me-iam-internal-token-at-least-32-chars",
+      "fail_policy": "fail_closed",
+      "introspection_cache_ttl_seconds": 60,
+      "invalid_cache_ttl_seconds": 10,
+      "connection_access_check": {
+        "enabled": true,
+        "template": {
+          "resource_type": "ns_runtime_connection",
+          "resource_id": "{{ client_type }}",
+          "action_code": "connect",
+          "context": {
+            "runtime_id": "{{ runtime_id }}",
+            "cluster_id": "{{ cluster_id }}",
+            "mode": "{{ mode }}",
+            "client_type": "{{ client_type }}",
+            "client_id": "{{ client_id }}",
+            "node_id": "{{ node_id }}",
+            "node_group": "{{ node_group }}"
+          }
+        }
       }
     },
-    "admin_http": {
-      "host": "127.0.0.1",
-      "port": 8766,
-      "path": "/admin/action"
+    "cluster": {
+      "master_urls": [],
+      "shard_key_fields": [
+        "payload.tenant_id",
+        "payload.company_id",
+        "metadata.tenant_id",
+        "metadata.company_id",
+        "node_group",
+        "target_type+message_type",
+        "client_type",
+        "message_id"
+      ],
+      "lease_ttl_seconds": 30,
+      "lease_renew_interval_seconds": 10,
+      "migration_policy": "proxy",
+      "auto_degrade_enabled": true,
+      "master_unavailable_threshold_seconds": 60,
+      "auto_recover_enabled": true
     },
-    "trusted_proxies": [
-      "127.0.0.1",
-      "10.0.0.0/8",
-      "192.168.0.0/16"
+    "state_store": {
+      "backend": "sqlite_wal",
+      "sqlite_path": "data/ns_runtime_state.sqlite3",
+      "redis_url": "",
+      "key_prefix": "ns_runtime_state"
+    },
+    "message_store": {
+      "backend": "sqlite_wal",
+      "sqlite_path": "data/ns_runtime_message.sqlite3",
+      "redis_url": "",
+      "key_prefix": "ns_runtime_message"
+    },
+    "audit_store": {
+      "backend": "sqlite_wal",
+      "sqlite_path": "data/ns_runtime_audit.sqlite3",
+      "database": {},
+      "api_url": "",
+      "key_prefix": "ns_runtime_audit"
+    },
+    "routing": {
+      "default_strategy": "rule_based",
+      "default_load_balance": "weighted_least_loaded",
+      "max_hops": 8,
+      "rules": [],
+      "tenant_isolation_enabled": true,
+      "cross_tenant_allow_rules": []
+    },
+    "plugins": {
+      "import_paths": [],
+      "scan_dirs": [],
+      "enable_hot_reload": true
+    },
+    "admin": {
+      "path": "/admin/action",
+      "iam_access_check": {
+        "enabled": true,
+        "template": {
+          "resource_type": "ns_runtime_admin",
+          "resource_id": "{{ runtime_id }}",
+          "action_code": "{{ action }}",
+          "context": {
+            "runtime_id": "{{ runtime_id }}",
+            "cluster_id": "{{ cluster_id }}",
+            "mode": "{{ mode }}",
+            "admin_action": "{{ action }}",
+            "client_ip": "{{ client_ip }}",
+            "request_id": "{{ request_id }}"
+          }
+        }
+      }
+    },
+    "global_max_concurrency": 1000,
+    "default_processor_max_concurrency": 100,
+    "default_connection_max_inflight": 32,
+    "default_backpressure_policy": "timeout_queue"
+  },
+  "log": {
+    "level": "INFO",
+    "file_level": "INFO",
+    "console_level": "INFO",
+    "console": true,
+    "format_type": "json",
+    "console_format_type": "color_text",
+    "file_format_type": "json",
+    "format": "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s",
+    "datefmt": "%Y-%m-%d %H:%M:%S",
+    "when": "midnight",
+    "interval": 1,
+    "backup_count": 14,
+    "encoding": "utf-8",
+    "delay": true,
+    "utc": false,
+    "at_time": null,
+    "max_bytes": 0,
+    "use_gzip": false,
+    "lock_file_directory": null,
+    "level_files": [
+      "DEBUG",
+      "INFO",
+      "WARNING",
+      "ERROR",
+      "CRITICAL"
     ]
-  },
-  "iam": {
-    "base_url": "http://127.0.0.1:8080/api/iam",
-    "internal_token": "change-me-runtime-iam-internal-token",
-    "fail_policy": "fail_closed",
-    "introspection_cache_ttl_seconds": 60,
-    "invalid_cache_ttl_seconds": 10,
-    "connection_access_check": {
-      "enabled": true,
-      "template": {
-        "resource_type": "ns_runtime_connection",
-        "resource_id": "{{ client_type }}",
-        "action_code": "connect",
-        "context": {
-          "runtime_id": "{{ runtime_id }}",
-          "cluster_id": "{{ cluster_id }}",
-          "mode": "{{ mode }}",
-          "client_type": "{{ client_type }}",
-          "node_id": "{{ node_id }}",
-          "node_group": "{{ node_group }}"
-        }
-      }
-    }
-  },
-  "cluster": {
-    "master_urls": [],
-    "shard_key_fields": [
-      "payload.tenant_id",
-      "payload.company_id",
-      "metadata.tenant_id",
-      "metadata.company_id",
-      "node_group",
-      "target_type+message_type",
-      "client_type",
-      "message_id"
-    ],
-    "lease_ttl_seconds": 30,
-    "lease_renew_interval_seconds": 10,
-    "migration_policy": "proxy",
-    "auto_degrade_enabled": true,
-    "master_unavailable_threshold_seconds": 60,
-    "auto_recover_enabled": true
-  },
-  "state_store": {
-    "backend": "sqlite_wal",
-    "sqlite_path": "data/ns_runtime_state.sqlite3",
-    "redis_url": "",
-    "key_prefix": "ns_runtime_state"
-  },
-  "message_store": {
-    "backend": "sqlite_wal",
-    "sqlite_path": "data/ns_runtime_message.sqlite3",
-    "redis_url": "",
-    "key_prefix": "ns_runtime_message"
-  },
-  "audit_store": {
-    "backend": "sqlite_wal",
-    "sqlite_path": "data/ns_runtime_audit.sqlite3",
-    "database": {},
-    "api_url": "",
-    "key_prefix": "ns_runtime_audit"
-  },
-  "routing": {
-    "default_strategy": "rule_based",
-    "default_load_balance": "weighted_least_loaded",
-    "max_hops": 8,
-    "rules": [],
-    "tenant_isolation_enabled": true,
-    "cross_tenant_allow_rules": []
-  },
-  "plugins": {
-    "import_paths": [],
-    "scan_dirs": [],
-    "enable_hot_reload": true
-  },
-  "admin": {
-    "path": "/admin/action",
-    "iam_access_check": {
-      "enabled": true,
-      "template": {
-        "resource_type": "ns_runtime_admin",
-        "resource_id": "{{ runtime_id }}",
-        "action_code": "{{ action }}",
-        "context": {
-          "runtime_id": "{{ runtime_id }}",
-          "cluster_id": "{{ cluster_id }}",
-          "mode": "{{ mode }}",
-          "admin_action": "{{ action }}",
-          "client_ip": "{{ client_ip }}",
-          "request_id": "{{ request_id }}"
-        }
-      }
-    }
-  },
-  "global_max_concurrency": 1000,
-  "default_processor_max_concurrency": 100,
-  "default_connection_max_inflight": 32,
-  "default_backpressure_policy": "timeout_queue"
-},
-"log": {
-"level": "INFO",
-"file_level": "INFO",
-"console_level": "INFO",
-"console": true,
-"format_type": "json",
-"console_format_type": "color_text",
-"file_format_type": "json",
-"format": "%(asctime)s - %(levelname)-8s - %(process)d:%(threadName)s - %(name)s - %(filename)s:%(lineno)d - %(message)s",
-"datefmt": "%Y-%m-%d %H:%M:%S",
-"when": "midnight",
-"interval": 1,
-"backup_count": 14,
-"encoding": "utf-8",
-"delay": true,
-"utc": false,
-"at_time": null,
-"max_bytes": 0,
-"use_gzip": false,
-"lock_file_directory": null,
-"level_files": [
-"DEBUG",
-"INFO",
-"WARNING",
-"ERROR",
-"CRITICAL"
-]
-}
+  }
 }
