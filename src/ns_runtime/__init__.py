@@ -3,6 +3,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ns_runtime.iam_adapter import (
+    NsRuntimeIamAccessDecision,
+    NsRuntimeIamAdapter,
+    NsRuntimeIamIntrospectionResult,
+    get_runtime_iam_adapter,
+)
 from ns_runtime.protocol import (
     NsRuntimeClientType,
     NsRuntimeEnvelope,
@@ -28,4 +34,8 @@ __all__ = [
     "NsRuntimePeer",
     "current_epoch_ms",
     "new_runtime_message_id",
+    "NsRuntimeIamAccessDecision",
+    "NsRuntimeIamAdapter",
+    "NsRuntimeIamIntrospectionResult",
+    "get_runtime_iam_adapter",
 ]
