@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from ns_runtime.app import RuntimeApplication
 
-if TYPE_CHECKING:
-    pass
+__all__ = [
+    "__version__",
+    "RuntimeApplication",
+]
+
+__version__ = "0.1.0"
