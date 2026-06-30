@@ -65,6 +65,13 @@ class NsRuntimeAcceptedConnection:
     last_seen_epoch_ms: int
     remote_address: str | None = None
     request_path: str | None = None
+    max_inflight: int
+    backpressure_policy: str
+
+    inflight_count: int = 0
+    _inflight_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _processor_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False)
 
     def touch(self) -> None:
         self.last_seen_epoch_ms = current_epoch_ms()
@@ -93,6 +100,53 @@ class NsRuntimeAcceptedConnection:
     def principal_type(self) -> str | None:
         return self.peer.principal_type
 
+    async def try_acquire_processor_slot(self) -> bool:
+        async with self._inflight_lock:
+            if self.inflight_count >= self.max_inflight:
+                return False
+
+            self.inflight_count += 1
+            self.touch()
+            return True
+
+    async def release_processor_slot(self) -> None:
+        async with self._inflight_lock:
+            if self.inflight_count > 0:
+                self.inflight_count -= 1
+
+            self.touch()
+
+    async def get_inflight_count(self) -> int:
+        async with self._inflight_lock:
+            return self.inflight_count
+
+    def add_processor_task(self, task: asyncio.Task[None]) -> None:
+        self._processor_tasks.add(task)
+
+    def discard_processor_task(self, task: asyncio.Task[None] | None) -> None:
+        if task is None:
+            return
+
+        self._processor_tasks.discard(task)
+
+    async def cancel_processor_tasks(self) -> None:
+        tasks = list(self._processor_tasks)
+        self._processor_tasks.clear()
+
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+
+        if tasks:
+            await asyncio.gather(
+                *tasks,
+                return_exceptions=True,
+            )
+
+    async def send_envelope(self, envelope: NsRuntimeEnvelope) -> None:
+        async with self._send_lock:
+            await self.websocket.send(NsRuntimeJsonCodec.encode(envelope))
+
     def to_summary(self) -> dict[str, Any]:
         return {
             "connection_id": self.connection_id,
@@ -106,6 +160,9 @@ class NsRuntimeAcceptedConnection:
             "last_seen_epoch_ms": self.last_seen_epoch_ms,
             "remote_address": self.remote_address,
             "request_path": self.request_path,
+            "max_inflight": self.max_inflight,
+            "inflight_count": self.inflight_count,
+            "backpressure_policy": self.backpressure_policy,
         }
 
 
@@ -192,6 +249,8 @@ class NsRuntimeConnectionRegistry:
         connections = await self.list_all()
 
         for connection in connections:
+            await connection.cancel_processor_tasks()
+
             try:
                 await connection.websocket.close(
                     code=code,
@@ -298,6 +357,8 @@ class NsRuntimeWebSocketServer:
                 "ping_timeout_seconds": self.ws_config.ping_timeout_seconds,
                 "max_message_size_bytes": self.ws_config.max_message_size_bytes,
                 "processors": self.processor_registry.list_processors(),
+                "default_connection_max_inflight": self.runtime_config.default_connection_max_inflight,
+                "default_backpressure_policy": self.runtime_config.default_backpressure_policy,
             },
         )
 
@@ -379,13 +440,14 @@ class NsRuntimeWebSocketServer:
                     "principal_id": accepted.peer.principal_id,
                     "remote_address": remote_address,
                     "active_connection_count": await self.connection_registry.count(),
+                    "max_inflight": accepted.max_inflight,
+                    "backpressure_policy": accepted.backpressure_policy,
                 },
             )
 
             async for raw_message in websocket:
                 await self.connection_registry.touch(accepted.connection_id)
                 await self._process_runtime_message(
-                    websocket,
                     raw_message,
                     connection=accepted,
                 )
@@ -413,7 +475,6 @@ class NsRuntimeWebSocketServer:
                 )
             else:
                 await self._send_error_response(
-                    websocket,
                     connection=accepted,
                     code=exc.code,
                     message=exc.message,
@@ -458,6 +519,7 @@ class NsRuntimeWebSocketServer:
                 pass
         finally:
             if accepted is not None:
+                await accepted.cancel_processor_tasks()
                 await self.connection_registry.unregister(accepted.connection_id)
 
                 self.logger.info(
@@ -597,6 +659,8 @@ class NsRuntimeWebSocketServer:
             last_seen_epoch_ms=now_epoch_ms,
             remote_address=remote_address,
             request_path=request_path,
+            max_inflight=self.runtime_config.default_connection_max_inflight,
+            backpressure_policy=self.runtime_config.default_backpressure_policy,
         )
 
         response = NsRuntimeEnvelope.new(
@@ -614,15 +678,16 @@ class NsRuntimeWebSocketServer:
                 "server_time_epoch_ms": current_epoch_ms(),
                 "principal": principal,
                 "access_decision": access_decision.raw,
+                "max_inflight": accepted.max_inflight,
+                "backpressure_policy": accepted.backpressure_policy,
             },
         )
 
-        await websocket.send(NsRuntimeJsonCodec.encode(response))
+        await accepted.send_envelope(response)
         return accepted
 
     async def _process_runtime_message(
             self,
-            websocket: ServerConnection,
             raw_message: str | bytes,
             *,
             connection: NsRuntimeAcceptedConnection,
@@ -631,7 +696,6 @@ class NsRuntimeWebSocketServer:
 
         if envelope.is_expired():
             await self._send_error_response(
-                websocket,
                 connection=connection,
                 code="RUNTIME_MESSAGE_EXPIRED",
                 message="Runtime message is expired.",
@@ -657,9 +721,11 @@ class NsRuntimeWebSocketServer:
                     "connection_id": connection.connection_id,
                     "server_time_epoch_ms": current_epoch_ms(),
                     "echo": envelope.payload,
+                    "inflight_count": await connection.get_inflight_count(),
+                    "max_inflight": connection.max_inflight,
                 },
             )
-            await websocket.send(NsRuntimeJsonCodec.encode(pong))
+            await connection.send_envelope(pong)
             return
 
         if envelope.message_type == NsRuntimeMessageType.ACK:
@@ -675,15 +741,13 @@ class NsRuntimeWebSocketServer:
             return
 
         if envelope.message_type == NsRuntimeMessageType.PROCESSOR_REQUEST:
-            await self._process_processor_request(
-                websocket,
+            await self._schedule_processor_request(
                 envelope,
                 connection=connection,
             )
             return
 
         await self._send_error_response(
-            websocket,
             connection=connection,
             code=NsRuntimeMessageError.code,
             message="Runtime message type is not supported in local WebSocket server.",
@@ -691,14 +755,108 @@ class NsRuntimeWebSocketServer:
             details={
                 "message_id": envelope.message_id,
                 "message_type": envelope.message_type,
-                "phase": "1.7",
+                "phase": "1.8",
             },
             reply_to=envelope,
         )
 
+    async def _schedule_processor_request(
+            self,
+            envelope: NsRuntimeEnvelope,
+            *,
+            connection: NsRuntimeAcceptedConnection,
+    ) -> None:
+        acquired = await connection.try_acquire_processor_slot()
+        if not acquired:
+            await self._send_error_response(
+                connection=connection,
+                code="RUNTIME_BACKPRESSURE_REJECTED",
+                message="Runtime connection inflight limit exceeded.",
+                numeric_code=NsRuntimeMessageError.numeric_code,
+                details={
+                    "message_id": envelope.message_id,
+                    "message_type": envelope.message_type,
+                    "connection_id": connection.connection_id,
+                    "inflight_count": await connection.get_inflight_count(),
+                    "max_inflight": connection.max_inflight,
+                    "configured_backpressure_policy": connection.backpressure_policy,
+                    "applied_backpressure_policy": "reject",
+                    "reason": "QUEUE_POLICY_NOT_IMPLEMENTED_IN_PHASE_1_8",
+                },
+                reply_to=envelope,
+            )
+            return
+
+        task = asyncio.create_task(
+            self._run_processor_request_task(
+                envelope,
+                connection=connection,
+            )
+        )
+        connection.add_processor_task(task)
+
+        self.logger.debug(
+            "Runtime processor request scheduled.",
+            extra={
+                "runtime_id": self.runtime_config.runtime_id,
+                "connection_id": connection.connection_id,
+                "message_id": envelope.message_id,
+                "message_type": envelope.message_type,
+                "inflight_count": await connection.get_inflight_count(),
+                "max_inflight": connection.max_inflight,
+            },
+        )
+
+    async def _run_processor_request_task(
+            self,
+            envelope: NsRuntimeEnvelope,
+            *,
+            connection: NsRuntimeAcceptedConnection,
+    ) -> None:
+        task = asyncio.current_task()
+
+        try:
+            await self._process_processor_request(
+                envelope,
+                connection=connection,
+            )
+        except ConnectionClosed:
+            pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa
+            self.logger.exception(
+                "Runtime processor request task failed unexpectedly.",
+                extra={
+                    "runtime_id": self.runtime_config.runtime_id,
+                    "connection_id": connection.connection_id,
+                    "message_id": envelope.message_id,
+                    "message_type": envelope.message_type,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+            )
+            try:
+                await self._send_error_response(
+                    connection=connection,
+                    code="RUNTIME_PROCESSOR_TASK_ERROR",
+                    message="Runtime processor task failed unexpectedly.",
+                    details={
+                        "message_id": envelope.message_id,
+                        "message_type": envelope.message_type,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    },
+                    reply_to=envelope,
+                )
+            except Exception:  # noqa
+                pass
+        finally:
+            await connection.release_processor_slot()
+            connection.discard_processor_task(task)
+
     async def _process_processor_request(
             self,
-            websocket: ServerConnection,
             envelope: NsRuntimeEnvelope,
             *,
             connection: NsRuntimeAcceptedConnection,
@@ -716,7 +874,6 @@ class NsRuntimeWebSocketServer:
             result = await self.processor_registry.dispatch(context)
         except NsEvermoreError as exc:
             await self._send_error_response(
-                websocket,
                 connection=connection,
                 code=exc.code,
                 message=exc.message,
@@ -727,7 +884,6 @@ class NsRuntimeWebSocketServer:
             return
         except Exception as exc:  # noqa
             await self._send_error_response(
-                websocket,
                 connection=connection,
                 code="RUNTIME_PROCESSOR_ERROR",
                 message="Runtime processor failed unexpectedly.",
@@ -751,7 +907,7 @@ class NsRuntimeWebSocketServer:
             payload=result.payload,
             metadata=result.metadata,
         )
-        await websocket.send(NsRuntimeJsonCodec.encode(response))
+        await connection.send_envelope(response)
 
     async def send_to_connection(
             self,
@@ -762,13 +918,12 @@ class NsRuntimeWebSocketServer:
         if connection is None:
             return False
 
-        await connection.websocket.send(NsRuntimeJsonCodec.encode(envelope))
+        await connection.send_envelope(envelope)
         await self.connection_registry.touch(connection_id)
         return True
 
     async def _send_error_response(
             self,
-            websocket: ServerConnection,
             *,
             connection: NsRuntimeAcceptedConnection,
             code: str,
@@ -791,7 +946,7 @@ class NsRuntimeWebSocketServer:
                 "details": dict(details or {}),
             },
         )
-        await websocket.send(NsRuntimeJsonCodec.encode(envelope))
+        await connection.send_envelope(envelope)
 
     async def _reject_and_close(
             self,
