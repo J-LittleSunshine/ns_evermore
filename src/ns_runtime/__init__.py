@@ -20,6 +20,10 @@ from ns_runtime.protocol import (
     current_epoch_ms,
     new_runtime_message_id
 )
+from ns_runtime.ws_server import (
+    NsRuntimeAcceptedConnection,
+    NsRuntimeWebSocketServer,
+)
 
 if TYPE_CHECKING:
     pass
@@ -38,4 +42,6 @@ __all__ = [
     "NsRuntimeIamAdapter",
     "NsRuntimeIamIntrospectionResult",
     "get_runtime_iam_adapter",
+    "NsRuntimeAcceptedConnection",
+    "NsRuntimeWebSocketServer",
 ]

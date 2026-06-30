@@ -26,6 +26,7 @@ from ns_common.config import (  # noqa: E402
 from ns_common.exceptions import NsEvermoreError  # noqa: E402
 from ns_common.http_client import aclose_http_clients  # noqa: E402
 from ns_common.logger import get_ns_logger  # noqa: E402
+from ns_runtime.ws_server import NsRuntimeWebSocketServer  # noqa: E402
 
 
 class NsRuntimeMainProcessor:
@@ -35,6 +36,7 @@ class NsRuntimeMainProcessor:
         self.logger = get_ns_logger("ns_runtime")
         self._stop_event: asyncio.Event | None = None
         self._started: bool = False
+        self._ws_server: NsRuntimeWebSocketServer | None = None
 
     async def start(self) -> None:
         if self._started:
@@ -42,6 +44,11 @@ class NsRuntimeMainProcessor:
 
         self.runtime.validate()
         self._stop_event = asyncio.Event()
+
+        self._ws_server = NsRuntimeWebSocketServer(
+            runtime_config=self.runtime,
+        )
+        await self._ws_server.start()
 
         self.logger.info(
             "Runtime main processor started.",
@@ -74,6 +81,12 @@ class NsRuntimeMainProcessor:
     async def stop(self, reason: str = "normal") -> None:
         if not self._started:
             return
+
+        ws_server = self._ws_server
+        self._ws_server = None
+
+        if ws_server is not None:
+            await ws_server.stop(reason=reason)
 
         await aclose_http_clients()
 
