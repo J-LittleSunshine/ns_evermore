@@ -54,6 +54,46 @@ from ns_runtime.protocol import (
 
 
 @dataclass(slots=True, kw_only=True)
+class NsRuntimePendingAck:
+    message_id: str
+    message_type: str
+    created_at_epoch_ms: int
+    expires_at_epoch_ms: int
+    trace_id: str | None = None
+    correlation_id: str | None = None
+    reply_to_message_id: str | None = None
+
+    def is_expired(self, *, now_epoch_ms: int | None = None) -> bool:
+        now_value = now_epoch_ms if now_epoch_ms is not None else current_epoch_ms()
+        return now_value > self.expires_at_epoch_ms
+
+    def to_summary(self) -> dict[str, Any]:
+        return {
+            "message_id": self.message_id,
+            "message_type": self.message_type,
+            "created_at_epoch_ms": self.created_at_epoch_ms,
+            "expires_at_epoch_ms": self.expires_at_epoch_ms,
+            "trace_id": self.trace_id,
+            "correlation_id": self.correlation_id,
+            "reply_to_message_id": self.reply_to_message_id,
+        }
+
+
+@dataclass(slots=True, kw_only=True)
+class NsRuntimeAckResult:
+    ack_message_id: str | None
+    matched: bool
+    pending_ack: NsRuntimePendingAck | None = None
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "ack_message_id": self.ack_message_id,
+            "matched": self.matched,
+            "pending_ack": self.pending_ack.to_summary() if self.pending_ack else None,
+        }
+
+
+@dataclass(slots=True, kw_only=True)
 class NsRuntimeAcceptedConnection:
     connection_id: str
     peer: NsRuntimePeer
@@ -63,15 +103,19 @@ class NsRuntimeAcceptedConnection:
     websocket: ServerConnection = field(repr=False)
     connected_at_epoch_ms: int
     last_seen_epoch_ms: int
-    remote_address: str | None = None
-    request_path: str | None = None
     max_inflight: int
     backpressure_policy: str
+    ack_timeout_ms: int
 
+    remote_address: str | None = None
+    request_path: str | None = None
     inflight_count: int = 0
+
     _inflight_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _processor_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False)
+    _pending_ack_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _pending_acks: dict[str, NsRuntimePendingAck] = field(default_factory=dict, repr=False)
 
     def touch(self) -> None:
         self.last_seen_epoch_ms = current_epoch_ms()
@@ -143,9 +187,108 @@ class NsRuntimeAcceptedConnection:
                 return_exceptions=True,
             )
 
-    async def send_envelope(self, envelope: NsRuntimeEnvelope) -> None:
-        async with self._send_lock:
-            await self.websocket.send(NsRuntimeJsonCodec.encode(envelope))
+    async def register_pending_ack(self, envelope: NsRuntimeEnvelope) -> NsRuntimePendingAck | None:
+        if not envelope.requires_ack:
+            return None
+
+        now_epoch_ms = current_epoch_ms()
+        pending_ack = NsRuntimePendingAck(
+            message_id=envelope.message_id,
+            message_type=envelope.message_type,
+            created_at_epoch_ms=now_epoch_ms,
+            expires_at_epoch_ms=now_epoch_ms + self.ack_timeout_ms,
+            trace_id=envelope.trace_id,
+            correlation_id=envelope.correlation_id,
+            reply_to_message_id=envelope.reply_to_message_id,
+        )
+
+        async with self._pending_ack_lock:
+            self._pending_acks[pending_ack.message_id] = pending_ack
+
+        return pending_ack
+
+    async def forget_pending_ack(self, message_id: str | None) -> NsRuntimePendingAck | None:
+        if not message_id:
+            return None
+
+        async with self._pending_ack_lock:
+            return self._pending_acks.pop(message_id, None)
+
+    async def acknowledge(self, ack_envelope: NsRuntimeEnvelope) -> NsRuntimeAckResult:
+        payload = dict(ack_envelope.payload or {})
+        ack_message_id = _normalize_optional_text(
+            payload.get("ack_message_id")
+            or payload.get("message_id")
+            or ack_envelope.reply_to_message_id
+        )
+
+        if not ack_message_id:
+            return NsRuntimeAckResult(
+                ack_message_id=None,
+                matched=False,
+            )
+
+        pending_ack = await self.forget_pending_ack(ack_message_id)
+
+        return NsRuntimeAckResult(
+            ack_message_id=ack_message_id,
+            matched=pending_ack is not None,
+            pending_ack=pending_ack,
+        )
+
+    async def prune_expired_pending_acks(self) -> list[NsRuntimePendingAck]:
+        now_epoch_ms = current_epoch_ms()
+
+        async with self._pending_ack_lock:
+            expired = [
+                item
+                for item in self._pending_acks.values()
+                if item.is_expired(now_epoch_ms=now_epoch_ms)
+            ]
+
+            for item in expired:
+                self._pending_acks.pop(item.message_id, None)
+
+            return expired
+
+    async def clear_pending_acks(self) -> list[NsRuntimePendingAck]:
+        async with self._pending_ack_lock:
+            pending = list(self._pending_acks.values())
+            self._pending_acks.clear()
+            return pending
+
+    async def get_pending_ack_count(self) -> int:
+        async with self._pending_ack_lock:
+            return len(self._pending_acks)
+
+    async def pending_ack_snapshot(self) -> list[dict[str, Any]]:
+        async with self._pending_ack_lock:
+            return [
+                item.to_summary()
+                for item in sorted(
+                    self._pending_acks.values(),
+                    key=lambda pending: pending.created_at_epoch_ms,
+                )
+            ]
+
+    async def send_envelope(
+            self,
+            envelope: NsRuntimeEnvelope,
+            *,
+            track_ack: bool = True,
+    ) -> None:
+        pending_ack: NsRuntimePendingAck | None = None
+
+        if track_ack and envelope.requires_ack:
+            pending_ack = await self.register_pending_ack(envelope)
+
+        try:
+            async with self._send_lock:
+                await self.websocket.send(NsRuntimeJsonCodec.encode(envelope))
+        except Exception:
+            if pending_ack is not None:
+                await self.forget_pending_ack(pending_ack.message_id)
+            raise
 
     def to_summary(self) -> dict[str, Any]:
         return {
@@ -163,6 +306,8 @@ class NsRuntimeAcceptedConnection:
             "max_inflight": self.max_inflight,
             "inflight_count": self.inflight_count,
             "backpressure_policy": self.backpressure_policy,
+            "ack_timeout_ms": self.ack_timeout_ms,
+            "pending_ack_count": len(self._pending_acks),
         }
 
 
@@ -250,6 +395,7 @@ class NsRuntimeConnectionRegistry:
 
         for connection in connections:
             await connection.cancel_processor_tasks()
+            await connection.clear_pending_acks()
 
             try:
                 await connection.websocket.close(
@@ -309,6 +455,7 @@ class NsRuntimeConnectionRegistry:
 
 class NsRuntimeWebSocketServer:
     CONNECTION_HELLO_TIMEOUT_SECONDS = 10.0
+    DEFAULT_ACK_TIMEOUT_MS = 30_000
 
     def __init__(
             self,
@@ -359,6 +506,7 @@ class NsRuntimeWebSocketServer:
                 "processors": self.processor_registry.list_processors(),
                 "default_connection_max_inflight": self.runtime_config.default_connection_max_inflight,
                 "default_backpressure_policy": self.runtime_config.default_backpressure_policy,
+                "default_ack_timeout_ms": self.DEFAULT_ACK_TIMEOUT_MS,
             },
         )
 
@@ -442,6 +590,7 @@ class NsRuntimeWebSocketServer:
                     "active_connection_count": await self.connection_registry.count(),
                     "max_inflight": accepted.max_inflight,
                     "backpressure_policy": accepted.backpressure_policy,
+                    "ack_timeout_ms": accepted.ack_timeout_ms,
                 },
             )
 
@@ -520,6 +669,7 @@ class NsRuntimeWebSocketServer:
         finally:
             if accepted is not None:
                 await accepted.cancel_processor_tasks()
+                pending_acks = await accepted.clear_pending_acks()
                 await self.connection_registry.unregister(accepted.connection_id)
 
                 self.logger.info(
@@ -532,6 +682,7 @@ class NsRuntimeWebSocketServer:
                         "node_id": accepted.peer.node_id,
                         "node_group": accepted.peer.node_group,
                         "active_connection_count": await self.connection_registry.count(),
+                        "cleared_pending_ack_count": len(pending_acks),
                     },
                 )
 
@@ -657,10 +808,11 @@ class NsRuntimeWebSocketServer:
             websocket=websocket,
             connected_at_epoch_ms=now_epoch_ms,
             last_seen_epoch_ms=now_epoch_ms,
-            remote_address=remote_address,
-            request_path=request_path,
             max_inflight=self.runtime_config.default_connection_max_inflight,
             backpressure_policy=self.runtime_config.default_backpressure_policy,
+            ack_timeout_ms=self.DEFAULT_ACK_TIMEOUT_MS,
+            remote_address=remote_address,
+            request_path=request_path,
         )
 
         response = NsRuntimeEnvelope.new(
@@ -680,6 +832,7 @@ class NsRuntimeWebSocketServer:
                 "access_decision": access_decision.raw,
                 "max_inflight": accepted.max_inflight,
                 "backpressure_policy": accepted.backpressure_policy,
+                "ack_timeout_ms": accepted.ack_timeout_ms,
             },
         )
 
@@ -709,6 +862,34 @@ class NsRuntimeWebSocketServer:
             )
             return
 
+        if envelope.message_type == NsRuntimeMessageType.ACK:
+            await self._process_ack(
+                envelope,
+                connection=connection,
+            )
+            return
+
+        if envelope.requires_ack:
+            await self._send_inbound_ack(
+                envelope,
+                connection=connection,
+            )
+
+        expired_pending_acks = await connection.prune_expired_pending_acks()
+        if expired_pending_acks:
+            self.logger.warning(
+                "Runtime pending ACK entries expired.",
+                extra={
+                    "runtime_id": self.runtime_config.runtime_id,
+                    "connection_id": connection.connection_id,
+                    "expired_pending_ack_count": len(expired_pending_acks),
+                    "expired_pending_acks": [
+                        item.to_summary()
+                        for item in expired_pending_acks
+                    ],
+                },
+            )
+
         if envelope.message_type == NsRuntimeMessageType.HEARTBEAT_PING:
             pong = NsRuntimeEnvelope.new(
                 message_type=NsRuntimeMessageType.HEARTBEAT_PONG,
@@ -723,21 +904,10 @@ class NsRuntimeWebSocketServer:
                     "echo": envelope.payload,
                     "inflight_count": await connection.get_inflight_count(),
                     "max_inflight": connection.max_inflight,
+                    "pending_ack_count": await connection.get_pending_ack_count(),
                 },
             )
             await connection.send_envelope(pong)
-            return
-
-        if envelope.message_type == NsRuntimeMessageType.ACK:
-            self.logger.debug(
-                "Runtime WebSocket ACK received.",
-                extra={
-                    "runtime_id": self.runtime_config.runtime_id,
-                    "connection_id": connection.connection_id,
-                    "message_id": envelope.message_id,
-                    "payload": envelope.payload,
-                },
-            )
             return
 
         if envelope.message_type == NsRuntimeMessageType.PROCESSOR_REQUEST:
@@ -755,9 +925,57 @@ class NsRuntimeWebSocketServer:
             details={
                 "message_id": envelope.message_id,
                 "message_type": envelope.message_type,
-                "phase": "1.8",
+                "phase": "1.9",
             },
             reply_to=envelope,
+        )
+
+    async def _process_ack(
+            self,
+            envelope: NsRuntimeEnvelope,
+            *,
+            connection: NsRuntimeAcceptedConnection,
+    ) -> None:
+        ack_result = await connection.acknowledge(envelope)
+
+        if ack_result.matched:
+            self.logger.debug(
+                "Runtime pending ACK matched.",
+                extra={
+                    "runtime_id": self.runtime_config.runtime_id,
+                    "connection_id": connection.connection_id,
+                    **ack_result.to_mapping(),
+                },
+            )
+            return
+
+        self.logger.warning(
+            "Runtime ACK received without matching pending message.",
+            extra={
+                "runtime_id": self.runtime_config.runtime_id,
+                "connection_id": connection.connection_id,
+                "ack_message_id": ack_result.ack_message_id,
+                "ack_payload": envelope.payload,
+                "reply_to_message_id": envelope.reply_to_message_id,
+            },
+        )
+
+    async def _send_inbound_ack(
+            self,
+            envelope: NsRuntimeEnvelope,
+            *,
+            connection: NsRuntimeAcceptedConnection,
+    ) -> None:
+        ack = envelope.build_ack(
+            source=self._build_runtime_peer(),
+            metadata={
+                "connection_id": connection.connection_id,
+                "acknowledged_at_epoch_ms": current_epoch_ms(),
+            },
+        )
+        await connection.send_envelope(
+            ack,
+            track_ack=False,
         )
 
     async def _schedule_processor_request(
@@ -781,7 +999,7 @@ class NsRuntimeWebSocketServer:
                     "max_inflight": connection.max_inflight,
                     "configured_backpressure_policy": connection.backpressure_policy,
                     "applied_backpressure_policy": "reject",
-                    "reason": "QUEUE_POLICY_NOT_IMPLEMENTED_IN_PHASE_1_8",
+                    "reason": "QUEUE_POLICY_NOT_IMPLEMENTED_IN_PHASE_1_9",
                 },
                 reply_to=envelope,
             )
@@ -897,6 +1115,8 @@ class NsRuntimeWebSocketServer:
             )
             return
 
+        response_requires_ack = _resolve_response_requires_ack(envelope)
+
         response = NsRuntimeEnvelope.new(
             message_type=NsRuntimeMessageType.PROCESSOR_RESPONSE,
             source=self._build_runtime_peer(),
@@ -906,6 +1126,7 @@ class NsRuntimeWebSocketServer:
             reply_to_message_id=envelope.message_id,
             payload=result.payload,
             metadata=result.metadata,
+            requires_ack=response_requires_ack,
         )
         await connection.send_envelope(response)
 
@@ -1041,3 +1262,16 @@ def _normalize_optional_text(value: Any) -> str | None:
 
     normalized = str(value).strip()
     return normalized or None
+
+
+def _resolve_response_requires_ack(envelope: NsRuntimeEnvelope) -> bool:
+    payload = dict(envelope.payload or {})
+    metadata = dict(envelope.metadata or {})
+
+    value = (
+        payload.get("response_requires_ack")
+        if "response_requires_ack" in payload
+        else metadata.get("response_requires_ack")
+    )
+
+    return value is True
