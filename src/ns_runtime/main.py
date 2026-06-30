@@ -129,7 +129,7 @@ def _register_stop_signals(processor: NsRuntimeMainProcessor) -> None:
             continue
 
 
-async def run_runtime(*, check_config: bool = False) -> int:
+async def run(*, check_config: bool = False) -> int:
     logger = get_ns_logger("ns_runtime")
     config = ns_config
     config.validate()
@@ -183,7 +183,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     logger = get_ns_logger("ns_runtime")
 
     try:
-        return asyncio.run(run_runtime(check_config=bool(args.check_config)))
+        return asyncio.run(run(check_config=bool(args.check_config)))
     except KeyboardInterrupt:
         return 130
     except NsEvermoreError as exc:
