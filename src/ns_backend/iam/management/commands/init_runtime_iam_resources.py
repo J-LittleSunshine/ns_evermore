@@ -20,6 +20,7 @@ from ns_backend.iam.models import (
     IamResourceAction,
     IamUser
 )
+from ns_backend.iam.services.cache import IamCacheService
 
 if TYPE_CHECKING:
     from argparse import ArgumentParser
@@ -89,6 +90,8 @@ class Command(BaseCommand):
                 grant_usernames=grant_usernames,
             )
 
+        cache_version = IamCacheService.bump_authz_version()
+
         self.stdout.write("")
         self.stdout.write(
             self.style.SUCCESS(
@@ -106,6 +109,15 @@ class Command(BaseCommand):
         self.stdout.write(
             f"ACLs: created={acl_results['created']}, updated={acl_results['updated']}, skipped={acl_results['skipped']}."
         )
+
+        if cache_version is None:
+            self.stdout.write(
+                "IAM authz cache version: skipped or unavailable."
+            )
+        else:
+            self.stdout.write(
+                f"IAM authz cache version: bumped to {cache_version}."
+            )
 
         if not grant_usernames:
             self.stdout.write(
