@@ -28,6 +28,10 @@ from ns_common.paths import (
     TMP_DIR,
     ensure_runtime_dirs
 )
+from ns_common.runtime_config import (
+    NsRuntimeConfig,
+    validate_runtime_config,
+)
 
 if TYPE_CHECKING:
     pass
@@ -182,6 +186,7 @@ class NsConfig:
     backend: NsBackendConfig = field(default_factory=NsBackendConfig)
     cache: NsCacheConfig = field(default_factory=NsCacheConfig)
     log: NsLogConfig = field(default_factory=NsLogConfig)
+    runtime: NsRuntimeConfig = field(default_factory=NsRuntimeConfig)
 
     _lock = RLock()
 
@@ -221,10 +226,24 @@ class NsConfig:
                     },
                 )
 
+            runtime_raw = raw_config.get("runtime", raw_config.get("runtime_config", {}))
+            if runtime_raw is None:
+                runtime_raw = {}
+
+            if not isinstance(runtime_raw, dict):
+                raise NsConfigError(
+                    "runtime must be a JSON object.",
+                    details={
+                        "field": "runtime",
+                        "actual_type": type(runtime_raw).__name__,
+                    },
+                )
+
             config = cls(
                 backend=NsBackendConfig(**backend_raw),
                 cache=NsCacheConfig(**cache_raw),
                 log=NsLogConfig(**log_raw),
+                runtime=NsRuntimeConfig.from_mapping(runtime_raw),
             )
             config.validate()
             return config
@@ -368,6 +387,7 @@ class NsConfig:
             seen_installed_apps.add(normalized_app_key)
 
         self._validate_cache_config()
+        validate_runtime_config(self.runtime)
 
     def _validate_cache_config(self) -> None:
         cache = self.cache
