@@ -473,6 +473,7 @@ class NsRuntimeWebSocketServer:
         self.logger = get_ns_logger("ns_runtime.ws_server")
         self._server: Server | None = None
         self._started: bool = False
+        self._ack_sweeper_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         if self._started:
@@ -490,6 +491,7 @@ class NsRuntimeWebSocketServer:
         )
 
         self._started = True
+        self._start_background_tasks()
 
         self.logger.info(
             "Runtime WebSocket server started.",
@@ -508,6 +510,7 @@ class NsRuntimeWebSocketServer:
                 "default_backpressure_policy": self.runtime_config.default_backpressure_policy,
                 "default_processor_timeout_ms": self.runtime_config.default_processor_timeout_ms,
                 "default_ack_timeout_ms": self.DEFAULT_ACK_TIMEOUT_MS,
+                "ack_sweep_interval_ms": self.runtime_config.ack_sweep_interval_ms,
             },
         )
 
@@ -518,6 +521,8 @@ class NsRuntimeWebSocketServer:
         server = self._server
         self._server = None
         self._started = False
+
+        await self._stop_background_tasks()
 
         await self.connection_registry.close_all(
             code=1001,
@@ -540,6 +545,119 @@ class NsRuntimeWebSocketServer:
                 "connection_total": snapshot["total"],
             },
         )
+
+    def _start_background_tasks(self) -> None:
+        """
+        启动 runtime WebSocket server 内部后台任务。
+
+        Phase 1.13 只启动 pending ACK background sweeper。
+        不在这里引入复杂任务框架、重试队列或持久化消息能力。
+        """
+        if self._ack_sweeper_task is not None and not self._ack_sweeper_task.done():
+            return
+
+        self._ack_sweeper_task = asyncio.create_task(
+            self._run_ack_sweeper(),
+            name=f"ns-runtime-ack-sweeper:{self.runtime_config.runtime_id}",
+        )
+
+    async def _stop_background_tasks(self) -> None:
+        """
+        停止 runtime WebSocket server 内部后台任务。
+
+        当前只负责取消 pending ACK background sweeper。
+        """
+        task = self._ack_sweeper_task
+        self._ack_sweeper_task = None
+
+        if task is None:
+            return
+
+        if not task.done():
+            task.cancel()
+
+        await asyncio.gather(
+            task,
+            return_exceptions=True,
+        )
+
+    async def _run_ack_sweeper(self) -> None:
+        """
+        后台定期清理所有连接上的过期 pending ACK。
+
+        边界：
+        - 只清理 expired pending ACK；
+        - 不做 ACK retry；
+        - 不做消息重发；
+        - 不做持久化；
+        - 不改 wire protocol。
+        """
+        interval_ms = self.runtime_config.ack_sweep_interval_ms
+        interval_seconds = interval_ms / 1000.0
+
+        while True:
+            await asyncio.sleep(interval_seconds)
+
+            try:
+                await self._sweep_expired_pending_acks_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa
+                self.logger.exception(
+                    "Runtime pending ACK background sweeper failed unexpectedly.",
+                    extra={
+                        "runtime_id": self.runtime_config.runtime_id,
+                        "cluster_id": self.runtime_config.cluster_id,
+                        "mode": self.runtime_config.mode,
+                        "sweep_interval_ms": interval_ms,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    },
+                )
+
+    async def _sweep_expired_pending_acks_once(self) -> None:
+        """
+        执行一次 pending ACK 清理。
+
+        单个 connection 清理失败不能影响其他 connection，也不能导致 sweeper 整体退出。
+        """
+        connections = await self.connection_registry.list_all()
+        interval_ms = self.runtime_config.ack_sweep_interval_ms
+
+        for connection in connections:
+            try:
+                expired_pending_acks = await connection.prune_expired_pending_acks()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa
+                self.logger.exception(
+                    "Runtime pending ACK sweep failed for connection.",
+                    extra={
+                        "runtime_id": self.runtime_config.runtime_id,
+                        "connection_id": connection.connection_id,
+                        "sweep_interval_ms": interval_ms,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    },
+                )
+                continue
+
+            if not expired_pending_acks:
+                continue
+
+            self.logger.warning(
+                "Runtime pending ACK entries expired by background sweeper.",
+                extra={
+                    "runtime_id": self.runtime_config.runtime_id,
+                    "connection_id": connection.connection_id,
+                    "expired_pending_ack_count": len(expired_pending_acks),
+                    "expired_pending_acks": [
+                        item.to_summary()
+                        for item in expired_pending_acks
+                    ],
+                    "sweep_interval_ms": interval_ms,
+                },
+            )
 
     async def _process_connection(self, websocket: ServerConnection) -> None:
         connection_id = self._resolve_connection_id(websocket)
@@ -888,6 +1006,7 @@ class NsRuntimeWebSocketServer:
                         item.to_summary()
                         for item in expired_pending_acks
                     ],
+                    "sweep_interval_ms": self.runtime_config.ack_sweep_interval_ms,
                 },
             )
 
