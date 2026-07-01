@@ -11,6 +11,8 @@
 - [x] 当某个设计点在本文档中写明“由策略配置”“可配置”“按消息类型配置”时，后续方案应保留策略扩展点，而不是在实现层写死单一行为。
 - [x] 当本文档中区分“强一致数据”和“异步/可观测数据”时，后续方案必须保留这种可靠性等级差异，不能为了简化把所有状态都当作缓存，也不能把所有观测数据都放进强一致路径。
 - [x] 当本文档中提到 `ns_backend`、`ns_frontend`、`ns_client`、`ns_node`、`ns_common` 时，均指 `ns_evermore` 项目内对应组件。
+- [x] 第一阶段补充决策用于补充 `ns_runtime` 第一阶段实现、测试、验收与生产化边界。
+- [x] 第一阶段补充决策中的条目为已确认决策，后续实现阶段不得随意降级为 MVP、单机演示或临时协议。
 
 ## 1. 代码样式与实现风格约束
 
@@ -52,10 +54,13 @@
 - [x] `ns_runtime` 必须作为独立进程运行，入口文件必须是 `main.py`；后续实现中模块名、类名、函数名都应避免 `cli` 和 `app` 语义，启动相关命名优先使用 `service`。
 - [x] 设计和实现时应优先复用 `ns_common` 已有基础设施；如果 runtime 需要通用能力而公共层不存在，可以扩展 `ns_common`，但不应把 runtime 私有协议硬塞进公共层。
 - [x] 消息处理语义必须使用 `processor` 而不是 `handler`；后续讨论中“处理某类消息”和“流水线阶段处理”都可以称为 processor，但需要通过上下文区分。
+- [x] 第一阶段不强制定义统一客户端 SDK，也不要求 `ns_frontend`、`ns_client`、`ns_node`、`ns_backend` 必须通过同一个 SDK 接入。
+- [x] 设计文档只约束连接方必须遵守的协议行为，包括 WebSocket 握手、`connection.hello`、协议版本协商、heartbeat、ACK/NACK/Defer 语义、message_id/delivery_id 幂等、connection_epoch 校验、错误 envelope 处理、source/auth_context 禁止伪造和安全日志脱敏。
 
 ## 4. 运行模式、角色与切换
 
 - [x] `ns_runtime` 必须支持 `master`、`sub_node`、`singleton` 三种模式，并且设计上不能假设启动后模式永远固定，因为 `singleton` 未来允许平滑升级或切换为 `master` 或 `sub_node`。
+- [x] 第一阶段最小闭环不以 `singleton` 为验收目标，而是必须直接完成 `active_master + sub_node` 拓扑下的基础消息路由、跨节点转发、可靠投递、ACK 回收和最小集群协调；`singleton` 只作为本地开发、降级或调试模式存在，不能替代第一阶段主线验收。
 - [x] 当 runtime 处于 `master` 模式且存在可用 `sub_node` 时，master 接收到消息后应按配置策略通过负载均衡或指定节点转发给 sub_node；此时 master 默认不接受普通客户端连接，只接受 sub_node、runtime 节点和管理类连接。
 - [x] 当 runtime 处于 `master` 模式但没有可用 `sub_node` 时，master 允许接受普通客户端接入并在本地处理消息；这个行为是 master 无 sub_node 时的降级/单点处理语义。
 - [x] 当 runtime 处于 `sub_node` 模式时，它必须主动接入 active master，并能接收来自 master 的消息在本地处理；同时 sub_node 可以接受任意类型普通客户端连接。
@@ -116,6 +121,22 @@
 - [x] 内部 runtime processing context 中的接收时间、策略版本、校验结果、lease/fencing 细节等不出现在出站 envelope；只有接收方需要理解的协议字段才进入 envelope。
 - [x] Envelope schema 校验采用“基础 envelope schema + message.type 专属 schema”的叠加模型；插件 processor 可以注册自己的 message.type schema，但不能放宽核心字段约束。
 - [x] 未注册、未授权或被策略禁用的 extension namespace 不得静默进入业务 processor；其处理方式应由策略决定为拒绝、忽略并审计或降级处理。
+- [x] 第一阶段不得使用临时扁平协议结构，也不得为了快速跑通通信而绕过最终 Envelope 分组模型。
+- [x] 所有入站和出站消息必须使用 `protocol / message / source / target / route / delivery / stream / auth_context / payload / callback / trace / extensions` 统一分组结构。
+- [x] 不适用的分组应省略，不能用 `null` 或空对象占位。
+- [x] 第一阶段可以只分层实现部分高级语义，但 Envelope 外壳、字段校验、source/auth_context 注入、未知字段拒绝和标准错误 envelope 必须按最终协议执行。
+- [x] 第一阶段内置 `message.type` 不只覆盖最小通信闭环，而应直接建立完整类型族注册表。
+- [x] 内置类型族至少包括连接握手、连接心跳、任务调度、可靠投递、ACK/NACK/Defer、stream、管理控制、集群事件、配置热更新、dead letter、replay、cancel、hold、状态查询和标准错误类型。
+- [x] 所有内置 `message.type` 都必须进入统一 Envelope schema 校验、权限声明、processor 注册、审计和错误处理链路。
+- [x] 第一阶段采用“全量注册 + 分层实现”：所有内置类型必须提供 schema、权限声明、processor 入口、审计入口和标准错误响应。
+- [x] 连接、集群、路由、任务投递、ACK/NACK/Defer 必须端到端可用。
+- [x] stream、replay、cancel、hold、dead letter、状态查询、配置热更新等高级类型必须具备基础语义和标准响应，并按本清单中额外确认的完整 stream 与生产级验收要求实现。
+- [x] 第一阶段协议兼容采用“主版本严格、次版本兼容”策略。
+- [x] `protocol.major` 不一致时，runtime 必须在握手阶段拒绝连接，并返回标准 `connection.rejected` 或 `runtime.error` envelope。
+- [x] `protocol.minor` / `patch` 可以通过 `min_version`、`supported_versions`、兼容矩阵和能力协商进行降级或兼容处理。
+- [x] 兼容协商必须发生在 `connection.hello` 握手阶段，协商结果写入 session context，并在后续 envelope 校验、processor 分发、schema 选择和错误响应中使用。
+- [x] processor 不得各自临时判断协议版本差异；协议版本兼容、字段兼容、schema 选择和降级能力必须集中在 Envelope 协议层和协议兼容策略中处理。
+- [x] 协议兼容不能放宽核心安全字段约束。即使次版本兼容，也不得允许发送方携带 source、auth_context、伪造 tenant、未知顶层字段或未授权 extension namespace。
 
 ## 7. 连接与会话模型
 
@@ -148,6 +169,11 @@
 - [x] 第一阶段不支持透明 WebSocket 连接迁移，也不支持 runtime 通过 redirect envelope 指定客户端无缝切到另一个 runtime；拓扑调整通过 drain、close、grace resume、重新握手和外部发现/配置完成。
 - [x] 连接进入 draining 后，已在 `ack_waiting` 的 delivery 继续等待 ACK 或按策略超时，尚未发送的 queued delivery 应按策略重路由、重试或取消，drain 本身应有超时和最终关闭路径。
 - [x] 连接与会话状态应采用当前内存快照加状态变更事件日志模型；普通 open/close/heartbeat/reconnect 可以异步记录，session resume、kick、安全关闭、管理控制关闭等关键事件必须强审计。
+- [x] 第一阶段允许普通网络断开进入 reconnect grace period，默认 `30s`。
+- [x] 在 grace period 内，客户端可以重新握手并申请复用原 `connection_id`，但必须重新通过 IAM 校验，并且 `identity`、`tenant`、`component_type` 与原 session 匹配。
+- [x] 每次 resume 成功后必须递增 `connection_epoch`，当前有效物理连接由 `connection_id + connection_epoch` 唯一标识。
+- [x] 管理端 kick、安全违规关闭、协议严重错误、source/auth_context 伪造、tenant 越界、恶意重复 ACK/NACK/Defer 等场景默认禁止 resume。
+- [x] grace period 内的 connection_id 不应视为 active target。
 
 ## 8. 身份、权限与安全模型
 
@@ -162,6 +188,13 @@
 - [x] 鉴权失败、伪造身份、伪造 tenant、协议版本不兼容、重复恶意 ACK、超限流、非法 schema 都属于严重错误基础集合；最终是否断开、限流、审计或隔离可叠加配置条件。
 - [x] 严重错误默认应记录安全审计并关闭或限制连接；如果连接仍处于可安全回写状态且不会泄露敏感信息，应尽量先返回标准错误 envelope，再按 severity 和策略决定是否断开。
 - [x] 审计记录中涉及 payload、身份、权限、token 等敏感信息时，默认必须脱敏或摘要化存储，而不是完整明文落库后只依赖 IAM 控制访问。
+- [x] runtime 节点启动时应优先向 `ns_backend` 获取节点凭证、角色授权、配置版本、候选 master 信息和集群策略。
+- [x] 当 `ns_backend` 暂时不可用时，runtime 可以使用未过期、未撤销且本地校验通过的缓存节点凭证进入降级模式，但降级模式必须受严格限制。
+- [x] 降级模式下允许维持已有低风险连接、保持本地 heartbeat、继续处理不需要控制面重新授权的已受理 delivery、执行本地健康检查和有限恢复扫描。
+- [x] 降级模式下禁止执行高风险操作，包括 master 切换、force takeover、emergency isolate、跨 tenant 调度、新配置覆盖、节点恢复确认、强制 replay、跨节点全局协调写入和任何依赖 `ns_backend` 最新授权的管理控制。
+- [x] 一旦 `ns_backend` 恢复可用，runtime 必须重新校验节点凭证、角色授权、配置版本、leader lease、fencing_token 和当前 role。
+- [x] 本地缓存凭证只能用于短时控制面不可用时的受限启动或受限维持服务，不能作为绕过 `ns_backend` 控制面的长期运行凭证。
+- [x] 缓存凭证必须有 TTL、签名校验、权限范围、节点 identity、runtime_id、role scope 和脱敏审计记录。
 
 ## 9. Processor 与插件模型
 
@@ -196,6 +229,23 @@
 - [x] 过载行为必须策略化，至少要能表达 reroute、queue、reject、dead_letter、degrade 和 hybrid；路由层负责策略判断，可靠投递层负责最终发送前水位保护。
 - [x] 协议兼容策略、连接收尾/重连策略、ACK 到旧 owner 策略、pause 期间计时策略、no target 重试策略、顺序阻塞策略和恢复扫描策略都必须归入策略引擎统一裁决，而不是散落在各模块内部写死。
 - [x] ACK timeout、priority、reliability 等可以由发送方建议，但 runtime 策略拥有最终裁决权，包括最小/最大值、覆盖规则、动态调整和安全限制。
+- [x] 第一阶段 runtime 节点发现采用混合模式：本地配置文件作为启动兜底、最小灾难恢复入口和完全离线启动依据；`ns_backend` 控制面作为运行期权威。
+- [x] `ns_backend` 控制面负责下发 master/sub_node 拓扑、节点角色、节点凭证、配置版本、隔离/恢复状态、master 切换信息和策略覆盖。
+- [x] 当 `ns_backend` 暂时不可用时，runtime 可以按本地配置和本地缓存凭证进入受限降级模式；但降级模式不得执行需要全局权威确认的高风险操作。
+- [x] 配置热更新必须按配置项声明生效方式，每个配置项至少声明为 `immediate`、`rolling` 或 `restart_required`。
+- [x] 配置热更新回滚采用“按配置组回滚”模型。
+- [x] runtime 配置必须按职责分组，例如 protocol、security、state_store、routing、delivery、worker、pool、tenant_quota、observability、logging、debug 等。
+- [x] 每个配置组必须维护独立的 `group_version`、`effective_at`、`rollback_from_version`、`source`、`policy_version` 和审计记录。
+- [x] 配置组之间如果存在强依赖关系，不能独立回滚。
+- [x] 第一阶段多节点配置一致性采用混合模式。
+- [x] `ns_backend` 是配置版本、配置来源和策略覆盖的最终权威；active master 负责 runtime 集群内配置生效协调、版本兼容检查、sub_node 状态确认和配置漂移检测。
+- [x] sub_node 可以直接从 `ns_backend` 拉取配置，也可以接收 active master 的配置协调消息；但无论配置来源如何，sub_node 都必须向 active master 汇报实际生效的 `config_version`、`policy_version`、各 `config_group_version`、生效时间、失败配置组和回滚状态。
+- [x] 多节点配置漂移必须按配置组分级处理，不能简单地把所有配置版本不一致都视为致命错误。
+- [x] 对于 protocol、security、state_store、fencing、delivery_state_machine、routing_critical、payload_ref_validation、cluster_coordination 等关键配置组，如果 sub_node 与 active master 的生效版本不兼容，应立即禁止该节点作为新路由目标，并按策略进入 degraded、isolated 或 draining。
+- [x] 对于 logging、observability、debug、低风险采样比例、非关键指标推送等配置组，如果发生版本漂移，可以先记录告警、指标和审计，不必立即隔离节点。
+- [x] 配置漂移恢复采用“自动修复 + 管理确认恢复”模型。
+- [x] runtime 节点检测到配置漂移后，应自动尝试从 `ns_backend` 拉取权威配置并重新应用。
+- [x] 如果节点曾因关键配置组漂移进入 isolated、degraded、draining 或被禁止作为路由目标，即使自动修复成功，也不得立即自动重新参与路由，必须通过管理控制 envelope 执行恢复确认。
 
 ## 12. 路由与调度模型
 
@@ -219,6 +269,9 @@
 - [x] 会话粘滞不是硬编码行为，而是策略配置项；可以按 source identity、tenant、task group、stream_id、conversation/session_id、capability 或 callback group 维度配置。
 - [x] 会话粘滞策略应能表达 prefer previous target、require same target、avoid previous failed target、sticky TTL、以及在 NACK/timeout/defer 达到阈值后解除或反向避让粘滞目标。
 - [x] 当目标过载时，路由层负责判断是否换目标、排队、拒绝、死信或降级；可靠投递层在实际发送前仍要做最终水位保护。
+- [x] target health score 必须采用分层健康画像模型，至少维护 `connection health`、`identity health`、`component_type health`、`runtime node health`、`tenant health` 五类画像。
+- [x] 每层画像都应基于滑动窗口与指数衰减计算，包括 ACK P95/P99、NACK 率、Defer 率、ACK timeout 率、WebSocket 写失败率、连接写队列压力、retry 成功率、queue backlog、慢连接表现和最近异常趋势等指标。
+- [x] 健康画像只能影响评分、限流、避让、重试节奏和背压策略，不能绕过 IAM、tenant 隔离、payload_ref 校验、owner/fencing 校验或 DeliveryRecord 状态机。
 
 ## 13. 可靠投递模型
 
@@ -247,6 +300,13 @@
 - [x] delivery lease 必须通过状态存储层跨进程可见；worker claim queued delivery 前必须获得 lease，lease 过期后旧 worker 的后续状态更新必须被 fencing 拒绝。
 - [x] delivery lease 过期后默认进入 `retry_scheduled`，因为发送结果不确定；如果随后目标发来合法 ACK，允许从 `retry_scheduled` 转为 `acked`。
 - [x] delivery lease 过期应记录一次 attempt 异常，并由策略决定是否消耗 message 级重试预算；无论是否消耗预算，都不能直接回到 queued 造成立即重复发送。
+- [x] 第一阶段 delivery lease 默认采用平衡 profile：`lease TTL = 15s`，`renew interval = 5s`。
+- [x] 当同一 delivery 的 lease renew 连续失败超过 `2` 次时，应进入 owner 风险状态，允许 RecoveryWorker 或恢复扫描机制在重新校验 owner、fencing、runtime role、delivery state 和当前 lease 后接管。
+- [x] lease 过期不等于 delivery 失败，也不等于目标未收到消息；默认应进入可恢复风险路径，由策略决定进入 `retry_scheduled`、等待恢复扫描、转移 owner 或 dead letter。
+- [x] lease renew 连续失败达到策略阈值后，当前 worker 不得继续发起新的高风险状态写入动作，例如继续发送新 envelope、触发 retry、提交 dead letter、执行 owner transfer 或修改主 DeliveryRecord 状态。
+- [x] delivery 进入 owner 风险状态后，允许一个短暂保护窗口处理已经在途的 ACK/NACK/Defer。
+- [x] owner 风险保护窗口默认采用中等窗口，建议 `3～5s`。
+- [x] owner 风险保护窗口不是 lease 延期，也不是新的有效 lease，只是在途确认容错窗口；真正写入权威仍然以 Redis/Valkey 中的 current owner、lease 和 fencing_token 为准。
 - [x] ACK、NACK 只允许从 `sending`、`ack_waiting`、`retry_scheduled` 生效；`prepared`、`queued`、`replay_requested`、终态或旧 owner 状态收到 ACK/NACK 时必须按异常、重复或迟到事件审计。
 - [x] `dead_lettered` 是唯一默认允许管理端显式 replay 恢复的终态；`acked`、`cancelled`、`expired`、旧 owner 的 `transferred` 默认不可恢复。
 - [x] 可靠投递层必须维护投递去重登记；同一 tenant 下相同 `message_id + target_fingerprint` 在去重窗口内重复进入时，应按策略拒绝、复用已有 delivery、合并目标或允许重复，并记录幂等命中事件。
@@ -283,6 +343,21 @@
 - [x] stream window 只能由 runtime 策略决定；接收方不能主动通过 extend_window 扩大窗口，但 ACK/NACK/Defer/延迟等信号可以影响后续策略计算。
 - [x] 开启强顺序保证时，必须等前一条 delivery ACK 后才发送下一条；如果前序 delivery dead_lettered、expired 或 cancelled，后续是阻塞、跳过、取消还是死信，由顺序策略配置。
 - [x] 顺序保证范围必须由策略配置，可以按 stream_id、source-target、connection、tenant、message_type 或其他受控范围设置；严格顺序流如果要求前一分片 ACK 后再发下一分片，stream window 应等价收敛为 1。
+- [x] 第一阶段 ACK timeout 默认采用平衡 profile：本地 delivery ACK timeout 默认 `5s`，跨节点 delivery ACK timeout 默认 `10s`。
+- [x] ACK timeout 到期不等于业务失败，也不等于目标一定未收到 envelope；timeout 只能说明 runtime 未在规定窗口内收到合法 ACK。
+- [x] 第一阶段 Defer 默认采用平衡限制策略：每个 delivery 默认最多允许 Defer `3` 次；单次 Defer 最多延长 `5s`；总延长时间默认不超过 `15s`。
+- [x] Defer 是目标压力信号，频繁 Defer 必须进入 target health profile，用于后续路由评分、限流、背压和是否避让该目标。
+- [x] 第一阶段 NACK 默认采用平衡策略，NACK reason 必须按语义分为 `retryable`、`reroutable`、`non_retryable`、`security` 四类。
+- [x] 对于 `target_overloaded`、`temporarily_unavailable`、`queue_full`、`dependency_unavailable`、`target_draining`、`node_degraded` 等临时性或容量类原因，默认进入 `retry_scheduled`、`reroute` 或降低 target health score。
+- [x] 对于 `permission_denied`、`tenant_mismatch`、`invalid_payload_ref`、`payload_ref_denied`、`source_forged`、`auth_context_forged`、`protocol_violation` 等权限、安全或协议类原因，默认进入 `dead_lettered`、`rejected` 或安全审计，不应反复 retry.
+- [x] 所有 NACK reason 必须进入细粒度 `RUNTIME_*` 错误码体系，并定义在 `ns_common.exceptions` 中。
+- [x] 第一阶段可靠 stream 必须实现完整可靠 stream 语义，而不是只注册协议或基础 processor。
+- [x] 第一阶段必须实现 `stream.start`、`stream.chunk`、`stream.end`、分片级 delivery、滑动窗口、cumulative ACK、selective ACK、`ack_ranges`、`missing_sequences`、乱序恢复、窗口动态调整、stream hold/cancel/replay 基础链路，以及 `stream_end` 被 ACK 后 stream 才能进入 `closed`。
+- [x] stream 的可靠性必须建立在统一 Envelope、DeliveryRecord、ACK/NACK/Defer、StreamDeliveryState、状态存储层、策略引擎和 processor 流水线之上。
+- [x] 不允许为 stream 另开私有传输通道、私有 ACK 通道或绕过可靠投递层。
+- [x] 第一阶段 stream 可以限制最大窗口、最大分片大小、最大 stream 生命周期、最大乱序缓存范围和最大并发 stream 数，但这些限制必须策略化，不能写死在 processor 或 transport 层。
+- [x] stream 的分片 ACK、cumulative ACK 和 selective ACK 不能直接更新内存状态后异步补写 Redis/Valkey。
+- [x] 凡是会影响 StreamDeliveryState、chunk DeliveryRecord、ack window、missing ranges、retry、dead letter 或 stream closed 状态的操作，都必须通过状态存储层原子更新，并写入状态变更日志或审计摘要。
 
 ## 15. 重试、死信、重投、取消与 hold
 
@@ -316,6 +391,21 @@
 - [x] message 级 hold 默认作用于该 message 下所有未终态 delivery，并且后续同一 message 的 replay_requested、自动恢复、prepared 激活和 queued 发送都必须继承 hold；只有策略明确允许并经管理 capability 授权时，才能对特定 delivery 做例外释放。
 - [x] 投递暂停/恢复必须支持；暂停期间新普通消息默认返回错误 envelope，已有 queued delivery 保留但不发送，ACK/NACK/Defer 和管理控制继续处理，计时行为由 pause 策略决定。
 - [x] `prepared`、`queued`、`retry_scheduled` 和 `ack_waiting` 在暂停、hold、draining、transitioning、isolation 等运行状态下的计时、激活和重试行为必须由策略或硬规则明确，不能靠实现时的默认队列行为隐式决定。
+- [x] 第一阶段 retry budget 默认采用平衡预算，每个 message 默认最多自动 retry `5` 次。
+- [x] `retryable NACK`、`ACK timeout`、WebSocket 写失败、目标连接写队列满、目标 runtime 暂时不可达等明确投递失败或接收失败场景，默认消耗自动 retry budget。
+- [x] 对于 target 暂时离线、master 暂不可用、payload_ref 校验服务暂不可用、tenant 暂停、node transitioning、runtime draining 等基础设施或运行状态类问题，可以按策略进入 wait、retry_scheduled、deferred retry 或 dead letter，不一定立即消耗 retry budget。
+- [x] 自动 retry budget 与人工 replay budget 必须拆开。
+- [x] retry backoff 默认采用“指数退避 + jitter + 目标健康感知”的混合策略。
+- [x] 基础退避曲线采用指数退避，例如 `1s -> 2s -> 4s -> 8s -> 16s`，并加入随机 jitter。
+- [x] runtime 必须结合 target health score、tenant backlog、runtime 全局水位、connection 写队列压力、NACK reason、route segment、message priority 和 reliability 等因素动态调整 retry 间隔。
+- [x] DeadLetterRecord 必须采用分级 replay 策略，dead letter reason 至少分为 `replayable`、`not_replayable`、`manual_confirm_required` 三类。
+- [x] 临时投递失败默认归为 `replayable`；安全、权限、tenant 或 payload 明确无效问题默认归为 `not_replayable`；fencing 冲突、owner 异常、processor 异常、状态机异常默认归为 `manual_confirm_required`。
+- [x] 每个 `dead_lettered` delivery 默认最多允许人工 replay `3` 次。
+- [x] 每次 replay 都必须创建新的 `replay_epoch`，并记录 `replay_count`、`replay_budget`、`last_replayed_by`、`replay_reason`、`previous_dead_letter_reason`、`policy_version` 和 `replay_started_at`。
+- [x] replay 不得清零历史 `attempt_count`、`retry_used`、`dead_letter_reason` 或审计记录。
+- [x] dead letter replay 采用 message 内有限并发模型：同一个 `message_id` 同一时间只能存在一个 active `replay_epoch`。
+- [x] 在同一个 `replay_epoch` 内，可以允许多个符合 replay 条件的 `dead_lettered` delivery 并行进入 `replay_requested -> queued`，但必须受 recovery pool、tenant 配额、target health score、runtime 全局水位、Redis/Valkey queue backlog、replay budget 和 system pool 保护。
+- [x] replay 受理必须支持 partial success。
 
 ## 16. MessageDeliverySummary 与受理响应
 
@@ -337,6 +427,12 @@
 - [x] 只要 runtime 已完成受理并创建 summary/delivery 或 rejected summary，发送方连接随后断开不应回滚已受理结果；后续 delivery 生命周期继续由可靠投递层、策略和管理端驱动，受理响应发送失败只写审计或指标。
 - [x] `delivery.accepted` 响应只返回 message_id、summary_id、accepted_at、status_query_hint 和 trace 等轻量信息，不返回大量 delivery_id 列表；详细 delivery 信息只能由具备管理 capability 的连接查询。
 - [x] 普通发送方或无管理 capability 的连接请求查询 delivery detail、delivery tree、dead letter 或其他管理状态时，必须返回授权失败错误 envelope 并审计，不能泄露目标连接、路由路径、其他 tenant 或内部 owner/fencing 信息。
+- [x] MessageDeliverySummary 默认采用单 message 单 bucket 聚合模型；普通 message 的 summary、delivery、ACK/NACK/Defer、retry/timeout 索引和状态日志应尽量落在同一个 `tenant + bucket` 中。
+- [x] 只有当 message 的目标数量、fanout 规模、单 bucket 热点风险或单次初始化成本超过策略阈值时，才允许拆分为多个 bucket，并创建 root summary 与 shard summary。
+- [x] shard summary 负责 bucket 内 delivery 计数和状态聚合，root summary 负责跨 shard 的整体状态汇总。
+- [x] 第一阶段 fanout 拆分采用“内置保守默认值 + 配置覆盖”的方式。
+- [x] 第一阶段 fanout 默认阈值采用平衡 profile：超过 `5,000` 个 targets 时触发 fanout 分片；每个 bucket 最多承载 `1,000` 个 delivery；summary 初始化批次默认为 `500`；`prepared -> queued` 激活批次默认为 `200`。
+- [x] fanout 分片阈值、bucket 目标数、summary 初始化批次和 prepared 激活批次必须由策略引擎统一裁决；路由层、可靠投递层、状态存储层不得各自读取不同配置或写死不同默认值。
 
 ## 17. Payload Reference 校验
 
@@ -346,6 +442,12 @@
 - [x] 如果 payload reference 实时校验因 `ns_backend` 暂时不可用、校验服务超时或依赖异常而无法完成，关键消息应进入 `dead_lettered`，而不是继续投递或依赖缓存。
 - [x] 普通消息在 payload reference 校验服务不可用时的处理方式可以策略化，但不能绕过校验后继续当作已安全消息投递；策略只能在 reject、dead_letter、retry/wait 或降级拒绝之间选择。
 - [x] payload reference 校验结果可以用于观测或短期诊断缓存，但不能作为后续投递授权依据；每次需要安全确认的投递/重投必须实时校验。
+- [x] 第一阶段 `payload_ref` 校验必须采用分级策略。
+- [x] 当 `payload_ref` 被 `ns_backend` 明确判定为无效、对象不存在、version/checksum 不匹配、tenant 不匹配、owner 不匹配、发送方无权引用、目标无权访问、对象已过期或已撤销时，runtime 必须直接 `rejected` 或进入不可继续投递的 `dead_lettered`，并写入安全审计。
+- [x] 当 `payload_ref` 校验服务暂时不可用、超时、`ns_backend` 依赖异常或返回不确定结果时，runtime 不得绕过校验继续投递。
+- [x] 关键消息可以按策略进入 `dead_lettered`、`wait` 或 `retry_scheduled`；普通消息可以按策略选择 `reject`、`wait` 或 `dead_letter`。
+- [x] 只要 payload_ref 需要安全确认，就不能使用过期缓存、诊断缓存或观测缓存作为投递授权依据。
+- [x] payload_ref 校验异常必须进入细粒度 `RUNTIME_*` 错误码体系，例如 `RUNTIME_PAYLOAD_REF_INVALID`、`RUNTIME_PAYLOAD_REF_DENIED`、`RUNTIME_PAYLOAD_REF_EXPIRED`、`RUNTIME_PAYLOAD_REF_CHECKSUM_MISMATCH`、`RUNTIME_PAYLOAD_REF_VALIDATION_UNAVAILABLE`、`RUNTIME_PAYLOAD_REF_VALIDATION_TIMEOUT`。
 
 ## 18. 优先级、公平调度与背压
 
@@ -361,6 +463,33 @@
 - [x] tenant 公平调度应允许 weighted round-robin、deficit round-robin、tenant 权重、burst 上限和 reserved capacity 等策略形态，但任何策略都不能突破 system pool 的保留容量。
 - [x] 连接、tenant 和 runtime 全局都必须有背压水位；连接层负责实际入队/拒绝/关闭动作，策略引擎负责判断软过载、硬过载和错误等级。
 - [x] 队列满或过载时应尽量返回标准错误 envelope；只有内存危险、写队列无法发送错误、帧过大、恶意刷流量或严重安全错误时，才允许直接断开并审计。
+- [x] `prepared -> queued` 激活调度采用“优先级 + 水位混合驱动”模型。
+- [x] `prepared` delivery 不得一次性全部进入 `queued`，而应按 `message.priority`、tenant fair share、target health score、delivery age、message.type 可靠性等级和策略版本排序，再结合 runtime 全局水位、tenant 水位、target/connection 水位、Redis/Valkey queue backlog、recovery pool 和管理控制优先级分批激活。
+- [x] 每一次 `prepared -> queued` 批量迁移都必须记录策略版本、批次大小、候选数量、实际激活数量、跳过原因和水位判断摘要。
+- [x] 第一阶段 delivery worker 并发模型采用“固定底座 + 动态扩展”。
+- [x] runtime 启动时必须按配置创建基础 worker，分别保障 `claim`、`send`、`ACK timeout`、`retry`、`recovery`、`lease renew`、`system pool` 等关键链路的最低处理能力。
+- [x] 当 ready queue backlog、ACK timeout 数量、retry backlog、recovery backlog、Redis/Valkey 延迟、连接写队列压力或 system pool backlog 上升时，runtime 可以在配置上限内临时扩展 worker。
+- [x] worker 扩缩容只能改变调度并发，不得改变 DeliveryRecord 状态机语义。
+- [x] 第一阶段 delivery worker 必须按职责拆分，至少拆分为 `ClaimWorker`、`SendWorker`、`AckTimeoutWorker`、`RetryWorker`、`RecoveryWorker`、`LeaseRenewWorker`、`SystemControlWorker`。
+- [x] worker 之间通过状态存储层、调度队列、事件总线和明确状态机迁移协作，而不是互相直接调用内部实现。
+- [x] worker 协作采用“Redis/Valkey 队列与状态存储为权威，进程内事件总线仅做加速唤醒”的模型。
+- [x] 进程内事件总线只作为加速信号，不作为状态权威；事件丢失不得导致状态机不可恢复。
+- [x] 每次被事件唤醒后，worker 仍必须重新从 Redis/Valkey 读取当前状态，校验 owner、lease、fencing、connection_epoch、policy_version 和 DeliveryRecord 当前状态。
+- [x] worker 唤醒采用“事件唤醒优先，周期扫描兜底”的模型。
+- [x] 每类 worker 都必须保留 Redis/Valkey 队列、ZSet deadline、retry index、ack deadline index、recovery index 和状态异常索引的低频周期扫描能力。
+- [x] 第一阶段 worker 周期扫描频率采用平衡 profile：普通队列兜底扫描 `1～2s`；ACK timeout 扫描 `500ms～1s`；lease renew 检查 `300～500ms`；retry due 扫描 `1s`；recovery 扫描 `5～10s`。
+- [x] 扫描频率必须作为策略配置项，并纳入 `config_version/policy_version` 管理，不能在 worker 类中各自写死。
+- [x] 第一阶段 tenant 公平调度采用“硬配额 + 加权公平队列”的混合模型。
+- [x] 每个 tenant 必须具备硬性安全配额，包括 `max_active_delivery`、`max_queued_delivery`、`max_inflight_delivery`、`max_retry_backlog`、`max_activation_per_second`、`max_write_queue_pressure` 等。
+- [x] 在未触达硬配额的前提下，tenant pool 内使用 Weighted Fair Queuing 或 Deficit Round Robin 按 tenant weight 分配激活与发送机会。
+- [x] 系统级 ACK、管理控制、集群协调和健康相关消息不参与普通 tenant pool 配额竞争，可以使用 system pool 或保留容量，但仍必须受 runtime 全局安全水位保护。
+- [x] 第一阶段 system pool 采用“固定保留底线 + 动态上浮”的容量策略。
+- [x] system pool 默认建议保留 `15%` 的调度能力、发送能力和关键队列预算。
+- [x] 当出现 ACK backlog 上升、ACK timeout 增多、cluster heartbeat 延迟、control backlog 堆积、leader lease renew 接近超时、节点切换或恢复扫描压力升高时，system pool 可以按策略临时上浮，最高建议上浮到 `30%`。
+- [x] system pool 内部必须采用分级优先级模型：最高级保护 leader lease renew、fencing、节点隔离/切换、安全关闭；第二级保护 ACK/NACK/Defer 和 ACK deadline；第三级用于 health、节点状态、连接状态、delivery 状态查询；第四级用于普通配置热更新、低风险控制命令和低优先级观测。
+- [x] recovery pool 采用“固定保留底线 + 动态上浮”的容量策略，默认保留总调度能力的 `10%` 左右，必要时可上浮到 `20%～30%`。
+- [x] recovery pool 不得挤占最高优先级 system pool，也不得无限挤压普通 tenant pool。
+- [x] recovery pool 内部采用分级优先级模型：最高级处理 lease 失效、owner 风险、旧 owner fencing、current owner 不可用；第二级处理节点恢复后的 delivery recovery scan 和 ack_waiting 风险 delivery；第三级处理人工 replay；第四级处理 dead letter 清理、历史状态归档和低优先级恢复统计。
 
 ## 19. 集群协调模型
 
@@ -378,6 +507,14 @@
 - [x] 会改变 leader、节点隔离、成员关系、配置版本、owner/fencing 或 delivery tree 的集群控制消息必须按关键控制消息处理，具备可靠投递、强审计和必要的强一致状态更新；普通健康、观测或拓扑提示类集群事件是否可靠由策略配置。
 - [x] 节点健康状态由 WebSocket 心跳、envelope heartbeat、leader/node lease、NACK/defer/timeout/write failure、管理隔离、存储状态、IAM 凭证状态和版本兼容状态共同计算，由策略引擎输出 healthy、degraded、isolated 或 unavailable。
 - [x] 网络分区时，如果父 delivery 已经 ACK 下一跳，父状态不回滚；delivery tree 查询下游 child 状态不可达时显示 unknown/unreachable，并把断点定位在下游 runtime。
+- [x] 第一阶段 master 选举采用混合模型：`ns_backend` 提供候选 master、节点凭证、节点优先级、切换授权和控制面策略；Redis/Valkey 负责 `leader lease`、`epoch/term`、`fencing_token` 和原子抢占。
+- [x] 只有同时满足 `ns_backend` 控制面授权、节点凭证有效、角色状态允许、Redis/Valkey leader lease 抢占成功、持有当前有效 fencing_token 的 runtime 节点，才能进入 `active_master` 状态并执行全局协调写入。
+- [x] `ns_backend` 的授权不是 active master 的最终运行期写入权威；Redis/Valkey lease 也不是绕过控制面的选主许可，二者必须同时成立。
+- [x] 第一阶段 master 切换必须支持 `graceful handoff`、`force takeover`、`emergency isolate` 三种模式，但必须按风险等级分级授权。
+- [x] `graceful handoff` 用于正常维护、滚动发布和计划内主节点切换，可由具备普通集群管理 capability 的管理连接发起。
+- [x] `force takeover` 用于 active master 不响应、leader lease 过期、节点健康失败或集群协调中断等场景，必须要求高级管理 capability，并重新校验 active master 状态、leader lease、epoch/term、fencing_token、Redis/Valkey 连通性和 `ns_backend` 授权。
+- [x] `emergency isolate` 用于 suspected split-brain、旧 owner 持续写入、关键配置漂移、fencing 异常、跨 tenant 风险或安全事故，只允许最高级安全/运维 capability 发起，并必须强审计。
+- [x] master 切换不能只依赖 WebSocket 断开、心跳失败或管理端命令；任何 active master 变更都必须通过 Redis/Valkey 的 leader lease、epoch/term 和 fencing_token 原子确认。
 
 ## 20. 状态存储与一致性模型
 
@@ -394,6 +531,24 @@
 - [x] delivery tree 查询必须强实时准确；父子关系、root_delivery_id、current_owner、current_state 等索引不能依赖最终一致异步聚合。
 - [x] 状态清理允许在保留期后删除详细 DeliveryRecord，但必须保留 MessageDeliverySummary 和压缩后的状态变更摘要；未处理 dead_lettered 不清理，transferred history 可以压缩但必须保留链路摘要。
 - [x] 清理详细 DeliveryRecord、AckRecord、NackRecord、DeferRecord 或 Attempt 记录时，不能破坏 summary、delivery tree、审计链路和压缩状态摘要之间的引用关系；清理必须可 dry-run 并可审计。
+- [x] 第一阶段状态存储必须以 Redis/Valkey 作为生产强一致目标实现，覆盖 leader lease、fencing_token、DeliveryRecord、ACK/NACK/Defer 原子状态更新、控制审计和 delivery tree 查询。
+- [x] SQLite WAL 仅作为开发模式和本机多进程模拟集群使用，必须通过启动校验禁止其作为生产分布式协调权威。
+- [x] Redis/Valkey 在开发和测试环境中允许使用 standalone 模式；生产适配层必须从第一阶段开始支持 Sentinel 或 Cluster 拓扑能力。
+- [x] 状态存储层不得在业务代码中直接依赖单个 Redis 实例地址；所有访问必须通过统一 store adapter 进入。
+- [x] Redis/Valkey 状态模型采用 `Hash + Sorted Set + Stream/Log` 混合模型。
+- [x] DeliveryRecord、MessageDeliverySummary、Session、NodeState、RoutingPlan、Lease/Fencing 等当前权威状态优先使用 Hash 表达。
+- [x] 待发送队列、重试队列、ACK deadline、expires_at、恢复扫描索引、priority scheduling 等时间或优先级驱动结构使用 Sorted Set。
+- [x] 状态变更日志、审计摘要、恢复事件、控制事件和关键调试轨迹使用 Stream 或 append-only log 表达。
+- [x] Redis/Valkey 中的 Hash 保存“当前状态权威”，Sorted Set 保存“可调度/可扫描索引”，Stream/Log 保存“状态变化事实”，三者职责不得混用。
+- [x] Redis/Valkey 关键状态迁移必须优先通过 Lua 脚本实现，尤其是 claim delivery、ACK 原子提交、NACK 原子提交、Defer 延期、lease renew、fencing 校验、状态迁移、索引同步和状态变更日志追加。
+- [x] Lua 脚本必须保持短小、确定性和可测试，不允许在脚本中承载复杂业务逻辑；业务判断、策略裁决、路由评分、IAM 鉴权、payload_ref 校验仍必须在 runtime 应用层完成。
+- [x] 对同一个 DeliveryRecord 的状态变更，不允许出现“先更新 Hash，再由应用层补删 ZSet，再异步写状态日志”的非原子流程。
+- [x] 第一阶段 Redis/Valkey key 设计必须从 Redis Cluster 兼容角度出发，所有需要在同一个 Lua 脚本内原子更新的 key，必须通过 hash tag 保证落在同一个 hash slot。
+- [x] Redis/Valkey key 的 hash tag 粒度采用 `tenant_id + bucket_id` 模型，而不是单纯按 `message_id` 或 `delivery_id` 分槽。
+- [x] `bucket_id` 应由稳定哈希算法基于 `message_id` 或 `delivery_id` 计算得到，例如 `bucket_id = hash(message_id) % bucket_count`。
+- [x] 同一条 message 下需要原子聚合的关键状态应尽量落在同一 bucket；对超大 fanout、broadcast 或多目标消息，可以按策略拆分到多个 bucket，并通过 MessageDeliverySummary 的分片聚合机制汇总。
+- [x] `bucket_count` 必须是配置项，并纳入 `config_version/policy_version` 管理。
+- [x] bucket 数量变化不能隐式重写旧 key；如需扩容 bucket，必须通过明确的数据迁移、双读迁移或新旧 bucket 并存策略完成，不能由运行时代码静默改变 hash 结果。
 
 ## 21. 管理、审计与查询边界
 
@@ -405,6 +560,16 @@
 - [x] 管理端可以查询 message summary、delivery detail、delivery tree、dead letter、stream state、连接状态、节点状态和 runtime health；普通发送方不能直接查询 delivery 状态。
 - [x] 控制操作审计必须强一致且不可丢；审计中涉及敏感 payload、token、权限或身份信息时默认脱敏或摘要化。
 - [x] 清理策略由管理端通过配置热更新控制，清理动作作为管理控制 processor 执行；清理必须支持 dry-run、按 tenant、按 message_type、按状态、批量执行、暂停和恢复。
+- [x] 管理查询采用“摘要优先，必要时 drill-down 到明细”的读取模型。
+- [x] 普通管理查询应优先读取 MessageDeliverySummary、NodeState、SessionSnapshot、TargetHealthProfile、RuntimeHealthSummary、QueueWatermarkSummary 等摘要状态。
+- [x] 管理端需要排障、重投、取消、hold、状态解释或审计追踪时，才允许 drill-down 读取 DeliveryRecord、RoutingPlan、DeliveryAttempt、AckRecord、NackRecord、DeferRecord、DeadLetterRecord、状态变更 Stream/Log 和脱敏审计记录。
+- [x] 管理查询必须采用分级一致性模型。
+- [x] 控制类查询、replay/cancel/hold/kick_connection/drain_node/switch_master 等操作前置校验、delivery 明细查询、owner/fencing 状态查询、payload_ref 复验结果查询，必须读取 Redis/Valkey 当前权威状态。
+- [x] dashboard、列表页、运行概览、健康画像、队列水位、target health、tenant 级统计、趋势指标等允许读取近实时摘要，但响应中必须包含 `as_of`、`summary_version`、`state_version` 或等价版本字段。
+- [x] 管理操作提交采用分级模型。
+- [x] 高风险操作必须使用 `precheck + commit` 双阶段提交，包括 replay、cancel、hold、switch_master、node isolate/recover、批量 dead letter 清理、批量 delivery 操作、owner transfer、跨 tenant 管理操作和影响集群权威的控制命令。
+- [x] 低风险操作可以使用单阶段强校验，例如普通 kick_connection、低风险 reload_config、普通限流调整、状态快照查询和低风险观测控制。
+- [x] 双阶段提交中的 operation token 不能作为绕过权限、状态或 fencing 校验的凭证；commit 时仍必须重新读取权威状态并重新校验。
 
 ## 22. 恢复、保留与清理
 
@@ -415,6 +580,12 @@
 - [x] 如果恢复扫描发现 owner/fencing 不匹配、current_owner 不是自己或 message 已过期，应跳过、审计或转终态，不能为了恢复进度强行写状态。
 - [x] 状态保留期和清理策略必须按状态、message_type、tenant 和审计要求配置；AckRecord 的保留期通常不应短于相关 DeliveryRecord 的可追踪周期。
 - [x] NackRecord、DeferRecord、PendingAckRecord、PendingNackRecord 和 DeadLetterRecord 的保留期不应短于它们解释对应 DeliveryRecord 状态所需的最短审计周期；清理这些记录前必须确保 summary、delivery tree 和状态摘要仍能解释最终状态来源。
+- [x] Redis/Valkey 状态清理与归档采用平衡 TTL 策略。
+- [x] `acked`、`cancelled`、`expired` 等普通终态 delivery 默认在 Redis/Valkey 中保留 `7 天`。
+- [x] `dead_lettered` 默认保留 `30 天`。
+- [x] 状态变更日志、ACK/NACK/Defer 摘要、replay 记录、恢复扫描摘要和诊断性事件默认保留 `14～30 天`。
+- [x] 超过 TTL 后，状态数据应按策略归档到外部审计库、数据库、对象存储或日志系统，也可以在确认无需追溯后清理。
+- [x] 状态清理必须同时处理 DeliveryRecord、MessageDeliverySummary、ACK/NACK/Defer 记录、retry/timeout ZSet 索引、state log、dead letter 索引、stream 状态和相关审计摘要，避免孤儿索引、僵尸 delivery 或 summary 计数不一致。
 
 ## 23. 错误处理与状态机不变量
 
@@ -428,13 +599,34 @@
 - [x] `prepared` 不发送、不占 active 配额；`queued` 才进入发送调度；`retry_scheduled` 到点前不占 active/inflight；`ack_waiting` 持续占 inflight 直到终态或转入 retry。
 - [x] 资源占用口径必须稳定：`queued` 占 tenant/global 队列名额但不占连接写队列，`sending` 占 active/write slot 并受写超时保护，`ack_waiting` 占 inflight 和必要顺序窗口，`retry_scheduled` 释放 active/inflight 但保留 retry backlog 统计，终态必须释放所有运行时占用。
 - [x] `dead_lettered` 只能由显式 replay 恢复；`expired`、`cancelled`、`acked`、旧 owner `transferred` 默认不可恢复。
+- [x] 第一阶段必须建立独立的 `RUNTIME_*` 错误码体系，但错误码、异常基类、错误元数据结构和标准错误映射应定义在 `ns_common.exceptions` 中。
+- [x] `RUNTIME_*` 错误码采用细粒度设计，不能只按大类模糊表达。
+- [x] 错误码应能直接区分协议解析失败、Envelope schema 失败、source 伪造、auth_context 伪造、IAM 拒绝、tenant 越界、target 不存在、route 不可用、ACK 超时、NACK 不可重试、Defer 超预算、fencing 拒绝、owner 不匹配、payload_ref 无效、leader lease 失效、processor 超时、状态机非法迁移等关键场景。
+- [x] 每个错误码必须携带稳定元数据，包括 `severity`、`category`、`retryable`、`disconnect_required`、`audit_required`、`safe_detail` 和可选 `action`。
+- [x] 生产审计与普通日志默认严格脱敏，不允许记录 token、payload 明文、完整 auth_context、完整 capabilities、fencing_token 原值、payload_ref 签名 URL、IAM 原始返回体或敏感权限明细。
+- [x] debug 模式允许打印经过脱敏处理的完整 envelope 结构，但必须经过统一 redaction/sanitizer 处理，并且默认关闭。
+- [x] runtime 中任何日志、异常、审计、事件或错误 envelope 都不得直接序列化原始 envelope 对象；必须先经过统一脱敏器处理。
 
-## 24. TLS、部署与性能目标
+## 24. TLS、部署、验收与性能目标
 
 - [x] WebSocket 连接支持 TLS/WSS；内网或开发环境允许明文 WS，但是否允许明文必须由配置控制，不能在生产安全假设中默认明文可用。
 - [x] 生产多节点协调必须使用 Redis/Valkey；SQLite WAL 只用于开发、本地单机或本机多进程模拟集群，并且需要防止误用为生产分布式协调权威。
-- [x] 第一阶段不写死单实例连接数、消息 QPS、P99 延迟或默认 ACK timeout 等性能指标；先按架构可扩展性设计，后续通过压测确定具体指标。
+- [x] 第一阶段需要定义单实例连接数、消息 QPS、P99 延迟或默认 ACK timeout 等生产参考验收指标；这些指标不是最终生产 SLA，但必须作为压测、瓶颈记录、风险评审和后续优化计划的依据。
 - [x] 单个 runtime 进程内部并发模型优先基于 asyncio；水平扩展优先通过多进程部署多个 runtime 实例，而不是第一阶段在一个进程内做多 worker 共享状态。
+- [x] 第一阶段不以功能跑通作为完成标准，而必须按生产级验收执行。
+- [x] 第一阶段生产级验收必须覆盖 `master/sub_node` 集群拓扑、Redis/Valkey 高可用适配、leader lease、fencing、可靠投递、ACK/NACK/Defer、完整 stream、replay、hold、cancel、状态查询、配置热更新、多节点配置一致性、故障注入、压测、审计脱敏、状态清理和恢复扫描。
+- [x] 第一阶段必须定义明确生产参考验收指标；这些指标不是最终生产 SLA，但不能只作为可选参考。未达标时必须记录瓶颈、风险、优化计划和是否允许进入下一阶段的评审结论。
+- [x] 第一阶段必须把故障注入和恢复测试作为验收边界的一部分，而不是只验证正常通信链路。
+- [x] 故障注入至少覆盖 Redis/Valkey 短暂不可用、IAM 超时、active master 断开、sub_node 断开、ACK 迟到、ACK 到旧 owner、connection_epoch 不匹配、payload_ref 校验失败、processor 超时、慢连接写队列满。
+- [x] 每个故障注入用例都必须验证四类结果：状态机迁移是否正确、是否产生标准错误或控制响应、是否写入脱敏审计、是否暴露可观测指标。
+- [x] 第一阶段测试必须采用生产级测试分层，不得只依赖单元测试、简单集成测试或手工联调判断完成。
+- [x] 测试范围至少必须覆盖单元测试、状态机测试、Redis/Valkey Lua 原子脚本测试、processor 流水线测试、Envelope 协议兼容测试、集群切换测试、故障注入测试、stream 可靠性测试、管理控制测试、压测和回归测试。
+- [x] 状态机测试必须覆盖 DeliveryRecord、MessageDeliverySummary、StreamDeliveryState、ACK/NACK/Defer、retry、dead letter、replay、cancel、hold、lease/fencing、owner transfer 等核心迁移。
+- [x] Redis/Valkey Lua 脚本测试必须覆盖原子提交、索引同步、fencing 拒绝、重复 ACK、迟到 ACK、旧 owner 写入、lease 过期、状态日志追加和异常回滚。
+- [x] 集群切换测试必须覆盖 graceful handoff、force takeover、emergency isolate、配置漂移、sub_node 断开、active master 失联、leader lease 过期和 fencing_token 轮换。
+- [x] stream 可靠性测试必须覆盖 stream_start、stream_chunk、stream_end、滑动窗口、cumulative ACK、selective ACK、missing ranges、乱序恢复、窗口动态调整、stream replay、stream cancel 和 stream hold。
+- [x] 第一阶段生产参考验收线建议如下：单 runtime 普通 WebSocket 连接数不少于 `5,000`；master 管理/节点连接数不少于 `100`；本地 task dispatch 受理吞吐不少于 `2,000 msg/s`；master/sub_node 转发吞吐不少于 `1,000 msg/s`；本地 ACK P99 不高于 `100ms`；跨节点 ACK P99 不高于 `300ms`；Redis/Valkey 关键状态写入 P99 不高于 `50ms`；delivery recovery scan 速率不少于 `1,000 records/s`；replayable dead letter 重投成功率不低于 `99%`；安全/管理/状态变更审计覆盖率为 `100%`；token/payload/auth_context/fencing 原值泄露为 `0`；TTL 清理后孤儿索引为 `0`；必选故障场景通过率为 `100%`。
+- [x] 第一阶段性能参考线必须和压测报告绑定。压测报告至少应包含测试环境、runtime 节点数量、Redis/Valkey 拓扑、连接规模、消息类型分布、payload 模式、ACK timeout 配置、worker 配置、pool 配置、P95/P99、错误码分布、Redis/Valkey 延迟、CPU/内存占用和瓶颈分析。
 
 ## 25. 明确禁止漂移的硬边界
 
@@ -448,255 +640,3 @@
 - [x] Envelope 固定 JSON 文本帧；不能在不重新确认的情况下改成二进制协议或混合编码。
 - [x] Runtime 不能负责对象存储上传、下载或签名 URL；payload_ref 只做引用路由和实时校验。
 - [x] 多 master 第一阶段是单 active master、多 standby master；不能默认设计成多 active 分片 master，除非后续重新讨论分片 leader 模型。
-
-## 26. 第一阶段补充决策清单
-
-> 本清单用于补充 `ns_runtime` 第一阶段实现、测试、验收与生产化边界。
-> 本清单中的条目为已确认决策，后续实现阶段不得随意降级为 MVP、单机演示或临时协议。
-
-### 26.A 第一阶段范围与验收边界
-
-- [x] 第一阶段最小闭环不以 `singleton` 为验收目标，而是必须直接完成 `active_master + sub_node` 拓扑下的基础消息路由、跨节点转发、可靠投递、ACK 回收和最小集群协调；`singleton` 只作为本地开发、降级或调试模式存在，不能替代第一阶段主线验收。
-- [x] 第一阶段不以功能跑通作为完成标准，而必须按生产级验收执行。
-- [x] 第一阶段生产级验收必须覆盖 `master/sub_node` 集群拓扑、Redis/Valkey 高可用适配、leader lease、fencing、可靠投递、ACK/NACK/Defer、完整 stream、replay、hold、cancel、状态查询、配置热更新、多节点配置一致性、故障注入、压测、审计脱敏、状态清理和恢复扫描。
-- [x] 第一阶段必须定义明确生产参考验收指标；这些指标不是最终生产 SLA，但不能只作为可选参考。未达标时必须记录瓶颈、风险、优化计划和是否允许进入下一阶段的评审结论。
-
-### 26.B 状态存储与 Redis/Valkey 决策
-
-- [x] 第一阶段状态存储必须以 Redis/Valkey 作为生产强一致目标实现，覆盖 leader lease、fencing_token、DeliveryRecord、ACK/NACK/Defer 原子状态更新、控制审计和 delivery tree 查询。
-- [x] SQLite WAL 仅作为开发模式和本机多进程模拟集群使用，必须通过启动校验禁止其作为生产分布式协调权威。
-- [x] Redis/Valkey 在开发和测试环境中允许使用 standalone 模式；生产适配层必须从第一阶段开始支持 Sentinel 或 Cluster 拓扑能力。
-- [x] 状态存储层不得在业务代码中直接依赖单个 Redis 实例地址；所有访问必须通过统一 store adapter 进入。
-- [x] Redis/Valkey 状态模型采用 `Hash + Sorted Set + Stream/Log` 混合模型。
-- [x] DeliveryRecord、MessageDeliverySummary、Session、NodeState、RoutingPlan、Lease/Fencing 等当前权威状态优先使用 Hash 表达。
-- [x] 待发送队列、重试队列、ACK deadline、expires_at、恢复扫描索引、priority scheduling 等时间或优先级驱动结构使用 Sorted Set。
-- [x] 状态变更日志、审计摘要、恢复事件、控制事件和关键调试轨迹使用 Stream 或 append-only log 表达。
-- [x] Redis/Valkey 中的 Hash 保存“当前状态权威”，Sorted Set 保存“可调度/可扫描索引”，Stream/Log 保存“状态变化事实”，三者职责不得混用。
-- [x] Redis/Valkey 关键状态迁移必须优先通过 Lua 脚本实现，尤其是 claim delivery、ACK 原子提交、NACK 原子提交、Defer 延期、lease renew、fencing 校验、状态迁移、索引同步和状态变更日志追加。
-- [x] Lua 脚本必须保持短小、确定性和可测试，不允许在脚本中承载复杂业务逻辑；业务判断、策略裁决、路由评分、IAM 鉴权、payload_ref 校验仍必须在 runtime 应用层完成。
-- [x] 对同一个 DeliveryRecord 的状态变更，不允许出现“先更新 Hash，再由应用层补删 ZSet，再异步写状态日志”的非原子流程。
-
-### 26.C Redis/Valkey Cluster key 设计
-
-- [x] 第一阶段 Redis/Valkey key 设计必须从 Redis Cluster 兼容角度出发，所有需要在同一个 Lua 脚本内原子更新的 key，必须通过 hash tag 保证落在同一个 hash slot。
-- [x] Redis/Valkey key 的 hash tag 粒度采用 `tenant_id + bucket_id` 模型，而不是单纯按 `message_id` 或 `delivery_id` 分槽。
-- [x] `bucket_id` 应由稳定哈希算法基于 `message_id` 或 `delivery_id` 计算得到，例如 `bucket_id = hash(message_id) % bucket_count`。
-- [x] 同一条 message 下需要原子聚合的关键状态应尽量落在同一 bucket；对超大 fanout、broadcast 或多目标消息，可以按策略拆分到多个 bucket，并通过 MessageDeliverySummary 的分片聚合机制汇总。
-- [x] `bucket_count` 必须是配置项，并纳入 `config_version/policy_version` 管理。
-- [x] bucket 数量变化不能隐式重写旧 key；如需扩容 bucket，必须通过明确的数据迁移、双读迁移或新旧 bucket 并存策略完成，不能由运行时代码静默改变 hash 结果。
-
-### 26.D Summary、fanout 与 prepared 激活
-
-- [x] MessageDeliverySummary 默认采用单 message 单 bucket 聚合模型；普通 message 的 summary、delivery、ACK/NACK/Defer、retry/timeout 索引和状态日志应尽量落在同一个 `tenant + bucket` 中。
-- [x] 只有当 message 的目标数量、fanout 规模、单 bucket 热点风险或单次初始化成本超过策略阈值时，才允许拆分为多个 bucket，并创建 root summary 与 shard summary。
-- [x] shard summary 负责 bucket 内 delivery 计数和状态聚合，root summary 负责跨 shard 的整体状态汇总。
-- [x] 第一阶段 fanout 拆分采用“内置保守默认值 + 配置覆盖”的方式。
-- [x] 第一阶段 fanout 默认阈值采用平衡 profile：超过 `5,000` 个 targets 时触发 fanout 分片；每个 bucket 最多承载 `1,000` 个 delivery；summary 初始化批次默认为 `500`；`prepared -> queued` 激活批次默认为 `200`。
-- [x] fanout 分片阈值、bucket 目标数、summary 初始化批次和 prepared 激活批次必须由策略引擎统一裁决；路由层、可靠投递层、状态存储层不得各自读取不同配置或写死不同默认值。
-- [x] `prepared -> queued` 激活调度采用“优先级 + 水位混合驱动”模型。
-- [x] `prepared` delivery 不得一次性全部进入 `queued`，而应按 `message.priority`、tenant fair share、target health score、delivery age、message.type 可靠性等级和策略版本排序，再结合 runtime 全局水位、tenant 水位、target/connection 水位、Redis/Valkey queue backlog、recovery pool 和管理控制优先级分批激活。
-- [x] 每一次 `prepared -> queued` 批量迁移都必须记录策略版本、批次大小、候选数量、实际激活数量、跳过原因和水位判断摘要。
-
-### 26.E Envelope、message.type、错误码与日志
-
-- [x] 第一阶段不得使用临时扁平协议结构，也不得为了快速跑通通信而绕过最终 Envelope 分组模型。
-- [x] 所有入站和出站消息必须使用 `protocol / message / source / target / route / delivery / stream / auth_context / payload / callback / trace / extensions` 统一分组结构。
-- [x] 不适用的分组应省略，不能用 `null` 或空对象占位。
-- [x] 第一阶段可以只分层实现部分高级语义，但 Envelope 外壳、字段校验、source/auth_context 注入、未知字段拒绝和标准错误 envelope 必须按最终协议执行。
-- [x] 第一阶段内置 `message.type` 不只覆盖最小通信闭环，而应直接建立完整类型族注册表。
-- [x] 内置类型族至少包括连接握手、连接心跳、任务调度、可靠投递、ACK/NACK/Defer、stream、管理控制、集群事件、配置热更新、dead letter、replay、cancel、hold、状态查询和标准错误类型。
-- [x] 所有内置 `message.type` 都必须进入统一 Envelope schema 校验、权限声明、processor 注册、审计和错误处理链路。
-- [x] 第一阶段采用“全量注册 + 分层实现”：所有内置类型必须提供 schema、权限声明、processor 入口、审计入口和标准错误响应。
-- [x] 连接、集群、路由、任务投递、ACK/NACK/Defer 必须端到端可用。
-- [x] stream、replay、cancel、hold、dead letter、状态查询、配置热更新等高级类型必须具备基础语义和标准响应，并按本清单中额外确认的完整 stream 与生产级验收要求实现。
-- [x] 第一阶段必须建立独立的 `RUNTIME_*` 错误码体系，但错误码、异常基类、错误元数据结构和标准错误映射应定义在 `ns_common.exceptions` 中。
-- [x] `RUNTIME_*` 错误码采用细粒度设计，不能只按大类模糊表达。
-- [x] 错误码应能直接区分协议解析失败、Envelope schema 失败、source 伪造、auth_context 伪造、IAM 拒绝、tenant 越界、target 不存在、route 不可用、ACK 超时、NACK 不可重试、Defer 超预算、fencing 拒绝、owner 不匹配、payload_ref 无效、leader lease 失效、processor 超时、状态机非法迁移等关键场景。
-- [x] 每个错误码必须携带稳定元数据，包括 `severity`、`category`、`retryable`、`disconnect_required`、`audit_required`、`safe_detail` 和可选 `action`。
-- [x] 生产审计与普通日志默认严格脱敏，不允许记录 token、payload 明文、完整 auth_context、完整 capabilities、fencing_token 原值、payload_ref 签名 URL、IAM 原始返回体或敏感权限明细。
-- [x] debug 模式允许打印经过脱敏处理的完整 envelope 结构，但必须经过统一 redaction/sanitizer 处理，并且默认关闭。
-- [x] runtime 中任何日志、异常、审计、事件或错误 envelope 都不得直接序列化原始 envelope 对象；必须先经过统一脱敏器处理。
-
-### 26.F 客户端接入与节点发现
-
-- [x] 第一阶段不强制定义统一客户端 SDK，也不要求 `ns_frontend`、`ns_client`、`ns_node`、`ns_backend` 必须通过同一个 SDK 接入。
-- [x] 设计文档只约束连接方必须遵守的协议行为，包括 WebSocket 握手、`connection.hello`、协议版本协商、heartbeat、ACK/NACK/Defer 语义、message_id/delivery_id 幂等、connection_epoch 校验、错误 envelope 处理、source/auth_context 禁止伪造和安全日志脱敏。
-- [x] 第一阶段 runtime 节点发现采用混合模式：本地配置文件作为启动兜底、最小灾难恢复入口和完全离线启动依据；`ns_backend` 控制面作为运行期权威。
-- [x] `ns_backend` 控制面负责下发 master/sub_node 拓扑、节点角色、节点凭证、配置版本、隔离/恢复状态、master 切换信息和策略覆盖。
-- [x] 当 `ns_backend` 暂时不可用时，runtime 可以按本地配置和本地缓存凭证进入受限降级模式；但降级模式不得执行需要全局权威确认的高风险操作。
-
-### 26.G master 选举、leader lease 与切换
-
-- [x] 第一阶段 master 选举采用混合模型：`ns_backend` 提供候选 master、节点凭证、节点优先级、切换授权和控制面策略；Redis/Valkey 负责 `leader lease`、`epoch/term`、`fencing_token` 和原子抢占。
-- [x] 只有同时满足 `ns_backend` 控制面授权、节点凭证有效、角色状态允许、Redis/Valkey leader lease 抢占成功、持有当前有效 fencing_token 的 runtime 节点，才能进入 `active_master` 状态并执行全局协调写入。
-- [x] `ns_backend` 的授权不是 active master 的最终运行期写入权威；Redis/Valkey lease 也不是绕过控制面的选主许可，二者必须同时成立。
-- [x] 第一阶段 master 切换必须支持 `graceful handoff`、`force takeover`、`emergency isolate` 三种模式，但必须按风险等级分级授权。
-- [x] `graceful handoff` 用于正常维护、滚动发布和计划内主节点切换，可由具备普通集群管理 capability 的管理连接发起。
-- [x] `force takeover` 用于 active master 不响应、leader lease 过期、节点健康失败或集群协调中断等场景，必须要求高级管理 capability，并重新校验 active master 状态、leader lease、epoch/term、fencing_token、Redis/Valkey 连通性和 `ns_backend` 授权。
-- [x] `emergency isolate` 用于 suspected split-brain、旧 owner 持续写入、关键配置漂移、fencing 异常、跨 tenant 风险或安全事故，只允许最高级安全/运维 capability 发起，并必须强审计。
-- [x] master 切换不能只依赖 WebSocket 断开、心跳失败或管理端命令；任何 active master 变更都必须通过 Redis/Valkey 的 leader lease、epoch/term 和 fencing_token 原子确认。
-
-### 26.H runtime 节点凭证与启动降级
-
-- [x] runtime 节点启动时应优先向 `ns_backend` 获取节点凭证、角色授权、配置版本、候选 master 信息和集群策略。
-- [x] 当 `ns_backend` 暂时不可用时，runtime 可以使用未过期、未撤销且本地校验通过的缓存节点凭证进入降级模式，但降级模式必须受严格限制。
-- [x] 降级模式下允许维持已有低风险连接、保持本地 heartbeat、继续处理不需要控制面重新授权的已受理 delivery、执行本地健康检查和有限恢复扫描。
-- [x] 降级模式下禁止执行高风险操作，包括 master 切换、force takeover、emergency isolate、跨 tenant 调度、新配置覆盖、节点恢复确认、强制 replay、跨节点全局协调写入和任何依赖 `ns_backend` 最新授权的管理控制。
-- [x] 一旦 `ns_backend` 恢复可用，runtime 必须重新校验节点凭证、角色授权、配置版本、leader lease、fencing_token 和当前 role。
-- [x] 本地缓存凭证只能用于短时控制面不可用时的受限启动或受限维持服务，不能作为绕过 `ns_backend` 控制面的长期运行凭证。
-- [x] 缓存凭证必须有 TTL、签名校验、权限范围、节点 identity、runtime_id、role scope 和脱敏审计记录。
-
-### 26.I worker、pool 与兜底扫描
-
-- [x] 第一阶段 delivery worker 并发模型采用“固定底座 + 动态扩展”。
-- [x] runtime 启动时必须按配置创建基础 worker，分别保障 `claim`、`send`、`ACK timeout`、`retry`、`recovery`、`lease renew`、`system pool` 等关键链路的最低处理能力。
-- [x] 当 ready queue backlog、ACK timeout 数量、retry backlog、recovery backlog、Redis/Valkey 延迟、连接写队列压力或 system pool backlog 上升时，runtime 可以在配置上限内临时扩展 worker。
-- [x] worker 扩缩容只能改变调度并发，不得改变 DeliveryRecord 状态机语义。
-- [x] 第一阶段 delivery worker 必须按职责拆分，至少拆分为 `ClaimWorker`、`SendWorker`、`AckTimeoutWorker`、`RetryWorker`、`RecoveryWorker`、`LeaseRenewWorker`、`SystemControlWorker`。
-- [x] worker 之间通过状态存储层、调度队列、事件总线和明确状态机迁移协作，而不是互相直接调用内部实现。
-- [x] worker 协作采用“Redis/Valkey 队列与状态存储为权威，进程内事件总线仅做加速唤醒”的模型。
-- [x] 进程内事件总线只作为加速信号，不作为状态权威；事件丢失不得导致状态机不可恢复。
-- [x] 每次被事件唤醒后，worker 仍必须重新从 Redis/Valkey 读取当前状态，校验 owner、lease、fencing、connection_epoch、policy_version 和 DeliveryRecord 当前状态。
-- [x] worker 唤醒采用“事件唤醒优先，周期扫描兜底”的模型。
-- [x] 每类 worker 都必须保留 Redis/Valkey 队列、ZSet deadline、retry index、ack deadline index、recovery index 和状态异常索引的低频周期扫描能力。
-- [x] 第一阶段 worker 周期扫描频率采用平衡 profile：普通队列兜底扫描 `1～2s`；ACK timeout 扫描 `500ms～1s`；lease renew 检查 `300～500ms`；retry due 扫描 `1s`；recovery 扫描 `5～10s`。
-- [x] 扫描频率必须作为策略配置项，并纳入 `config_version/policy_version` 管理，不能在 worker 类中各自写死。
-
-### 26.J system pool、tenant fair share 与 recovery pool
-
-- [x] 第一阶段 tenant 公平调度采用“硬配额 + 加权公平队列”的混合模型。
-- [x] 每个 tenant 必须具备硬性安全配额，包括 `max_active_delivery`、`max_queued_delivery`、`max_inflight_delivery`、`max_retry_backlog`、`max_activation_per_second`、`max_write_queue_pressure` 等。
-- [x] 在未触达硬配额的前提下，tenant pool 内使用 Weighted Fair Queuing 或 Deficit Round Robin 按 tenant weight 分配激活与发送机会。
-- [x] 系统级 ACK、管理控制、集群协调和健康相关消息不参与普通 tenant pool 配额竞争，可以使用 system pool 或保留容量，但仍必须受 runtime 全局安全水位保护。
-- [x] 第一阶段 system pool 采用“固定保留底线 + 动态上浮”的容量策略。
-- [x] system pool 默认建议保留 `15%` 的调度能力、发送能力和关键队列预算。
-- [x] 当出现 ACK backlog 上升、ACK timeout 增多、cluster heartbeat 延迟、control backlog 堆积、leader lease renew 接近超时、节点切换或恢复扫描压力升高时，system pool 可以按策略临时上浮，最高建议上浮到 `30%`。
-- [x] system pool 内部必须采用分级优先级模型：最高级保护 leader lease renew、fencing、节点隔离/切换、安全关闭；第二级保护 ACK/NACK/Defer 和 ACK deadline；第三级用于 health、节点状态、连接状态、delivery 状态查询；第四级用于普通配置热更新、低风险控制命令和低优先级观测。
-- [x] recovery pool 采用“固定保留底线 + 动态上浮”的容量策略，默认保留总调度能力的 `10%` 左右，必要时可上浮到 `20%～30%`。
-- [x] recovery pool 不得挤占最高优先级 system pool，也不得无限挤压普通 tenant pool。
-- [x] recovery pool 内部采用分级优先级模型：最高级处理 lease 失效、owner 风险、旧 owner fencing、current owner 不可用；第二级处理节点恢复后的 delivery recovery scan 和 ack_waiting 风险 delivery；第三级处理人工 replay；第四级处理 dead letter 清理、历史状态归档和低优先级恢复统计。
-
-### 26.K lease、owner risk、ACK/NACK/Defer
-
-- [x] 第一阶段 delivery lease 默认采用平衡 profile：`lease TTL = 15s`，`renew interval = 5s`。
-- [x] 当同一 delivery 的 lease renew 连续失败超过 `2` 次时，应进入 owner 风险状态，允许 RecoveryWorker 或恢复扫描机制在重新校验 owner、fencing、runtime role、delivery state 和当前 lease 后接管。
-- [x] lease 过期不等于 delivery 失败，也不等于目标未收到消息；默认应进入可恢复风险路径，由策略决定进入 `retry_scheduled`、等待恢复扫描、转移 owner 或 dead letter。
-- [x] lease renew 连续失败达到策略阈值后，当前 worker 不得继续发起新的高风险状态写入动作，例如继续发送新 envelope、触发 retry、提交 dead letter、执行 owner transfer 或修改主 DeliveryRecord 状态。
-- [x] delivery 进入 owner 风险状态后，允许一个短暂保护窗口处理已经在途的 ACK/NACK/Defer。
-- [x] owner 风险保护窗口默认采用中等窗口，建议 `3～5s`。
-- [x] owner 风险保护窗口不是 lease 延期，也不是新的有效 lease，只是在途确认容错窗口；真正写入权威仍然以 Redis/Valkey 中的 current owner、lease 和 fencing_token 为准。
-- [x] 第一阶段 ACK timeout 默认采用平衡 profile：本地 delivery ACK timeout 默认 `5s`，跨节点 delivery ACK timeout 默认 `10s`。
-- [x] ACK timeout 到期不等于业务失败，也不等于目标一定未收到 envelope；timeout 只能说明 runtime 未在规定窗口内收到合法 ACK。
-- [x] 第一阶段 Defer 默认采用平衡限制策略：每个 delivery 默认最多允许 Defer `3` 次；单次 Defer 最多延长 `5s`；总延长时间默认不超过 `15s`。
-- [x] Defer 是目标压力信号，频繁 Defer 必须进入 target health profile，用于后续路由评分、限流、背压和是否避让该目标。
-- [x] 第一阶段 NACK 默认采用平衡策略，NACK reason 必须按语义分为 `retryable`、`reroutable`、`non_retryable`、`security` 四类。
-- [x] 对于 `target_overloaded`、`temporarily_unavailable`、`queue_full`、`dependency_unavailable`、`target_draining`、`node_degraded` 等临时性或容量类原因，默认进入 `retry_scheduled`、`reroute` 或降低 target health score。
-- [x] 对于 `permission_denied`、`tenant_mismatch`、`invalid_payload_ref`、`payload_ref_denied`、`source_forged`、`auth_context_forged`、`protocol_violation` 等权限、安全或协议类原因，默认进入 `dead_lettered`、`rejected` 或安全审计，不应反复 retry.
-- [x] 所有 NACK reason 必须进入细粒度 `RUNTIME_*` 错误码体系，并定义在 `ns_common.exceptions` 中。
-
-### 26.L retry、dead letter 与 replay
-
-- [x] 第一阶段 retry budget 默认采用平衡预算，每个 message 默认最多自动 retry `5` 次。
-- [x] `retryable NACK`、`ACK timeout`、WebSocket 写失败、目标连接写队列满、目标 runtime 暂时不可达等明确投递失败或接收失败场景，默认消耗自动 retry budget。
-- [x] 对于 target 暂时离线、master 暂不可用、payload_ref 校验服务暂不可用、tenant 暂停、node transitioning、runtime draining 等基础设施或运行状态类问题，可以按策略进入 wait、retry_scheduled、deferred retry 或 dead letter，不一定立即消耗 retry budget。
-- [x] 自动 retry budget 与人工 replay budget 必须拆开。
-- [x] retry backoff 默认采用“指数退避 + jitter + 目标健康感知”的混合策略。
-- [x] 基础退避曲线采用指数退避，例如 `1s -> 2s -> 4s -> 8s -> 16s`，并加入随机 jitter。
-- [x] runtime 必须结合 target health score、tenant backlog、runtime 全局水位、connection 写队列压力、NACK reason、route segment、message priority 和 reliability 等因素动态调整 retry 间隔。
-- [x] DeadLetterRecord 必须采用分级 replay 策略，dead letter reason 至少分为 `replayable`、`not_replayable`、`manual_confirm_required` 三类。
-- [x] 临时投递失败默认归为 `replayable`；安全、权限、tenant 或 payload 明确无效问题默认归为 `not_replayable`；fencing 冲突、owner 异常、processor 异常、状态机异常默认归为 `manual_confirm_required`。
-- [x] 每个 `dead_lettered` delivery 默认最多允许人工 replay `3` 次。
-- [x] 每次 replay 都必须创建新的 `replay_epoch`，并记录 `replay_count`、`replay_budget`、`last_replayed_by`、`replay_reason`、`previous_dead_letter_reason`、`policy_version` 和 `replay_started_at`。
-- [x] replay 不得清零历史 `attempt_count`、`retry_used`、`dead_letter_reason` 或审计记录。
-- [x] dead letter replay 采用 message 内有限并发模型：同一个 `message_id` 同一时间只能存在一个 active `replay_epoch`。
-- [x] 在同一个 `replay_epoch` 内，可以允许多个符合 replay 条件的 `dead_lettered` delivery 并行进入 `replay_requested -> queued`，但必须受 recovery pool、tenant 配额、target health score、runtime 全局水位、Redis/Valkey queue backlog、replay budget 和 system pool 保护。
-- [x] replay 受理必须支持 partial success。
-
-### 26.M payload_ref 校验
-
-- [x] 第一阶段 `payload_ref` 校验必须采用分级策略。
-- [x] 当 `payload_ref` 被 `ns_backend` 明确判定为无效、对象不存在、version/checksum 不匹配、tenant 不匹配、owner 不匹配、发送方无权引用、目标无权访问、对象已过期或已撤销时，runtime 必须直接 `rejected` 或进入不可继续投递的 `dead_lettered`，并写入安全审计。
-- [x] 当 `payload_ref` 校验服务暂时不可用、超时、`ns_backend` 依赖异常或返回不确定结果时，runtime 不得绕过校验继续投递。
-- [x] 关键消息可以按策略进入 `dead_lettered`、`wait` 或 `retry_scheduled`；普通消息可以按策略选择 `reject`、`wait` 或 `dead_letter`。
-- [x] 只要 payload_ref 需要安全确认，就不能使用过期缓存、诊断缓存或观测缓存作为投递授权依据。
-- [x] payload_ref 校验异常必须进入细粒度 `RUNTIME_*` 错误码体系，例如 `RUNTIME_PAYLOAD_REF_INVALID`、`RUNTIME_PAYLOAD_REF_DENIED`、`RUNTIME_PAYLOAD_REF_EXPIRED`、`RUNTIME_PAYLOAD_REF_CHECKSUM_MISMATCH`、`RUNTIME_PAYLOAD_REF_VALIDATION_UNAVAILABLE`、`RUNTIME_PAYLOAD_REF_VALIDATION_TIMEOUT`。
-
-### 26.N reliable stream
-
-- [x] 第一阶段可靠 stream 必须实现完整可靠 stream 语义，而不是只注册协议或基础 processor。
-- [x] 第一阶段必须实现 `stream.start`、`stream.chunk`、`stream.end`、分片级 delivery、滑动窗口、cumulative ACK、selective ACK、`ack_ranges`、`missing_sequences`、乱序恢复、窗口动态调整、stream hold/cancel/replay 基础链路，以及 `stream_end` 被 ACK 后 stream 才能进入 `closed`。
-- [x] stream 的可靠性必须建立在统一 Envelope、DeliveryRecord、ACK/NACK/Defer、StreamDeliveryState、状态存储层、策略引擎和 processor 流水线之上。
-- [x] 不允许为 stream 另开私有传输通道、私有 ACK 通道或绕过可靠投递层。
-- [x] 第一阶段 stream 可以限制最大窗口、最大分片大小、最大 stream 生命周期、最大乱序缓存范围和最大并发 stream 数，但这些限制必须策略化，不能写死在 processor 或 transport 层。
-- [x] stream 的分片 ACK、cumulative ACK 和 selective ACK 不能直接更新内存状态后异步补写 Redis/Valkey。
-- [x] 凡是会影响 StreamDeliveryState、chunk DeliveryRecord、ack window、missing ranges、retry、dead letter 或 stream closed 状态的操作，都必须通过状态存储层原子更新，并写入状态变更日志或审计摘要。
-
-### 26.O target health、connection resume 与状态清理
-
-- [x] target health score 必须采用分层健康画像模型，至少维护 `connection health`、`identity health`、`component_type health`、`runtime node health`、`tenant health` 五类画像。
-- [x] 每层画像都应基于滑动窗口与指数衰减计算，包括 ACK P95/P99、NACK 率、Defer 率、ACK timeout 率、WebSocket 写失败率、连接写队列压力、retry 成功率、queue backlog、慢连接表现和最近异常趋势等指标。
-- [x] 健康画像只能影响评分、限流、避让、重试节奏和背压策略，不能绕过 IAM、tenant 隔离、payload_ref 校验、owner/fencing 校验或 DeliveryRecord 状态机。
-- [x] 第一阶段允许普通网络断开进入 reconnect grace period，默认 `30s`。
-- [x] 在 grace period 内，客户端可以重新握手并申请复用原 `connection_id`，但必须重新通过 IAM 校验，并且 `identity`、`tenant`、`component_type` 与原 session 匹配。
-- [x] 每次 resume 成功后必须递增 `connection_epoch`，当前有效物理连接由 `connection_id + connection_epoch` 唯一标识。
-- [x] 管理端 kick、安全违规关闭、协议严重错误、source/auth_context 伪造、tenant 越界、恶意重复 ACK/NACK/Defer 等场景默认禁止 resume。
-- [x] grace period 内的 connection_id 不应视为 active target。
-- [x] Redis/Valkey 状态清理与归档采用平衡 TTL 策略。
-- [x] `acked`、`cancelled`、`expired` 等普通终态 delivery 默认在 Redis/Valkey 中保留 `7 天`。
-- [x] `dead_lettered` 默认保留 `30 天`。
-- [x] 状态变更日志、ACK/NACK/Defer 摘要、replay 记录、恢复扫描摘要和诊断性事件默认保留 `14～30 天`。
-- [x] 超过 TTL 后，状态数据应按策略归档到外部审计库、数据库、对象存储或日志系统，也可以在确认无需追溯后清理。
-- [x] 状态清理必须同时处理 DeliveryRecord、MessageDeliverySummary、ACK/NACK/Defer 记录、retry/timeout ZSet 索引、state log、dead letter 索引、stream 状态和相关审计摘要，避免孤儿索引、僵尸 delivery 或 summary 计数不一致。
-
-### 26.P 管理查询、管理操作与配置热更新
-
-- [x] 管理查询采用“摘要优先，必要时 drill-down 到明细”的读取模型。
-- [x] 普通管理查询应优先读取 MessageDeliverySummary、NodeState、SessionSnapshot、TargetHealthProfile、RuntimeHealthSummary、QueueWatermarkSummary 等摘要状态。
-- [x] 管理端需要排障、重投、取消、hold、状态解释或审计追踪时，才允许 drill-down 读取 DeliveryRecord、RoutingPlan、DeliveryAttempt、AckRecord、NackRecord、DeferRecord、DeadLetterRecord、状态变更 Stream/Log 和脱敏审计记录。
-- [x] 管理查询必须采用分级一致性模型。
-- [x] 控制类查询、replay/cancel/hold/kick_connection/drain_node/switch_master 等操作前置校验、delivery 明细查询、owner/fencing 状态查询、payload_ref 复验结果查询，必须读取 Redis/Valkey 当前权威状态。
-- [x] dashboard、列表页、运行概览、健康画像、队列水位、target health、tenant 级统计、趋势指标等允许读取近实时摘要，但响应中必须包含 `as_of`、`summary_version`、`state_version` 或等价版本字段。
-- [x] 管理操作提交采用分级模型。
-- [x] 高风险操作必须使用 `precheck + commit` 双阶段提交，包括 replay、cancel、hold、switch_master、node isolate/recover、批量 dead letter 清理、批量 delivery 操作、owner transfer、跨 tenant 管理操作和影响集群权威的控制命令。
-- [x] 低风险操作可以使用单阶段强校验，例如普通 kick_connection、低风险 reload_config、普通限流调整、状态快照查询和低风险观测控制。
-- [x] 双阶段提交中的 operation token 不能作为绕过权限、状态或 fencing 校验的凭证；commit 时仍必须重新读取权威状态并重新校验。
-- [x] 配置热更新必须按配置项声明生效方式，每个配置项至少声明为 `immediate`、`rolling` 或 `restart_required`。
-- [x] 配置热更新回滚采用“按配置组回滚”模型。
-- [x] runtime 配置必须按职责分组，例如 protocol、security、state_store、routing、delivery、worker、pool、tenant_quota、observability、logging、debug 等。
-- [x] 每个配置组必须维护独立的 `group_version`、`effective_at`、`rollback_from_version`、`source`、`policy_version` 和审计记录。
-- [x] 配置组之间如果存在强依赖关系，不能独立回滚。
-
-### 26.Q 多节点配置一致性与漂移恢复
-
-- [x] 第一阶段多节点配置一致性采用混合模式。
-- [x] `ns_backend` 是配置版本、配置来源和策略覆盖的最终权威；active master 负责 runtime 集群内配置生效协调、版本兼容检查、sub_node 状态确认和配置漂移检测。
-- [x] sub_node 可以直接从 `ns_backend` 拉取配置，也可以接收 active master 的配置协调消息；但无论配置来源如何，sub_node 都必须向 active master 汇报实际生效的 `config_version`、`policy_version`、各 `config_group_version`、生效时间、失败配置组和回滚状态。
-- [x] 多节点配置漂移必须按配置组分级处理，不能简单地把所有配置版本不一致都视为致命错误。
-- [x] 对于 protocol、security、state_store、fencing、delivery_state_machine、routing_critical、payload_ref_validation、cluster_coordination 等关键配置组，如果 sub_node 与 active master 的生效版本不兼容，应立即禁止该节点作为新路由目标，并按策略进入 degraded、isolated 或 draining。
-- [x] 对于 logging、observability、debug、低风险采样比例、非关键指标推送等配置组，如果发生版本漂移，可以先记录告警、指标和审计，不必立即隔离节点。
-- [x] 配置漂移恢复采用“自动修复 + 管理确认恢复”模型。
-- [x] runtime 节点检测到配置漂移后，应自动尝试从 `ns_backend` 拉取权威配置并重新应用。
-- [x] 如果节点曾因关键配置组漂移进入 isolated、degraded、draining 或被禁止作为路由目标，即使自动修复成功，也不得立即自动重新参与路由，必须通过管理控制 envelope 执行恢复确认。
-
-### 26.R 协议兼容与版本升级
-
-- [x] 第一阶段协议兼容采用“主版本严格、次版本兼容”策略。
-- [x] `protocol.major` 不一致时，runtime 必须在握手阶段拒绝连接，并返回标准 `connection.rejected` 或 `runtime.error` envelope。
-- [x] `protocol.minor` / `patch` 可以通过 `min_version`、`supported_versions`、兼容矩阵和能力协商进行降级或兼容处理。
-- [x] 兼容协商必须发生在 `connection.hello` 握手阶段，协商结果写入 session context，并在后续 envelope 校验、processor 分发、schema 选择和错误响应中使用。
-- [x] processor 不得各自临时判断协议版本差异；协议版本兼容、字段兼容、schema 选择和降级能力必须集中在 Envelope 协议层和协议兼容策略中处理。
-- [x] 协议兼容不能放宽核心安全字段约束。即使次版本兼容，也不得允许发送方携带 source、auth_context、伪造 tenant、未知顶层字段或未授权 extension namespace。
-
-### 26.S 故障注入、测试分层与生产参考指标
-
-- [x] 第一阶段必须把故障注入和恢复测试作为验收边界的一部分，而不是只验证正常通信链路。
-- [x] 故障注入至少覆盖 Redis/Valkey 短暂不可用、IAM 超时、active master 断开、sub_node 断开、ACK 迟到、ACK 到旧 owner、connection_epoch 不匹配、payload_ref 校验失败、processor 超时、慢连接写队列满。
-- [x] 每个故障注入用例都必须验证四类结果：状态机迁移是否正确、是否产生标准错误或控制响应、是否写入脱敏审计、是否暴露可观测指标。
-- [x] 第一阶段测试必须采用生产级测试分层，不得只依赖单元测试、简单集成测试或手工联调判断完成。
-- [x] 测试范围至少必须覆盖单元测试、状态机测试、Redis/Valkey Lua 原子脚本测试、processor 流水线测试、Envelope 协议兼容测试、集群切换测试、故障注入测试、stream 可靠性测试、管理控制测试、压测和回归测试。
-- [x] 状态机测试必须覆盖 DeliveryRecord、MessageDeliverySummary、StreamDeliveryState、ACK/NACK/Defer、retry、dead letter、replay、cancel、hold、lease/fencing、owner transfer 等核心迁移。
-- [x] Redis/Valkey Lua 脚本测试必须覆盖原子提交、索引同步、fencing 拒绝、重复 ACK、迟到 ACK、旧 owner 写入、lease 过期、状态日志追加和异常回滚。
-- [x] 集群切换测试必须覆盖 graceful handoff、force takeover、emergency isolate、配置漂移、sub_node 断开、active master 失联、leader lease 过期和 fencing_token 轮换。
-- [x] stream 可靠性测试必须覆盖 stream_start、stream_chunk、stream_end、滑动窗口、cumulative ACK、selective ACK、missing ranges、乱序恢复、窗口动态调整、stream replay、stream cancel 和 stream hold。
-- [x] 第一阶段生产参考验收线建议如下：单 runtime 普通 WebSocket 连接数不少于 `5,000`；master 管理/节点连接数不少于 `100`；本地 task dispatch 受理吞吐不少于 `2,000 msg/s`；master/sub_node 转发吞吐不少于 `1,000 msg/s`；本地 ACK P99 不高于 `100ms`；跨节点 ACK P99 不高于 `300ms`；Redis/Valkey 关键状态写入 P99 不高于 `50ms`；delivery recovery scan 速率不少于 `1,000 records/s`；replayable dead letter 重投成功率不低于 `99%`；安全/管理/状态变更审计覆盖率为 `100%`；token/payload/auth_context/fencing 原值泄露为 `0`；TTL 清理后孤儿索引为 `0`；必选故障场景通过率为 `100%`。
-- [x] 第一阶段性能参考线必须和压测报告绑定。压测报告至少应包含测试环境、runtime 节点数量、Redis/Valkey 拓扑、连接规模、消息类型分布、payload 模式、ACK timeout 配置、worker 配置、pool 配置、P95/P99、错误码分布、Redis/Valkey 延迟、CPU/内存占用和瓶颈分析。
