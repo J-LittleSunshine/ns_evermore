@@ -73,3 +73,116 @@ class NsHttpClientError(NsEvermoreError):
     code = "NS_HTTP_CLIENT_ERROR"
     numeric_code = 100600
     default_message = "NsEvermore HTTP client error."
+
+
+class NsRuntimeProtocolError(NsRuntimeError):
+    code = "RUNTIME_PROTOCOL_ERROR"
+    numeric_code = 200100
+    default_message = "Runtime protocol error."
+
+
+class NsRuntimeEnvelopeSchemaError(NsRuntimeProtocolError):
+    code = "RUNTIME_ENVELOPE_SCHEMA_ERROR"
+    numeric_code = 200101
+    default_message = "Runtime envelope schema error."
+
+
+class NsRuntimeProtocolVersionError(NsRuntimeProtocolError):
+    code = "RUNTIME_PROTOCOL_VERSION_ERROR"
+    numeric_code = 200102
+    default_message = "Runtime protocol version is incompatible."
+
+
+class NsRuntimeSourceForgedError(NsRuntimeProtocolError):
+    code = "RUNTIME_SOURCE_FORGED"
+    numeric_code = 200103
+    default_message = "Inbound envelope must not contain source."
+
+
+class NsRuntimeAuthContextForgedError(NsRuntimeProtocolError):
+    code = "RUNTIME_AUTH_CONTEXT_FORGED"
+    numeric_code = 200104
+    default_message = "Inbound envelope must not contain auth_context."
+
+
+class NsRuntimeUnsupportedMessageTypeError(NsRuntimeProtocolError):
+    code = "RUNTIME_UNSUPPORTED_MESSAGE_TYPE"
+    numeric_code = 200105
+    default_message = "Runtime message type is not registered."
+
+
+class NsRuntimeUnauthorizedMessageTypeError(NsRuntimeProtocolError):
+    code = "RUNTIME_UNAUTHORIZED_MESSAGE_TYPE"
+    numeric_code = 200106
+    default_message = "Runtime message type is not allowed by current capability."
+
+
+class NsRuntimeTenantMismatchError(NsRuntimeProtocolError):
+    code = "RUNTIME_TENANT_MISMATCH"
+    numeric_code = 200107
+    default_message = "Runtime tenant boundary is violated."
+
+
+class NsRuntimePayloadRefDeniedError(NsRuntimeProtocolError):
+    code = "RUNTIME_PAYLOAD_REF_DENIED"
+    numeric_code = 200108
+    default_message = "Runtime payload reference is denied."
+
+
+class NsRuntimeTargetUnavailableError(NsRuntimeError):
+    code = "RUNTIME_TARGET_UNAVAILABLE"
+    numeric_code = 200109
+    default_message = "Runtime target is unavailable."
+
+
+class NsRuntimeDeliveryStateError(NsRuntimeError):
+    code = "RUNTIME_DELIVERY_STATE_ERROR"
+    numeric_code = 200110
+    default_message = "Runtime delivery state transition is invalid."
+
+
+class NsRuntimeAckRejectedError(NsRuntimeDeliveryStateError):
+    code = "RUNTIME_ACK_REJECTED"
+    numeric_code = 200111
+    default_message = "Runtime ACK is rejected."
+
+
+class NsRuntimeNackRejectedError(NsRuntimeDeliveryStateError):
+    code = "RUNTIME_NACK_REJECTED"
+    numeric_code = 200112
+    default_message = "Runtime NACK is rejected."
+
+
+class NsRuntimeDeferRejectedError(NsRuntimeDeliveryStateError):
+    code = "RUNTIME_DEFER_REJECTED"
+    numeric_code = 200113
+    default_message = "Runtime Defer is rejected."
+
+
+class NsRuntimeBackpressureError(NsRuntimeError):
+    code = "RUNTIME_BACKPRESSURE"
+    numeric_code = 200114
+    default_message = "Runtime backpressure policy rejected the message."
+
+
+class NsRuntimeClusterCoordinationError(NsRuntimeError):
+    code = "RUNTIME_CLUSTER_COORDINATION_ERROR"
+    numeric_code = 200115
+    default_message = "Runtime cluster coordination error."
+
+
+RUNTIME_NACK_REASON_ERROR_CODES: tuple[tuple[str, str], ...] = (
+    ("target_overloaded", NsRuntimeBackpressureError.code),
+    ("temporarily_unavailable", NsRuntimeTargetUnavailableError.code),
+    ("queue_full", NsRuntimeBackpressureError.code),
+    ("dependency_unavailable", NsDependencyError.code),
+    ("target_draining", NsRuntimeTargetUnavailableError.code),
+    ("node_degraded", NsRuntimeClusterCoordinationError.code),
+    ("permission_denied", NsRuntimeUnauthorizedMessageTypeError.code),
+    ("tenant_mismatch", NsRuntimeTenantMismatchError.code),
+    ("invalid_payload_ref", NsRuntimePayloadRefDeniedError.code),
+    ("payload_ref_denied", NsRuntimePayloadRefDeniedError.code),
+    ("source_forged", NsRuntimeSourceForgedError.code),
+    ("auth_context_forged", NsRuntimeAuthContextForgedError.code),
+    ("protocol_violation", NsRuntimeProtocolError.code),
+)

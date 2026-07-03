@@ -625,7 +625,8 @@
 - [x] Redis/Valkey Lua 脚本测试必须覆盖原子提交、索引同步、fencing 拒绝、重复 ACK、迟到 ACK、旧 owner 写入、lease 过期、状态日志追加和异常回滚。
 - [x] 集群切换测试必须覆盖 graceful handoff、force takeover、emergency isolate、配置漂移、sub_node 断开、active master 失联、leader lease 过期和 fencing_token 轮换。
 - [x] stream 可靠性测试必须覆盖 stream_start、stream_chunk、stream_end、滑动窗口、cumulative ACK、selective ACK、missing ranges、乱序恢复、窗口动态调整、stream replay、stream cancel 和 stream hold。
-- [x] 第一阶段生产参考验收线建议如下：单 runtime 普通 WebSocket 连接数不少于 `5,000`；master 管理/节点连接数不少于 `100`；本地 task dispatch 受理吞吐不少于 `2,000 msg/s`；master/sub_node 转发吞吐不少于 `1,000 msg/s`；本地 ACK P99 不高于 `100ms`；跨节点 ACK P99 不高于 `300ms`；Redis/Valkey 关键状态写入 P99 不高于 `50ms`；delivery recovery scan 速率不少于 `1,000 records/s`；replayable dead letter 重投成功率不低于 `99%`；安全/管理/状态变更审计覆盖率为 `100%`；token/payload/auth_context/fencing 原值泄露为 `0`；TTL 清理后孤儿索引为 `0`；必选故障场景通过率为 `100%`。
+- [x] 第一阶段生产参考验收线建议如下：单 runtime 普通 WebSocket 连接数不少于 `5,000`；master 管理/节点连接数不少于 `100`；本地 task dispatch 受理吞吐不少于 `2,000 msg/s`；master/sub_node 转发吞吐不少于 `1,000 msg/s`；本地 ACK P99 不高于 `100ms`；跨节点 ACK P99 不高于 `300ms`；Redis/Valkey 关键状态写入 P99 不高于 `50ms`；delivery recovery scan 速率不少于
+  `1,000 records/s`；replayable dead letter 重投成功率不低于 `99%`；安全/管理/状态变更审计覆盖率为 `100%`；token/payload/auth_context/fencing 原值泄露为 `0`；TTL 清理后孤儿索引为 `0`；必选故障场景通过率为 `100%`。
 - [x] 第一阶段性能参考线必须和压测报告绑定。压测报告至少应包含测试环境、runtime 节点数量、Redis/Valkey 拓扑、连接规模、消息类型分布、payload 模式、ACK timeout 配置、worker 配置、pool 配置、P95/P99、错误码分布、Redis/Valkey 延迟、CPU/内存占用和瓶颈分析。
 
 ## 25. 明确禁止漂移的硬边界
@@ -640,3 +641,21 @@
 - [x] Envelope 固定 JSON 文本帧；不能在不重新确认的情况下改成二进制协议或混合编码。
 - [x] Runtime 不能负责对象存储上传、下载或签名 URL；payload_ref 只做引用路由和实时校验。
 - [x] 多 master 第一阶段是单 active master、多 standby master；不能默认设计成多 active 分片 master，除非后续重新讨论分片 leader 模型。
+
+## 26. 第一阶段实现进度勾选
+
+> 本节只记录实现完成边界，不新增、不覆盖、不放宽前文设计边界。
+
+- [x] 1.1 已建立 `src/ns_runtime` 独立组件包边界。
+- [x] 1.1 已提供 `src/ns_runtime/main.py` 作为 runtime 独立进程入口占位。
+- [x] 1.1 已建立 Runtime Service 最小角色状态表达，包括 `singleton`、`sub_node`、`standby_master`、`active_master`、`transitioning`、`draining`。
+- [x] 1.1 已建立 Envelope 基础分组白名单，覆盖 `protocol`、`message`、`source`、`target`、`route`、`delivery`、`stream`、`auth_context`、`payload`、`callback`、`trace`、`extensions`。
+- [x] 1.1 已实现入站 Envelope 禁止携带 `source` 和 `auth_context` 的硬校验。
+- [x] 1.1 已实现 Envelope 顶层未知字段拒绝、核心分组未知字段拒绝、`null` 分组拒绝和空对象分组拒绝。
+- [x] 1.1 已实现协议兼容基础策略：主版本严格拒绝，次版本按 runtime 与客户端较低版本协商。
+- [x] 1.1 已建立内置 `message.type` 注册表，并为内置类型登记 schema、权限声明、processor 入口名、可靠性档位、审计事件和标准错误响应。
+- [x] 1.1 已在 `ns_common.exceptions` 中补充 `RUNTIME_*` 细粒度错误码和 NACK reason 到错误码的静态映射。
+- [x] 1.1 已补充基础单元测试，覆盖合法 `connection.hello`、source/auth_context 伪造拒绝、未知字段拒绝、主版本不兼容拒绝和内置类型族注册完整性。
+- [ ] 1.2 尚未实现 WebSocket 接入、握手超时、真实 session 生命周期和 heartbeat processor。
+- [ ] 1.3 尚未实现 IAM 实调、权限快照、source/auth_context 注入和安全审计落库。
+- [ ] 1.4 尚未实现 active_master + sub_node 跨节点转发、可靠投递状态机、ACK/NACK/Defer 原子状态更新和 Redis/Valkey fencing。
