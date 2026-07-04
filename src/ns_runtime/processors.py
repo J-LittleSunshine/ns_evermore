@@ -59,7 +59,37 @@ class MessageTypeAuthProcessor(BaseRuntimeProcessor):
             )
             return ProcessorResponse.reject(self._codec.build_error_envelope(error, session=request.session, request=request.envelope))
 
+        schema_error = self._validate_message_type_schema(request.envelope, spec)
+        if schema_error is not None:
+            return ProcessorResponse.reject(self._codec.build_error_envelope(schema_error, session=request.session, request=request.envelope))
+
         return ProcessorResponse.continue_next()
+
+    @staticmethod
+    def _validate_message_type_schema(envelope: Envelope, spec: MessageTypeSpec) -> NsRuntimeEnvelopeSchemaError | None:
+        raw_groups = set(envelope.raw.keys())
+        missing_groups = sorted(set(spec.required_groups) - raw_groups)
+
+        if missing_groups:
+            return NsRuntimeEnvelopeSchemaError(
+                "Envelope misses required groups for message.type.",
+                details={
+                    "message_type": spec.message_type,
+                    "missing_groups": missing_groups,
+                },
+            )
+
+        if envelope.category != spec.category:
+            return NsRuntimeEnvelopeSchemaError(
+                "Envelope message.category does not match registered message.type category.",
+                details={
+                    "message_type": spec.message_type,
+                    "actual_category": envelope.category,
+                    "expected_category": spec.category,
+                },
+            )
+
+        return None
 
 
 class AuditMarkProcessor(BaseRuntimeProcessor):

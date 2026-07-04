@@ -19,7 +19,6 @@ from ns_common.exceptions import (
     NsRuntimeEnvelopeSchemaError,
     NsRuntimeProtocolVersionError,
     NsRuntimeSourceForgedError,
-    NsRuntimeTenantMismatchError,
 )
 from ns_runtime.models import (
     Envelope,
@@ -331,8 +330,14 @@ class EnvelopeCodec:
         for namespace in extensions.keys():
             if not isinstance(namespace, str) or not namespace.strip():
                 raise NsRuntimeEnvelopeSchemaError("extension namespace must be a non-empty string.")
-            if allowed_namespaces and namespace not in allowed_namespaces:
-                raise NsRuntimeTenantMismatchError("Extension namespace is not allowed by current runtime policy.", details={"namespace": namespace})
+            if namespace not in allowed_namespaces:
+                raise NsRuntimeEnvelopeSchemaError(
+                    "Extension namespace is not registered or allowed by current runtime policy.",
+                    details={
+                        "namespace": namespace,
+                        "allowed_namespaces": sorted(allowed_namespaces),
+                    },
+                )
 
     @staticmethod
     def _parse_version(value: Any) -> tuple[int, int, int]:
