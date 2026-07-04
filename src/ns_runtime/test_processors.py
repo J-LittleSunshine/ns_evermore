@@ -1,0 +1,92 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import asyncio
+import json
+import unittest
+from typing import (
+    Any,
+    TYPE_CHECKING
+)
+
+from ns_runtime.models import (
+    RuntimeSessionContext,
+    utc_now_iso
+)
+from ns_runtime.service import RuntimeService
+
+if TYPE_CHECKING:
+    pass
+
+
+class RuntimeProcessorTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.service = RuntimeService.build_default(runtime_id="runtime-test")
+        self.session = RuntimeSessionContext(
+            runtime_id="runtime-test",
+            connection_id="conn-1",
+            session_id="sess-1",
+            identity="manager-1",
+            tenant_id="tenant-1",
+            component_type="management",
+            capabilities=("runtime.management", "task.dispatch"),
+            auth_snapshot_id="auth-1",
+            auth_issued_at=utc_now_iso(),
+            auth_expires_at=utc_now_iso(),
+        )
+
+    def test_builtin_message_type_registry_contains_required_families(self) -> None:
+        message_types = {item["message_type"] for item in self.service.list_message_type_specs()}
+
+        self.assertIn("connection.heartbeat", message_types)
+        self.assertIn("task.dispatch", message_types)
+        self.assertIn("delivery.ack", message_types)
+        self.assertIn("delivery.nack", message_types)
+        self.assertIn("delivery.defer", message_types)
+        self.assertIn("stream.start", message_types)
+        self.assertIn("runtime.control.health", message_types)
+        self.assertIn("cluster.event.node_joined", message_types)
+        self.assertIn("runtime.control.config_update", message_types)
+        self.assertIn("runtime.error", message_types)
+
+    def test_connection_heartbeat_returns_heartbeat_ack(self) -> None:
+        response = asyncio.run(self.service.process_frame(self._build_frame("connection.heartbeat"), self.session))
+
+        self.assertEqual(response.action, "respond")
+        self.assertIsNotNone(response.envelope)
+        self.assertEqual(response.envelope["message"]["type"], "connection.heartbeat_ack")
+
+    def test_registered_only_type_returns_standard_error(self) -> None:
+        response = asyncio.run(self.service.process_frame(self._build_frame("task.dispatch", target=True), self.session))
+
+        self.assertEqual(response.action, "respond")
+        self.assertIsNotNone(response.envelope)
+        self.assertEqual(response.envelope["message"]["type"], "runtime.error")
+        self.assertEqual(response.envelope["payload"]["inline"]["error"]["code"], "RUNTIME_ENVELOPE_SCHEMA_ERROR")
+
+    def _build_frame(self, message_type: str, *, target: bool = False) -> str:
+        raw: dict[str, Any] = {
+            "protocol": {
+                "version": "1.0.0",
+            },
+            "message": {
+                "message_id": "msg-1",
+                "type": message_type,
+                "category": "control",
+                "priority": 100,
+                "created_at": utc_now_iso(),
+                "reliability": "best_effort",
+            },
+        }
+
+        if target:
+            raw["target"] = {
+                "kind": "connection",
+                "connection_id": "conn-2",
+            }
+
+        return json.dumps(raw, ensure_ascii=False)
+
+
+if __name__ == "__main__":
+    unittest.main()
