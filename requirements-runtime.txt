@@ -1,0 +1,11 @@
+anyio==4.14.1
+certifi==2026.6.17
+concurrent-log-handler==0.9.29
+exceptiongroup==1.3.1
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.18
+portalocker==3.2.0
+typing_extensions==4.16.0
+websockets==16.0
