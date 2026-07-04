@@ -68,6 +68,17 @@ class RuntimeProtocolTestCase(unittest.TestCase):
         with self.assertRaises(NsRuntimeEnvelopeSchemaError):
             self.codec.parse_inbound(json.dumps(raw), self.session)
 
+    def test_unregistered_extension_namespace_is_rejected_by_default(self) -> None:
+        raw = self._build_raw("connection.heartbeat")
+        raw["extensions"] = {
+            "demo": {
+                "enabled": True,
+            },
+        }
+
+        with self.assertRaises(NsRuntimeEnvelopeSchemaError):
+            self.codec.parse_inbound(json.dumps(raw), self.session)
+
     def test_delivery_must_not_repeat_message_id(self) -> None:
         raw = self._build_raw("delivery.ack")
         raw["delivery"] = {
