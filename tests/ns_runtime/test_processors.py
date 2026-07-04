@@ -50,21 +50,57 @@ class RuntimeProcessorTestCase(unittest.TestCase):
         self.assertIn("runtime.error", message_types)
 
     def test_connection_heartbeat_returns_heartbeat_ack(self) -> None:
-        response = asyncio.run(self.service.process_frame(self._build_frame("connection.heartbeat"), self.session))
+        response = asyncio.run(
+            self.service.process_frame(
+                self._build_frame("connection.heartbeat", category="control"),
+                self.session,
+            )
+        )
 
         self.assertEqual(response.action, "respond")
         self.assertIsNotNone(response.envelope)
         self.assertEqual(response.envelope["message"]["type"], "connection.heartbeat_ack")
 
-    def test_registered_only_type_returns_standard_error(self) -> None:
-        response = asyncio.run(self.service.process_frame(self._build_frame("task.dispatch", target=True), self.session))
+    def test_task_dispatch_without_target_is_rejected_by_type_schema(self) -> None:
+        response = asyncio.run(
+            self.service.process_frame(
+                self._build_frame("task.dispatch", category="task"),
+                self.session,
+            )
+        )
+
+        self.assertEqual(response.action, "reject")
+        self.assertIsNotNone(response.envelope)
+        self.assertEqual(response.envelope["message"]["type"], "runtime.error")
+        self.assertEqual(response.envelope["payload"]["inline"]["error"]["code"], "RUNTIME_ENVELOPE_SCHEMA_ERROR")
+
+    def test_task_dispatch_with_wrong_category_is_rejected_by_type_schema(self) -> None:
+        response = asyncio.run(
+            self.service.process_frame(
+                self._build_frame("task.dispatch", category="control", target=True),
+                self.session,
+            )
+        )
+
+        self.assertEqual(response.action, "reject")
+        self.assertIsNotNone(response.envelope)
+        self.assertEqual(response.envelope["message"]["type"], "runtime.error")
+        self.assertEqual(response.envelope["payload"]["inline"]["error"]["code"], "RUNTIME_ENVELOPE_SCHEMA_ERROR")
+
+    def test_registered_only_type_returns_standard_error_after_type_schema_passed(self) -> None:
+        response = asyncio.run(
+            self.service.process_frame(
+                self._build_frame("task.dispatch", category="task", target=True),
+                self.session,
+            )
+        )
 
         self.assertEqual(response.action, "respond")
         self.assertIsNotNone(response.envelope)
         self.assertEqual(response.envelope["message"]["type"], "runtime.error")
         self.assertEqual(response.envelope["payload"]["inline"]["error"]["code"], "RUNTIME_ENVELOPE_SCHEMA_ERROR")
 
-    def _build_frame(self, message_type: str, *, target: bool = False) -> str:
+    def _build_frame(self, message_type: str, *, category: str, target: bool = False) -> str:
         raw: dict[str, Any] = {
             "protocol": {
                 "version": "1.0.0",
@@ -72,7 +108,7 @@ class RuntimeProcessorTestCase(unittest.TestCase):
             "message": {
                 "message_id": "msg-1",
                 "type": message_type,
-                "category": "control",
+                "category": category,
                 "priority": 100,
                 "created_at": utc_now_iso(),
                 "reliability": "best_effort",
