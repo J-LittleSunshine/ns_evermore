@@ -56,6 +56,7 @@
 - 消息处理语义必须使用 `processor` 而不是 `handler`；后续讨论中“处理某类消息”和“流水线阶段处理”都可以称为 processor，但需要通过上下文区分。
 - 第一阶段不强制定义统一客户端 SDK，也不要求 `ns_frontend`、`ns_client`、`ns_node`、`ns_backend` 必须通过同一个 SDK 接入。
 - 设计文档只约束连接方必须遵守的协议行为，包括 WebSocket 握手、`connection.hello`、协议版本协商、heartbeat、ACK/NACK/Defer 语义、message_id/delivery_id 幂等、connection_epoch 校验、错误 envelope 处理、source/auth_context 禁止伪造和安全日志脱敏。
+    - [x] 【实现进度 1.2】已新增独立 WebSocket transport，runtime 进程可以通过 `main.py` 启动 WebSocket 服务；当前阶段只接受 JSON 文本帧，第一帧必须是 `connection.hello`，并通过握手服务建立 session 后才进入普通 envelope processor。该进度不表示可靠投递、跨节点转发、ACK/NACK/Defer 状态机或生产 IAM 已完成。
 
 ## 4. 运行模式、角色与切换
 
@@ -148,6 +149,7 @@
 - 客户端可以声明 component_type 和 requested capabilities，但 runtime 必须把 token、component_type、requested capabilities、协议版本和连接来源信息交给 `ns_backend` IAM 校验；最终 identity、tenant、component_type、capabilities、权限快照、权限版本和 TTL 以 IAM 返回为准。
 - 如果客户端协议 version/min_version 与 runtime 不能兼容，应在握手阶段返回 `connection.rejected` 并关闭连接；版本兼容是进入 active session 的前置条件。
 - 握手成功后 runtime 返回 `connection.accepted`，其中只包含 `connection_id`、`session_id`、协商协议版本、heartbeat 配置、session_expires_at、server_time、runtime_id 和 role 等必要信息，不返回 tenant_id、identity 或完整 capabilities。
+    - [x] 【实现进度 1.2】已提供 `RuntimeSessionRegistry`、`RuntimeHandshakeService`、`RuntimeAuthenticator` 抽象和本地 token authenticator；握手成功后生成 `RuntimeSessionContext` 并返回 `connection.accepted`，握手失败返回 `connection.rejected` 后关闭连接。当前本地 authenticator 仅用于开发闭环，生产阶段仍需替换为调用 `ns_backend` IAM 的严格实现。
 - session 必须支持续期；续期可以由 runtime 使用握手 token 或缓存凭证主动刷新，也可以要求客户端发送 `connection.reauth`，还可以配置为到期关闭连接。
 - session 续期或权限快照刷新失败时，runtime 不能默认继续无限信任旧权限；应按策略进入降级、限权、要求 reauth 或关闭连接，并记录安全审计摘要。
 - 如果使用客户端重新认证，消息类型为 `connection.reauth`，成功响应为 `connection.reauth_accepted`，失败响应为 `connection.reauth_rejected`；重新认证仍禁止客户端携带 source/auth_context。

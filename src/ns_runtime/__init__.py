@@ -3,6 +3,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ns_runtime.auth import (
+    LocalTokenRuntimeAuthenticator,
+    RuntimeAuthResult,
+    RuntimeAuthenticator
+)
+from ns_runtime.handshake import (
+    ConnectionHello,
+    RuntimeHandshakeOutcome,
+    RuntimeHandshakeService,
+)
 from ns_runtime.models import (
     Envelope,
     MessageTypeSpec,
@@ -21,6 +31,14 @@ from ns_runtime.processors import (
 )
 from ns_runtime.protocol import EnvelopeCodec
 from ns_runtime.service import RuntimeService
+from ns_runtime.session import (
+    RuntimeConnectionRecord,
+    RuntimeSessionRegistry,
+)
+from ns_runtime.transport import (
+    RuntimeWebSocketTransport,
+    RuntimeWebSocketTransportConfig,
+)
 
 if TYPE_CHECKING:
     pass
@@ -34,6 +52,16 @@ __all__ = [
     "RuntimeAuthContext",
     "RuntimeSessionContext",
     "RuntimeSourceContext",
+    "RuntimeAuthResult",
+    "RuntimeAuthenticator",
+    "LocalTokenRuntimeAuthenticator",
+    "ConnectionHello",
+    "RuntimeHandshakeOutcome",
+    "RuntimeHandshakeService",
+    "RuntimeConnectionRecord",
+    "RuntimeSessionRegistry",
+    "RuntimeWebSocketTransport",
+    "RuntimeWebSocketTransportConfig",
     "BaseRuntimeProcessor",
     "ProcessorPipeline",
     "ProcessorRegistry",
@@ -42,4 +70,4 @@ __all__ = [
     "RuntimeService",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

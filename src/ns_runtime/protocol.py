@@ -125,6 +125,51 @@ class EnvelopeCodec:
             reliability=reliability,
         )
 
+    def parse_connection_hello(self, frame_text: str) -> dict[str, Any]:
+        self._validate_frame_text(frame_text)
+
+        try:
+            raw = json.loads(frame_text)
+        except json.JSONDecodeError as exc:
+            raise NsRuntimeEnvelopeSchemaError("connection.hello frame must be a valid JSON object.", details={"reason": str(exc)}) from exc
+
+        if not isinstance(raw, dict):
+            raise NsRuntimeEnvelopeSchemaError("connection.hello envelope must be a JSON object.", details={"actual_type": type(raw).__name__})
+
+        self._validate_top_level_groups(raw)
+        self._reject_forged_context(raw)
+        self._validate_group_fields(raw)
+        self._validate_protocol(raw)
+        _message_id, message_type, category, _reliability = self._validate_message(raw)
+        self._validate_extensions(raw)
+
+        if message_type != "connection.hello":
+            raise NsRuntimeEnvelopeSchemaError(
+                "First WebSocket runtime envelope must be connection.hello.",
+                details={
+                    "actual_message_type": message_type,
+                },
+            )
+
+        if category != "connection":
+            raise NsRuntimeEnvelopeSchemaError(
+                "connection.hello must use message.category=connection.",
+                details={
+                    "actual_category": category,
+                },
+            )
+
+        forbidden_groups = sorted(set(raw.keys()) & {"target", "route", "delivery", "stream", "callback"})
+        if forbidden_groups:
+            raise NsRuntimeEnvelopeSchemaError(
+                "connection.hello contains groups that are not allowed during handshake.",
+                details={
+                    "forbidden_groups": forbidden_groups,
+                },
+            )
+
+        return dict(raw)
+
     def inject_runtime_context(self, raw: Mapping[str, Any], session: RuntimeSessionContext) -> dict[str, Any]:
         normalized = dict(raw)
         normalized["source"] = session.build_source_context().to_group()
