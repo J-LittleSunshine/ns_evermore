@@ -30,6 +30,11 @@ from ns_runtime.processors import (
     build_default_processor_registry,
 )
 from ns_runtime.protocol import EnvelopeCodec
+from ns_runtime.routing import (
+    RuntimeRouteDecision,
+    RuntimeRouteTarget,
+    RuntimeTargetResolver,
+)
 from ns_runtime.service import RuntimeService
 from ns_runtime.session import (
     RuntimeConnectionRecord,
@@ -68,6 +73,9 @@ __all__ = [
     "build_default_processor_pipeline",
     "build_default_processor_registry",
     "RuntimeService",
+    "RuntimeRouteDecision",
+    "RuntimeRouteTarget",
+    "RuntimeTargetResolver",
 ]
 
 __version__ = "0.2.0"

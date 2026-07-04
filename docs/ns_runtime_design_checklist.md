@@ -112,6 +112,8 @@
 - `target` 分组必须包含 `kind` 来避免寻址歧义；`kind` 可以是 `connection`、`identity`、`tenant`、`capability`、`component_type`、`runtime`、`broadcast` 或未来受控扩展类型。
 - `target.kind=connection` 时必须提供 connection_id；`target.kind=identity` 时必须提供 identity；`target.kind=capability` 时必须提供 capabilities；`target.kind=component_type` 时必须提供 component_type；`target.kind=runtime` 时必须提供 runtime_id；`target.kind=tenant/broadcast` 时必须声明 tenant 或广播范围与过滤条件。
 - 当 target 指向多个连接可能性时，消息必须显式指定多连接策略，或由系统默认策略裁决；后续实现不能在 identity 多连接场景下隐式广播或隐式任选而不留策略痕迹。
+    - [x] 【实现进度 1.4】已提供本地 `RuntimeTargetResolver` 和 target lookup processor，基于当前单进程 session index 支持 `connection`、`identity`、`tenant`、`broadcast`、`component_type`、`capability`、`runtime` 的基础解析；target 不存在时返回 `RUNTIME_TARGET_UNAVAILABLE`，跨 tenant 本地寻址默认拒绝。该进度只表示本地 routing decision 与 target 校验完成，不表示
+      WebSocket 写出、DeliveryRecord、ACK/NACK/Defer、跨节点路由或负载均衡策略已完成。
 - `delivery` 分组只在可靠投递相关消息中出现，包含 `delivery_id`、`summary_id`、`root_delivery_id`、`parent_delivery_id`、`attempt`、`ack_timeout_ms`、`replay_epoch` 等投递维度字段；`message_id` 只从 `message.message_id` 读取，不在 delivery 中重复。
 - `payload` 必须支持 inline 小 payload 和 `payload_ref` 对象存储引用两种模式；inline 大小上限完全由 runtime 策略决定，payload_ref 必须实时调用 `ns_backend` 校验。
 - 当 inline payload 超过 runtime 策略允许大小、JSON 深度或帧大小限制时，应返回错误 envelope 或按严重错误策略断开连接，并且不能为了兼容发送方自动转为 payload_ref。

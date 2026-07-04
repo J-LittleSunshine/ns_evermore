@@ -27,6 +27,7 @@ from ns_runtime.processors import (
     build_default_processor_registry,
 )
 from ns_runtime.protocol import EnvelopeCodec
+from ns_runtime.routing import RuntimeTargetResolver
 from ns_runtime.session import (
     RuntimeConnectionRecord,
     RuntimeSessionRegistry
@@ -42,16 +43,17 @@ if TYPE_CHECKING:
 
 class RuntimeService:
     def __init__(
-            self,
-            *,
-            runtime_id: str,
-            codec: EnvelopeCodec,
-            registry: ProcessorRegistry,
-            pipeline: ProcessorPipeline,
-            session_registry: RuntimeSessionRegistry,
-            handshake_service: RuntimeHandshakeService,
-            config_version: str = "local:1",
-            policy_version: str = "local:1",
+        self,
+        *,
+        runtime_id: str,
+        codec: EnvelopeCodec,
+        registry: ProcessorRegistry,
+        pipeline: ProcessorPipeline,
+        session_registry: RuntimeSessionRegistry,
+        handshake_service: RuntimeHandshakeService,
+        target_resolver: RuntimeTargetResolver,
+        config_version: str = "local:1",
+        policy_version: str = "local:1",
     ) -> None:
         self._runtime_id = runtime_id
         self._codec = codec
@@ -59,6 +61,7 @@ class RuntimeService:
         self._pipeline = pipeline
         self._session_registry = session_registry
         self._handshake_service = handshake_service
+        self._target_resolver = target_resolver
         self._config_version = config_version
         self._policy_version = policy_version
         self._logger = get_ns_logger("ns_runtime", True)
@@ -67,11 +70,19 @@ class RuntimeService:
     def build_default(cls, *, runtime_id: str, authenticator: RuntimeAuthenticator | None = None) -> "RuntimeService":
         codec = EnvelopeCodec(runtime_id=runtime_id)
         session_registry = RuntimeSessionRegistry(runtime_id=runtime_id)
+        target_resolver = RuntimeTargetResolver(
+            runtime_id=runtime_id,
+            session_registry=session_registry,
+        )
         registry = build_default_processor_registry(
             codec,
             health_snapshot_provider=session_registry.build_health_snapshot,
         )
-        pipeline = build_default_processor_pipeline(codec, registry)
+        pipeline = build_default_processor_pipeline(
+            codec,
+            registry,
+            target_resolver=target_resolver,
+        )
         resolved_authenticator = authenticator or LocalTokenRuntimeAuthenticator(expected_token="local-dev-token")
         handshake_service = RuntimeHandshakeService(
             runtime_id=runtime_id,
@@ -87,6 +98,7 @@ class RuntimeService:
             pipeline=pipeline,
             session_registry=session_registry,
             handshake_service=handshake_service,
+            target_resolver=target_resolver,
         )
 
     @property
@@ -96,6 +108,18 @@ class RuntimeService:
     @property
     def session_registry(self) -> RuntimeSessionRegistry:
         return self._session_registry
+
+    @property
+    def target_resolver(self) -> RuntimeTargetResolver:
+        return self._target_resolver
+
+    def resolve_target(self, frame_text: str, session: RuntimeSessionContext) -> dict[str, Any] | None:
+        envelope = self._codec.parse_inbound(frame_text, session)
+        decision = self._target_resolver.resolve(envelope, session)
+        if decision is None:
+            return None
+
+        return decision.to_dict()
 
     def list_message_type_specs(self) -> tuple[dict[str, Any], ...]:
         return tuple(

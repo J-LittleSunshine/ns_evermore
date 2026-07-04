@@ -14,6 +14,7 @@ from typing import (
 )
 
 from ns_common.exceptions import (
+    NsEvermoreError,
     NsRuntimeEnvelopeSchemaError,
     NsRuntimeUnauthorizedMessageTypeError,
     NsRuntimeUnsupportedMessageTypeError,
@@ -27,6 +28,7 @@ from ns_runtime.models import (
     utc_now_iso,
 )
 from ns_runtime.protocol import EnvelopeCodec
+from ns_runtime.routing import RuntimeTargetResolver
 
 if TYPE_CHECKING:
     pass
@@ -91,6 +93,27 @@ class MessageTypeAuthProcessor(BaseRuntimeProcessor):
             )
 
         return None
+
+class TargetLookupProcessor(BaseRuntimeProcessor):
+    def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver) -> None:
+        self._codec = codec
+        self._target_resolver = target_resolver
+
+    async def process(self, request: ProcessorRequest) -> ProcessorResponse:
+        if "target" not in request.envelope.raw:
+            return ProcessorResponse.continue_next()
+
+        try:
+            self._target_resolver.resolve(request.envelope, request.session)
+            return ProcessorResponse.continue_next()
+        except NsEvermoreError as exc:
+            return ProcessorResponse.reject(
+                self._codec.build_error_envelope(
+                    exc,
+                    session=request.session,
+                    request=request.envelope,
+                )
+            )
 
 
 class AuditMarkProcessor(BaseRuntimeProcessor):
@@ -300,14 +323,25 @@ def build_default_processor_registry(codec: EnvelopeCodec, *, health_snapshot_pr
     return registry
 
 
-def build_default_processor_pipeline(codec: EnvelopeCodec, registry: ProcessorRegistry) -> ProcessorPipeline:
+def build_default_processor_pipeline(codec: EnvelopeCodec, registry: ProcessorRegistry, *, target_resolver: RuntimeTargetResolver | None = None) -> ProcessorPipeline:
+    generic_processors: list[BaseRuntimeProcessor] = [
+        MessageTypeAuthProcessor(registry=registry, codec=codec),
+    ]
+
+    if target_resolver is not None:
+        generic_processors.append(
+            TargetLookupProcessor(
+                codec=codec,
+                target_resolver=target_resolver,
+            )
+        )
+
+    generic_processors.append(AuditMarkProcessor())
+
     return ProcessorPipeline(
         codec=codec,
         registry=registry,
-        generic_processors=(
-            MessageTypeAuthProcessor(registry=registry, codec=codec),
-            AuditMarkProcessor(),
-        ),
+        generic_processors=tuple(generic_processors),
     )
 
 

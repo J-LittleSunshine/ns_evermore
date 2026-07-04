@@ -77,7 +77,7 @@ class RuntimeProcessorTestCase(unittest.TestCase):
     def test_task_dispatch_with_wrong_category_is_rejected_by_type_schema(self) -> None:
         response = asyncio.run(
             self.service.process_frame(
-                self._build_frame("task.dispatch", category="control", target=True),
+                self._build_frame("task.dispatch", category="control", target={"kind": "runtime", "runtime_id": "runtime-test"}),
                 self.session,
             )
         )
@@ -87,10 +87,23 @@ class RuntimeProcessorTestCase(unittest.TestCase):
         self.assertEqual(response.envelope["message"]["type"], "runtime.error")
         self.assertEqual(response.envelope["payload"]["inline"]["error"]["code"], "RUNTIME_ENVELOPE_SCHEMA_ERROR")
 
-    def test_registered_only_type_returns_standard_error_after_type_schema_passed(self) -> None:
+    def test_task_dispatch_with_unavailable_connection_target_is_rejected_by_target_lookup(self) -> None:
         response = asyncio.run(
             self.service.process_frame(
-                self._build_frame("task.dispatch", category="task", target=True),
+                self._build_frame("task.dispatch", category="task", target={"kind": "connection", "connection_id": "missing-conn"}),
+                self.session,
+            )
+        )
+
+        self.assertEqual(response.action, "reject")
+        self.assertIsNotNone(response.envelope)
+        self.assertEqual(response.envelope["message"]["type"], "runtime.error")
+        self.assertEqual(response.envelope["payload"]["inline"]["error"]["code"], "RUNTIME_TARGET_UNAVAILABLE")
+
+    def test_registered_only_type_returns_standard_error_after_target_lookup_passed(self) -> None:
+        response = asyncio.run(
+            self.service.process_frame(
+                self._build_frame("task.dispatch", category="task", target={"kind": "runtime", "runtime_id": "runtime-test"}),
                 self.session,
             )
         )
@@ -100,7 +113,7 @@ class RuntimeProcessorTestCase(unittest.TestCase):
         self.assertEqual(response.envelope["message"]["type"], "runtime.error")
         self.assertEqual(response.envelope["payload"]["inline"]["error"]["code"], "RUNTIME_ENVELOPE_SCHEMA_ERROR")
 
-    def _build_frame(self, message_type: str, *, category: str, target: bool = False) -> str:
+    def _build_frame(self, message_type: str, *, category: str, target: dict[str, Any] | None = None) -> str:
         raw: dict[str, Any] = {
             "protocol": {
                 "version": "1.0.0",
@@ -115,11 +128,8 @@ class RuntimeProcessorTestCase(unittest.TestCase):
             },
         }
 
-        if target:
-            raw["target"] = {
-                "kind": "connection",
-                "connection_id": "conn-2",
-            }
+        if target is not None:
+            raw["target"] = target
 
         return json.dumps(raw, ensure_ascii=False)
 
