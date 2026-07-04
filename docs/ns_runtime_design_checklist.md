@@ -50,6 +50,7 @@
 - `ns_runtime` 可以主动调用 `ns_backend` 的 HTTP/RPC API 做 IAM 鉴权、权限刷新、节点凭证获取和 payload object reference 校验；该主动调用能力不改变“runtime 入站只接受 WebSocket”的边界。
 - 健康检查、运行状态查询、配置热更新、节点隔离、消息重投、消息清理、master 切换和限流调整都应通过 WebSocket 管理 envelope 进入 runtime，而不是另开默认 HTTP 管理端口。
 - 如果容器、systemd 或运维系统需要进程级 healthcheck，应通过本地命令建立 WebSocket 连接并发送 health envelope，而不是依赖 `/health` HTTP 探针。
+    - [x] 【实现进度 1.3】已提供 `python -m ns_runtime.healthcheck` 本地命令式 healthcheck，通过 WebSocket 先发送 `connection.hello` 建立 session，再发送 `runtime.control.health` envelope 获取 `runtime.control.health_result`；当前仍不新增 HTTP `/health` 管理端口。
 - `ns_runtime` 是 `src/ns_runtime` 下的独立组件边界；后续实现可以复用 `ns_common`，但不应把 runtime 的核心进程入口、协议层或可靠投递状态散落到其他组件目录中。
 - `ns_runtime` 必须作为独立进程运行，入口文件必须是 `main.py`；后续实现中模块名、类名、函数名都应避免 `cli` 和 `app` 语义，启动相关命名优先使用 `service`。
 - 设计和实现时应优先复用 `ns_common` 已有基础设施；如果 runtime 需要通用能力而公共层不存在，可以扩展 `ns_common`，但不应把 runtime 私有协议硬塞进公共层。
@@ -156,6 +157,7 @@
 - 心跳必须支持双层机制：WebSocket 原生 ping/pong 用于底层连接存活检测；envelope heartbeat 用于 session、协议和 runtime 健康检查。
 - envelope heartbeat 必须走 Envelope 协议层、安全硬校验和轻量 processor，但默认不进入可靠投递，不创建 DeliveryRecord，也不要求 delivery ACK。
 - 连接层必须维护本地实时索引，包括 `connection_id -> session`、`identity -> connections`、`tenant -> connections`，并可扩展 component_type、capability、session_id 等索引。
+    - [x] 【实现进度 1.3】已在 `RuntimeSessionRegistry` 中维护 active connection、session_id、identity、tenant、component_type 和 capability 的内存索引，并将索引快照接入 `runtime.control.health_result`；该进度只表示单进程实时索引完成，不表示 reconnect grace、resume、跨节点路由索引或强一致连接状态持久化已完成。
 - 普通连接索引以内存实时状态为主，会话快照异步持久化和推送；集群拓扑、leader、隔离、暂停等控制状态必须强一致。
 - 连接断开后允许短暂 reconnect grace period；在 grace period 内，客户端可以重新握手并复用原 `connection_id`，但每次重连必须增加 `connection_epoch` 来防止旧连接残留。
 - 快速重连复用原 `connection_id` 必须满足 grace period 未过期、identity/tenant/component_type 与原 session 匹配、token 或 resume 凭证通过 IAM 校验、旧物理连接已关闭或被 fencing 排除等条件。

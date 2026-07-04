@@ -7,6 +7,7 @@ from abc import (
 )
 from typing import (
     Any,
+    Callable,
     Iterable,
     Mapping,
     TYPE_CHECKING
@@ -174,10 +175,21 @@ class HeartbeatProcessor(BaseRuntimeProcessor):
 
 
 class RuntimeHealthProcessor(BaseRuntimeProcessor):
-    def __init__(self, *, codec: EnvelopeCodec) -> None:
+    def __init__(self, *, codec: EnvelopeCodec, health_snapshot_provider: Callable[[], Mapping[str, Any]] | None = None) -> None:
         self._codec = codec
+        self._health_snapshot_provider = health_snapshot_provider
 
     async def process(self, request: ProcessorRequest) -> ProcessorResponse:
+        inline_payload: dict[str, Any] = {
+            "status": "ok",
+            "runtime_id": request.session.runtime_id,
+            "role": request.session.role,
+            "server_time": utc_now_iso(),
+        }
+
+        if self._health_snapshot_provider is not None:
+            inline_payload["runtime"] = dict(self._health_snapshot_provider())
+
         return ProcessorResponse.respond(
             {
                 "protocol": {
@@ -209,12 +221,7 @@ class RuntimeHealthProcessor(BaseRuntimeProcessor):
                 },
                 "payload": {
                     "mode": "inline",
-                    "inline": {
-                        "status": "ok",
-                        "runtime_id": request.session.runtime_id,
-                        "role": request.session.role,
-                        "server_time": utc_now_iso(),
-                    },
+                    "inline": inline_payload,
                 },
                 "trace": {
                     "trace_id": request.envelope.raw.get("trace", {}).get("trace_id", request.envelope.message_id),
@@ -273,7 +280,7 @@ class ProcessorPipeline:
         return await message_processor.process(request)
 
 
-def build_default_processor_registry(codec: EnvelopeCodec) -> ProcessorRegistry:
+def build_default_processor_registry(codec: EnvelopeCodec, *, health_snapshot_provider: Callable[[], Mapping[str, Any]] | None = None) -> ProcessorRegistry:
     registry = ProcessorRegistry()
     registered_only = RegisteredOnlyProcessor(codec=codec)
 
@@ -283,7 +290,10 @@ def build_default_processor_registry(codec: EnvelopeCodec) -> ProcessorRegistry:
         if spec.message_type == "connection.heartbeat":
             processor = HeartbeatProcessor(codec=codec)
         elif spec.message_type == "runtime.control.health":
-            processor = RuntimeHealthProcessor(codec=codec)
+            processor = RuntimeHealthProcessor(
+                codec=codec,
+                health_snapshot_provider=health_snapshot_provider,
+            )
 
         registry.register(spec, processor)
 

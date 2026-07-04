@@ -66,9 +66,12 @@ class RuntimeService:
     @classmethod
     def build_default(cls, *, runtime_id: str, authenticator: RuntimeAuthenticator | None = None) -> "RuntimeService":
         codec = EnvelopeCodec(runtime_id=runtime_id)
-        registry = build_default_processor_registry(codec)
-        pipeline = build_default_processor_pipeline(codec, registry)
         session_registry = RuntimeSessionRegistry(runtime_id=runtime_id)
+        registry = build_default_processor_registry(
+            codec,
+            health_snapshot_provider=session_registry.build_health_snapshot,
+        )
+        pipeline = build_default_processor_pipeline(codec, registry)
         resolved_authenticator = authenticator or LocalTokenRuntimeAuthenticator(expected_token="local-dev-token")
         handshake_service = RuntimeHandshakeService(
             runtime_id=runtime_id,
@@ -90,6 +93,10 @@ class RuntimeService:
     def runtime_id(self) -> str:
         return self._runtime_id
 
+    @property
+    def session_registry(self) -> RuntimeSessionRegistry:
+        return self._session_registry
+
     def list_message_type_specs(self) -> tuple[dict[str, Any], ...]:
         return tuple(
             {
@@ -101,6 +108,14 @@ class RuntimeService:
                 "implemented": spec.implemented,
             }
             for spec in self._registry.list_specs()
+        )
+
+    def build_transport(self, transport_config: RuntimeWebSocketTransportConfig) -> RuntimeWebSocketTransport:
+        return RuntimeWebSocketTransport(
+            service=self,
+            handshake_service=self._handshake_service,
+            session_registry=self._session_registry,
+            config=transport_config,
         )
 
     async def accept_connection_hello(self, frame_text: str, record: RuntimeConnectionRecord, *, remote_address: str) -> RuntimeHandshakeOutcome:
@@ -154,10 +169,5 @@ class RuntimeService:
 
     async def serve_forever(self, transport_config: RuntimeWebSocketTransportConfig) -> None:
         await self.start()
-        transport = RuntimeWebSocketTransport(
-            service=self,
-            handshake_service=self._handshake_service,
-            session_registry=self._session_registry,
-            config=transport_config,
-        )
+        transport = self.build_transport(transport_config)
         await transport.serve_forever()

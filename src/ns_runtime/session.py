@@ -61,6 +61,12 @@ class RuntimeSessionRegistry:
     def __init__(self, *, runtime_id: str) -> None:
         self._runtime_id = runtime_id
         self._connections: dict[str, RuntimeConnectionRecord] = {}
+        self._active_connection_ids: set[str] = set()
+        self._identity_connections: dict[str, set[str]] = {}
+        self._tenant_connections: dict[str, set[str]] = {}
+        self._component_type_connections: dict[str, set[str]] = {}
+        self._capability_connections: dict[str, set[str]] = {}
+        self._session_connections: dict[str, str] = {}
 
     def create_handshaking(self, *, remote_address: str) -> RuntimeConnectionRecord:
         connection_id = str(uuid.uuid4())
@@ -116,6 +122,7 @@ class RuntimeSessionRegistry:
 
         record.session_context = session
         record.mark("active")
+        self._add_active_indexes(record)
         return session
 
     def reject(self, record: RuntimeConnectionRecord, *, state: RuntimeConnectionState, reason: str) -> None:
@@ -128,13 +135,124 @@ class RuntimeSessionRegistry:
                 },
             )
 
+        self._remove_active_indexes(record)
         record.mark(state, reason=reason)
 
     def close(self, record: RuntimeConnectionRecord, *, reason: str) -> None:
+        self._remove_active_indexes(record)
         record.mark("closed", reason=reason)
 
     def get(self, connection_id: str) -> RuntimeConnectionRecord | None:
         return self._connections.get(connection_id)
 
+    def get_active_record(self, connection_id: str) -> RuntimeConnectionRecord | None:
+        record = self._connections.get(connection_id)
+        if record is None or record.state != "active":
+            return None
+
+        return record
+
+    def get_active_session(self, connection_id: str) -> RuntimeSessionContext | None:
+        record = self.get_active_record(connection_id)
+        if record is None:
+            return None
+
+        return record.session_context
+
+    def get_by_session_id(self, session_id: str) -> RuntimeConnectionRecord | None:
+        connection_id = self._session_connections.get(session_id)
+        if connection_id is None:
+            return None
+
+        return self.get_active_record(connection_id)
+
     def list_records(self) -> tuple[RuntimeConnectionRecord, ...]:
         return tuple(self._connections[key] for key in sorted(self._connections.keys()))
+
+    def list_active_records(self) -> tuple[RuntimeConnectionRecord, ...]:
+        return self._records_by_ids(self._active_connection_ids)
+
+    def list_by_identity(self, identity: str) -> tuple[RuntimeConnectionRecord, ...]:
+        return self._records_by_ids(self._identity_connections.get(identity, set()))
+
+    def list_by_tenant(self, tenant_id: str) -> tuple[RuntimeConnectionRecord, ...]:
+        return self._records_by_ids(self._tenant_connections.get(tenant_id, set()))
+
+    def list_by_component_type(self, component_type: str) -> tuple[RuntimeConnectionRecord, ...]:
+        return self._records_by_ids(self._component_type_connections.get(component_type, set()))
+
+    def list_by_capability(self, capability: str) -> tuple[RuntimeConnectionRecord, ...]:
+        return self._records_by_ids(self._capability_connections.get(capability, set()))
+
+    def build_health_snapshot(self) -> dict[str, object]:
+        return {
+            "runtime_id": self._runtime_id,
+            "active_connection_count": len(self._active_connection_ids),
+            "total_connection_count": len(self._connections),
+            "identity_count": len(self._identity_connections),
+            "tenant_count": len(self._tenant_connections),
+            "component_type_count": len(self._component_type_connections),
+            "capability_count": len(self._capability_connections),
+            "by_tenant": self._count_index(self._tenant_connections),
+            "by_component_type": self._count_index(self._component_type_connections),
+            "server_time": utc_now_iso(),
+        }
+
+    def _add_active_indexes(self, record: RuntimeConnectionRecord) -> None:
+        session = record.session_context
+        if session is None:
+            return
+
+        self._active_connection_ids.add(record.connection_id)
+        self._session_connections[session.session_id] = record.connection_id
+        self._index_add(self._identity_connections, session.identity, record.connection_id)
+        self._index_add(self._tenant_connections, session.tenant_id, record.connection_id)
+        self._index_add(self._component_type_connections, session.component_type, record.connection_id)
+
+        for capability in session.capabilities:
+            self._index_add(self._capability_connections, capability, record.connection_id)
+
+    def _remove_active_indexes(self, record: RuntimeConnectionRecord) -> None:
+        session = record.session_context
+        if session is None:
+            return
+
+        self._active_connection_ids.discard(record.connection_id)
+        self._session_connections.pop(session.session_id, None)
+        self._index_remove(self._identity_connections, session.identity, record.connection_id)
+        self._index_remove(self._tenant_connections, session.tenant_id, record.connection_id)
+        self._index_remove(self._component_type_connections, session.component_type, record.connection_id)
+
+        for capability in session.capabilities:
+            self._index_remove(self._capability_connections, capability, record.connection_id)
+
+    def _records_by_ids(self, connection_ids: set[str]) -> tuple[RuntimeConnectionRecord, ...]:
+        records: list[RuntimeConnectionRecord] = []
+
+        for connection_id in sorted(connection_ids):
+            record = self._connections.get(connection_id)
+            if record is not None and record.state == "active":
+                records.append(record)
+
+        return tuple(records)
+
+    @staticmethod
+    def _index_add(index: dict[str, set[str]], key: str, connection_id: str) -> None:
+        index.setdefault(key, set()).add(connection_id)
+
+    @staticmethod
+    def _index_remove(index: dict[str, set[str]], key: str, connection_id: str) -> None:
+        values = index.get(key)
+        if values is None:
+            return
+
+        values.discard(connection_id)
+        if not values:
+            index.pop(key, None)
+
+    @staticmethod
+    def _count_index(index: dict[str, set[str]]) -> dict[str, int]:
+        return {
+            key: len(value)
+            for key, value in sorted(index.items())
+        }

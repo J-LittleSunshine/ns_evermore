@@ -57,7 +57,7 @@ class RuntimeWebSocketTransport:
         )
 
         async with serve(
-                self._handle_connection,
+                self.handle_connection,
                 self._config.host,
                 self._config.port,
                 origins=list(self._config.allowed_origins),
@@ -72,7 +72,7 @@ class RuntimeWebSocketTransport:
         ):
             await asyncio.Future()
 
-    async def _handle_connection(self, websocket: Any) -> None:
+    async def handle_connection(self, websocket: Any) -> None:
         record = self._session_registry.create_handshaking(remote_address=self._get_remote_address(websocket))
 
         try:
