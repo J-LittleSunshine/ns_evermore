@@ -12,6 +12,7 @@ from typing import (
 from ns_common.exceptions import NsRuntimeEnvelopeSchemaError
 from ns_common.logger import get_ns_logger
 from ns_runtime.handshake import RuntimeHandshakeService
+from ns_runtime.outbound import RuntimeConnectionWriterRegistry
 from ns_runtime.session import RuntimeSessionRegistry
 
 if TYPE_CHECKING:
@@ -33,10 +34,11 @@ class RuntimeWebSocketTransportConfig:
 
 
 class RuntimeWebSocketTransport:
-    def __init__(self, *, service: "RuntimeService", handshake_service: RuntimeHandshakeService, session_registry: RuntimeSessionRegistry, config: RuntimeWebSocketTransportConfig) -> None:
+    def __init__(self, *, service: "RuntimeService", handshake_service: RuntimeHandshakeService, session_registry: RuntimeSessionRegistry, writer_registry: RuntimeConnectionWriterRegistry, config: RuntimeWebSocketTransportConfig) -> None:
         self._service = service
         self._handshake_service = handshake_service
         self._session_registry = session_registry
+        self._writer_registry = writer_registry
         self._config = config
         self._logger = get_ns_logger("ns_runtime.transport", True)
 
@@ -95,6 +97,12 @@ class RuntimeWebSocketTransport:
                 await websocket.close(code=outcome.close_code, reason=outcome.close_reason[:120])
                 return
 
+            self._writer_registry.register(
+                connection_id=record.connection_id,
+                connection_epoch=record.connection_epoch,
+                websocket=websocket,
+            )
+
             async for frame in websocket:
                 if not isinstance(frame, str):
                     response = self._service.build_protocol_error_response(
@@ -129,6 +137,10 @@ class RuntimeWebSocketTransport:
             except Exception:  # noqa
                 pass
         finally:
+            self._writer_registry.unregister(
+                connection_id=record.connection_id,
+                connection_epoch=record.connection_epoch,
+            )
             self._session_registry.close(record, reason="websocket handler exited")
 
     @staticmethod

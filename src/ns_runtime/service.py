@@ -20,6 +20,10 @@ from ns_runtime.models import (
     ProcessorResponse,
     RuntimeSessionContext
 )
+from ns_runtime.outbound import (
+    RuntimeConnectionWriterRegistry,
+    RuntimeLocalEnvelopeForwarder,
+)
 from ns_runtime.processors import (
     ProcessorPipeline,
     ProcessorRegistry,
@@ -43,23 +47,27 @@ if TYPE_CHECKING:
 
 class RuntimeService:
     def __init__(
-        self,
-        *,
-        runtime_id: str,
-        codec: EnvelopeCodec,
-        registry: ProcessorRegistry,
-        pipeline: ProcessorPipeline,
-        session_registry: RuntimeSessionRegistry,
-        handshake_service: RuntimeHandshakeService,
-        target_resolver: RuntimeTargetResolver,
-        config_version: str = "local:1",
-        policy_version: str = "local:1",
+            self,
+            *,
+            runtime_id: str,
+            codec: EnvelopeCodec,
+            registry: ProcessorRegistry,
+            pipeline: ProcessorPipeline,
+            session_registry: RuntimeSessionRegistry,
+            writer_registry: RuntimeConnectionWriterRegistry,
+            local_forwarder: RuntimeLocalEnvelopeForwarder,
+            handshake_service: RuntimeHandshakeService,
+            target_resolver: RuntimeTargetResolver,
+            config_version: str = "local:1",
+            policy_version: str = "local:1",
     ) -> None:
         self._runtime_id = runtime_id
         self._codec = codec
         self._registry = registry
         self._pipeline = pipeline
         self._session_registry = session_registry
+        self._writer_registry = writer_registry
+        self._local_forwarder = local_forwarder
         self._handshake_service = handshake_service
         self._target_resolver = target_resolver
         self._config_version = config_version
@@ -70,6 +78,8 @@ class RuntimeService:
     def build_default(cls, *, runtime_id: str, authenticator: RuntimeAuthenticator | None = None) -> "RuntimeService":
         codec = EnvelopeCodec(runtime_id=runtime_id)
         session_registry = RuntimeSessionRegistry(runtime_id=runtime_id)
+        writer_registry = RuntimeConnectionWriterRegistry()
+        local_forwarder = RuntimeLocalEnvelopeForwarder(writer_registry=writer_registry)
         target_resolver = RuntimeTargetResolver(
             runtime_id=runtime_id,
             session_registry=session_registry,
@@ -97,6 +107,8 @@ class RuntimeService:
             registry=registry,
             pipeline=pipeline,
             session_registry=session_registry,
+            writer_registry=writer_registry,
+            local_forwarder=local_forwarder,
             handshake_service=handshake_service,
             target_resolver=target_resolver,
         )
@@ -112,6 +124,14 @@ class RuntimeService:
     @property
     def target_resolver(self) -> RuntimeTargetResolver:
         return self._target_resolver
+
+    @property
+    def writer_registry(self) -> RuntimeConnectionWriterRegistry:
+        return self._writer_registry
+
+    @property
+    def local_forwarder(self) -> RuntimeLocalEnvelopeForwarder:
+        return self._local_forwarder
 
     def resolve_target(self, frame_text: str, session: RuntimeSessionContext) -> dict[str, Any] | None:
         envelope = self._codec.parse_inbound(frame_text, session)
@@ -139,6 +159,7 @@ class RuntimeService:
             service=self,
             handshake_service=self._handshake_service,
             session_registry=self._session_registry,
+            writer_registry=self._writer_registry,
             config=transport_config,
         )
 

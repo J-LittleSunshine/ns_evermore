@@ -22,6 +22,12 @@ from ns_runtime.models import (
     RuntimeSessionContext,
     RuntimeSourceContext,
 )
+from ns_runtime.outbound import (
+    RuntimeConnectionWriter,
+    RuntimeConnectionWriterRegistry,
+    RuntimeLocalEnvelopeForwarder,
+    RuntimeLocalWriteResult,
+)
 from ns_runtime.processors import (
     BaseRuntimeProcessor,
     ProcessorPipeline,
@@ -76,6 +82,10 @@ __all__ = [
     "RuntimeRouteDecision",
     "RuntimeRouteTarget",
     "RuntimeTargetResolver",
+    "RuntimeConnectionWriter",
+    "RuntimeConnectionWriterRegistry",
+    "RuntimeLocalEnvelopeForwarder",
+    "RuntimeLocalWriteResult",
 ]
 
 __version__ = "0.2.0"

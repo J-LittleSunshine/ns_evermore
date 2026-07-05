@@ -23,6 +23,75 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
     def test_websocket_connection_hello_then_runtime_health(self) -> None:
         asyncio.run(self._run_websocket_connection_hello_then_runtime_health())
 
+    def test_websocket_task_dispatch_forwards_to_local_connection(self) -> None:
+        asyncio.run(self._run_websocket_task_dispatch_forwards_to_local_connection())
+
+    async def _run_websocket_task_dispatch_forwards_to_local_connection(self) -> None:
+        try:
+            from websockets.asyncio.client import connect
+            from websockets.asyncio.server import serve
+        except ImportError as exc:
+            raise RuntimeError("Install requirements-runtime.txt before running runtime integration tests.") from exc
+
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            authenticator=LocalTokenRuntimeAuthenticator(expected_token="secret"),
+        )
+        config = RuntimeWebSocketTransportConfig(
+            host="127.0.0.1",
+            port=0,
+            handshake_timeout_seconds=2.0,
+        )
+        transport = service.build_transport(config)
+
+        async with serve(
+                transport.handle_connection,
+                config.host,
+                0,
+                compression=None,
+                max_size=config.max_frame_bytes,
+                max_queue=config.read_queue_high_water,
+                write_limit=config.write_limit_bytes,
+                ping_interval=None,
+                server_header=None,
+        ) as server:
+            port = server.sockets[0].getsockname()[1]
+            async with connect(f"ws://127.0.0.1:{port}", max_size=config.max_frame_bytes) as receiver:
+                await receiver.send(self._build_hello_frame(token="secret", capabilities=[
+                    "task.execute"
+                ]
+                )
+                )
+                receiver_accepted = self._read_json(await receiver.recv())
+                receiver_connection_id = receiver_accepted["payload"]["inline"]["connection_id"]
+
+                async with connect(f"ws://127.0.0.1:{port}", max_size=config.max_frame_bytes) as sender:
+                    await sender.send(self._build_hello_frame(token="secret", capabilities=[
+                        "task.dispatch"
+                    ]
+                    )
+                    )
+                    sender_accepted = self._read_json(await sender.recv())
+                    sender_connection_id = sender_accepted["payload"]["inline"]["connection_id"]
+
+                    await sender.send(self._build_task_dispatch_frame(target_connection_id=receiver_connection_id))
+
+                    forwarded = self._read_json(await receiver.recv())
+                    forward_result = self._read_json(await sender.recv())
+
+                    self.assertEqual(forwarded["message"]["type"], "task.dispatch")
+                    self.assertEqual(forwarded["source"]["connection_id"], sender_connection_id)
+                    self.assertEqual(forwarded["target"]["connection_id"], receiver_connection_id)
+                    self.assertEqual(forwarded["payload"]["inline"]["task_name"], "demo-task")
+
+                    self.assertEqual(forward_result["message"]["type"], "runtime.control.forward_result")
+                    self.assertEqual(forward_result["payload"]["inline"]["status"], "forwarded")
+                    self.assertEqual(forward_result["payload"]["inline"]["write_count"], 1)
+                    self.assertEqual(
+                        forward_result["payload"]["inline"]["reliability_note"],
+                        "websocket_send_only_no_delivery_ack",
+                    )
+
     async def _run_websocket_connection_hello_then_runtime_health(self) -> None:
         try:
             from websockets.asyncio.client import connect
@@ -70,7 +139,7 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                 self.assertEqual(health_result["payload"]["inline"]["runtime"]["active_connection_count"], 1)
 
     @staticmethod
-    def _build_hello_frame(*, token: str) -> str:
+    def _build_hello_frame(*, token: str, capabilities: list[str] | None = None) -> str:
         return json.dumps(
             {
                 "protocol": {
@@ -89,10 +158,39 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                     "inline": {
                         "token": token,
                         "component_type": "management",
-                        "requested_capabilities": [
+                        "requested_capabilities": capabilities or [
                             "runtime.management",
                             "task.dispatch",
                         ],
+                    },
+                },
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _build_task_dispatch_frame(*, target_connection_id: str) -> str:
+        return json.dumps(
+            {
+                "protocol": {
+                    "version": "1.0.0",
+                },
+                "message": {
+                    "message_id": str(uuid.uuid4()),
+                    "type": "task.dispatch",
+                    "category": "task",
+                    "priority": 100,
+                    "created_at": utc_now_iso(),
+                    "reliability": "critical",
+                },
+                "target": {
+                    "kind": "connection",
+                    "connection_id": target_connection_id,
+                },
+                "payload": {
+                    "mode": "inline",
+                    "inline": {
+                        "task_name": "demo-task",
                     },
                 },
             },

@@ -27,6 +27,7 @@ from ns_runtime.models import (
     RuntimeSessionContext,
     utc_now_iso,
 )
+from ns_runtime.outbound import RuntimeLocalEnvelopeForwarder
 from ns_runtime.protocol import EnvelopeCodec
 from ns_runtime.routing import RuntimeTargetResolver
 
@@ -94,6 +95,7 @@ class MessageTypeAuthProcessor(BaseRuntimeProcessor):
 
         return None
 
+
 class TargetLookupProcessor(BaseRuntimeProcessor):
     def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver) -> None:
         self._codec = codec
@@ -130,6 +132,96 @@ class AuditMarkProcessor(BaseRuntimeProcessor):
                 "policy_version": request.policy_version,
             },
         )
+
+
+class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
+    def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver, local_forwarder: RuntimeLocalEnvelopeForwarder) -> None:
+        self._codec = codec
+        self._target_resolver = target_resolver
+        self._local_forwarder = local_forwarder
+
+    async def process(self, request: ProcessorRequest) -> ProcessorResponse:
+        try:
+            decision = self._target_resolver.resolve(request.envelope, request.session)
+            if decision is None:
+                raise NsRuntimeEnvelopeSchemaError(
+                    "task.dispatch must contain target group.",
+                    details={
+                        "message_id": request.envelope.message_id,
+                    },
+                )
+
+            write_results = await self._local_forwarder.forward(
+                decision=decision,
+                envelope=request.envelope,
+            )
+
+            return ProcessorResponse.respond(
+                self._build_forward_result(
+                    request=request,
+                    decision=decision,
+                    write_results=write_results,
+                )
+            )
+        except NsEvermoreError as exc:
+            return ProcessorResponse.reject(
+                self._codec.build_error_envelope(
+                    exc,
+                    session=request.session,
+                    request=request.envelope,
+                )
+            )
+
+    def _build_forward_result(self, *, request: ProcessorRequest, decision, write_results) -> dict[str, Any]:
+        return {
+            "protocol": {
+                "version": self._codec.protocol_version_text,
+            },
+            "message": {
+                "message_id": f"{request.envelope.message_id}.forwarded",
+                "type": "runtime.control.forward_result",
+                "category": "control",
+                "priority": 100,
+                "created_at": utc_now_iso(),
+                "reliability": "best_effort",
+            },
+            "source": {
+                "runtime_id": request.session.runtime_id,
+                "connection_id": "runtime",
+                "session_id": "runtime",
+                "identity": request.session.runtime_id,
+                "tenant_id": request.session.tenant_id,
+                "component_type": "runtime",
+                "capabilities_summary": [
+                    "runtime.control.forward_result",
+                ],
+                "connection_epoch": 0,
+            },
+            "target": {
+                "kind": "connection",
+                "connection_id": request.session.connection_id,
+            },
+            "payload": {
+                "mode": "inline",
+                "inline": {
+                    "status": "forwarded",
+                    "message_id": request.envelope.message_id,
+                    "message_type": request.envelope.message_type,
+                    "target_kind": decision.target_kind,
+                    "target_count": decision.target_count,
+                    "write_count": len(write_results),
+                    "writes": [
+                        item.to_dict()
+                        for item in write_results
+                    ],
+                    "reliability_note": "websocket_send_only_no_delivery_ack",
+                },
+            },
+            "trace": {
+                "trace_id": request.envelope.raw.get("trace", {}).get("trace_id", request.envelope.message_id),
+                "request_id": request.envelope.message_id,
+            },
+        }
 
 
 class RegisteredOnlyProcessor(BaseRuntimeProcessor):
@@ -303,7 +395,7 @@ class ProcessorPipeline:
         return await message_processor.process(request)
 
 
-def build_default_processor_registry(codec: EnvelopeCodec, *, health_snapshot_provider: Callable[[], Mapping[str, Any]] | None = None) -> ProcessorRegistry:
+def build_default_processor_registry(codec: EnvelopeCodec, *, health_snapshot_provider: Callable[[], Mapping[str, Any]] | None = None, target_resolver: RuntimeTargetResolver | None = None, local_forwarder: RuntimeLocalEnvelopeForwarder | None = None) -> ProcessorRegistry:
     registry = ProcessorRegistry()
     registered_only = RegisteredOnlyProcessor(codec=codec)
 
@@ -316,6 +408,12 @@ def build_default_processor_registry(codec: EnvelopeCodec, *, health_snapshot_pr
             processor = RuntimeHealthProcessor(
                 codec=codec,
                 health_snapshot_provider=health_snapshot_provider,
+            )
+        elif spec.message_type == "task.dispatch" and target_resolver is not None and local_forwarder is not None:
+            processor = LocalTaskDispatchProcessor(
+                codec=codec,
+                target_resolver=target_resolver,
+                local_forwarder=local_forwarder,
             )
 
         registry.register(spec, processor)
@@ -356,7 +454,7 @@ def _build_builtin_message_type_specs() -> tuple[MessageTypeSpec, ...]:
         {"message_type": "connection.heartbeat", "category": "control", "reliability": "best_effort", "implemented": True},
         {"message_type": "connection.heartbeat_ack", "category": "control", "reliability": "best_effort", "implemented": False},
         {"message_type": "connection.drain", "category": "control", "reliability": "reliable", "implemented": False},
-        {"message_type": "task.dispatch", "category": "task", "required_groups": ("target",), "required_capabilities": ("task.dispatch",), "reliability": "critical", "implemented": False},
+        {"message_type": "task.dispatch", "category": "task", "required_groups": ("target",), "required_capabilities": ("task.dispatch",), "reliability": "critical", "implemented": True},
         {"message_type": "task.result", "category": "task", "required_groups": ("target",), "reliability": "reliable", "implemented": False},
         {"message_type": "delivery.ack", "category": "delivery", "required_groups": ("delivery",), "reliability": "critical", "implemented": False},
         {"message_type": "delivery.nack", "category": "delivery", "required_groups": ("delivery",), "reliability": "critical", "implemented": False},
@@ -373,6 +471,7 @@ def _build_builtin_message_type_specs() -> tuple[MessageTypeSpec, ...]:
         {"message_type": "stream.status_query", "category": "stream", "required_capabilities": ("stream.status_query",), "reliability": "best_effort", "implemented": False},
         {"message_type": "runtime.control.health", "category": "control", "reliability": "best_effort", "implemented": True},
         {"message_type": "runtime.control.health_result", "category": "control", "reliability": "best_effort", "implemented": False},
+        {"message_type": "runtime.control.forward_result", "category": "control", "reliability": "best_effort", "implemented": False},
         {"message_type": "runtime.control.node_status", "category": "control", "required_capabilities": ("runtime.management",), "reliability": "best_effort", "implemented": False},
         {"message_type": "runtime.control.connection_status", "category": "control", "required_capabilities": ("runtime.management",), "reliability": "best_effort", "implemented": False},
         {"message_type": "runtime.control.kick_connection", "category": "control", "required_capabilities": ("runtime.management",), "reliability": "critical", "implemented": False},

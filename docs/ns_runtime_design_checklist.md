@@ -114,6 +114,8 @@
 - 当 target 指向多个连接可能性时，消息必须显式指定多连接策略，或由系统默认策略裁决；后续实现不能在 identity 多连接场景下隐式广播或隐式任选而不留策略痕迹。
     - [x] 【实现进度 1.4】已提供本地 `RuntimeTargetResolver` 和 target lookup processor，基于当前单进程 session index 支持 `connection`、`identity`、`tenant`、`broadcast`、`component_type`、`capability`、`runtime` 的基础解析；target 不存在时返回 `RUNTIME_TARGET_UNAVAILABLE`，跨 tenant 本地寻址默认拒绝。该进度只表示本地 routing decision 与 target 校验完成，不表示
       WebSocket 写出、DeliveryRecord、ACK/NACK/Defer、跨节点路由或负载均衡策略已完成。
+  - [x] 【实现进度 1.5】已提供本地 active WebSocket writer registry 和 `task.dispatch` 本地直连转发基础能力：runtime 可将已通过 Envelope 校验、权限校验和 target lookup 的 normalized envelope 写出到本机 active target connection，并向发送方返回 `runtime.control.forward_result`。该进度只表示 WebSocket send 层面的本地写出完成，不表示
+    DeliveryRecord、ACK/NACK/Defer 状态机、可靠重试、死信、跨节点转发或 delivery 成功语义已完成；WebSocket send 成功不得解释为 delivery ACK。
 - `delivery` 分组只在可靠投递相关消息中出现，包含 `delivery_id`、`summary_id`、`root_delivery_id`、`parent_delivery_id`、`attempt`、`ack_timeout_ms`、`replay_epoch` 等投递维度字段；`message_id` 只从 `message.message_id` 读取，不在 delivery 中重复。
 - `payload` 必须支持 inline 小 payload 和 `payload_ref` 对象存储引用两种模式；inline 大小上限完全由 runtime 策略决定，payload_ref 必须实时调用 `ns_backend` 校验。
 - 当 inline payload 超过 runtime 策略允许大小、JSON 深度或帧大小限制时，应返回错误 envelope 或按严重错误策略断开连接，并且不能为了兼容发送方自动转为 payload_ref。
