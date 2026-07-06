@@ -292,8 +292,8 @@
 - DeliveryRecord 强一致持久化是可靠投递底线；RoutingPlan、DeliveryAttempt、MessageDeliverySummary 的一致性等级可以按消息类型和策略配置，但关键消息的 summary 与初始 delivery 需要原子写入。
 - 普通消息允许异步记录、摘要记录或采样记录时，只能放宽 RoutingPlan、DeliveryAttempt、普通 summary 或观测数据的记录强度；一旦某条消息声明为可靠投递，DeliveryRecord 和合法 ACK/NACK/Defer 相关原子状态仍不能退化为纯内存成功。
 - DeliveryAttempt 对关键消息必须强一致记录，以便审计、重试和排障；普通消息的 DeliveryAttempt 可以异步记录、摘要记录或采样记录，但不能影响 DeliveryRecord 强一致状态。
-  - [x] 【实现进度 1.6】已新增内存版 `RuntimeDeliveryRegistry`、`RuntimeDeliveryRecord` 和 `RuntimeDeliveryAttempt` 骨架；`task.dispatch` 本地直连转发时会为每个本地 target 创建 delivery metadata，将 `delivery` 分组注入写给目标连接的 envelope，并在 WebSocket send 成功后把 DeliveryRecord 置为 `ack_waiting`、DeliveryAttempt 写状态置为 `sent_to_transport`
-  。该进度只表示投递元数据与本地写出链路打通，不表示强一致持久化、ACK/NACK/Defer 状态机、retry、dead letter、lease/fencing、去重或生产级可靠投递已完成。
+    - [x] 【实现进度 1.6】已新增内存版 `RuntimeDeliveryRegistry`、`RuntimeDeliveryRecord` 和 `RuntimeDeliveryAttempt` 骨架；`task.dispatch` 本地直连转发时会为每个本地 target 创建 delivery metadata，将 `delivery` 分组注入写给目标连接的 envelope，并在 WebSocket send 成功后把 DeliveryRecord 置为 `ack_waiting`、DeliveryAttempt 写状态置为 `sent_to_transport`
+      。该进度只表示投递元数据与本地写出链路打通，不表示强一致持久化、ACK/NACK/Defer 状态机、retry、dead letter、lease/fencing、去重或生产级可靠投递已完成。
 - `prepared` 表示 delivery 已强一致创建但所属 summary 仍在 initializing 或尚未允许发送；`prepared` 不占 active/inflight 配额，不参与优先级、aging 或抢占，但受 expires_at 和管理取消影响。
 - 如果消息在受理阶段已经超过 runtime 裁决后的有效期，或剩余有效期低于策略允许的最小投递窗口，应在受理阶段 rejected 或创建 failed summary，而不是创建必然过期的有效 DeliveryRecord；具体是否保留 rejected summary 由受理策略决定。
 - `queued` 表示 delivery 已可发送并等待可靠投递调度器选择发送时机；`queued` 不等于已经进入某个 connection 写队列。
@@ -329,6 +329,8 @@
 - ACK 是一等 envelope 消息，必须完整走 Envelope 协议层、安全硬校验和 processor 流水线；可靠投递层只接受 ACK processor 校验后的 ACK 结果，不允许 ACK 快速通道。
 - ACK、NACK、Defer 的发送者必须匹配该 delivery 当前期望的确认方；叶子 delivery 通常只能由目标 connection/session/identity 确认，父 delivery 只能由对应下游 runtime 节点确认，target rebinding 或 ownership transfer 后必须按新 owner/target/fencing 重新校验。
 - 第一次合法 ACK 必须写 AckRecord，并与 DeliveryRecord 进入 `acked` 在同一事务或原子操作中完成；重复 ACK 不新增 AckRecord，只写审计/安全事件和指标。
+    - [x] 【实现进度 1.7】已新增内存版 `RuntimeAckRecord` 和 `delivery.ack` processor 骨架；当前 ACK 会校验 delivery 是否存在、ACK 来源 tenant、connection_id 和 connection_epoch 是否匹配当前 DeliveryRecord target，并在合法 ACK 后将 DeliveryRecord 从 `ack_waiting` 等可确认状态置为 `acked`。重复 ACK 返回 `duplicate_ack`，不新增第二条 AckRecord。该进度只表示单进程内存
+      ACK 校验和状态迁移打通，不表示强一致事务、lease/fencing、旧 owner 转发、ACK timeout、retry 取消、NACK/Defer 或生产级可靠投递已完成。
 - 如果 delivery 处于 `retry_scheduled` 且收到合法 ACK，可靠投递层必须原子写入 AckRecord、进入 `acked` 并取消对应待重试计划；不能让已 ACK 的 delivery 继续被 retry worker 再次发送。
 - stream cumulative ACK 使用单条范围型 AckRecord 覆盖多个 chunk delivery，并在同一事务中批量更新被覆盖 DeliveryRecord 和 StreamDeliveryState。
 - NACK 是一等 envelope 消息，必须强一致写 NackRecord，并与 DeliveryRecord 状态变更原子完成；NACK 不算 ACK，NACK reason 决定 retry、reroute、dead_letter 或安全审计。

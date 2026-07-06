@@ -98,6 +98,19 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                         forward_result["payload"]["inline"]["reliability_note"],
                         "websocket_send_only_no_delivery_ack",
                     )
+                    delivery_id = forwarded["delivery"]["delivery_id"]
+                    await receiver.send(self._build_ack_frame(delivery_id=delivery_id))
+                    ack_result = self._read_json(await receiver.recv())
+
+                    self.assertEqual(ack_result["message"]["type"], "delivery.ack_result")
+                    self.assertEqual(ack_result["payload"]["inline"]["status"], "acked")
+                    self.assertEqual(ack_result["payload"]["inline"]["delivery_state"], "acked")
+                    self.assertEqual(ack_result["payload"]["inline"]["delivery_id"], delivery_id)
+                    self.assertFalse(ack_result["payload"]["inline"]["duplicate"])
+
+                    delivery_record = service.delivery_registry.get_record(delivery_id)
+                    self.assertIsNotNone(delivery_record)
+                    self.assertEqual(delivery_record.state, "acked")
 
     async def _run_websocket_connection_hello_then_runtime_health(self) -> None:
         try:
@@ -199,6 +212,28 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                     "inline": {
                         "task_name": "demo-task",
                     },
+                },
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _build_ack_frame(*, delivery_id: str) -> str:
+        return json.dumps(
+            {
+                "protocol": {
+                    "version": "1.0.0",
+                },
+                "message": {
+                    "message_id": str(uuid.uuid4()),
+                    "type": "delivery.ack",
+                    "category": "delivery",
+                    "priority": 100,
+                    "created_at": utc_now_iso(),
+                    "reliability": "critical",
+                },
+                "delivery": {
+                    "delivery_id": delivery_id,
                 },
             },
             ensure_ascii=False,

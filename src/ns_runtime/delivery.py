@@ -14,7 +14,11 @@ from typing import (
     TYPE_CHECKING
 )
 
-from ns_common.exceptions import NsRuntimeDeliveryStateError
+from ns_common.exceptions import (
+    NsRuntimeAckRejectedError,
+    NsRuntimeDeliveryStateError,
+    NsRuntimeEnvelopeSchemaError,
+)
 from ns_runtime.models import (
     Envelope,
     MessageReliability,
@@ -48,6 +52,50 @@ RuntimeDeliveryAttemptWriteStatus = Literal[
     "sent_to_transport",
     "write_failed",
 ]
+
+
+@dataclass(slots=True, kw_only=True)
+class RuntimeAckRecord:
+    ack_id: str
+    delivery_id: str
+    message_id: str
+    tenant_id: str
+    ack_connection_id: str
+    ack_connection_epoch: int
+    ack_message_id: str
+    acked_at: str
+    duplicate_count: int = 0
+    last_seen_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ack_id": self.ack_id,
+            "delivery_id": self.delivery_id,
+            "message_id": self.message_id,
+            "tenant_id": self.tenant_id,
+            "ack_connection_id": self.ack_connection_id,
+            "ack_connection_epoch": self.ack_connection_epoch,
+            "ack_message_id": self.ack_message_id,
+            "acked_at": self.acked_at,
+            "duplicate_count": self.duplicate_count,
+            "last_seen_at": self.last_seen_at,
+        }
+
+
+@dataclass(slots=True, kw_only=True)
+class RuntimeAckResult:
+    status: str
+    delivery_record: RuntimeDeliveryRecord
+    ack_record: RuntimeAckRecord
+    duplicate: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "duplicate": self.duplicate,
+            "delivery": self.delivery_record.to_dict(),
+            "ack": self.ack_record.to_dict(),
+        }
 
 
 @dataclass(slots=True, kw_only=True)
@@ -142,6 +190,8 @@ class RuntimeDeliveryRegistry:
         self._records: dict[str, RuntimeDeliveryRecord] = {}
         self._attempts: dict[str, RuntimeDeliveryAttempt] = {}
         self._attempt_ids_by_delivery: dict[str, list[str]] = {}
+        self._acks: dict[str, RuntimeAckRecord] = {}
+        self._ack_id_by_delivery: dict[str, str] = {}
 
     def create_prepared_record(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target: RuntimeRouteTarget) -> RuntimeDeliveryRecord:
         delivery_id = str(uuid.uuid4())
@@ -232,6 +282,86 @@ class RuntimeDeliveryRegistry:
         record.last_error_code = exc.__class__.__name__
         record.last_error_message = str(exc)
 
+    def mark_acked(self, *, envelope: Envelope, session_connection_id: str, session_connection_epoch: int, session_tenant_id: str) -> RuntimeAckResult:
+        delivery_id = self._read_required_delivery_id(envelope)
+        record = self._records.get(delivery_id)
+        if record is None:
+            raise NsRuntimeAckRejectedError(
+                "ACK references unknown delivery.",
+                details={
+                    "delivery_id": delivery_id,
+                    "ack_message_id": envelope.message_id,
+                },
+            )
+
+        existing_ack_id = self._ack_id_by_delivery.get(delivery_id)
+        if existing_ack_id is not None:
+            ack_record = self._acks[existing_ack_id]
+            ack_record.duplicate_count += 1
+            ack_record.last_seen_at = utc_now_iso()
+            return RuntimeAckResult(
+                status="duplicate_ack",
+                delivery_record=record,
+                ack_record=ack_record,
+                duplicate=True,
+            )
+
+        self._validate_ack_source(
+            record=record,
+            session_connection_id=session_connection_id,
+            session_connection_epoch=session_connection_epoch,
+            session_tenant_id=session_tenant_id,
+        )
+
+        if record.state not in {"sending", "ack_waiting", "retry_scheduled"}:
+            raise NsRuntimeAckRejectedError(
+                "ACK is not allowed from current delivery state.",
+                details={
+                    "delivery_id": delivery_id,
+                    "state": record.state,
+                },
+            )
+
+        now = utc_now_iso()
+        ack_record = RuntimeAckRecord(
+            ack_id=str(uuid.uuid4()),
+            delivery_id=record.delivery_id,
+            message_id=record.message_id,
+            tenant_id=record.tenant_id,
+            ack_connection_id=session_connection_id,
+            ack_connection_epoch=session_connection_epoch,
+            ack_message_id=envelope.message_id,
+            acked_at=now,
+            last_seen_at=now,
+        )
+
+        record.state = "acked"
+        record.updated_at = now
+        record.last_error_code = ""
+        record.last_error_message = ""
+
+        self._acks[ack_record.ack_id] = ack_record
+        self._ack_id_by_delivery[record.delivery_id] = ack_record.ack_id
+
+        return RuntimeAckResult(
+            status="acked",
+            delivery_record=record,
+            ack_record=ack_record,
+        )
+
+    def get_ack_for_delivery(self, delivery_id: str) -> RuntimeAckRecord | None:
+        ack_id = self._ack_id_by_delivery.get(delivery_id)
+        if ack_id is None:
+            return None
+
+        return self._acks.get(ack_id)
+
+    def list_acks(self) -> tuple[RuntimeAckRecord, ...]:
+        return tuple(
+            self._acks[key]
+            for key in sorted(self._acks.keys())
+        )
+
     def inject_delivery_group(self, *, envelope: Envelope, record: RuntimeDeliveryRecord, attempt: RuntimeDeliveryAttempt) -> dict[str, Any]:
         data = envelope.to_dict()
         data["delivery"] = {
@@ -270,6 +400,7 @@ class RuntimeDeliveryRegistry:
         return {
             "delivery_count": len(self._records),
             "attempt_count": len(self._attempts),
+            "ack_count": len(self._acks),
             "by_state": {
                 key: by_state[key]
                 for key in sorted(by_state.keys())
@@ -296,6 +427,50 @@ class RuntimeDeliveryRegistry:
         if not isinstance(value, str):
             return ""
         return value
+
+    @staticmethod
+    def _read_required_delivery_id(envelope: Envelope) -> str:
+        delivery = envelope.raw.get("delivery")
+        if not isinstance(delivery, dict):
+            raise NsRuntimeEnvelopeSchemaError("delivery group must be an object.")
+
+        delivery_id = delivery.get("delivery_id")
+        if not isinstance(delivery_id, str) or not delivery_id.strip():
+            raise NsRuntimeEnvelopeSchemaError("delivery.delivery_id must be a non-empty string.")
+
+        return delivery_id.strip()
+
+    @staticmethod
+    def _validate_ack_source(*, record: RuntimeDeliveryRecord, session_connection_id: str, session_connection_epoch: int, session_tenant_id: str) -> None:
+        if record.tenant_id != session_tenant_id:
+            raise NsRuntimeAckRejectedError(
+                "ACK tenant does not match delivery tenant.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "delivery_tenant_id": record.tenant_id,
+                    "ack_tenant_id": session_tenant_id,
+                },
+            )
+
+        if record.target_connection_id != session_connection_id:
+            raise NsRuntimeAckRejectedError(
+                "ACK connection does not match delivery target connection.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "target_connection_id": record.target_connection_id,
+                    "ack_connection_id": session_connection_id,
+                },
+            )
+
+        if record.target_connection_epoch != session_connection_epoch:
+            raise NsRuntimeAckRejectedError(
+                "ACK connection epoch does not match delivery target epoch.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "target_connection_epoch": record.target_connection_epoch,
+                    "ack_connection_epoch": session_connection_epoch,
+                },
+            )
 
     @staticmethod
     def _compute_ack_deadline(ack_timeout_ms: int) -> str:

@@ -113,6 +113,19 @@ class RuntimeProcessorTestCase(unittest.TestCase):
         self.assertEqual(response.envelope["message"]["type"], "runtime.error")
         self.assertEqual(response.envelope["payload"]["inline"]["error"]["code"], "RUNTIME_TARGET_UNAVAILABLE")
 
+    def test_delivery_ack_with_unknown_delivery_is_rejected_by_ack_processor(self) -> None:
+        response = asyncio.run(
+            self.service.process_frame(
+                self._build_ack_frame(delivery_id="missing-delivery"),
+                self.session,
+            )
+        )
+
+        self.assertEqual(response.action, "reject")
+        self.assertIsNotNone(response.envelope)
+        self.assertEqual(response.envelope["message"]["type"], "runtime.error")
+        self.assertEqual(response.envelope["payload"]["inline"]["error"]["code"], "RUNTIME_ACK_REJECTED")
+
     def _build_frame(self, message_type: str, *, category: str, target: dict[str, Any] | None = None) -> str:
         raw: dict[str, Any] = {
             "protocol": {
@@ -133,6 +146,25 @@ class RuntimeProcessorTestCase(unittest.TestCase):
 
         return json.dumps(raw, ensure_ascii=False)
 
+    @staticmethod
+    def _build_ack_frame(*, delivery_id: str) -> str:
+        raw: dict[str, Any] = {
+            "protocol": {
+                "version": "1.0.0",
+            },
+            "message": {
+                "message_id": "ack-1",
+                "type": "delivery.ack",
+                "category": "delivery",
+                "priority": 100,
+                "created_at": utc_now_iso(),
+                "reliability": "critical",
+            },
+            "delivery": {
+                "delivery_id": delivery_id,
+            },
+        }
+        return json.dumps(raw, ensure_ascii=False)
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,8 @@ from ns_runtime.auth import (
     RuntimeAuthenticator
 )
 from ns_runtime.delivery import (
+    RuntimeAckRecord,
+    RuntimeAckResult,
     RuntimeDeliveryAttempt,
     RuntimeDeliveryAttemptWriteStatus,
     RuntimeDeliveryRecord,
@@ -98,6 +100,8 @@ __all__ = [
     "RuntimeDeliveryRecord",
     "RuntimeDeliveryRegistry",
     "RuntimeDeliveryState",
+    "RuntimeAckRecord",
+    "RuntimeAckResult",
 ]
 
 __version__ = "0.2.0"

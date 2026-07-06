@@ -96,6 +96,7 @@ class RuntimeService:
             health_snapshot_provider=session_registry.build_health_snapshot,
             target_resolver=target_resolver,
             local_forwarder=local_forwarder,
+            delivery_registry=delivery_registry,
         )
         pipeline = build_default_processor_pipeline(
             codec,
