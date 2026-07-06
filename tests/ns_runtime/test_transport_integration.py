@@ -29,6 +29,9 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
     def test_websocket_task_dispatch_then_nack_moves_delivery_to_retry_scheduled(self) -> None:
         asyncio.run(self._run_websocket_task_dispatch_then_nack_moves_delivery_to_retry_scheduled())
 
+    def test_websocket_task_dispatch_then_defer_extends_ack_deadline(self) -> None:
+        asyncio.run(self._run_websocket_task_dispatch_then_defer_extends_ack_deadline())
+
     async def _run_websocket_task_dispatch_forwards_to_local_connection(self) -> None:
         try:
             from websockets.asyncio.client import connect
@@ -234,6 +237,77 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                     self.assertIsNotNone(delivery_record)
                     self.assertEqual(delivery_record.state, "retry_scheduled")
 
+    async def _run_websocket_task_dispatch_then_defer_extends_ack_deadline(self) -> None:
+        try:
+            from websockets.asyncio.client import connect
+            from websockets.asyncio.server import serve
+        except ImportError as exc:
+            raise RuntimeError("Install requirements-runtime.txt before running runtime integration tests.") from exc
+
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            authenticator=LocalTokenRuntimeAuthenticator(expected_token="secret"),
+        )
+        config = RuntimeWebSocketTransportConfig(
+            host="127.0.0.1",
+            port=0,
+            handshake_timeout_seconds=2.0,
+        )
+        transport = service.build_transport(config)
+
+        async with serve(
+                transport.handle_connection,
+                config.host,
+                0,
+                compression=None,
+                max_size=config.max_frame_bytes,
+                max_queue=config.read_queue_high_water,
+                write_limit=config.write_limit_bytes,
+                ping_interval=None,
+                server_header=None,
+        ) as server:
+            port = server.sockets[0].getsockname()[1]
+            async with connect(f"ws://127.0.0.1:{port}", max_size=config.max_frame_bytes) as receiver:
+                await receiver.send(self._build_hello_frame(token="secret", capabilities=["task.execute"]))
+                receiver_accepted = self._read_json(await receiver.recv())
+                receiver_connection_id = receiver_accepted["payload"]["inline"]["connection_id"]
+
+                async with connect(f"ws://127.0.0.1:{port}", max_size=config.max_frame_bytes) as sender:
+                    await sender.send(self._build_hello_frame(token="secret", capabilities=["task.dispatch"]))
+                    await sender.recv()
+
+                    await sender.send(self._build_task_dispatch_frame(target_connection_id=receiver_connection_id))
+
+                    forwarded = self._read_json(await receiver.recv())
+                    await sender.recv()
+
+                    delivery_id = forwarded["delivery"]["delivery_id"]
+                    original_record = service.delivery_registry.get_record(delivery_id)
+                    self.assertIsNotNone(original_record)
+                    original_deadline = original_record.ack_deadline_at
+
+                    await receiver.send(
+                        self._build_defer_frame(
+                            delivery_id=delivery_id,
+                            defer_ms=1000,
+                        )
+                    )
+                    defer_result = self._read_json(await receiver.recv())
+
+                    self.assertEqual(defer_result["message"]["type"], "delivery.defer_result")
+                    self.assertEqual(defer_result["payload"]["inline"]["status"], "deferred")
+                    self.assertEqual(defer_result["payload"]["inline"]["delivery_state"], "ack_waiting")
+                    self.assertEqual(defer_result["payload"]["inline"]["delivery_id"], delivery_id)
+                    self.assertEqual(defer_result["payload"]["inline"]["defer_ms"], 1000)
+                    self.assertEqual(defer_result["payload"]["inline"]["defer_sequence"], 1)
+                    self.assertEqual(defer_result["payload"]["inline"]["defer_count"], 1)
+                    self.assertEqual(defer_result["payload"]["inline"]["total_defer_ms"], 1000)
+
+                    delivery_record = service.delivery_registry.get_record(delivery_id)
+                    self.assertIsNotNone(delivery_record)
+                    self.assertEqual(delivery_record.state, "ack_waiting")
+                    self.assertNotEqual(delivery_record.ack_deadline_at, original_deadline)
+
     @staticmethod
     def _build_hello_frame(*, token: str, capabilities: list[str] | None = None) -> str:
         return json.dumps(
@@ -337,6 +411,34 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                     "mode": "inline",
                     "inline": {
                         "reason": reason,
+                    },
+                },
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _build_defer_frame(*, delivery_id: str, defer_ms: int) -> str:
+        return json.dumps(
+            {
+                "protocol": {
+                    "version": "1.0.0",
+                },
+                "message": {
+                    "message_id": str(uuid.uuid4()),
+                    "type": "delivery.defer",
+                    "category": "delivery",
+                    "priority": 100,
+                    "created_at": utc_now_iso(),
+                    "reliability": "critical",
+                },
+                "delivery": {
+                    "delivery_id": delivery_id,
+                },
+                "payload": {
+                    "mode": "inline",
+                    "inline": {
+                        "defer_ms": defer_ms,
                     },
                 },
             },

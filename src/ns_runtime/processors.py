@@ -400,6 +400,96 @@ class DeliveryNackProcessor(BaseRuntimeProcessor):
         }
 
 
+class DeliveryDeferProcessor(BaseRuntimeProcessor):
+    def __init__(self, *, codec: EnvelopeCodec, delivery_registry: RuntimeDeliveryRegistry) -> None:
+        self._codec = codec
+        self._delivery_registry = delivery_registry
+
+    async def process(self, request: ProcessorRequest) -> ProcessorResponse:
+        try:
+            defer_result = self._delivery_registry.mark_deferred(
+                envelope=request.envelope,
+                session_connection_id=request.session.connection_id,
+                session_connection_epoch=request.session.connection_epoch,
+                session_tenant_id=request.session.tenant_id,
+            )
+
+            return ProcessorResponse.respond(
+                self._build_defer_result(
+                    request=request,
+                    defer_result=defer_result,
+                )
+            )
+        except NsEvermoreError as exc:
+            return ProcessorResponse.reject(
+                self._codec.build_error_envelope(
+                    exc,
+                    session=request.session,
+                    request=request.envelope,
+                )
+            )
+
+    def _build_defer_result(self, *, request: ProcessorRequest, defer_result) -> dict[str, Any]:
+        return {
+            "protocol": {
+                "version": self._codec.protocol_version_text,
+            },
+            "message": {
+                "message_id": f"{request.envelope.message_id}.result",
+                "type": "delivery.defer_result",
+                "category": "delivery",
+                "priority": 100,
+                "created_at": utc_now_iso(),
+                "reliability": "best_effort",
+            },
+            "source": {
+                "runtime_id": request.session.runtime_id,
+                "connection_id": "runtime",
+                "session_id": "runtime",
+                "identity": request.session.runtime_id,
+                "tenant_id": request.session.tenant_id,
+                "component_type": "runtime",
+                "capabilities_summary": [
+                    "delivery.defer_result",
+                ],
+                "connection_epoch": 0,
+            },
+            "target": {
+                "kind": "connection",
+                "connection_id": request.session.connection_id,
+            },
+            "delivery": {
+                "delivery_id": defer_result.delivery_record.delivery_id,
+                "summary_id": defer_result.delivery_record.summary_id,
+                "root_delivery_id": defer_result.delivery_record.root_delivery_id,
+                "attempt": defer_result.delivery_record.attempt_count,
+                "ack_timeout_ms": defer_result.delivery_record.ack_timeout_ms,
+                "replay_epoch": 0,
+            },
+            "payload": {
+                "mode": "inline",
+                "inline": {
+                    "status": defer_result.status,
+                    "delivery_id": defer_result.delivery_record.delivery_id,
+                    "delivery_state": defer_result.delivery_record.state,
+                    "defer_id": defer_result.defer_record.defer_id,
+                    "defer_connection_id": defer_result.defer_record.defer_connection_id,
+                    "defer_connection_epoch": defer_result.defer_record.defer_connection_epoch,
+                    "defer_ms": defer_result.defer_record.defer_ms,
+                    "defer_sequence": defer_result.defer_record.defer_sequence,
+                    "previous_ack_deadline_at": defer_result.defer_record.previous_ack_deadline_at,
+                    "new_ack_deadline_at": defer_result.defer_record.new_ack_deadline_at,
+                    "total_defer_ms": defer_result.total_defer_ms,
+                    "defer_count": defer_result.defer_count,
+                },
+            },
+            "trace": {
+                "trace_id": request.envelope.raw.get("trace", {}).get("trace_id", request.envelope.message_id),
+                "request_id": request.envelope.message_id,
+            },
+        }
+
+
 class RegisteredOnlyProcessor(BaseRuntimeProcessor):
     def __init__(self, *, codec: EnvelopeCodec) -> None:
         self._codec = codec
@@ -608,6 +698,11 @@ def build_default_processor_registry(
                 codec=codec,
                 delivery_registry=delivery_registry,
             )
+        elif spec.message_type == "delivery.defer" and delivery_registry is not None:
+            processor = DeliveryDeferProcessor(
+                codec=codec,
+                delivery_registry=delivery_registry,
+            )
 
         registry.register(spec, processor)
 
@@ -653,7 +748,8 @@ def _build_builtin_message_type_specs() -> tuple[MessageTypeSpec, ...]:
         {"message_type": "delivery.ack_result", "category": "delivery", "required_groups": ("delivery",), "reliability": "best_effort", "implemented": False},
         {"message_type": "delivery.nack", "category": "delivery", "required_groups": ("delivery", "payload"), "reliability": "critical", "implemented": True},
         {"message_type": "delivery.nack_result", "category": "delivery", "required_groups": ("delivery",), "reliability": "best_effort", "implemented": False},
-        {"message_type": "delivery.defer", "category": "delivery", "required_groups": ("delivery",), "reliability": "critical", "implemented": False},
+        {"message_type": "delivery.defer", "category": "delivery", "required_groups": ("delivery", "payload"), "reliability": "critical", "implemented": True},
+        {"message_type": "delivery.defer_result", "category": "delivery", "required_groups": ("delivery",), "reliability": "best_effort", "implemented": False},
         {"message_type": "delivery.dead_letter", "category": "delivery", "required_groups": ("delivery",), "reliability": "critical", "implemented": False},
         {"message_type": "delivery.replay", "category": "delivery", "required_groups": ("delivery",), "required_capabilities": ("delivery.replay",), "reliability": "critical", "implemented": False},
         {"message_type": "delivery.cancel", "category": "delivery", "required_groups": ("delivery",), "required_capabilities": ("delivery.cancel",), "reliability": "critical", "implemented": False},

@@ -11,13 +11,15 @@ from ns_runtime.auth import (
 from ns_runtime.delivery import (
     RuntimeAckRecord,
     RuntimeAckResult,
+    RuntimeDeferRecord,
+    RuntimeDeferResult,
     RuntimeDeliveryAttempt,
     RuntimeDeliveryAttemptWriteStatus,
     RuntimeDeliveryRecord,
     RuntimeDeliveryRegistry,
     RuntimeDeliveryState,
     RuntimeNackRecord,
-    RuntimeNackResult,
+    RuntimeNackResult
 )
 from ns_runtime.handshake import (
     ConnectionHello,
@@ -106,6 +108,8 @@ __all__ = [
     "RuntimeAckResult",
     "RuntimeNackRecord",
     "RuntimeNackResult",
+    "RuntimeDeferRecord",
+    "RuntimeDeferResult",
 ]
 
 __version__ = "0.2.0"

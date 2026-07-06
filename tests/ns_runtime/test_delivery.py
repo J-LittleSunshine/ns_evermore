@@ -10,6 +10,7 @@ from typing import (
 
 from ns_common.exceptions import (
     NsRuntimeAckRejectedError,
+    NsRuntimeDeferRejectedError,
     NsRuntimeNackRejectedError,
 )
 from ns_runtime.auth import RuntimeAuthResult
@@ -468,6 +469,163 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
         self.assertEqual(len(self.delivery_registry.list_nacks()), 1)
         self.assertEqual(self.delivery_registry.get_nack_for_delivery(record.delivery_id).duplicate_count, 0)
 
+    def test_defer_extends_ack_deadline_and_keeps_ack_waiting(self) -> None:
+        record = self._create_ack_waiting_delivery()
+        previous_deadline = record.ack_deadline_at
+
+        defer_envelope = self.codec.parse_inbound(
+            self._build_defer_frame(
+                delivery_id=record.delivery_id,
+                defer_ms=1000,
+            ),
+            self.target_session,
+        )
+        result = self.delivery_registry.mark_deferred(
+            envelope=defer_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        self.assertEqual(result.status, "deferred")
+        self.assertEqual(record.state, "ack_waiting")
+        self.assertEqual(result.defer_record.defer_ms, 1000)
+        self.assertEqual(result.defer_record.defer_sequence, 1)
+        self.assertEqual(result.defer_record.previous_ack_deadline_at, previous_deadline)
+        self.assertEqual(record.ack_deadline_at, result.defer_record.new_ack_deadline_at)
+        self.assertNotEqual(record.ack_deadline_at, previous_deadline)
+        self.assertEqual(result.defer_count, 1)
+        self.assertEqual(result.total_defer_ms, 1000)
+        self.assertEqual(self.delivery_registry.build_delivery_snapshot()["defer_count"], 1)
+        self.assertEqual(self.delivery_registry.build_delivery_snapshot()["by_state"]["ack_waiting"], 1)
+
+    def test_defer_from_retry_scheduled_returns_to_ack_waiting(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=record.delivery_id,
+                reason="queue_full",
+            ),
+            self.target_session,
+        )
+        self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+        self.assertEqual(record.state, "retry_scheduled")
+
+        defer_envelope = self.codec.parse_inbound(
+            self._build_defer_frame(
+                delivery_id=record.delivery_id,
+                defer_ms=1000,
+            ),
+            self.target_session,
+        )
+        result = self.delivery_registry.mark_deferred(
+            envelope=defer_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        self.assertEqual(result.status, "deferred")
+        self.assertEqual(record.state, "ack_waiting")
+        self.assertEqual(result.defer_record.defer_sequence, 1)
+
+    def test_defer_from_wrong_connection_is_rejected(self) -> None:
+        record = self._create_ack_waiting_delivery()
+        wrong_session = self._activate(
+            identity="wrong-defer-target",
+            tenant_id="tenant-1",
+            component_type="client",
+            capabilities=("task.execute",),
+        )
+
+        defer_envelope = self.codec.parse_inbound(
+            self._build_defer_frame(
+                delivery_id=record.delivery_id,
+                defer_ms=1000,
+            ),
+            wrong_session,
+        )
+
+        with self.assertRaises(NsRuntimeDeferRejectedError):
+            self.delivery_registry.mark_deferred(
+                envelope=defer_envelope,
+                session_connection_id=wrong_session.connection_id,
+                session_connection_epoch=wrong_session.connection_epoch,
+                session_tenant_id=wrong_session.tenant_id,
+            )
+
+    def test_defer_budget_count_limit_is_rejected(self) -> None:
+        registry = RuntimeDeliveryRegistry(
+            default_ack_timeout_ms=1000,
+            max_defer_count=1,
+            max_single_defer_ms=1000,
+            max_total_defer_ms=2000,
+        )
+        self.delivery_registry = registry
+        record = self._create_ack_waiting_delivery()
+
+        first = self.codec.parse_inbound(
+            self._build_defer_frame(
+                delivery_id=record.delivery_id,
+                defer_ms=500,
+            ),
+            self.target_session,
+        )
+        self.delivery_registry.mark_deferred(
+            envelope=first,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        second = self.codec.parse_inbound(
+            self._build_defer_frame(
+                delivery_id=record.delivery_id,
+                defer_ms=500,
+            ),
+            self.target_session,
+        )
+
+        with self.assertRaises(NsRuntimeDeferRejectedError):
+            self.delivery_registry.mark_deferred(
+                envelope=second,
+                session_connection_id=self.target_session.connection_id,
+                session_connection_epoch=self.target_session.connection_epoch,
+                session_tenant_id=self.target_session.tenant_id,
+            )
+
+    def test_defer_single_duration_limit_is_rejected(self) -> None:
+        registry = RuntimeDeliveryRegistry(
+            default_ack_timeout_ms=1000,
+            max_defer_count=3,
+            max_single_defer_ms=1000,
+            max_total_defer_ms=5000,
+        )
+        self.delivery_registry = registry
+        record = self._create_ack_waiting_delivery()
+
+        defer_envelope = self.codec.parse_inbound(
+            self._build_defer_frame(
+                delivery_id=record.delivery_id,
+                defer_ms=1001,
+            ),
+            self.target_session,
+        )
+
+        with self.assertRaises(NsRuntimeDeferRejectedError):
+            self.delivery_registry.mark_deferred(
+                envelope=defer_envelope,
+                session_connection_id=self.target_session.connection_id,
+                session_connection_epoch=self.target_session.connection_epoch,
+                session_tenant_id=self.target_session.tenant_id,
+            )
+
     def _create_ack_waiting_delivery(self):
         envelope = self.codec.parse_inbound(
             self._build_task_dispatch_frame(
@@ -561,6 +719,32 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
                 "mode": "inline",
                 "inline": {
                     "reason": reason,
+                },
+            },
+        }
+        return json.dumps(raw, ensure_ascii=False)
+
+    @staticmethod
+    def _build_defer_frame(*, delivery_id: str, defer_ms: int) -> str:
+        raw: dict[str, Any] = {
+            "protocol": {
+                "version": "1.0.0",
+            },
+            "message": {
+                "message_id": "defer-1",
+                "type": "delivery.defer",
+                "category": "delivery",
+                "priority": 100,
+                "created_at": utc_now_iso(),
+                "reliability": "critical",
+            },
+            "delivery": {
+                "delivery_id": delivery_id,
+            },
+            "payload": {
+                "mode": "inline",
+                "inline": {
+                    "defer_ms": defer_ms,
                 },
             },
         }

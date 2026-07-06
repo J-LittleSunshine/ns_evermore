@@ -16,6 +16,7 @@ from typing import (
 
 from ns_common.exceptions import (
     NsRuntimeAckRejectedError,
+    NsRuntimeDeferRejectedError,
     NsRuntimeDeliveryStateError,
     NsRuntimeEnvelopeSchemaError,
     NsRuntimeNackRejectedError,
@@ -151,6 +152,56 @@ class RuntimeNackResult:
 
 
 @dataclass(slots=True, kw_only=True)
+class RuntimeDeferRecord:
+    defer_id: str
+    delivery_id: str
+    message_id: str
+    tenant_id: str
+    defer_connection_id: str
+    defer_connection_epoch: int
+    defer_message_id: str
+    defer_ms: int
+    defer_sequence: int
+    previous_ack_deadline_at: str
+    new_ack_deadline_at: str
+    deferred_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "defer_id": self.defer_id,
+            "delivery_id": self.delivery_id,
+            "message_id": self.message_id,
+            "tenant_id": self.tenant_id,
+            "defer_connection_id": self.defer_connection_id,
+            "defer_connection_epoch": self.defer_connection_epoch,
+            "defer_message_id": self.defer_message_id,
+            "defer_ms": self.defer_ms,
+            "defer_sequence": self.defer_sequence,
+            "previous_ack_deadline_at": self.previous_ack_deadline_at,
+            "new_ack_deadline_at": self.new_ack_deadline_at,
+            "deferred_at": self.deferred_at,
+        }
+
+
+@dataclass(slots=True, kw_only=True)
+class RuntimeDeferResult:
+    status: str
+    delivery_record: RuntimeDeliveryRecord
+    defer_record: RuntimeDeferRecord
+    total_defer_ms: int
+    defer_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "delivery": self.delivery_record.to_dict(),
+            "defer": self.defer_record.to_dict(),
+            "total_defer_ms": self.total_defer_ms,
+            "defer_count": self.defer_count,
+        }
+
+
+@dataclass(slots=True, kw_only=True)
 class RuntimeDeliveryRecord:
     delivery_id: str
     summary_id: str
@@ -237,7 +288,7 @@ class RuntimeDeliveryAttempt:
 
 
 class RuntimeDeliveryRegistry:
-    def __init__(self, *, default_ack_timeout_ms: int = 30000) -> None:
+    def __init__(self, *, default_ack_timeout_ms: int = 30000, max_defer_count: int = 3, max_single_defer_ms: int = 30000, max_total_defer_ms: int = 90000) -> None:
         self._default_ack_timeout_ms = default_ack_timeout_ms
         self._records: dict[str, RuntimeDeliveryRecord] = {}
         self._attempts: dict[str, RuntimeDeliveryAttempt] = {}
@@ -246,6 +297,11 @@ class RuntimeDeliveryRegistry:
         self._ack_id_by_delivery: dict[str, str] = {}
         self._nacks: dict[str, RuntimeNackRecord] = {}
         self._nack_id_by_delivery: dict[str, str] = {}
+        self._max_defer_count = max_defer_count
+        self._max_single_defer_ms = max_single_defer_ms
+        self._max_total_defer_ms = max_total_defer_ms
+        self._defers: dict[str, RuntimeDeferRecord] = {}
+        self._defer_ids_by_delivery: dict[str, list[str]] = {}
 
     def create_prepared_record(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target: RuntimeRouteTarget) -> RuntimeDeliveryRecord:
         delivery_id = str(uuid.uuid4())
@@ -485,6 +541,95 @@ class RuntimeDeliveryRegistry:
             nack_record=nack_record,
         )
 
+    def mark_deferred(self, *, envelope: Envelope, session_connection_id: str, session_connection_epoch: int, session_tenant_id: str) -> RuntimeDeferResult:
+        delivery_id = self._read_required_delivery_id(envelope)
+        defer_ms = self._read_required_defer_ms(envelope)
+
+        record = self._records.get(delivery_id)
+        if record is None:
+            raise NsRuntimeDeferRejectedError(
+                "Defer references unknown delivery.",
+                details={
+                    "delivery_id": delivery_id,
+                    "defer_message_id": envelope.message_id,
+                    "defer_ms": defer_ms,
+                },
+            )
+
+        self._validate_defer_source(
+            record=record,
+            session_connection_id=session_connection_id,
+            session_connection_epoch=session_connection_epoch,
+            session_tenant_id=session_tenant_id,
+        )
+
+        if record.state not in {"sending", "ack_waiting", "retry_scheduled"}:
+            raise NsRuntimeDeferRejectedError(
+                "Defer is not allowed from current delivery state.",
+                details={
+                    "delivery_id": delivery_id,
+                    "state": record.state,
+                    "defer_ms": defer_ms,
+                },
+            )
+
+        self._ensure_defer_budget(
+            record=record,
+            requested_defer_ms=defer_ms,
+        )
+
+        now = utc_now_iso()
+        previous_deadline = record.ack_deadline_at
+        new_deadline = self._extend_ack_deadline(
+            record=record,
+            defer_ms=defer_ms,
+        )
+        defer_sequence = self._next_defer_sequence(record.delivery_id)
+
+        defer_record = RuntimeDeferRecord(
+            defer_id=str(uuid.uuid4()),
+            delivery_id=record.delivery_id,
+            message_id=record.message_id,
+            tenant_id=record.tenant_id,
+            defer_connection_id=session_connection_id,
+            defer_connection_epoch=session_connection_epoch,
+            defer_message_id=envelope.message_id,
+            defer_ms=defer_ms,
+            defer_sequence=defer_sequence,
+            previous_ack_deadline_at=previous_deadline,
+            new_ack_deadline_at=new_deadline,
+            deferred_at=now,
+        )
+
+        record.state = "ack_waiting"
+        record.ack_deadline_at = new_deadline
+        record.updated_at = now
+        record.last_error_code = ""
+        record.last_error_message = ""
+
+        self._defers[defer_record.defer_id] = defer_record
+        self._defer_ids_by_delivery.setdefault(record.delivery_id, []).append(defer_record.defer_id)
+
+        return RuntimeDeferResult(
+            status="deferred",
+            delivery_record=record,
+            defer_record=defer_record,
+            total_defer_ms=self._compute_total_defer_ms(record.delivery_id),
+            defer_count=len(self._defer_ids_by_delivery.get(record.delivery_id, [])),
+        )
+
+    def list_defers_for_delivery(self, delivery_id: str) -> tuple[RuntimeDeferRecord, ...]:
+        return tuple(
+            self._defers[defer_id]
+            for defer_id in self._defer_ids_by_delivery.get(delivery_id, [])
+        )
+
+    def list_defers(self) -> tuple[RuntimeDeferRecord, ...]:
+        return tuple(
+            self._defers[key]
+            for key in sorted(self._defers.keys())
+        )
+
     def get_nack_for_delivery(self, delivery_id: str) -> RuntimeNackRecord | None:
         nack_id = self._nack_id_by_delivery.get(delivery_id)
         if nack_id is None:
@@ -551,6 +696,7 @@ class RuntimeDeliveryRegistry:
             "attempt_count": len(self._attempts),
             "ack_count": len(self._acks),
             "nack_count": len(self._nacks),
+            "defer_count": len(self._defers),
             "by_state": {
                 key: by_state[key]
                 for key in sorted(by_state.keys())
@@ -618,6 +764,30 @@ class RuntimeDeliveryRegistry:
         return normalized
 
     @staticmethod
+    def _read_required_defer_ms(envelope: Envelope) -> int:
+        payload = envelope.raw.get("payload")
+        if not isinstance(payload, dict):
+            raise NsRuntimeEnvelopeSchemaError("delivery.defer must contain payload group.")
+
+        inline = payload.get("inline")
+        if not isinstance(inline, dict):
+            raise NsRuntimeEnvelopeSchemaError("delivery.defer payload.inline must be an object.")
+
+        defer_ms = inline.get("defer_ms")
+        if isinstance(defer_ms, bool) or not isinstance(defer_ms, int):
+            raise NsRuntimeEnvelopeSchemaError("delivery.defer payload.inline.defer_ms must be an integer.")
+
+        if defer_ms <= 0:
+            raise NsRuntimeDeferRejectedError(
+                "Defer duration must be positive.",
+                details={
+                    "defer_ms": defer_ms,
+                },
+            )
+
+        return defer_ms
+
+    @staticmethod
     def _resolve_nack_reason_error_code(reason: str) -> str:
         return RuntimeDeliveryRegistry._nack_reason_error_code_map()[reason]
 
@@ -674,6 +844,38 @@ class RuntimeDeliveryRegistry:
             )
 
     @staticmethod
+    def _validate_defer_source(*, record: RuntimeDeliveryRecord, session_connection_id: str, session_connection_epoch: int, session_tenant_id: str) -> None:
+        if record.tenant_id != session_tenant_id:
+            raise NsRuntimeDeferRejectedError(
+                "Defer tenant does not match delivery tenant.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "delivery_tenant_id": record.tenant_id,
+                    "defer_tenant_id": session_tenant_id,
+                },
+            )
+
+        if record.target_connection_id != session_connection_id:
+            raise NsRuntimeDeferRejectedError(
+                "Defer connection does not match delivery target connection.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "target_connection_id": record.target_connection_id,
+                    "defer_connection_id": session_connection_id,
+                },
+            )
+
+        if record.target_connection_epoch != session_connection_epoch:
+            raise NsRuntimeDeferRejectedError(
+                "Defer connection epoch does not match delivery target epoch.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "target_connection_epoch": record.target_connection_epoch,
+                    "defer_connection_epoch": session_connection_epoch,
+                },
+            )
+
+    @staticmethod
     def _validate_ack_source(*, record: RuntimeDeliveryRecord, session_connection_id: str, session_connection_epoch: int, session_tenant_id: str) -> None:
         if record.tenant_id != session_tenant_id:
             raise NsRuntimeAckRejectedError(
@@ -704,6 +906,74 @@ class RuntimeDeliveryRegistry:
                     "ack_connection_epoch": session_connection_epoch,
                 },
             )
+
+    def _ensure_defer_budget(self, *, record: RuntimeDeliveryRecord, requested_defer_ms: int) -> None:
+        current_count = len(self._defer_ids_by_delivery.get(record.delivery_id, []))
+        if current_count >= self._max_defer_count:
+            raise NsRuntimeDeferRejectedError(
+                "Defer budget count is exhausted.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "current_count": current_count,
+                    "max_defer_count": self._max_defer_count,
+                },
+            )
+
+        if requested_defer_ms > self._max_single_defer_ms:
+            raise NsRuntimeDeferRejectedError(
+                "Single defer duration exceeds policy limit.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "defer_ms": requested_defer_ms,
+                    "max_single_defer_ms": self._max_single_defer_ms,
+                },
+            )
+
+        total_after = self._compute_total_defer_ms(record.delivery_id) + requested_defer_ms
+        if total_after > self._max_total_defer_ms:
+            raise NsRuntimeDeferRejectedError(
+                "Total defer duration exceeds policy limit.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "requested_defer_ms": requested_defer_ms,
+                    "total_after_ms": total_after,
+                    "max_total_defer_ms": self._max_total_defer_ms,
+                },
+            )
+
+    def _compute_total_defer_ms(self, delivery_id: str) -> int:
+        return sum(
+            self._defers[defer_id].defer_ms
+            for defer_id in self._defer_ids_by_delivery.get(delivery_id, [])
+        )
+
+    def _next_defer_sequence(self, delivery_id: str) -> int:
+        return len(self._defer_ids_by_delivery.get(delivery_id, [])) + 1
+
+    def _extend_ack_deadline(self, *, record: RuntimeDeliveryRecord, defer_ms: int) -> str:
+        now = datetime.now(timezone.utc)
+        current_deadline = self._parse_datetime(record.ack_deadline_at)
+        base = now
+
+        if current_deadline is not None and current_deadline > now:
+            base = current_deadline
+
+        return (base + timedelta(milliseconds=defer_ms)).isoformat(timespec="milliseconds")
+
+    @staticmethod
+    def _parse_datetime(value: str) -> datetime | None:
+        if not value:
+            return None
+
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+
+        return parsed
 
     @staticmethod
     def _compute_ack_deadline(ack_timeout_ms: int) -> str:
