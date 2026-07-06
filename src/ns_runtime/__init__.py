@@ -16,6 +16,8 @@ from ns_runtime.delivery import (
     RuntimeDeliveryRecord,
     RuntimeDeliveryRegistry,
     RuntimeDeliveryState,
+    RuntimeNackRecord,
+    RuntimeNackResult,
 )
 from ns_runtime.handshake import (
     ConnectionHello,
@@ -102,6 +104,8 @@ __all__ = [
     "RuntimeDeliveryState",
     "RuntimeAckRecord",
     "RuntimeAckResult",
+    "RuntimeNackRecord",
+    "RuntimeNackResult",
 ]
 
 __version__ = "0.2.0"

@@ -8,7 +8,10 @@ from typing import (
     TYPE_CHECKING
 )
 
-from ns_common.exceptions import NsRuntimeAckRejectedError
+from ns_common.exceptions import (
+    NsRuntimeAckRejectedError,
+    NsRuntimeNackRejectedError,
+)
 from ns_runtime.auth import RuntimeAuthResult
 from ns_runtime.delivery import RuntimeDeliveryRegistry
 from ns_runtime.models import (
@@ -289,6 +292,137 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
         self.assertEqual(len(self.delivery_registry.list_acks()), 1)
         self.assertEqual(self.delivery_registry.get_ack_for_delivery(record.delivery_id).duplicate_count, 0)
 
+    def test_retryable_nack_moves_delivery_to_retry_scheduled(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=record.delivery_id,
+                reason="temporarily_unavailable",
+            ),
+            self.target_session,
+        )
+        result = self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        self.assertEqual(result.status, "nacked_retry_scheduled")
+        self.assertFalse(result.duplicate)
+        self.assertTrue(result.nack_record.retryable)
+        self.assertEqual(result.nack_record.reason, "temporarily_unavailable")
+        self.assertEqual(record.state, "retry_scheduled")
+        self.assertEqual(self.delivery_registry.get_nack_for_delivery(record.delivery_id), result.nack_record)
+        self.assertEqual(self.delivery_registry.build_delivery_snapshot()["by_state"]["retry_scheduled"], 1)
+        self.assertEqual(self.delivery_registry.build_delivery_snapshot()["nack_count"], 1)
+
+    def test_non_retryable_nack_moves_delivery_to_dead_lettered(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=record.delivery_id,
+                reason="permission_denied",
+            ),
+            self.target_session,
+        )
+        result = self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        self.assertEqual(result.status, "nacked_dead_lettered")
+        self.assertFalse(result.duplicate)
+        self.assertFalse(result.nack_record.retryable)
+        self.assertEqual(result.nack_record.reason, "permission_denied")
+        self.assertEqual(record.state, "dead_lettered")
+        self.assertEqual(record.last_error_code, "RUNTIME_UNAUTHORIZED_MESSAGE_TYPE")
+        self.assertEqual(self.delivery_registry.build_delivery_snapshot()["by_state"]["dead_lettered"], 1)
+
+    def test_duplicate_nack_returns_duplicate_nack_without_second_record(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        nack_frame = self._build_nack_frame(
+            delivery_id=record.delivery_id,
+            reason="queue_full",
+        )
+        nack_envelope = self.codec.parse_inbound(nack_frame, self.target_session)
+
+        first = self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+        second = self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        self.assertEqual(first.status, "nacked_retry_scheduled")
+        self.assertEqual(second.status, "duplicate_nack")
+        self.assertTrue(second.duplicate)
+        self.assertEqual(len(self.delivery_registry.list_nacks()), 1)
+        self.assertEqual(second.nack_record.duplicate_count, 1)
+
+    def test_nack_from_wrong_connection_is_rejected(self) -> None:
+        record = self._create_ack_waiting_delivery()
+        wrong_session = self._activate(
+            identity="wrong-nack-target",
+            tenant_id="tenant-1",
+            component_type="client",
+            capabilities=("task.execute",),
+        )
+
+        nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=record.delivery_id,
+                reason="temporarily_unavailable",
+            ),
+            wrong_session,
+        )
+
+        with self.assertRaises(NsRuntimeNackRejectedError):
+            self.delivery_registry.mark_nacked(
+                envelope=nack_envelope,
+                session_connection_id=wrong_session.connection_id,
+                session_connection_epoch=wrong_session.connection_epoch,
+                session_tenant_id=wrong_session.tenant_id,
+            )
+
+    def _create_ack_waiting_delivery(self):
+        envelope = self.codec.parse_inbound(
+            self._build_task_dispatch_frame(
+                target_connection_id=self.target_session.connection_id,
+            ),
+            self.source_session,
+        )
+        decision = self.target_resolver.resolve(envelope, self.source_session)
+        self.assertIsNotNone(decision)
+
+        record = self.delivery_registry.create_prepared_record(
+            decision=decision,
+            envelope=envelope,
+            target=decision.targets[0],
+        )
+        attempt = self.delivery_registry.start_sending(record=record)
+        self.delivery_registry.mark_sent_to_transport(
+            record=record,
+            attempt=attempt,
+            write_result=RuntimeLocalWriteResult(
+                connection_id=self.target_session.connection_id,
+                connection_epoch=self.target_session.connection_epoch,
+                status="sent",
+            ),
+        )
+        return record
+
     def _activate(self, *, identity: str, tenant_id: str, component_type: str, capabilities: tuple[str, ...]) -> RuntimeSessionContext:
         record = self.session_registry.create_handshaking(remote_address="test")
         return self.session_registry.activate(
@@ -335,6 +469,32 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
         return json.dumps(raw, ensure_ascii=False)
 
     @staticmethod
+    def _build_nack_frame(*, delivery_id: str, reason: str) -> str:
+        raw: dict[str, Any] = {
+            "protocol": {
+                "version": "1.0.0",
+            },
+            "message": {
+                "message_id": "nack-1",
+                "type": "delivery.nack",
+                "category": "delivery",
+                "priority": 100,
+                "created_at": utc_now_iso(),
+                "reliability": "critical",
+            },
+            "delivery": {
+                "delivery_id": delivery_id,
+            },
+            "payload": {
+                "mode": "inline",
+                "inline": {
+                    "reason": reason,
+                },
+            },
+        }
+        return json.dumps(raw, ensure_ascii=False)
+
+    @staticmethod
     def _build_ack_frame(*, delivery_id: str) -> str:
         raw: dict[str, Any] = {
             "protocol": {
@@ -353,6 +513,7 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
             },
         }
         return json.dumps(raw, ensure_ascii=False)
+
 
 if __name__ == "__main__":
     unittest.main()

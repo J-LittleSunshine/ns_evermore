@@ -334,6 +334,8 @@
 - 如果 delivery 处于 `retry_scheduled` 且收到合法 ACK，可靠投递层必须原子写入 AckRecord、进入 `acked` 并取消对应待重试计划；不能让已 ACK 的 delivery 继续被 retry worker 再次发送。
 - stream cumulative ACK 使用单条范围型 AckRecord 覆盖多个 chunk delivery，并在同一事务中批量更新被覆盖 DeliveryRecord 和 StreamDeliveryState。
 - NACK 是一等 envelope 消息，必须强一致写 NackRecord，并与 DeliveryRecord 状态变更原子完成；NACK 不算 ACK，NACK reason 决定 retry、reroute、dead_letter 或安全审计。
+  - [x] 【实现进度 1.8】已新增内存版 `RuntimeNackRecord` 和 `delivery.nack` processor 骨架；当前 NACK 会校验 delivery 是否存在、NACK 来源 tenant、connection_id 和 connection_epoch 是否匹配当前 DeliveryRecord target，并按 `payload.inline.reason` 将 retryable reason 置为 `retry_scheduled`、non-retryable reason 置为 `dead_lettered`。重复 NACK 返回
+  `duplicate_nack`，不新增第二条 NackRecord。该进度只表示单进程内存 NACK 校验与基础状态迁移打通，不表示强一致事务、策略引擎、retry worker、DeadLetterRecord、lease/fencing、目标健康画像或生产级可靠投递已完成。
 - 重复 NACK 不应污染 NackRecord 主记录；重复、迟到或非法 NACK 应进入审计/安全事件，并按策略决定是否限流、断连或降低目标健康评分。
 - 如果 NACK reason 是 target overloaded、temporarily unavailable、queue full 或 dependency unavailable，应默认倾向 retry/reroute 并降低 target health score；如果 reason 是 permission denied、tenant mismatch、invalid payload reference 等，应默认 dead letter 或安全审计。
 - retryable NACK 默认消耗 message 级重试预算；non-retryable NACK 直接进入 dead_lettered 或安全审计，预算耗尽时未完成 delivery 进入 dead_lettered。

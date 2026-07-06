@@ -26,6 +26,9 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
     def test_websocket_task_dispatch_forwards_to_local_connection(self) -> None:
         asyncio.run(self._run_websocket_task_dispatch_forwards_to_local_connection())
 
+    def test_websocket_task_dispatch_then_nack_moves_delivery_to_retry_scheduled(self) -> None:
+        asyncio.run(self._run_websocket_task_dispatch_then_nack_moves_delivery_to_retry_scheduled())
+
     async def _run_websocket_task_dispatch_forwards_to_local_connection(self) -> None:
         try:
             from websockets.asyncio.client import connect
@@ -158,6 +161,79 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                 self.assertEqual(health_result["payload"]["inline"]["status"], "ok")
                 self.assertEqual(health_result["payload"]["inline"]["runtime"]["active_connection_count"], 1)
 
+    async def _run_websocket_task_dispatch_then_nack_moves_delivery_to_retry_scheduled(self) -> None:
+        try:
+            from websockets.asyncio.client import connect
+            from websockets.asyncio.server import serve
+        except ImportError as exc:
+            raise RuntimeError("Install requirements-runtime.txt before running runtime integration tests.") from exc
+
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            authenticator=LocalTokenRuntimeAuthenticator(expected_token="secret"),
+        )
+        config = RuntimeWebSocketTransportConfig(
+            host="127.0.0.1",
+            port=0,
+            handshake_timeout_seconds=2.0,
+        )
+        transport = service.build_transport(config)
+
+        async with serve(
+                transport.handle_connection,
+                config.host,
+                0,
+                compression=None,
+                max_size=config.max_frame_bytes,
+                max_queue=config.read_queue_high_water,
+                write_limit=config.write_limit_bytes,
+                ping_interval=None,
+                server_header=None,
+        ) as server:
+            port = server.sockets[0].getsockname()[1]
+            async with connect(f"ws://127.0.0.1:{port}", max_size=config.max_frame_bytes) as receiver:
+                await receiver.send(self._build_hello_frame(token="secret", capabilities=[
+                    "task.execute"
+                ]
+                )
+                )
+                receiver_accepted = self._read_json(await receiver.recv())
+                receiver_connection_id = receiver_accepted["payload"]["inline"]["connection_id"]
+
+                async with connect(f"ws://127.0.0.1:{port}", max_size=config.max_frame_bytes) as sender:
+                    await sender.send(self._build_hello_frame(token="secret", capabilities=[
+                        "task.dispatch"
+                    ]
+                    )
+                    )
+                    await sender.recv()
+
+                    await sender.send(self._build_task_dispatch_frame(target_connection_id=receiver_connection_id))
+
+                    forwarded = self._read_json(await receiver.recv())
+                    await sender.recv()
+
+                    delivery_id = forwarded["delivery"]["delivery_id"]
+                    await receiver.send(
+                        self._build_nack_frame(
+                            delivery_id=delivery_id,
+                            reason="temporarily_unavailable",
+                        )
+                    )
+                    nack_result = self._read_json(await receiver.recv())
+
+                    self.assertEqual(nack_result["message"]["type"], "delivery.nack_result")
+                    self.assertEqual(nack_result["payload"]["inline"]["status"], "nacked_retry_scheduled")
+                    self.assertEqual(nack_result["payload"]["inline"]["delivery_state"], "retry_scheduled")
+                    self.assertEqual(nack_result["payload"]["inline"]["delivery_id"], delivery_id)
+                    self.assertEqual(nack_result["payload"]["inline"]["reason"], "temporarily_unavailable")
+                    self.assertTrue(nack_result["payload"]["inline"]["retryable"])
+                    self.assertFalse(nack_result["payload"]["inline"]["duplicate"])
+
+                    delivery_record = service.delivery_registry.get_record(delivery_id)
+                    self.assertIsNotNone(delivery_record)
+                    self.assertEqual(delivery_record.state, "retry_scheduled")
+
     @staticmethod
     def _build_hello_frame(*, token: str, capabilities: list[str] | None = None) -> str:
         return json.dumps(
@@ -234,6 +310,34 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                 },
                 "delivery": {
                     "delivery_id": delivery_id,
+                },
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _build_nack_frame(*, delivery_id: str, reason: str) -> str:
+        return json.dumps(
+            {
+                "protocol": {
+                    "version": "1.0.0",
+                },
+                "message": {
+                    "message_id": str(uuid.uuid4()),
+                    "type": "delivery.nack",
+                    "category": "delivery",
+                    "priority": 100,
+                    "created_at": utc_now_iso(),
+                    "reliability": "critical",
+                },
+                "delivery": {
+                    "delivery_id": delivery_id,
+                },
+                "payload": {
+                    "mode": "inline",
+                    "inline": {
+                        "reason": reason,
+                    },
                 },
             },
             ensure_ascii=False,

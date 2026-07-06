@@ -18,6 +18,8 @@ from ns_common.exceptions import (
     NsRuntimeAckRejectedError,
     NsRuntimeDeliveryStateError,
     NsRuntimeEnvelopeSchemaError,
+    NsRuntimeNackRejectedError,
+    RUNTIME_NACK_REASON_ERROR_CODES,
 )
 from ns_runtime.models import (
     Envelope,
@@ -95,6 +97,56 @@ class RuntimeAckResult:
             "duplicate": self.duplicate,
             "delivery": self.delivery_record.to_dict(),
             "ack": self.ack_record.to_dict(),
+        }
+
+
+@dataclass(slots=True, kw_only=True)
+class RuntimeNackRecord:
+    nack_id: str
+    delivery_id: str
+    message_id: str
+    tenant_id: str
+    nack_connection_id: str
+    nack_connection_epoch: int
+    nack_message_id: str
+    reason: str
+    reason_error_code: str
+    retryable: bool
+    nacked_at: str
+    duplicate_count: int = 0
+    last_seen_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "nack_id": self.nack_id,
+            "delivery_id": self.delivery_id,
+            "message_id": self.message_id,
+            "tenant_id": self.tenant_id,
+            "nack_connection_id": self.nack_connection_id,
+            "nack_connection_epoch": self.nack_connection_epoch,
+            "nack_message_id": self.nack_message_id,
+            "reason": self.reason,
+            "reason_error_code": self.reason_error_code,
+            "retryable": self.retryable,
+            "nacked_at": self.nacked_at,
+            "duplicate_count": self.duplicate_count,
+            "last_seen_at": self.last_seen_at,
+        }
+
+
+@dataclass(slots=True, kw_only=True)
+class RuntimeNackResult:
+    status: str
+    delivery_record: RuntimeDeliveryRecord
+    nack_record: RuntimeNackRecord
+    duplicate: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "duplicate": self.duplicate,
+            "delivery": self.delivery_record.to_dict(),
+            "nack": self.nack_record.to_dict(),
         }
 
 
@@ -192,6 +244,8 @@ class RuntimeDeliveryRegistry:
         self._attempt_ids_by_delivery: dict[str, list[str]] = {}
         self._acks: dict[str, RuntimeAckRecord] = {}
         self._ack_id_by_delivery: dict[str, str] = {}
+        self._nacks: dict[str, RuntimeNackRecord] = {}
+        self._nack_id_by_delivery: dict[str, str] = {}
 
     def create_prepared_record(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target: RuntimeRouteTarget) -> RuntimeDeliveryRecord:
         delivery_id = str(uuid.uuid4())
@@ -349,6 +403,101 @@ class RuntimeDeliveryRegistry:
             ack_record=ack_record,
         )
 
+    def mark_nacked(self, *, envelope: Envelope, session_connection_id: str, session_connection_epoch: int, session_tenant_id: str) -> RuntimeNackResult:
+        delivery_id = self._read_required_delivery_id(envelope)
+        reason = self._read_required_nack_reason(envelope)
+        reason_error_code = self._resolve_nack_reason_error_code(reason)
+        retryable = self._is_retryable_nack_reason(reason)
+
+        record = self._records.get(delivery_id)
+        if record is None:
+            raise NsRuntimeNackRejectedError(
+                "NACK references unknown delivery.",
+                details={
+                    "delivery_id": delivery_id,
+                    "nack_message_id": envelope.message_id,
+                    "reason": reason,
+                },
+            )
+
+        self._validate_nack_source(
+            record=record,
+            session_connection_id=session_connection_id,
+            session_connection_epoch=session_connection_epoch,
+            session_tenant_id=session_tenant_id,
+        )
+
+        if record.state not in {"sending", "ack_waiting", "retry_scheduled"}:
+            raise NsRuntimeNackRejectedError(
+                "NACK is not allowed from current delivery state.",
+                details={
+                    "delivery_id": delivery_id,
+                    "state": record.state,
+                    "reason": reason,
+                },
+            )
+
+        existing_nack_id = self._nack_id_by_delivery.get(delivery_id)
+        if existing_nack_id is not None:
+            nack_record = self._nacks[existing_nack_id]
+            nack_record.duplicate_count += 1
+            nack_record.last_seen_at = utc_now_iso()
+            return RuntimeNackResult(
+                status="duplicate_nack",
+                delivery_record=record,
+                nack_record=nack_record,
+                duplicate=True,
+            )
+
+        now = utc_now_iso()
+        nack_record = RuntimeNackRecord(
+            nack_id=str(uuid.uuid4()),
+            delivery_id=record.delivery_id,
+            message_id=record.message_id,
+            tenant_id=record.tenant_id,
+            nack_connection_id=session_connection_id,
+            nack_connection_epoch=session_connection_epoch,
+            nack_message_id=envelope.message_id,
+            reason=reason,
+            reason_error_code=reason_error_code,
+            retryable=retryable,
+            nacked_at=now,
+            last_seen_at=now,
+        )
+
+        if retryable:
+            record.state = "retry_scheduled"
+            status = "nacked_retry_scheduled"
+        else:
+            record.state = "dead_lettered"
+            status = "nacked_dead_lettered"
+
+        record.updated_at = now
+        record.last_error_code = reason_error_code
+        record.last_error_message = reason
+
+        self._nacks[nack_record.nack_id] = nack_record
+        self._nack_id_by_delivery[record.delivery_id] = nack_record.nack_id
+
+        return RuntimeNackResult(
+            status=status,
+            delivery_record=record,
+            nack_record=nack_record,
+        )
+
+    def get_nack_for_delivery(self, delivery_id: str) -> RuntimeNackRecord | None:
+        nack_id = self._nack_id_by_delivery.get(delivery_id)
+        if nack_id is None:
+            return None
+
+        return self._nacks.get(nack_id)
+
+    def list_nacks(self) -> tuple[RuntimeNackRecord, ...]:
+        return tuple(
+            self._nacks[key]
+            for key in sorted(self._nacks.keys())
+        )
+
     def get_ack_for_delivery(self, delivery_id: str) -> RuntimeAckRecord | None:
         ack_id = self._ack_id_by_delivery.get(delivery_id)
         if ack_id is None:
@@ -401,6 +550,7 @@ class RuntimeDeliveryRegistry:
             "delivery_count": len(self._records),
             "attempt_count": len(self._attempts),
             "ack_count": len(self._acks),
+            "nack_count": len(self._nacks),
             "by_state": {
                 key: by_state[key]
                 for key in sorted(by_state.keys())
@@ -439,6 +589,89 @@ class RuntimeDeliveryRegistry:
             raise NsRuntimeEnvelopeSchemaError("delivery.delivery_id must be a non-empty string.")
 
         return delivery_id.strip()
+
+    @staticmethod
+    def _read_required_nack_reason(envelope: Envelope) -> str:
+        payload = envelope.raw.get("payload")
+        if not isinstance(payload, dict):
+            raise NsRuntimeEnvelopeSchemaError("delivery.nack must contain payload group.")
+
+        inline = payload.get("inline")
+        if not isinstance(inline, dict):
+            raise NsRuntimeEnvelopeSchemaError("delivery.nack payload.inline must be an object.")
+
+        reason = inline.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise NsRuntimeEnvelopeSchemaError("delivery.nack payload.inline.reason must be a non-empty string.")
+
+        normalized = reason.strip()
+        allowed_reasons = RuntimeDeliveryRegistry._nack_reason_error_code_map()
+        if normalized not in allowed_reasons:
+            raise NsRuntimeNackRejectedError(
+                "NACK reason is not supported.",
+                details={
+                    "reason": normalized,
+                    "allowed_reasons": sorted(allowed_reasons.keys()),
+                },
+            )
+
+        return normalized
+
+    @staticmethod
+    def _resolve_nack_reason_error_code(reason: str) -> str:
+        return RuntimeDeliveryRegistry._nack_reason_error_code_map()[reason]
+
+    @staticmethod
+    def _nack_reason_error_code_map() -> dict[str, str]:
+        values = {
+            reason: error_code
+            for reason, error_code in RUNTIME_NACK_REASON_ERROR_CODES
+        }
+        values.setdefault("invalid_payload", "RUNTIME_ENVELOPE_SCHEMA_ERROR")
+        return values
+
+    @staticmethod
+    def _is_retryable_nack_reason(reason: str) -> bool:
+        return reason in {
+            "target_overloaded",
+            "temporarily_unavailable",
+            "queue_full",
+            "dependency_unavailable",
+            "target_draining",
+            "node_degraded",
+        }
+
+    @staticmethod
+    def _validate_nack_source(*, record: RuntimeDeliveryRecord, session_connection_id: str, session_connection_epoch: int, session_tenant_id: str) -> None:
+        if record.tenant_id != session_tenant_id:
+            raise NsRuntimeNackRejectedError(
+                "NACK tenant does not match delivery tenant.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "delivery_tenant_id": record.tenant_id,
+                    "nack_tenant_id": session_tenant_id,
+                },
+            )
+
+        if record.target_connection_id != session_connection_id:
+            raise NsRuntimeNackRejectedError(
+                "NACK connection does not match delivery target connection.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "target_connection_id": record.target_connection_id,
+                    "nack_connection_id": session_connection_id,
+                },
+            )
+
+        if record.target_connection_epoch != session_connection_epoch:
+            raise NsRuntimeNackRejectedError(
+                "NACK connection epoch does not match delivery target epoch.",
+                details={
+                    "delivery_id": record.delivery_id,
+                    "target_connection_epoch": record.target_connection_epoch,
+                    "nack_connection_epoch": session_connection_epoch,
+                },
+            )
 
     @staticmethod
     def _validate_ack_source(*, record: RuntimeDeliveryRecord, session_connection_id: str, session_connection_epoch: int, session_tenant_id: str) -> None:
