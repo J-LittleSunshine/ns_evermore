@@ -396,6 +396,78 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
                 session_tenant_id=wrong_session.tenant_id,
             )
 
+    def test_duplicate_non_retryable_nack_returns_duplicate_nack_without_second_record(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        nack_frame = self._build_nack_frame(
+            delivery_id=record.delivery_id,
+            reason="permission_denied",
+        )
+        nack_envelope = self.codec.parse_inbound(nack_frame, self.target_session)
+
+        first = self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+        second = self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        self.assertEqual(first.status, "nacked_dead_lettered")
+        self.assertEqual(first.delivery_record.state, "dead_lettered")
+        self.assertEqual(second.status, "duplicate_nack")
+        self.assertTrue(second.duplicate)
+        self.assertEqual(len(self.delivery_registry.list_nacks()), 1)
+        self.assertEqual(second.nack_record.duplicate_count, 1)
+        self.assertEqual(record.state, "dead_lettered")
+
+    def test_duplicate_nack_from_wrong_connection_is_rejected(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        valid_nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=record.delivery_id,
+                reason="queue_full",
+            ),
+            self.target_session,
+        )
+        self.delivery_registry.mark_nacked(
+            envelope=valid_nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        wrong_session = self._activate(
+            identity="wrong-nack-after-nack",
+            tenant_id="tenant-1",
+            component_type="client",
+            capabilities=("task.execute",),
+        )
+        wrong_nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=record.delivery_id,
+                reason="queue_full",
+            ),
+            wrong_session,
+        )
+
+        with self.assertRaises(NsRuntimeNackRejectedError):
+            self.delivery_registry.mark_nacked(
+                envelope=wrong_nack_envelope,
+                session_connection_id=wrong_session.connection_id,
+                session_connection_epoch=wrong_session.connection_epoch,
+                session_tenant_id=wrong_session.tenant_id,
+            )
+
+        self.assertEqual(len(self.delivery_registry.list_nacks()), 1)
+        self.assertEqual(self.delivery_registry.get_nack_for_delivery(record.delivery_id).duplicate_count, 0)
+
     def _create_ack_waiting_delivery(self):
         envelope = self.codec.parse_inbound(
             self._build_task_dispatch_frame(

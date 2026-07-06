@@ -427,16 +427,6 @@ class RuntimeDeliveryRegistry:
             session_tenant_id=session_tenant_id,
         )
 
-        if record.state not in {"sending", "ack_waiting", "retry_scheduled"}:
-            raise NsRuntimeNackRejectedError(
-                "NACK is not allowed from current delivery state.",
-                details={
-                    "delivery_id": delivery_id,
-                    "state": record.state,
-                    "reason": reason,
-                },
-            )
-
         existing_nack_id = self._nack_id_by_delivery.get(delivery_id)
         if existing_nack_id is not None:
             nack_record = self._nacks[existing_nack_id]
@@ -447,6 +437,16 @@ class RuntimeDeliveryRegistry:
                 delivery_record=record,
                 nack_record=nack_record,
                 duplicate=True,
+            )
+
+        if record.state not in {"sending", "ack_waiting", "retry_scheduled"}:
+            raise NsRuntimeNackRejectedError(
+                "NACK is not allowed from current delivery state.",
+                details={
+                    "delivery_id": delivery_id,
+                    "state": record.state,
+                    "reason": reason,
+                },
             )
 
         now = utc_now_iso()
