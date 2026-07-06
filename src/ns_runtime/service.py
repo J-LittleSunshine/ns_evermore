@@ -12,6 +12,7 @@ from ns_runtime.auth import (
     LocalTokenRuntimeAuthenticator,
     RuntimeAuthenticator
 )
+from ns_runtime.delivery import RuntimeDeliveryRegistry
 from ns_runtime.handshake import (
     RuntimeHandshakeOutcome,
     RuntimeHandshakeService
@@ -55,6 +56,7 @@ class RuntimeService:
             pipeline: ProcessorPipeline,
             session_registry: RuntimeSessionRegistry,
             writer_registry: RuntimeConnectionWriterRegistry,
+            delivery_registry: RuntimeDeliveryRegistry,
             local_forwarder: RuntimeLocalEnvelopeForwarder,
             handshake_service: RuntimeHandshakeService,
             target_resolver: RuntimeTargetResolver,
@@ -67,6 +69,7 @@ class RuntimeService:
         self._pipeline = pipeline
         self._session_registry = session_registry
         self._writer_registry = writer_registry
+        self._delivery_registry = delivery_registry
         self._local_forwarder = local_forwarder
         self._handshake_service = handshake_service
         self._target_resolver = target_resolver
@@ -79,7 +82,11 @@ class RuntimeService:
         codec = EnvelopeCodec(runtime_id=runtime_id)
         session_registry = RuntimeSessionRegistry(runtime_id=runtime_id)
         writer_registry = RuntimeConnectionWriterRegistry()
-        local_forwarder = RuntimeLocalEnvelopeForwarder(writer_registry=writer_registry)
+        delivery_registry = RuntimeDeliveryRegistry()
+        local_forwarder = RuntimeLocalEnvelopeForwarder(
+            writer_registry=writer_registry,
+            delivery_registry=delivery_registry,
+        )
         target_resolver = RuntimeTargetResolver(
             runtime_id=runtime_id,
             session_registry=session_registry,
@@ -110,6 +117,7 @@ class RuntimeService:
             pipeline=pipeline,
             session_registry=session_registry,
             writer_registry=writer_registry,
+            delivery_registry=delivery_registry,
             local_forwarder=local_forwarder,
             handshake_service=handshake_service,
             target_resolver=target_resolver,
@@ -130,6 +138,10 @@ class RuntimeService:
     @property
     def writer_registry(self) -> RuntimeConnectionWriterRegistry:
         return self._writer_registry
+
+    @property
+    def delivery_registry(self) -> RuntimeDeliveryRegistry:
+        return self._delivery_registry
 
     @property
     def local_forwarder(self) -> RuntimeLocalEnvelopeForwarder:

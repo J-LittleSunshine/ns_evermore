@@ -83,10 +83,17 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                     self.assertEqual(forwarded["source"]["connection_id"], sender_connection_id)
                     self.assertEqual(forwarded["target"]["connection_id"], receiver_connection_id)
                     self.assertEqual(forwarded["payload"]["inline"]["task_name"], "demo-task")
+                    self.assertIn("delivery", forwarded)
+                    self.assertIn("delivery_id", forwarded["delivery"])
+                    self.assertEqual(forwarded["delivery"]["attempt"], 1)
+                    self.assertEqual(forwarded["delivery"]["replay_epoch"], 0)
 
                     self.assertEqual(forward_result["message"]["type"], "runtime.control.forward_result")
                     self.assertEqual(forward_result["payload"]["inline"]["status"], "forwarded")
                     self.assertEqual(forward_result["payload"]["inline"]["write_count"], 1)
+                    self.assertEqual(forward_result["payload"]["inline"]["writes"][0]["status"], "sent_to_transport")
+                    self.assertEqual(forward_result["payload"]["inline"]["writes"][0]["delivery_state"], "ack_waiting")
+                    self.assertEqual(forward_result["payload"]["inline"]["writes"][0]["delivery_id"], forwarded["delivery"]["delivery_id"])
                     self.assertEqual(
                         forward_result["payload"]["inline"]["reliability_note"],
                         "websocket_send_only_no_delivery_ack",

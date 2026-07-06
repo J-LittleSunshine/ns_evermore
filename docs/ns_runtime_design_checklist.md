@@ -114,8 +114,8 @@
 - 当 target 指向多个连接可能性时，消息必须显式指定多连接策略，或由系统默认策略裁决；后续实现不能在 identity 多连接场景下隐式广播或隐式任选而不留策略痕迹。
     - [x] 【实现进度 1.4】已提供本地 `RuntimeTargetResolver` 和 target lookup processor，基于当前单进程 session index 支持 `connection`、`identity`、`tenant`、`broadcast`、`component_type`、`capability`、`runtime` 的基础解析；target 不存在时返回 `RUNTIME_TARGET_UNAVAILABLE`，跨 tenant 本地寻址默认拒绝。该进度只表示本地 routing decision 与 target 校验完成，不表示
       WebSocket 写出、DeliveryRecord、ACK/NACK/Defer、跨节点路由或负载均衡策略已完成。
-  - [x] 【实现进度 1.5】已提供本地 active WebSocket writer registry 和 `task.dispatch` 本地直连转发基础能力：runtime 可将已通过 Envelope 校验、权限校验和 target lookup 的 normalized envelope 写出到本机 active target connection，并向发送方返回 `runtime.control.forward_result`。该进度只表示 WebSocket send 层面的本地写出完成，不表示
-    DeliveryRecord、ACK/NACK/Defer 状态机、可靠重试、死信、跨节点转发或 delivery 成功语义已完成；WebSocket send 成功不得解释为 delivery ACK。
+    - [x] 【实现进度 1.5】已提供本地 active WebSocket writer registry 和 `task.dispatch` 本地直连转发基础能力：runtime 可将已通过 Envelope 校验、权限校验和 target lookup 的 normalized envelope 写出到本机 active target connection，并向发送方返回 `runtime.control.forward_result`。该进度只表示 WebSocket send 层面的本地写出完成，不表示
+      DeliveryRecord、ACK/NACK/Defer 状态机、可靠重试、死信、跨节点转发或 delivery 成功语义已完成；WebSocket send 成功不得解释为 delivery ACK。
 - `delivery` 分组只在可靠投递相关消息中出现，包含 `delivery_id`、`summary_id`、`root_delivery_id`、`parent_delivery_id`、`attempt`、`ack_timeout_ms`、`replay_epoch` 等投递维度字段；`message_id` 只从 `message.message_id` 读取，不在 delivery 中重复。
 - `payload` 必须支持 inline 小 payload 和 `payload_ref` 对象存储引用两种模式；inline 大小上限完全由 runtime 策略决定，payload_ref 必须实时调用 `ns_backend` 校验。
 - 当 inline payload 超过 runtime 策略允许大小、JSON 深度或帧大小限制时，应返回错误 envelope 或按严重错误策略断开连接，并且不能为了兼容发送方自动转为 payload_ref。
@@ -292,7 +292,8 @@
 - DeliveryRecord 强一致持久化是可靠投递底线；RoutingPlan、DeliveryAttempt、MessageDeliverySummary 的一致性等级可以按消息类型和策略配置，但关键消息的 summary 与初始 delivery 需要原子写入。
 - 普通消息允许异步记录、摘要记录或采样记录时，只能放宽 RoutingPlan、DeliveryAttempt、普通 summary 或观测数据的记录强度；一旦某条消息声明为可靠投递，DeliveryRecord 和合法 ACK/NACK/Defer 相关原子状态仍不能退化为纯内存成功。
 - DeliveryAttempt 对关键消息必须强一致记录，以便审计、重试和排障；普通消息的 DeliveryAttempt 可以异步记录、摘要记录或采样记录，但不能影响 DeliveryRecord 强一致状态。
-- DeliveryRecord 状态机包含 `prepared`、`queued`、`sending`、`ack_waiting`、`retry_scheduled`、`replay_requested`、`acked`、`dead_lettered`、`cancelled`、`expired`、`transferred`；`persisted` 只是进入可见状态前的动作，不作为业务状态。
+  - [x] 【实现进度 1.6】已新增内存版 `RuntimeDeliveryRegistry`、`RuntimeDeliveryRecord` 和 `RuntimeDeliveryAttempt` 骨架；`task.dispatch` 本地直连转发时会为每个本地 target 创建 delivery metadata，将 `delivery` 分组注入写给目标连接的 envelope，并在 WebSocket send 成功后把 DeliveryRecord 置为 `ack_waiting`、DeliveryAttempt 写状态置为 `sent_to_transport`
+  。该进度只表示投递元数据与本地写出链路打通，不表示强一致持久化、ACK/NACK/Defer 状态机、retry、dead letter、lease/fencing、去重或生产级可靠投递已完成。
 - `prepared` 表示 delivery 已强一致创建但所属 summary 仍在 initializing 或尚未允许发送；`prepared` 不占 active/inflight 配额，不参与优先级、aging 或抢占，但受 expires_at 和管理取消影响。
 - 如果消息在受理阶段已经超过 runtime 裁决后的有效期，或剩余有效期低于策略允许的最小投递窗口，应在受理阶段 rejected 或创建 failed summary，而不是创建必然过期的有效 DeliveryRecord；具体是否保留 rejected summary 由受理策略决定。
 - `queued` 表示 delivery 已可发送并等待可靠投递调度器选择发送时机；`queued` 不等于已经进入某个 connection 写队列。

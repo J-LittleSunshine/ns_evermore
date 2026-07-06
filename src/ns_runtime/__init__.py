@@ -8,6 +8,13 @@ from ns_runtime.auth import (
     RuntimeAuthResult,
     RuntimeAuthenticator
 )
+from ns_runtime.delivery import (
+    RuntimeDeliveryAttempt,
+    RuntimeDeliveryAttemptWriteStatus,
+    RuntimeDeliveryRecord,
+    RuntimeDeliveryRegistry,
+    RuntimeDeliveryState,
+)
 from ns_runtime.handshake import (
     ConnectionHello,
     RuntimeHandshakeOutcome,
@@ -86,6 +93,11 @@ __all__ = [
     "RuntimeConnectionWriterRegistry",
     "RuntimeLocalEnvelopeForwarder",
     "RuntimeLocalWriteResult",
+    "RuntimeDeliveryAttempt",
+    "RuntimeDeliveryAttemptWriteStatus",
+    "RuntimeDeliveryRecord",
+    "RuntimeDeliveryRegistry",
+    "RuntimeDeliveryState",
 ]
 
 __version__ = "0.2.0"
