@@ -11,6 +11,8 @@ from ns_runtime.auth import (
 from ns_runtime.delivery import (
     RuntimeAckRecord,
     RuntimeAckResult,
+    RuntimeAckTimeoutRecord,
+    RuntimeAckTimeoutScanResult,
     RuntimeDeferRecord,
     RuntimeDeferResult,
     RuntimeDeliveryAttempt,
@@ -110,6 +112,8 @@ __all__ = [
     "RuntimeNackResult",
     "RuntimeDeferRecord",
     "RuntimeDeferResult",
+    "RuntimeAckTimeoutRecord",
+    "RuntimeAckTimeoutScanResult",
 ]
 
 __version__ = "0.2.0"

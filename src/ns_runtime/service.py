@@ -12,7 +12,10 @@ from ns_runtime.auth import (
     LocalTokenRuntimeAuthenticator,
     RuntimeAuthenticator
 )
-from ns_runtime.delivery import RuntimeDeliveryRegistry
+from ns_runtime.delivery import (
+    RuntimeAckTimeoutScanResult,
+    RuntimeDeliveryRegistry,
+)
 from ns_runtime.handshake import (
     RuntimeHandshakeOutcome,
     RuntimeHandshakeService
@@ -143,6 +146,9 @@ class RuntimeService:
     @property
     def delivery_registry(self) -> RuntimeDeliveryRegistry:
         return self._delivery_registry
+
+    def scan_ack_timeouts(self) -> RuntimeAckTimeoutScanResult:
+        return self._delivery_registry.scan_ack_timeouts()
 
     @property
     def local_forwarder(self) -> RuntimeLocalEnvelopeForwarder:

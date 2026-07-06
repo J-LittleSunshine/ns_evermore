@@ -13,6 +13,7 @@
 - 当本文档中提到 `ns_backend`、`ns_frontend`、`ns_client`、`ns_node`、`ns_common` 时，均指 `ns_evermore` 项目内对应组件。
 - 第一阶段补充决策用于补充 `ns_runtime` 第一阶段实现、测试、验收与生产化边界。
 - 第一阶段补充决策中的条目为已确认决策，后续实现阶段不得随意降级为 MVP、单机演示或临时协议。
+- 当前各条【实现进度 x.y】只表示对应子阶段的局部验收通过，不等于第一阶段完整验收完成；第一阶段完整验收仍以 `active_master + sub_node` 拓扑、跨节点转发、强一致 delivery store、lease/fencing、ACK timeout/retry/dead-letter worker、集群协调和高级控制类型基础语义全部满足为准。
 
 ## 1. 代码样式与实现风格约束
 
@@ -332,6 +333,9 @@
     - [x] 【实现进度 1.7】已新增内存版 `RuntimeAckRecord` 和 `delivery.ack` processor 骨架；当前 ACK 会校验 delivery 是否存在、ACK 来源 tenant、connection_id 和 connection_epoch 是否匹配当前 DeliveryRecord target，并在合法 ACK 后将 DeliveryRecord 从 `ack_waiting` 等可确认状态置为 `acked`。重复 ACK 返回 `duplicate_ack`，不新增第二条 AckRecord。该进度只表示单进程内存
       ACK 校验和状态迁移打通，不表示强一致事务、lease/fencing、旧 owner 转发、ACK timeout、retry 取消、NACK/Defer 或生产级可靠投递已完成。
 - 如果 delivery 处于 `retry_scheduled` 且收到合法 ACK，可靠投递层必须原子写入 AckRecord、进入 `acked` 并取消对应待重试计划；不能让已 ACK 的 delivery 继续被 retry worker 再次发送。
+- ACK timeout scanner 必须只处理仍处于 `ack_waiting` 且 `ack_deadline_at` 已过期的 delivery；如果 message/delivery 已超过 `expires_at`，应进入 `expired`，否则应进入 `retry_scheduled` 并等待后续 retry worker 或策略引擎处理。
+    - [x] 【实现进度 1.10】已新增单进程内存版 ACK timeout scanner，可显式调用扫描 `ack_waiting` 且 `ack_deadline_at` 已过期的 DeliveryRecord；当前会将未过期 delivery 置为 `retry_scheduled`，将已超过 `expires_at` 的 delivery 置为 `expired`，并记录内存版 `RuntimeAckTimeoutRecord`。该进度只表示 timeout 状态迁移骨架完成，不表示后台 ACK timeout worker、retry
+      worker、dead-letter worker、强一致持久化、lease/fencing、owner 转移或生产级可靠投递已完成。
 - stream cumulative ACK 使用单条范围型 AckRecord 覆盖多个 chunk delivery，并在同一事务中批量更新被覆盖 DeliveryRecord 和 StreamDeliveryState。
 - NACK 是一等 envelope 消息，必须强一致写 NackRecord，并与 DeliveryRecord 状态变更原子完成；NACK 不算 ACK，NACK reason 决定 retry、reroute、dead_letter 或安全审计。
     - [x] 【实现进度 1.8】已新增内存版 `RuntimeNackRecord` 和 `delivery.nack` processor 骨架；当前 NACK 会校验 delivery 是否存在、NACK 来源 tenant、connection_id 和 connection_epoch 是否匹配当前 DeliveryRecord target，并按 `payload.inline.reason` 将 retryable reason 置为 `retry_scheduled`、non-retryable reason 置为 `dead_lettered`。重复 NACK 返回
@@ -342,8 +346,8 @@
 - 如果 delivery 因 NACK 进入 `retry_scheduled` 后又收到合法 ACK，可以转为 `acked` 并取消后续重试；如果 NACK 已导致 `dead_lettered`，后续 ACK 按终态迟到 ACK 忽略并审计。
 - `delivery.defer` 必须支持，并作为一等 envelope 通过协议层、安全层和 processor；合法 Defer 不新增主状态，而是保持或回到 `ack_waiting` 并延长 ack_deadline。
 - DeferRecord 必须强一致写入，并与 ack_deadline 更新原子完成；Defer 允许从 `sending`、`ack_waiting`、`retry_scheduled` 生效，其中 `retry_scheduled` 收到合法 Defer 后直接回到 `ack_waiting`。
-  - [x] 【实现进度 1.9】已新增内存版 `RuntimeDeferRecord` 和 `delivery.defer` processor 骨架；当前 Defer 会校验 delivery 是否存在、Defer 来源 tenant、connection_id 和 connection_epoch 是否匹配当前 DeliveryRecord target，并从 `payload.inline.defer_ms` 读取延长时间，将 `sending`、`ack_waiting`、`retry_scheduled` 中的 delivery 保持或置回 `ack_waiting`，同时延长
-  `ack_deadline_at`。该进度包含单进程内存 defer 次数、单次延长和总延长 budget 校验；不表示强一致事务、ACK timeout worker、retry worker、lease/fencing、Defer 压力画像或生产级可靠投递已完成。
+    - [x] 【实现进度 1.9】已新增内存版 `RuntimeDeferRecord` 和 `delivery.defer` processor 骨架；当前 Defer 会校验 delivery 是否存在、Defer 来源 tenant、connection_id 和 connection_epoch 是否匹配当前 DeliveryRecord target，并从 `payload.inline.defer_ms` 读取延长时间，将 `sending`、`ack_waiting`、`retry_scheduled` 中的 delivery 保持或置回 `ack_waiting`，同时延长
+      `ack_deadline_at`。该进度包含单进程内存 defer 次数、单次延长和总延长 budget 校验；不表示强一致事务、ACK timeout worker、retry worker、lease/fencing、Defer 压力画像或生产级可靠投递已完成。
 - Defer 必须有独立 defer budget，包括最大次数、最大总延长时间和单次最大延长；超过 defer budget 时立即按 ACK timeout 处理，并把频繁 defer 作为目标压力信号反馈给健康画像。
 - Defer 默认不释放 inflight，也不算 ACK；它是否消耗 retry budget 由策略决定，但无论是否消耗 retry budget，都必须受独立 defer budget 约束。
 - 重复、迟到、旧 owner、旧 connection_epoch 或超过预算的 Defer 不得继续延长 ack_deadline；应按重复/迟到控制消息进入审计、安全计数和目标健康画像，并由策略决定是否限流或断开。

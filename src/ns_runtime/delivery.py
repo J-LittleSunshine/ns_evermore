@@ -202,6 +202,61 @@ class RuntimeDeferResult:
 
 
 @dataclass(slots=True, kw_only=True)
+class RuntimeAckTimeoutRecord:
+    timeout_id: str
+    delivery_id: str
+    message_id: str
+    tenant_id: str
+    target_connection_id: str
+    target_connection_epoch: int
+    previous_state: RuntimeDeliveryState
+    new_state: RuntimeDeliveryState
+    timeout_sequence: int
+    ack_deadline_at: str
+    expires_at: str
+    timed_out_at: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "timeout_id": self.timeout_id,
+            "delivery_id": self.delivery_id,
+            "message_id": self.message_id,
+            "tenant_id": self.tenant_id,
+            "target_connection_id": self.target_connection_id,
+            "target_connection_epoch": self.target_connection_epoch,
+            "previous_state": self.previous_state,
+            "new_state": self.new_state,
+            "timeout_sequence": self.timeout_sequence,
+            "ack_deadline_at": self.ack_deadline_at,
+            "expires_at": self.expires_at,
+            "timed_out_at": self.timed_out_at,
+            "reason": self.reason,
+        }
+
+
+@dataclass(slots=True, kw_only=True)
+class RuntimeAckTimeoutScanResult:
+    scanned_count: int
+    timed_out_count: int
+    retry_scheduled_count: int
+    expired_count: int
+    timeout_records: tuple[RuntimeAckTimeoutRecord, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scanned_count": self.scanned_count,
+            "timed_out_count": self.timed_out_count,
+            "retry_scheduled_count": self.retry_scheduled_count,
+            "expired_count": self.expired_count,
+            "timeout_records": [
+                record.to_dict()
+                for record in self.timeout_records
+            ],
+        }
+
+
+@dataclass(slots=True, kw_only=True)
 class RuntimeDeliveryRecord:
     delivery_id: str
     summary_id: str
@@ -302,6 +357,8 @@ class RuntimeDeliveryRegistry:
         self._max_total_defer_ms = max_total_defer_ms
         self._defers: dict[str, RuntimeDeferRecord] = {}
         self._defer_ids_by_delivery: dict[str, list[str]] = {}
+        self._ack_timeouts: dict[str, RuntimeAckTimeoutRecord] = {}
+        self._ack_timeout_ids_by_delivery: dict[str, list[str]] = {}
 
     def create_prepared_record(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target: RuntimeRouteTarget) -> RuntimeDeliveryRecord:
         delivery_id = str(uuid.uuid4())
@@ -618,6 +675,58 @@ class RuntimeDeliveryRegistry:
             defer_count=len(self._defer_ids_by_delivery.get(record.delivery_id, [])),
         )
 
+    def scan_ack_timeouts(self, *, now: datetime | None = None) -> RuntimeAckTimeoutScanResult:
+        resolved_now = now or datetime.now(timezone.utc)
+        scanned_count = 0
+        timeout_records: list[RuntimeAckTimeoutRecord] = []
+
+        for record in self.list_records():
+            if record.state != "ack_waiting":
+                continue
+
+            scanned_count += 1
+            ack_deadline = self._parse_datetime(record.ack_deadline_at)
+            if ack_deadline is None or ack_deadline > resolved_now:
+                continue
+
+            timeout_records.append(
+                self._mark_ack_timed_out(
+                    record=record,
+                    now=resolved_now,
+                )
+            )
+
+        retry_scheduled_count = sum(
+            1
+            for record in timeout_records
+            if record.new_state == "retry_scheduled"
+        )
+        expired_count = sum(
+            1
+            for record in timeout_records
+            if record.new_state == "expired"
+        )
+
+        return RuntimeAckTimeoutScanResult(
+            scanned_count=scanned_count,
+            timed_out_count=len(timeout_records),
+            retry_scheduled_count=retry_scheduled_count,
+            expired_count=expired_count,
+            timeout_records=tuple(timeout_records),
+        )
+
+    def list_ack_timeouts_for_delivery(self, delivery_id: str) -> tuple[RuntimeAckTimeoutRecord, ...]:
+        return tuple(
+            self._ack_timeouts[timeout_id]
+            for timeout_id in self._ack_timeout_ids_by_delivery.get(delivery_id, [])
+        )
+
+    def list_ack_timeouts(self) -> tuple[RuntimeAckTimeoutRecord, ...]:
+        return tuple(
+            self._ack_timeouts[key]
+            for key in sorted(self._ack_timeouts.keys())
+        )
+
     def list_defers_for_delivery(self, delivery_id: str) -> tuple[RuntimeDeferRecord, ...]:
         return tuple(
             self._defers[defer_id]
@@ -697,6 +806,7 @@ class RuntimeDeliveryRegistry:
             "ack_count": len(self._acks),
             "nack_count": len(self._nacks),
             "defer_count": len(self._defers),
+            "ack_timeout_count": len(self._ack_timeouts),
             "by_state": {
                 key: by_state[key]
                 for key in sorted(by_state.keys())
@@ -940,6 +1050,55 @@ class RuntimeDeliveryRegistry:
                     "max_total_defer_ms": self._max_total_defer_ms,
                 },
             )
+
+    def _mark_ack_timed_out(self, *, record: RuntimeDeliveryRecord, now: datetime) -> RuntimeAckTimeoutRecord:
+        previous_state = record.state
+        timed_out_at = now.isoformat(timespec="milliseconds")
+
+        if self._record_is_expired(record=record, now=now):
+            new_state: RuntimeDeliveryState = "expired"
+            reason = "message_expired"
+            last_error_code = "RUNTIME_DELIVERY_EXPIRED"
+        else:
+            new_state = "retry_scheduled"
+            reason = "ack_timeout"
+            last_error_code = "RUNTIME_ACK_TIMEOUT"
+
+        timeout_record = RuntimeAckTimeoutRecord(
+            timeout_id=str(uuid.uuid4()),
+            delivery_id=record.delivery_id,
+            message_id=record.message_id,
+            tenant_id=record.tenant_id,
+            target_connection_id=record.target_connection_id,
+            target_connection_epoch=record.target_connection_epoch,
+            previous_state=previous_state,
+            new_state=new_state,
+            timeout_sequence=self._next_ack_timeout_sequence(record.delivery_id),
+            ack_deadline_at=record.ack_deadline_at,
+            expires_at=record.expires_at,
+            timed_out_at=timed_out_at,
+            reason=reason,
+        )
+
+        record.state = new_state
+        record.updated_at = timed_out_at
+        record.last_error_code = last_error_code
+        record.last_error_message = reason
+
+        self._ack_timeouts[timeout_record.timeout_id] = timeout_record
+        self._ack_timeout_ids_by_delivery.setdefault(record.delivery_id, []).append(timeout_record.timeout_id)
+
+        return timeout_record
+
+    def _next_ack_timeout_sequence(self, delivery_id: str) -> int:
+        return len(self._ack_timeout_ids_by_delivery.get(delivery_id, [])) + 1
+
+    def _record_is_expired(self, *, record: RuntimeDeliveryRecord, now: datetime) -> bool:
+        expires_at = self._parse_datetime(record.expires_at)
+        if expires_at is None:
+            return False
+
+        return expires_at <= now
 
     def _compute_total_defer_ms(self, delivery_id: str) -> int:
         return sum(

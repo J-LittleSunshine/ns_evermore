@@ -3,6 +3,11 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import (
+    datetime,
+    timedelta,
+    timezone
+)
 from typing import (
     Any,
     TYPE_CHECKING
@@ -625,6 +630,83 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
                 session_connection_epoch=self.target_session.connection_epoch,
                 session_tenant_id=self.target_session.tenant_id,
             )
+
+    def test_ack_timeout_moves_ack_waiting_delivery_to_retry_scheduled(self) -> None:
+        record = self._create_ack_waiting_delivery()
+        record.ack_deadline_at = (datetime.now(timezone.utc) - timedelta(milliseconds=1)).isoformat(timespec="milliseconds")
+
+        result = self.delivery_registry.scan_ack_timeouts()
+
+        self.assertEqual(result.scanned_count, 1)
+        self.assertEqual(result.timed_out_count, 1)
+        self.assertEqual(result.retry_scheduled_count, 1)
+        self.assertEqual(result.expired_count, 0)
+        self.assertEqual(record.state, "retry_scheduled")
+        self.assertEqual(record.last_error_code, "RUNTIME_ACK_TIMEOUT")
+        self.assertEqual(record.last_error_message, "ack_timeout")
+        self.assertEqual(self.delivery_registry.build_delivery_snapshot()["ack_timeout_count"], 1)
+
+        timeout_records = self.delivery_registry.list_ack_timeouts_for_delivery(record.delivery_id)
+        self.assertEqual(len(timeout_records), 1)
+        self.assertEqual(timeout_records[0].new_state, "retry_scheduled")
+        self.assertEqual(timeout_records[0].reason, "ack_timeout")
+
+    def test_ack_timeout_with_expired_message_moves_delivery_to_expired(self) -> None:
+        record = self._create_ack_waiting_delivery()
+        now = datetime.now(timezone.utc)
+        record.ack_deadline_at = (now - timedelta(milliseconds=1)).isoformat(timespec="milliseconds")
+        record.expires_at = (now - timedelta(seconds=1)).isoformat(timespec="milliseconds")
+
+        result = self.delivery_registry.scan_ack_timeouts(now=now)
+
+        self.assertEqual(result.scanned_count, 1)
+        self.assertEqual(result.timed_out_count, 1)
+        self.assertEqual(result.retry_scheduled_count, 0)
+        self.assertEqual(result.expired_count, 1)
+        self.assertEqual(record.state, "expired")
+        self.assertEqual(record.last_error_code, "RUNTIME_DELIVERY_EXPIRED")
+        self.assertEqual(record.last_error_message, "message_expired")
+
+        timeout_records = self.delivery_registry.list_ack_timeouts_for_delivery(record.delivery_id)
+        self.assertEqual(len(timeout_records), 1)
+        self.assertEqual(timeout_records[0].new_state, "expired")
+        self.assertEqual(timeout_records[0].reason, "message_expired")
+
+    def test_ack_timeout_scanner_ignores_future_ack_deadline(self) -> None:
+        record = self._create_ack_waiting_delivery()
+        record.ack_deadline_at = (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat(timespec="milliseconds")
+
+        result = self.delivery_registry.scan_ack_timeouts()
+
+        self.assertEqual(result.scanned_count, 1)
+        self.assertEqual(result.timed_out_count, 0)
+        self.assertEqual(result.retry_scheduled_count, 0)
+        self.assertEqual(result.expired_count, 0)
+        self.assertEqual(record.state, "ack_waiting")
+        self.assertEqual(len(self.delivery_registry.list_ack_timeouts_for_delivery(record.delivery_id)), 0)
+
+    def test_ack_timeout_scanner_ignores_non_ack_waiting_delivery(self) -> None:
+        record = self._create_ack_waiting_delivery()
+        record.ack_deadline_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(timespec="milliseconds")
+
+        ack_envelope = self.codec.parse_inbound(
+            self._build_ack_frame(delivery_id=record.delivery_id),
+            self.target_session,
+        )
+        self.delivery_registry.mark_acked(
+            envelope=ack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+        self.assertEqual(record.state, "acked")
+
+        result = self.delivery_registry.scan_ack_timeouts()
+
+        self.assertEqual(result.scanned_count, 0)
+        self.assertEqual(result.timed_out_count, 0)
+        self.assertEqual(record.state, "acked")
+        self.assertEqual(len(self.delivery_registry.list_ack_timeouts_for_delivery(record.delivery_id)), 0)
 
     def _create_ack_waiting_delivery(self):
         envelope = self.codec.parse_inbound(
