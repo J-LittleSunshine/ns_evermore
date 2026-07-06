@@ -41,7 +41,9 @@ from ns_runtime.outbound import (
     RuntimeConnectionWriter,
     RuntimeConnectionWriterRegistry,
     RuntimeLocalEnvelopeForwarder,
-    RuntimeLocalWriteResult,
+    RuntimeLocalRetryResult,
+    RuntimeLocalRetryScanResult,
+    RuntimeLocalWriteResult
 )
 from ns_runtime.processors import (
     BaseRuntimeProcessor,
@@ -114,6 +116,8 @@ __all__ = [
     "RuntimeDeferResult",
     "RuntimeAckTimeoutRecord",
     "RuntimeAckTimeoutScanResult",
+    "RuntimeLocalRetryResult",
+    "RuntimeLocalRetryScanResult",
 ]
 
 __version__ = "0.2.0"

@@ -27,6 +27,7 @@ from ns_runtime.models import (
 from ns_runtime.outbound import (
     RuntimeConnectionWriterRegistry,
     RuntimeLocalEnvelopeForwarder,
+    RuntimeLocalRetryScanResult,
 )
 from ns_runtime.processors import (
     ProcessorPipeline,
@@ -149,6 +150,9 @@ class RuntimeService:
 
     def scan_ack_timeouts(self) -> RuntimeAckTimeoutScanResult:
         return self._delivery_registry.scan_ack_timeouts()
+
+    async def scan_retry_scheduled(self) -> RuntimeLocalRetryScanResult:
+        return await self._local_forwarder.scan_retry_scheduled()
 
     @property
     def local_forwarder(self) -> RuntimeLocalEnvelopeForwarder:
