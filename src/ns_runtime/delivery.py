@@ -294,6 +294,13 @@ class RuntimeDeliveryRegistry:
                 },
             )
 
+        self._validate_ack_source(
+            record=record,
+            session_connection_id=session_connection_id,
+            session_connection_epoch=session_connection_epoch,
+            session_tenant_id=session_tenant_id,
+        )
+
         existing_ack_id = self._ack_id_by_delivery.get(delivery_id)
         if existing_ack_id is not None:
             ack_record = self._acks[existing_ack_id]
@@ -305,13 +312,6 @@ class RuntimeDeliveryRegistry:
                 ack_record=ack_record,
                 duplicate=True,
             )
-
-        self._validate_ack_source(
-            record=record,
-            session_connection_id=session_connection_id,
-            session_connection_epoch=session_connection_epoch,
-            session_tenant_id=session_tenant_id,
-        )
 
         if record.state not in {"sending", "ack_waiting", "retry_scheduled"}:
             raise NsRuntimeAckRejectedError(

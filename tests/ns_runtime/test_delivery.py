@@ -230,6 +230,65 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
                 session_tenant_id=wrong_session.tenant_id,
             )
 
+    def test_duplicate_ack_from_wrong_connection_is_rejected(self) -> None:
+        envelope = self.codec.parse_inbound(
+            self._build_task_dispatch_frame(
+                target_connection_id=self.target_session.connection_id,
+            ),
+            self.source_session,
+        )
+        decision = self.target_resolver.resolve(envelope, self.source_session)
+        self.assertIsNotNone(decision)
+
+        record = self.delivery_registry.create_prepared_record(
+            decision=decision,
+            envelope=envelope,
+            target=decision.targets[0],
+        )
+        attempt = self.delivery_registry.start_sending(record=record)
+        self.delivery_registry.mark_sent_to_transport(
+            record=record,
+            attempt=attempt,
+            write_result=RuntimeLocalWriteResult(
+                connection_id=self.target_session.connection_id,
+                connection_epoch=self.target_session.connection_epoch,
+                status="sent",
+            ),
+        )
+
+        valid_ack_envelope = self.codec.parse_inbound(
+            self._build_ack_frame(delivery_id=record.delivery_id),
+            self.target_session,
+        )
+        self.delivery_registry.mark_acked(
+            envelope=valid_ack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        wrong_session = self._activate(
+            identity="wrong-target-after-ack",
+            tenant_id="tenant-1",
+            component_type="client",
+            capabilities=("task.execute",),
+        )
+        wrong_ack_envelope = self.codec.parse_inbound(
+            self._build_ack_frame(delivery_id=record.delivery_id),
+            wrong_session,
+        )
+
+        with self.assertRaises(NsRuntimeAckRejectedError):
+            self.delivery_registry.mark_acked(
+                envelope=wrong_ack_envelope,
+                session_connection_id=wrong_session.connection_id,
+                session_connection_epoch=wrong_session.connection_epoch,
+                session_tenant_id=wrong_session.tenant_id,
+            )
+
+        self.assertEqual(len(self.delivery_registry.list_acks()), 1)
+        self.assertEqual(self.delivery_registry.get_ack_for_delivery(record.delivery_id).duplicate_count, 0)
+
     def _activate(self, *, identity: str, tenant_id: str, component_type: str, capabilities: tuple[str, ...]) -> RuntimeSessionContext:
         record = self.session_registry.create_handshaking(remote_address="test")
         return self.session_registry.activate(
