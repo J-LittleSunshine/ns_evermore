@@ -13,6 +13,9 @@ from ns_runtime.delivery import (
     RuntimeAckResult,
     RuntimeAckTimeoutRecord,
     RuntimeAckTimeoutScanResult,
+    RuntimeDeadLetterRecord,
+    RuntimeDeadLetterReplayability,
+    RuntimeDeadLetterScanResult,
     RuntimeDeferRecord,
     RuntimeDeferResult,
     RuntimeDeliveryAttempt,
@@ -82,6 +85,7 @@ __all__ = [
     "RuntimeSourceContext",
     "RuntimeAuthResult",
     "RuntimeAuthenticator",
+
     "LocalTokenRuntimeAuthenticator",
     "ConnectionHello",
     "RuntimeHandshakeOutcome",
@@ -116,6 +120,9 @@ __all__ = [
     "RuntimeDeferResult",
     "RuntimeAckTimeoutRecord",
     "RuntimeAckTimeoutScanResult",
+    "RuntimeDeadLetterRecord",
+    "RuntimeDeadLetterReplayability",
+    "RuntimeDeadLetterScanResult",
     "RuntimeLocalRetryResult",
     "RuntimeLocalRetryScanResult",
 ]

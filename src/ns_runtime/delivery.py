@@ -56,6 +56,12 @@ RuntimeDeliveryAttemptWriteStatus = Literal[
     "write_failed",
 ]
 
+RuntimeDeadLetterReplayability = Literal[
+    "replayable",
+    "not_replayable",
+    "manual_confirm_required",
+]
+
 
 @dataclass(slots=True, kw_only=True)
 class RuntimeAckRecord:
@@ -257,6 +263,71 @@ class RuntimeAckTimeoutScanResult:
 
 
 @dataclass(slots=True, kw_only=True)
+class RuntimeDeadLetterRecord:
+    dead_letter_id: str
+    delivery_id: str
+    message_id: str
+    tenant_id: str
+    message_type: str
+    terminal_state: RuntimeDeliveryState
+    reason: str
+    last_error_code: str
+    last_error_message: str
+    attempt_count: int
+    target_connection_id: str
+    target_connection_epoch: int
+    budget_exhausted: bool
+    route_segment: str
+    last_owner_runtime_id: str
+    replayable: RuntimeDeadLetterReplayability
+    recommended_action: str
+    created_at: str
+    dead_lettered_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dead_letter_id": self.dead_letter_id,
+            "delivery_id": self.delivery_id,
+            "message_id": self.message_id,
+            "tenant_id": self.tenant_id,
+            "message_type": self.message_type,
+            "terminal_state": self.terminal_state,
+            "reason": self.reason,
+            "last_error_code": self.last_error_code,
+            "last_error_message": self.last_error_message,
+            "attempt_count": self.attempt_count,
+            "target_connection_id": self.target_connection_id,
+            "target_connection_epoch": self.target_connection_epoch,
+            "budget_exhausted": self.budget_exhausted,
+            "route_segment": self.route_segment,
+            "last_owner_runtime_id": self.last_owner_runtime_id,
+            "replayable": self.replayable,
+            "recommended_action": self.recommended_action,
+            "created_at": self.created_at,
+            "dead_lettered_at": self.dead_lettered_at,
+        }
+
+
+@dataclass(slots=True, kw_only=True)
+class RuntimeDeadLetterScanResult:
+    scanned_count: int
+    created_count: int
+    skipped_count: int
+    dead_letter_records: tuple[RuntimeDeadLetterRecord, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scanned_count": self.scanned_count,
+            "created_count": self.created_count,
+            "skipped_count": self.skipped_count,
+            "dead_letter_records": [
+                record.to_dict()
+                for record in self.dead_letter_records
+            ],
+        }
+
+
+@dataclass(slots=True, kw_only=True)
 class RuntimeDeliveryRecord:
     delivery_id: str
     summary_id: str
@@ -359,6 +430,8 @@ class RuntimeDeliveryRegistry:
         self._defer_ids_by_delivery: dict[str, list[str]] = {}
         self._ack_timeouts: dict[str, RuntimeAckTimeoutRecord] = {}
         self._ack_timeout_ids_by_delivery: dict[str, list[str]] = {}
+        self._dead_letters: dict[str, RuntimeDeadLetterRecord] = {}
+        self._dead_letter_id_by_delivery: dict[str, str] = {}
 
     def create_prepared_record(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target: RuntimeRouteTarget) -> RuntimeDeliveryRecord:
         delivery_id = str(uuid.uuid4())
@@ -727,6 +800,46 @@ class RuntimeDeliveryRegistry:
             for key in sorted(self._ack_timeouts.keys())
         )
 
+    def scan_dead_letters(self, *, now: datetime | None = None) -> RuntimeDeadLetterScanResult:
+        resolved_now = now or datetime.now(timezone.utc)
+        scanned_count = 0
+        created_records: list[RuntimeDeadLetterRecord] = []
+
+        for record in self.list_records():
+            if record.state != "dead_lettered":
+                continue
+
+            scanned_count += 1
+            if record.delivery_id in self._dead_letter_id_by_delivery:
+                continue
+
+            created_records.append(
+                self._create_dead_letter_record(
+                    record=record,
+                    now=resolved_now,
+                )
+            )
+
+        return RuntimeDeadLetterScanResult(
+            scanned_count=scanned_count,
+            created_count=len(created_records),
+            skipped_count=scanned_count - len(created_records),
+            dead_letter_records=tuple(created_records),
+        )
+
+    def get_dead_letter_for_delivery(self, delivery_id: str) -> RuntimeDeadLetterRecord | None:
+        dead_letter_id = self._dead_letter_id_by_delivery.get(delivery_id)
+        if dead_letter_id is None:
+            return None
+
+        return self._dead_letters.get(dead_letter_id)
+
+    def list_dead_letters(self) -> tuple[RuntimeDeadLetterRecord, ...]:
+        return tuple(
+            self._dead_letters[key]
+            for key in sorted(self._dead_letters.keys())
+        )
+
     def list_defers_for_delivery(self, delivery_id: str) -> tuple[RuntimeDeferRecord, ...]:
         return tuple(
             self._defers[defer_id]
@@ -807,6 +920,7 @@ class RuntimeDeliveryRegistry:
             "nack_count": len(self._nacks),
             "defer_count": len(self._defers),
             "ack_timeout_count": len(self._ack_timeouts),
+            "dead_letter_count": len(self._dead_letters),
             "by_state": {
                 key: by_state[key]
                 for key in sorted(by_state.keys())
@@ -1050,6 +1164,86 @@ class RuntimeDeliveryRegistry:
                     "max_total_defer_ms": self._max_total_defer_ms,
                 },
             )
+
+    def _create_dead_letter_record(self, *, record: RuntimeDeliveryRecord, now: datetime) -> RuntimeDeadLetterRecord:
+        nack_record = self.get_nack_for_delivery(record.delivery_id)
+        reason = record.last_error_message or "dead_lettered"
+        if nack_record is not None and nack_record.reason:
+            reason = nack_record.reason
+
+        replayable = self._resolve_dead_letter_replayability(
+            reason=reason,
+            last_error_code=record.last_error_code,
+        )
+        created_at = now.isoformat(timespec="milliseconds")
+        dead_letter_record = RuntimeDeadLetterRecord(
+            dead_letter_id=str(uuid.uuid4()),
+            delivery_id=record.delivery_id,
+            message_id=record.message_id,
+            tenant_id=record.tenant_id,
+            message_type=record.message_type,
+            terminal_state=record.state,
+            reason=reason,
+            last_error_code=record.last_error_code,
+            last_error_message=record.last_error_message,
+            attempt_count=record.attempt_count,
+            target_connection_id=record.target_connection_id,
+            target_connection_epoch=record.target_connection_epoch,
+            budget_exhausted=False,
+            route_segment="local",
+            last_owner_runtime_id="",
+            replayable=replayable,
+            recommended_action=self._resolve_dead_letter_recommended_action(replayable),
+            created_at=created_at,
+            dead_lettered_at=record.updated_at or created_at,
+        )
+
+        self._dead_letters[dead_letter_record.dead_letter_id] = dead_letter_record
+        self._dead_letter_id_by_delivery[record.delivery_id] = dead_letter_record.dead_letter_id
+        return dead_letter_record
+
+    @staticmethod
+    def _resolve_dead_letter_replayability(*, reason: str, last_error_code: str) -> RuntimeDeadLetterReplayability:
+        if reason in {
+            "ack_timeout",
+            "target_overloaded",
+            "temporarily_unavailable",
+            "queue_full",
+            "dependency_unavailable",
+            "target_draining",
+            "node_degraded",
+        }:
+            return "replayable"
+
+        if reason in {
+            "permission_denied",
+            "tenant_mismatch",
+            "invalid_payload",
+            "invalid_payload_ref",
+            "payload_ref_denied",
+            "source_forged",
+            "auth_context_forged",
+            "protocol_violation",
+        }:
+            return "not_replayable"
+
+        if last_error_code in {
+            "RUNTIME_UNAUTHORIZED_MESSAGE_TYPE",
+            "RUNTIME_ENVELOPE_SCHEMA_ERROR",
+        }:
+            return "not_replayable"
+
+        return "manual_confirm_required"
+
+    @staticmethod
+    def _resolve_dead_letter_recommended_action(replayable: RuntimeDeadLetterReplayability) -> str:
+        if replayable == "replayable":
+            return "review_then_replay"
+
+        if replayable == "not_replayable":
+            return "do_not_replay"
+
+        return "manual_review"
 
     def _mark_ack_timed_out(self, *, record: RuntimeDeliveryRecord, now: datetime) -> RuntimeAckTimeoutRecord:
         previous_state = record.state

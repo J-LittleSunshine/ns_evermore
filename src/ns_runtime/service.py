@@ -14,6 +14,7 @@ from ns_runtime.auth import (
 )
 from ns_runtime.delivery import (
     RuntimeAckTimeoutScanResult,
+    RuntimeDeadLetterScanResult,
     RuntimeDeliveryRegistry,
 )
 from ns_runtime.handshake import (
@@ -153,6 +154,9 @@ class RuntimeService:
 
     async def scan_retry_scheduled(self) -> RuntimeLocalRetryScanResult:
         return await self._local_forwarder.scan_retry_scheduled()
+    
+    def scan_dead_letters(self) -> RuntimeDeadLetterScanResult:
+        return self._delivery_registry.scan_dead_letters()
 
     @property
     def local_forwarder(self) -> RuntimeLocalEnvelopeForwarder:

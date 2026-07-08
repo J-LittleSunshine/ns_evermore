@@ -708,6 +708,135 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
         self.assertEqual(record.state, "acked")
         self.assertEqual(len(self.delivery_registry.list_ack_timeouts_for_delivery(record.delivery_id)), 0)
 
+    def test_dead_lettered_delivery_is_registered_as_dead_letter(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=record.delivery_id,
+                reason="permission_denied",
+            ),
+            self.target_session,
+        )
+        self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        result = self.delivery_registry.scan_dead_letters()
+
+        self.assertEqual(result.scanned_count, 1)
+        self.assertEqual(result.created_count, 1)
+        self.assertEqual(result.skipped_count, 0)
+
+        dead_letter = self.delivery_registry.get_dead_letter_for_delivery(record.delivery_id)
+        self.assertIsNotNone(dead_letter)
+        self.assertEqual(dead_letter.delivery_id, record.delivery_id)
+        self.assertEqual(dead_letter.message_id, record.message_id)
+        self.assertEqual(dead_letter.tenant_id, record.tenant_id)
+        self.assertEqual(dead_letter.message_type, record.message_type)
+        self.assertEqual(dead_letter.terminal_state, "dead_lettered")
+        self.assertEqual(dead_letter.reason, "permission_denied")
+        self.assertEqual(dead_letter.last_error_code, "RUNTIME_UNAUTHORIZED_MESSAGE_TYPE")
+        self.assertEqual(dead_letter.attempt_count, record.attempt_count)
+        self.assertEqual(dead_letter.target_connection_id, record.target_connection_id)
+        self.assertEqual(dead_letter.target_connection_epoch, record.target_connection_epoch)
+        self.assertEqual(dead_letter.replayable, "not_replayable")
+
+    def test_dead_letter_scanner_is_idempotent(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=record.delivery_id,
+                reason="permission_denied",
+            ),
+            self.target_session,
+        )
+        self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        first = self.delivery_registry.scan_dead_letters()
+        second = self.delivery_registry.scan_dead_letters()
+
+        self.assertEqual(first.created_count, 1)
+        self.assertEqual(second.scanned_count, 1)
+        self.assertEqual(second.created_count, 0)
+        self.assertEqual(second.skipped_count, 1)
+        self.assertEqual(len(self.delivery_registry.list_dead_letters()), 1)
+
+    def test_expired_delivery_is_not_registered_as_dead_letter(self) -> None:
+        record = self._create_ack_waiting_delivery()
+        record.state = "expired"
+        record.last_error_code = "RUNTIME_DELIVERY_EXPIRED"
+        record.last_error_message = "message_expired"
+
+        result = self.delivery_registry.scan_dead_letters()
+
+        self.assertEqual(result.scanned_count, 0)
+        self.assertEqual(result.created_count, 0)
+        self.assertIsNone(self.delivery_registry.get_dead_letter_for_delivery(record.delivery_id))
+        self.assertEqual(len(self.delivery_registry.list_dead_letters()), 0)
+
+    def test_dead_letter_scanner_ignores_non_dead_letter_states(self) -> None:
+        ack_waiting = self._create_ack_waiting_delivery()
+
+        retry_scheduled = self._create_ack_waiting_delivery()
+        retry_scheduled.state = "retry_scheduled"
+
+        acked = self._create_ack_waiting_delivery()
+        ack_envelope = self.codec.parse_inbound(
+            self._build_ack_frame(delivery_id=acked.delivery_id),
+            self.target_session,
+        )
+        self.delivery_registry.mark_acked(
+            envelope=ack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        result = self.delivery_registry.scan_dead_letters()
+
+        self.assertEqual(result.scanned_count, 0)
+        self.assertEqual(result.created_count, 0)
+        self.assertIsNone(self.delivery_registry.get_dead_letter_for_delivery(ack_waiting.delivery_id))
+        self.assertIsNone(self.delivery_registry.get_dead_letter_for_delivery(retry_scheduled.delivery_id))
+        self.assertIsNone(self.delivery_registry.get_dead_letter_for_delivery(acked.delivery_id))
+
+    def test_delivery_snapshot_includes_dead_letter_count(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=record.delivery_id,
+                reason="permission_denied",
+            ),
+            self.target_session,
+        )
+        self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        before_scan = self.delivery_registry.build_delivery_snapshot()
+        self.assertEqual(before_scan["by_state"]["dead_lettered"], 1)
+        self.assertEqual(before_scan["dead_letter_count"], 0)
+
+        self.delivery_registry.scan_dead_letters()
+        after_scan = self.delivery_registry.build_delivery_snapshot()
+
+        self.assertEqual(after_scan["by_state"]["dead_lettered"], 1)
+        self.assertEqual(after_scan["dead_letter_count"], 1)
+
     def _create_ack_waiting_delivery(self):
         envelope = self.codec.parse_inbound(
             self._build_task_dispatch_frame(

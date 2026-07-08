@@ -339,6 +339,9 @@
 - Retry scanner 必须只处理仍处于 `retry_scheduled` 的 delivery；如果 delivery 已超过 `expires_at`，应进入 `expired`，否则应按策略重新创建 DeliveryAttempt 并再次投递给当前 target。retry replay 不能把完整业务 payload 写入强一致 DeliveryRecord，只能使用 payload_ref、可重建 envelope 元数据或单进程 transient cache 作为阶段性实现。
     - [x] 【实现进度 1.11】已新增单进程内存版 retry scanner，可显式调用扫描 `retry_scheduled` 的 DeliveryRecord；当前使用 `RuntimeLocalEnvelopeForwarder` 内部 transient retry envelope cache 重新注入新的 delivery attempt 并发往原 target connection/epoch，发送成功后进入 `ack_waiting`，写失败则保持 `retry_scheduled`，超过 `expires_at` 则进入 `expired`
       。该进度只表示本地内存 retry replay 骨架完成，不表示后台 retry worker、跨节点 reroute、强一致 payload 重建、dead-letter worker、lease/fencing、目标健康画像或生产级可靠投递已完成。
+- DeadLetterRecord scanner 必须只登记需要管理端处理或审计的异常终态 delivery；默认只扫描 `dead_lettered`，不扫描 `expired`。`expired` 是自然终态，只表示消息或 delivery 已超过有效期，不再有业务意义，应通过 DeliveryRecord、MessageDeliverySummary 和 snapshot 统计体现，而不是写入 DeadLetterRecord。
+    - [x] 【实现进度 1.12】已新增单进程内存版 `RuntimeDeadLetterRecord` 和显式调用型 `scan_dead_letters()`；当前只扫描 `dead_lettered` delivery，并为尚未登记过的 delivery 创建一条 DeadLetterRecord。DeadLetterRecord 只保存 delivery、message、tenant、message_type、terminal_state、reason、last_error、attempt_count、target connection/epoch、replayability 和
+      recommended_action 等摘要，不保存完整业务 payload。该进度只表示本地内存 dead-letter record skeleton 和 terminal delivery tracking foundation 完成，不表示后台 dead-letter worker、强一致持久化、replay 管理语义、lease/fencing、跨节点恢复、目标健康画像或生产级可靠投递完成。
 - stream cumulative ACK 使用单条范围型 AckRecord 覆盖多个 chunk delivery，并在同一事务中批量更新被覆盖 DeliveryRecord 和 StreamDeliveryState。
 - NACK 是一等 envelope 消息，必须强一致写 NackRecord，并与 DeliveryRecord 状态变更原子完成；NACK 不算 ACK，NACK reason 决定 retry、reroute、dead_letter 或安全审计。
     - [x] 【实现进度 1.8】已新增内存版 `RuntimeNackRecord` 和 `delivery.nack` processor 骨架；当前 NACK 会校验 delivery 是否存在、NACK 来源 tenant、connection_id 和 connection_epoch 是否匹配当前 DeliveryRecord target，并按 `payload.inline.reason` 将 retryable reason 置为 `retry_scheduled`、non-retryable reason 置为 `dead_lettered`。重复 NACK 返回
