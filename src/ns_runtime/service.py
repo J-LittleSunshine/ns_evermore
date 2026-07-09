@@ -16,6 +16,7 @@ from ns_runtime.delivery import (
     RuntimeAckTimeoutScanResult,
     RuntimeDeadLetterScanResult,
     RuntimeDeliveryRegistry,
+    RuntimeMessageDeliverySummary,
 )
 from ns_runtime.handshake import (
     RuntimeHandshakeOutcome,
@@ -148,6 +149,12 @@ class RuntimeService:
     @property
     def delivery_registry(self) -> RuntimeDeliveryRegistry:
         return self._delivery_registry
+
+    def get_message_summary(self, message_id: str) -> RuntimeMessageDeliverySummary | None:
+        return self._delivery_registry.get_message_summary(message_id)
+
+    def list_message_summaries(self) -> tuple[RuntimeMessageDeliverySummary, ...]:
+        return self._delivery_registry.list_message_summaries()
 
     def scan_ack_timeouts(self) -> RuntimeAckTimeoutScanResult:
         return self._delivery_registry.scan_ack_timeouts()

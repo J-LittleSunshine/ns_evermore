@@ -23,6 +23,8 @@ from ns_runtime.delivery import (
     RuntimeDeliveryRecord,
     RuntimeDeliveryRegistry,
     RuntimeDeliveryState,
+    RuntimeMessageDeliverySummary,
+    RuntimeMessageDeliverySummaryState,
     RuntimeNackRecord,
     RuntimeNackResult
 )
@@ -85,7 +87,8 @@ __all__ = [
     "RuntimeSourceContext",
     "RuntimeAuthResult",
     "RuntimeAuthenticator",
-
+    "RuntimeMessageDeliverySummary",
+    "RuntimeMessageDeliverySummaryState",
     "LocalTokenRuntimeAuthenticator",
     "ConnectionHello",
     "RuntimeHandshakeOutcome",

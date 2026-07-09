@@ -300,6 +300,7 @@ class RuntimeLocalEnvelopeForwarder:
                 record.updated_at = resolved_now.isoformat(timespec="milliseconds")
                 record.last_error_code = "RUNTIME_DELIVERY_EXPIRED"
                 record.last_error_message = "message_expired_before_retry"
+                self._delivery_registry.refresh_message_summary_for_delivery(record.delivery_id)
                 results.append(
                     RuntimeLocalRetryResult(
                         delivery_id=record.delivery_id,

@@ -436,6 +436,9 @@
 
 ## 16. MessageDeliverySummary 与受理响应
 
+- [x] 【实现进度 1.13】已新增单进程内存版 `RuntimeMessageDeliverySummary` 骨架；当前在创建 DeliveryRecord 时自动创建或复用同一 `message_id` 下的 summary，并在 ACK、NACK、Defer、ACK timeout、retry expired 等本地状态迁移后刷新 prepared、queued、sending、ack_waiting、retry_scheduled、acked、dead_lettered、expired、cancelled 和 pending 等计数。该进度只表示本地内存
+  summary 聚合 foundation 完成，不表示强一致 summary store、rejected target 完整受理路径、fanout shard summary、delivery.accepted/rejected 响应、管理查询 processor、prepared 激活调度、lease/fencing、跨节点 summary merge 或生产级可靠投递完成。
+
 - MessageDeliverySummary 由可靠投递层维护，用于聚合同一个 message_id 下所有 delivery、rejected target、cancelled、expired、dead_lettered 和 acked 的整体状态。
 - MessageDeliverySummary 应保留 target_count、accepted_count、rejected_count、delivery_count、acked_count、dead_lettered_count、expired_count、cancelled_count、pending_count、prepared_count、queued_count 等关键计数，以便管理端无需扫描全部 delivery 也能判断整体状态。
 - 受理阶段如果全部目标都 rejected，也必须创建 MessageDeliverySummary，以便管理端能够查询这条 message 为什么没有产生有效 delivery。

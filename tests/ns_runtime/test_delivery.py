@@ -837,6 +837,143 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
         self.assertEqual(after_scan["by_state"]["dead_lettered"], 1)
         self.assertEqual(after_scan["dead_letter_count"], 1)
 
+    def test_message_summary_is_created_with_prepared_delivery(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        summary = self.delivery_registry.get_message_summary(record.message_id)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.summary_id, record.summary_id)
+        self.assertEqual(summary.message_id, record.message_id)
+        self.assertEqual(summary.tenant_id, record.tenant_id)
+        self.assertEqual(summary.message_type, record.message_type)
+        self.assertEqual(summary.delivery_count, 1)
+        self.assertEqual(summary.accepted_count, 1)
+        self.assertEqual(summary.ack_waiting_count, 1)
+        self.assertEqual(summary.pending_count, 1)
+        self.assertEqual(summary.state, "pending")
+
+    def test_message_summary_moves_to_all_acked_after_ack(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        ack_envelope = self.codec.parse_inbound(
+            self._build_ack_frame(delivery_id=record.delivery_id),
+            self.target_session,
+        )
+        self.delivery_registry.mark_acked(
+            envelope=ack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        summary = self.delivery_registry.get_message_summary(record.message_id)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.delivery_count, 1)
+        self.assertEqual(summary.acked_count, 1)
+        self.assertEqual(summary.pending_count, 0)
+        self.assertEqual(summary.state, "all_acked")
+
+    def test_message_summary_moves_to_failed_after_dead_lettered_delivery(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=record.delivery_id,
+                reason="permission_denied",
+            ),
+            self.target_session,
+        )
+        self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        summary = self.delivery_registry.get_message_summary(record.message_id)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.dead_lettered_count, 1)
+        self.assertEqual(summary.pending_count, 0)
+        self.assertEqual(summary.state, "failed")
+
+    def test_message_summary_stays_pending_after_ack_timeout_retry_scheduled(self) -> None:
+        record = self._create_ack_waiting_delivery()
+        record.ack_deadline_at = (datetime.now(timezone.utc) - timedelta(milliseconds=1)).isoformat(timespec="milliseconds")
+
+        self.delivery_registry.scan_ack_timeouts()
+
+        summary = self.delivery_registry.get_message_summary(record.message_id)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.retry_scheduled_count, 1)
+        self.assertEqual(summary.pending_count, 1)
+        self.assertEqual(summary.state, "pending")
+
+    def test_message_summary_moves_to_failed_after_expired_delivery(self) -> None:
+        record = self._create_ack_waiting_delivery()
+        now = datetime.now(timezone.utc)
+        record.ack_deadline_at = (now - timedelta(milliseconds=1)).isoformat(timespec="milliseconds")
+        record.expires_at = (now - timedelta(seconds=1)).isoformat(timespec="milliseconds")
+
+        self.delivery_registry.scan_ack_timeouts(now=now)
+
+        summary = self.delivery_registry.get_message_summary(record.message_id)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.expired_count, 1)
+        self.assertEqual(summary.pending_count, 0)
+        self.assertEqual(summary.state, "failed")
+
+    def test_message_summary_moves_to_partial_failed_for_mixed_acked_and_failed_deliveries(self) -> None:
+        first = self._create_ack_waiting_delivery()
+        second = self._create_ack_waiting_delivery()
+
+        ack_envelope = self.codec.parse_inbound(
+            self._build_ack_frame(delivery_id=first.delivery_id),
+            self.target_session,
+        )
+        self.delivery_registry.mark_acked(
+            envelope=ack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        nack_envelope = self.codec.parse_inbound(
+            self._build_nack_frame(
+                delivery_id=second.delivery_id,
+                reason="permission_denied",
+            ),
+            self.target_session,
+        )
+        self.delivery_registry.mark_nacked(
+            envelope=nack_envelope,
+            session_connection_id=self.target_session.connection_id,
+            session_connection_epoch=self.target_session.connection_epoch,
+            session_tenant_id=self.target_session.tenant_id,
+        )
+
+        summary = self.delivery_registry.get_message_summary(first.message_id)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.delivery_count, 2)
+        self.assertEqual(summary.acked_count, 1)
+        self.assertEqual(summary.dead_lettered_count, 1)
+        self.assertEqual(summary.state, "partial_failed")
+
+    def test_delivery_snapshot_includes_message_summary_count_and_state(self) -> None:
+        record = self._create_ack_waiting_delivery()
+
+        snapshot = self.delivery_registry.build_delivery_snapshot()
+
+        self.assertEqual(snapshot["message_summary_count"], 1)
+        self.assertEqual(snapshot["summary_by_state"]["pending"], 1)
+        self.assertEqual(snapshot["by_state"]["ack_waiting"], 1)
+        self.assertEqual(record.summary_id, self.delivery_registry.get_message_summary(record.message_id).summary_id)
+
     def _create_ack_waiting_delivery(self):
         envelope = self.codec.parse_inbound(
             self._build_task_dispatch_frame(

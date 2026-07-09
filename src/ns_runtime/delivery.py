@@ -56,6 +56,16 @@ RuntimeDeliveryAttemptWriteStatus = Literal[
     "write_failed",
 ]
 
+RuntimeMessageDeliverySummaryState = Literal[
+    "initializing",
+    "pending",
+    "partial_acked",
+    "all_acked",
+    "partial_failed",
+    "failed",
+    "cancelled",
+]
+
 RuntimeDeadLetterReplayability = Literal[
     "replayable",
     "not_replayable",
@@ -328,6 +338,62 @@ class RuntimeDeadLetterScanResult:
 
 
 @dataclass(slots=True, kw_only=True)
+class RuntimeMessageDeliverySummary:
+    summary_id: str
+    message_id: str
+    tenant_id: str
+    message_type: str
+    source_connection_id: str
+    state: RuntimeMessageDeliverySummaryState
+    target_count: int
+    accepted_count: int
+    rejected_count: int
+    delivery_count: int
+    acked_count: int
+    dead_lettered_count: int
+    expired_count: int
+    cancelled_count: int
+    pending_count: int
+    prepared_count: int
+    queued_count: int
+    sending_count: int
+    ack_waiting_count: int
+    retry_scheduled_count: int
+    replay_requested_count: int
+    transferred_count: int
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "summary_id": self.summary_id,
+            "message_id": self.message_id,
+            "tenant_id": self.tenant_id,
+            "message_type": self.message_type,
+            "source_connection_id": self.source_connection_id,
+            "state": self.state,
+            "target_count": self.target_count,
+            "accepted_count": self.accepted_count,
+            "rejected_count": self.rejected_count,
+            "delivery_count": self.delivery_count,
+            "acked_count": self.acked_count,
+            "dead_lettered_count": self.dead_lettered_count,
+            "expired_count": self.expired_count,
+            "cancelled_count": self.cancelled_count,
+            "pending_count": self.pending_count,
+            "prepared_count": self.prepared_count,
+            "queued_count": self.queued_count,
+            "sending_count": self.sending_count,
+            "ack_waiting_count": self.ack_waiting_count,
+            "retry_scheduled_count": self.retry_scheduled_count,
+            "replay_requested_count": self.replay_requested_count,
+            "transferred_count": self.transferred_count,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass(slots=True, kw_only=True)
 class RuntimeDeliveryRecord:
     delivery_id: str
     summary_id: str
@@ -432,11 +498,19 @@ class RuntimeDeliveryRegistry:
         self._ack_timeout_ids_by_delivery: dict[str, list[str]] = {}
         self._dead_letters: dict[str, RuntimeDeadLetterRecord] = {}
         self._dead_letter_id_by_delivery: dict[str, str] = {}
+        self._summaries: dict[str, RuntimeMessageDeliverySummary] = {}
+        self._summary_id_by_message: dict[str, str] = {}
 
     def create_prepared_record(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target: RuntimeRouteTarget) -> RuntimeDeliveryRecord:
         delivery_id = str(uuid.uuid4())
         now = utc_now_iso()
-        summary_id = f"summary:{envelope.message_id}"
+        summary = self._ensure_message_summary(
+            decision=decision,
+            envelope=envelope,
+            target_count=decision.target_count,
+            now=now,
+        )
+        summary_id = summary.summary_id
         target_fingerprint = self._build_target_fingerprint(target)
 
         record = RuntimeDeliveryRecord(
@@ -466,6 +540,7 @@ class RuntimeDeliveryRegistry:
         )
         self._records[delivery_id] = record
         self._attempt_ids_by_delivery[delivery_id] = []
+        self._refresh_message_summary(summary_id)
         return record
 
     def start_sending(self, *, record: RuntimeDeliveryRecord) -> RuntimeDeliveryAttempt:
@@ -492,6 +567,7 @@ class RuntimeDeliveryRegistry:
         record.attempt_count = attempt.attempt
         record.current_attempt_id = attempt.attempt_id
         record.updated_at = utc_now_iso()
+        self._refresh_message_summary(record.summary_id)
 
         self._attempts[attempt.attempt_id] = attempt
         self._attempt_ids_by_delivery.setdefault(record.delivery_id, []).append(attempt.attempt_id)
@@ -508,6 +584,7 @@ class RuntimeDeliveryRegistry:
         record.updated_at = utc_now_iso()
         record.last_error_code = ""
         record.last_error_message = ""
+        self._refresh_message_summary(record.summary_id)
 
     def mark_write_failed(self, *, record: RuntimeDeliveryRecord, attempt: RuntimeDeliveryAttempt, exc: Exception) -> None:
         self._ensure_current_attempt(record, attempt)
@@ -521,6 +598,7 @@ class RuntimeDeliveryRegistry:
         record.updated_at = utc_now_iso()
         record.last_error_code = exc.__class__.__name__
         record.last_error_message = str(exc)
+        self._refresh_message_summary(record.summary_id)
 
     def mark_acked(self, *, envelope: Envelope, session_connection_id: str, session_connection_epoch: int, session_tenant_id: str) -> RuntimeAckResult:
         delivery_id = self._read_required_delivery_id(envelope)
@@ -579,6 +657,7 @@ class RuntimeDeliveryRegistry:
         record.updated_at = now
         record.last_error_code = ""
         record.last_error_message = ""
+        self._refresh_message_summary(record.summary_id)
 
         self._acks[ack_record.ack_id] = ack_record
         self._ack_id_by_delivery[record.delivery_id] = ack_record.ack_id
@@ -658,6 +737,8 @@ class RuntimeDeliveryRegistry:
             record.state = "dead_lettered"
             status = "nacked_dead_lettered"
 
+        self._refresh_message_summary(record.summary_id)
+
         record.updated_at = now
         record.last_error_code = reason_error_code
         record.last_error_message = reason
@@ -736,6 +817,7 @@ class RuntimeDeliveryRegistry:
         record.updated_at = now
         record.last_error_code = ""
         record.last_error_message = ""
+        self._refresh_message_summary(record.summary_id)
 
         self._defers[defer_record.defer_id] = defer_record
         self._defer_ids_by_delivery.setdefault(record.delivery_id, []).append(defer_record.defer_id)
@@ -902,6 +984,22 @@ class RuntimeDeliveryRegistry:
             for key in sorted(self._records.keys())
         )
 
+    def get_summary(self, summary_id: str) -> RuntimeMessageDeliverySummary | None:
+        return self._summaries.get(summary_id)
+
+    def get_message_summary(self, message_id: str) -> RuntimeMessageDeliverySummary | None:
+        summary_id = self._summary_id_by_message.get(message_id)
+        if summary_id is None:
+            return None
+
+        return self._summaries.get(summary_id)
+
+    def list_message_summaries(self) -> tuple[RuntimeMessageDeliverySummary, ...]:
+        return tuple(
+            self._summaries[key]
+            for key in sorted(self._summaries.keys())
+        )
+
     def list_attempts_for_delivery(self, delivery_id: str) -> tuple[RuntimeDeliveryAttempt, ...]:
         return tuple(
             self._attempts[attempt_id]
@@ -913,8 +1011,13 @@ class RuntimeDeliveryRegistry:
         for record in self._records.values():
             by_state[record.state] = by_state.get(record.state, 0) + 1
 
+        summary_by_state: dict[str, int] = {}
+        for summary in self._summaries.values():
+            summary_by_state[summary.state] = summary_by_state.get(summary.state, 0) + 1
+
         return {
             "delivery_count": len(self._records),
+            "message_summary_count": len(self._summaries),
             "attempt_count": len(self._attempts),
             "ack_count": len(self._acks),
             "nack_count": len(self._nacks),
@@ -925,8 +1028,126 @@ class RuntimeDeliveryRegistry:
                 key: by_state[key]
                 for key in sorted(by_state.keys())
             },
+            "summary_by_state": {
+                key: summary_by_state[key]
+                for key in sorted(summary_by_state.keys())
+            },
             "server_time": utc_now_iso(),
         }
+
+    def refresh_message_summary_for_delivery(self, delivery_id: str) -> RuntimeMessageDeliverySummary | None:
+        record = self._records.get(delivery_id)
+        if record is None:
+            return None
+
+        return self._refresh_message_summary(record.summary_id)
+
+    def _ensure_message_summary(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target_count: int, now: str) -> RuntimeMessageDeliverySummary:
+        summary_id = self._summary_id_by_message.get(envelope.message_id)
+        if summary_id is not None:
+            summary = self._summaries[summary_id]
+            summary.target_count = max(summary.target_count, target_count)
+            summary.updated_at = now
+            return summary
+
+        summary_id = f"summary:{envelope.message_id}"
+        summary = RuntimeMessageDeliverySummary(
+            summary_id=summary_id,
+            message_id=envelope.message_id,
+            tenant_id=decision.source_tenant_id,
+            message_type=envelope.message_type,
+            source_connection_id=decision.source_connection_id,
+            state="initializing",
+            target_count=target_count,
+            accepted_count=0,
+            rejected_count=0,
+            delivery_count=0,
+            acked_count=0,
+            dead_lettered_count=0,
+            expired_count=0,
+            cancelled_count=0,
+            pending_count=0,
+            prepared_count=0,
+            queued_count=0,
+            sending_count=0,
+            ack_waiting_count=0,
+            retry_scheduled_count=0,
+            replay_requested_count=0,
+            transferred_count=0,
+            created_at=now,
+            updated_at=now,
+        )
+        self._summaries[summary_id] = summary
+        self._summary_id_by_message[envelope.message_id] = summary_id
+        return summary
+
+    def _refresh_message_summary(self, summary_id: str) -> RuntimeMessageDeliverySummary | None:
+        summary = self._summaries.get(summary_id)
+        if summary is None:
+            return None
+
+        records = [
+            record
+            for record in self._records.values()
+            if record.summary_id == summary_id
+        ]
+        by_state: dict[str, int] = {}
+        for record in records:
+            by_state[record.state] = by_state.get(record.state, 0) + 1
+
+        summary.delivery_count = len(records)
+        summary.accepted_count = len(records)
+        summary.target_count = max(summary.target_count, summary.accepted_count + summary.rejected_count)
+        summary.acked_count = by_state.get("acked", 0)
+        summary.dead_lettered_count = by_state.get("dead_lettered", 0)
+        summary.expired_count = by_state.get("expired", 0)
+        summary.cancelled_count = by_state.get("cancelled", 0)
+        summary.prepared_count = by_state.get("prepared", 0)
+        summary.queued_count = by_state.get("queued", 0)
+        summary.sending_count = by_state.get("sending", 0)
+        summary.ack_waiting_count = by_state.get("ack_waiting", 0)
+        summary.retry_scheduled_count = by_state.get("retry_scheduled", 0)
+        summary.replay_requested_count = by_state.get("replay_requested", 0)
+        summary.transferred_count = by_state.get("transferred", 0)
+        summary.pending_count = (
+                summary.prepared_count
+                + summary.queued_count
+                + summary.sending_count
+                + summary.ack_waiting_count
+                + summary.retry_scheduled_count
+                + summary.replay_requested_count
+                + summary.transferred_count
+        )
+        summary.state = self._resolve_summary_state(summary)
+        summary.updated_at = utc_now_iso()
+        return summary
+
+    @staticmethod
+    def _resolve_summary_state(summary: RuntimeMessageDeliverySummary) -> RuntimeMessageDeliverySummaryState:
+        failure_count = summary.rejected_count + summary.dead_lettered_count + summary.expired_count
+        terminal_count = summary.acked_count + summary.dead_lettered_count + summary.expired_count + summary.cancelled_count
+
+        if summary.delivery_count == 0:
+            if summary.rejected_count > 0:
+                return "failed"
+            return "pending"
+
+        if summary.acked_count == summary.delivery_count:
+            return "all_acked"
+
+        if summary.cancelled_count == summary.delivery_count:
+            return "cancelled"
+
+        if failure_count > 0 and terminal_count == summary.delivery_count and summary.acked_count == 0:
+            return "failed"
+
+        if failure_count > 0:
+            return "partial_failed"
+
+        if summary.acked_count > 0:
+            return "partial_acked"
+
+        return "pending"
 
     @staticmethod
     def _build_target_fingerprint(target: RuntimeRouteTarget) -> str:
@@ -1258,6 +1479,8 @@ class RuntimeDeliveryRegistry:
             reason = "ack_timeout"
             last_error_code = "RUNTIME_ACK_TIMEOUT"
 
+        self._refresh_message_summary(record.summary_id)
+
         timeout_record = RuntimeAckTimeoutRecord(
             timeout_id=str(uuid.uuid4()),
             delivery_id=record.delivery_id,
@@ -1278,6 +1501,7 @@ class RuntimeDeliveryRegistry:
         record.updated_at = timed_out_at
         record.last_error_code = last_error_code
         record.last_error_message = reason
+        self._refresh_message_summary(record.summary_id)
 
         self._ack_timeouts[timeout_record.timeout_id] = timeout_record
         self._ack_timeout_ids_by_delivery.setdefault(record.delivery_id, []).append(timeout_record.timeout_id)

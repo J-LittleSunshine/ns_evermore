@@ -238,6 +238,44 @@ class RuntimeConnectionWriterRegistryTestCase(unittest.IsolatedAsyncioTestCase):
     def test_retry_scheduled_expired_delivery_moves_to_expired_without_replay(self) -> None:
         asyncio.run(self._run_retry_scheduled_expired_delivery_moves_to_expired_without_replay())
 
+    def test_retry_scheduled_expired_delivery_refreshes_message_summary(self) -> None:
+        asyncio.run(self._run_retry_scheduled_expired_delivery_refreshes_message_summary())
+
+    async def _run_retry_scheduled_expired_delivery_refreshes_message_summary(self) -> None:
+        writer_registry = RuntimeConnectionWriterRegistry()
+        delivery_registry = RuntimeDeliveryRegistry(default_ack_timeout_ms=1000)
+        forwarder = RuntimeLocalEnvelopeForwarder(
+            writer_registry=writer_registry,
+            delivery_registry=delivery_registry,
+        )
+
+        websocket = _MemoryWebSocket()
+        writer_registry.register(
+            connection_id=self.target.connection_id,
+            connection_epoch=self.target.connection_epoch,
+            websocket=websocket,
+        )
+        results = await forwarder.forward(
+            decision=self.decision,
+            envelope=self.envelope,
+        )
+        delivery_id = results[0].delivery_id
+        record = delivery_registry.get_record(delivery_id)
+        self.assertIsNotNone(record)
+        record.state = "retry_scheduled"
+        delivery_registry.refresh_message_summary_for_delivery(record.delivery_id)
+
+        record.expires_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(timespec="milliseconds")
+
+        await forwarder.scan_retry_scheduled()
+
+        summary = delivery_registry.get_message_summary(record.message_id)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.expired_count, 1)
+        self.assertEqual(summary.pending_count, 0)
+        self.assertEqual(summary.state, "failed")
+
     async def _run_retry_scheduled_expired_delivery_moves_to_expired_without_replay(self) -> None:
         writer_registry = RuntimeConnectionWriterRegistry()
         delivery_registry = RuntimeDeliveryRegistry(default_ack_timeout_ms=1000)
