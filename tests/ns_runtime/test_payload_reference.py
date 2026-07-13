@@ -6,6 +6,7 @@ import json
 import unittest
 from typing import Any
 
+from ns_runtime import RuntimeAdmissionPolicy
 from ns_runtime.auth import RuntimeAuthResult
 from ns_runtime.models import (
     RuntimeSessionContext,
@@ -1292,6 +1293,430 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
         self.assertEqual(
             validator.requests,
             [],
+        )
+
+    def test_terminal_payload_reference_rejection_cannot_be_overwritten_by_backpressure(self) -> None:
+        validator = _SequencePayloadReferenceValidator(
+            PayloadReferenceValidationResult.rejected(
+                reason="invalid",
+            ),
+            PayloadReferenceValidationResult.valid(),
+            PayloadReferenceValidationResult.valid(),
+        )
+
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            payload_reference_validator=validator,
+            admission_policy=RuntimeAdmissionPolicy(
+                max_runtime_active_delivery=1,
+                system_reserved_active_delivery=0,
+                max_tenant_active_delivery=1,
+                max_tenant_inflight_delivery=1,
+                max_tenant_retry_backlog=10,
+                max_target_inflight_delivery=10,
+            ),
+        )
+
+        source = self._build_source_session(
+            tenant_id="tenant-1",
+            connection_id="source-1",
+        )
+
+        capacity_target, capacity_websocket = (
+            self._activate_target(
+                service=service,
+                tenant_id="tenant-1",
+                identity="capacity-target",
+            )
+        )
+        terminal_target, terminal_websocket = (
+            self._activate_target(
+                service=service,
+                tenant_id="tenant-1",
+                identity="terminal-target",
+            )
+        )
+
+        capacity_frame = self._build_dispatch_frame(
+            message_id="capacity-holder-1",
+            target_connection_id=(
+                capacity_target.connection_id
+            ),
+            payload={
+                "mode": "inline",
+                "inline": {
+                    "task_name": "capacity-holder",
+                },
+            },
+        )
+
+        capacity_response = asyncio.run(
+            service.process_frame(
+                capacity_frame,
+                source,
+            )
+        )
+
+        self.assertEqual(
+            capacity_response.action,
+            "respond",
+        )
+        self.assertEqual(
+            capacity_response.envelope[
+                "message"
+            ]["type"],
+            "delivery.accepted",
+        )
+        self.assertEqual(
+            len(capacity_websocket.frames),
+            1,
+        )
+
+        capacity_record = next(
+            record
+            for record in (
+                service.delivery_registry
+                .list_records()
+            )
+            if record.message_id
+            == "capacity-holder-1"
+        )
+
+        self.assertEqual(
+            capacity_record.state,
+            "ack_waiting",
+        )
+
+        terminal_message_id = (
+            "terminal-rejection-backpressure-1"
+        )
+        terminal_frame = self._build_dispatch_frame(
+            message_id=terminal_message_id,
+            target_connection_id=(
+                terminal_target.connection_id
+            ),
+            payload=self._reference_payload(),
+        )
+
+        first_terminal_response = asyncio.run(
+            service.process_frame(
+                terminal_frame,
+                source,
+            )
+        )
+
+        self.assertEqual(
+            first_terminal_response.action,
+            "reject",
+        )
+        self.assertEqual(
+            first_terminal_response.envelope[
+                "message"
+            ]["type"],
+            "delivery.rejected",
+        )
+
+        first_terminal_inline = (
+            first_terminal_response.envelope[
+                "payload"
+            ]["inline"]
+        )
+
+        self.assertEqual(
+            first_terminal_inline["reason_code"],
+            "RUNTIME_PAYLOAD_REF_INVALID",
+        )
+        self.assertFalse(
+            first_terminal_inline["retryable"]
+        )
+
+        terminal_summary = (
+            service.get_message_summary(
+                terminal_message_id,
+                tenant_id="tenant-1",
+            )
+        )
+
+        self.assertIsNotNone(
+            terminal_summary
+        )
+        self.assertEqual(
+            terminal_summary.delivery_count,
+            0,
+        )
+        self.assertEqual(
+            terminal_summary.accepted_count,
+            0,
+        )
+        self.assertEqual(
+            terminal_summary.rejected_count,
+            1,
+        )
+        self.assertEqual(
+            terminal_summary.last_rejection_code,
+            "RUNTIME_PAYLOAD_REF_INVALID",
+        )
+        self.assertEqual(
+            terminal_summary.state,
+            "failed",
+        )
+
+        terminal_summary_snapshot = (
+            terminal_summary.to_dict()
+        )
+
+        snapshot_before_backpressure = (
+            service.delivery_registry
+            .build_delivery_snapshot()
+        )
+
+        self.assertEqual(
+            snapshot_before_backpressure[
+                "delivery_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            snapshot_before_backpressure[
+                "attempt_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            len(terminal_websocket.frames),
+            0,
+        )
+        self.assertEqual(
+            len(validator.requests),
+            1,
+        )
+
+        second_terminal_response = asyncio.run(
+            service.process_frame(
+                terminal_frame,
+                source,
+            )
+        )
+
+        self.assertEqual(
+            second_terminal_response.action,
+            "reject",
+        )
+        self.assertEqual(
+            second_terminal_response.envelope[
+                "message"
+            ]["type"],
+            "runtime.error",
+        )
+
+        second_error = (
+            second_terminal_response.envelope[
+                "payload"
+            ]["inline"]["error"]
+        )
+
+        self.assertEqual(
+            second_error["code"],
+            "RUNTIME_DELIVERY_STATE_ERROR",
+        )
+
+        summary_after_backpressure = (
+            service.get_message_summary(
+                terminal_message_id,
+                tenant_id="tenant-1",
+            )
+        )
+
+        self.assertIsNotNone(
+            summary_after_backpressure
+        )
+        self.assertEqual(
+            summary_after_backpressure.to_dict(),
+            terminal_summary_snapshot,
+        )
+        self.assertEqual(
+            summary_after_backpressure
+            .last_rejection_code,
+            "RUNTIME_PAYLOAD_REF_INVALID",
+        )
+
+        snapshot_after_backpressure = (
+            service.delivery_registry
+            .build_delivery_snapshot()
+        )
+
+        self.assertEqual(
+            snapshot_after_backpressure[
+                "delivery_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            snapshot_after_backpressure[
+                "attempt_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            len(terminal_websocket.frames),
+            0,
+        )
+        self.assertEqual(
+            len(validator.requests),
+            2,
+        )
+
+        ack_frame = json.dumps(
+            {
+                "protocol": {
+                    "version": "1.0.0",
+                },
+                "message": {
+                    "message_id": (
+                        "capacity-holder-1.ack"
+                    ),
+                    "type": "delivery.ack",
+                    "category": "delivery",
+                    "priority": 100,
+                    "created_at": utc_now_iso(),
+                    "reliability": "critical",
+                },
+                "delivery": {
+                    "delivery_id": (
+                        capacity_record.delivery_id
+                    ),
+                    "summary_id": (
+                        capacity_record.summary_id
+                    ),
+                    "root_delivery_id": (
+                        capacity_record
+                        .root_delivery_id
+                    ),
+                    "attempt": (
+                        capacity_record.attempt_count
+                    ),
+                    "ack_timeout_ms": (
+                        capacity_record
+                        .ack_timeout_ms
+                    ),
+                    "replay_epoch": 0,
+                },
+            },
+            ensure_ascii=False,
+        )
+
+        ack_response = asyncio.run(
+            service.process_frame(
+                ack_frame,
+                capacity_target,
+            )
+        )
+
+        self.assertEqual(
+            ack_response.action,
+            "respond",
+        )
+        self.assertEqual(
+            ack_response.envelope[
+                "message"
+            ]["type"],
+            "delivery.ack_result",
+        )
+        self.assertEqual(
+            capacity_record.state,
+            "acked",
+        )
+
+        third_terminal_response = asyncio.run(
+            service.process_frame(
+                terminal_frame,
+                source,
+            )
+        )
+
+        self.assertEqual(
+            third_terminal_response.action,
+            "reject",
+        )
+        self.assertEqual(
+            third_terminal_response.envelope[
+                "message"
+            ]["type"],
+            "runtime.error",
+        )
+
+        third_error = (
+            third_terminal_response.envelope[
+                "payload"
+            ]["inline"]["error"]
+        )
+
+        self.assertEqual(
+            third_error["code"],
+            "RUNTIME_DELIVERY_STATE_ERROR",
+        )
+
+        summary_after_recovery = (
+            service.get_message_summary(
+                terminal_message_id,
+                tenant_id="tenant-1",
+            )
+        )
+
+        self.assertIsNotNone(
+            summary_after_recovery
+        )
+        self.assertEqual(
+            summary_after_recovery.to_dict(),
+            terminal_summary_snapshot,
+        )
+        self.assertEqual(
+            summary_after_recovery
+            .last_rejection_code,
+            "RUNTIME_PAYLOAD_REF_INVALID",
+        )
+        self.assertEqual(
+            summary_after_recovery.rejected_count,
+            1,
+        )
+        self.assertEqual(
+            summary_after_recovery.delivery_count,
+            0,
+        )
+        self.assertEqual(
+            summary_after_recovery.state,
+            "failed",
+        )
+
+        final_snapshot = (
+            service.delivery_registry
+            .build_delivery_snapshot()
+        )
+
+        self.assertEqual(
+            final_snapshot["delivery_count"],
+            1,
+        )
+        self.assertEqual(
+            final_snapshot["attempt_count"],
+            1,
+        )
+        self.assertEqual(
+            final_snapshot["ack_count"],
+            1,
+        )
+
+        self.assertEqual(
+            len(capacity_websocket.frames),
+            1,
+        )
+        self.assertEqual(
+            len(terminal_websocket.frames),
+            0,
+        )
+        self.assertEqual(
+            len(validator.requests),
+            3,
         )
 
     def _build_runtime(self, *, validator: PayloadReferenceValidator) -> tuple[RuntimeService, RuntimeSessionContext, RuntimeSessionContext, _MemoryWebSocket]:

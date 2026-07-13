@@ -1241,6 +1241,28 @@ class RuntimeDeliveryRegistry:
                 },
             )
 
+        if (
+                summary.rejected_count > 0
+                and summary.last_rejection_code
+                and summary.last_rejection_code
+                not in _RETRYABLE_ADMISSION_REJECTION_CODES
+        ):
+            raise NsRuntimeDeliveryStateError(
+                "Previously rejected task dispatch message_id "
+                "cannot be reused for another admission result.",
+                details={
+                    "message_id": envelope.message_id,
+                    "summary_id": summary.summary_id,
+                    "existing_rejection_code": (
+                        summary.last_rejection_code
+                    ),
+                    "incoming_rejection_code": reason_code,
+                    "rejected_count": (
+                        summary.rejected_count
+                    ),
+                },
+            )
+
         summary.target_count = max(
             summary.target_count,
             resolved_target_count,
