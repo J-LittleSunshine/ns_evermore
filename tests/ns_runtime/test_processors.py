@@ -112,33 +112,73 @@ class RuntimeProcessorTestCase(unittest.TestCase):
             response.envelope["message"]["type"],
             "delivery.rejected",
         )
-        self.assertEqual(
-            response.envelope["payload"]["inline"]["reason_code"],
-            "RUNTIME_TARGET_UNAVAILABLE",
-        )
 
         inline = response.envelope["payload"]["inline"]
 
-        self.assertEqual(inline["message_id"], "msg-1")
-        self.assertEqual(inline["summary_id"], "summary:msg-1")
+        self.assertEqual(
+            inline["message_id"],
+            "msg-1",
+        )
         self.assertEqual(
             inline["reason_code"],
             "RUNTIME_TARGET_UNAVAILABLE",
         )
-        self.assertTrue(inline["retryable"])
+        self.assertTrue(
+            inline["retryable"]
+        )
         self.assertEqual(
             inline["status_query_hint"],
             "delivery.status_query",
         )
-        self.assertNotIn("details", inline)
-        self.assertNotIn("delivery", response.envelope)
+        self.assertNotIn(
+            "details",
+            inline,
+        )
+        self.assertNotIn(
+            "delivery",
+            response.envelope,
+        )
 
-        summary = self.service.get_message_summary("msg-1")
+        summary = self.service.get_message_summary(
+            "msg-1",
+            tenant_id=self.session.tenant_id,
+        )
 
         self.assertIsNotNone(summary)
-        self.assertEqual(summary.rejected_count, 1)
-        self.assertEqual(summary.delivery_count, 0)
-        self.assertEqual(summary.state, "failed")
+        self.assertEqual(
+            inline["summary_id"],
+            summary.summary_id,
+        )
+        self.assertTrue(
+            inline["summary_id"].startswith(
+                "summary:"
+            )
+        )
+
+        self.assertEqual(
+            summary.target_count,
+            1,
+        )
+        self.assertEqual(
+            summary.accepted_count,
+            0,
+        )
+        self.assertEqual(
+            summary.rejected_count,
+            1,
+        )
+        self.assertEqual(
+            summary.delivery_count,
+            0,
+        )
+        self.assertEqual(
+            summary.pending_count,
+            0,
+        )
+        self.assertEqual(
+            summary.state,
+            "failed",
+        )
         self.assertEqual(
             self.service.delivery_registry.list_records(),
             (),
@@ -172,6 +212,18 @@ class RuntimeProcessorTestCase(unittest.TestCase):
             inline["message_id"],
             "msg-1",
         )
+        self.assertEqual(
+            inline["reason_code"],
+            "RUNTIME_TARGET_UNAVAILABLE",
+        )
+        self.assertTrue(
+            inline["retryable"]
+        )
+        self.assertEqual(
+            inline["status_query_hint"],
+            "delivery.status_query",
+        )
+
         summary = self.service.get_message_summary(
             "msg-1",
             tenant_id=self.session.tenant_id,
@@ -183,27 +235,35 @@ class RuntimeProcessorTestCase(unittest.TestCase):
             summary.summary_id,
         )
         self.assertTrue(
-            inline["summary_id"].startswith("summary:")
-        )
-        self.assertEqual(
-            inline["reason_code"],
-            "RUNTIME_TARGET_UNAVAILABLE",
-        )
-        self.assertTrue(inline["retryable"])
-        self.assertEqual(
-            inline["status_query_hint"],
-            "delivery.status_query",
+            inline["summary_id"].startswith(
+                "summary:"
+            )
         )
 
-        summary = self.service.get_message_summary("msg-1")
-
-        self.assertIsNotNone(summary)
-        self.assertEqual(summary.target_count, 1)
-        self.assertEqual(summary.accepted_count, 0)
-        self.assertEqual(summary.rejected_count, 1)
-        self.assertEqual(summary.delivery_count, 0)
-        self.assertEqual(summary.pending_count, 0)
-        self.assertEqual(summary.state, "failed")
+        self.assertEqual(
+            summary.target_count,
+            1,
+        )
+        self.assertEqual(
+            summary.accepted_count,
+            0,
+        )
+        self.assertEqual(
+            summary.rejected_count,
+            1,
+        )
+        self.assertEqual(
+            summary.delivery_count,
+            0,
+        )
+        self.assertEqual(
+            summary.pending_count,
+            0,
+        )
+        self.assertEqual(
+            summary.state,
+            "failed",
+        )
 
     def test_delivery_ack_with_unknown_delivery_is_rejected_by_ack_processor(self) -> None:
         response = asyncio.run(

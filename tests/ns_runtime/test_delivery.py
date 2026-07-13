@@ -1187,7 +1187,7 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
 
         with self.assertRaises(
                 NsRuntimeDeliveryStateError
-        ):
+        ) as context:
             self.delivery_registry.register_prepared_record(
                 decision=conflicting_decision,
                 envelope=conflicting_envelope,
@@ -1195,13 +1195,30 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
             )
 
         self.assertEqual(
+            context.exception.details,
+            {
+                "message_id": "msg-1",
+            },
+        )
+        self.assertNotIn(
+            "tenant_id",
+            context.exception.details,
+        )
+        self.assertNotIn(
+            "target_fingerprint",
+            context.exception.details,
+        )
+        self.assertNotIn(
+            "existing_delivery_id",
+            context.exception.details,
+        )
+
+        self.assertEqual(
             len(self.delivery_registry.list_records()),
             1,
         )
 
-    def test_same_message_id_in_different_tenants_uses_separate_summaries(
-            self,
-    ) -> None:
+    def test_same_message_id_in_different_tenants_uses_separate_summaries(self) -> None:
         source_tenant_2 = self._activate(
             identity="source-2",
             tenant_id="tenant-2",
@@ -1239,6 +1256,117 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
         decision_2 = self.target_resolver.resolve(
             envelope_2,
             source_tenant_2,
+        )
+
+        self.assertIsNotNone(decision_1)
+        self.assertIsNotNone(decision_2)
+
+        first = (
+            self.delivery_registry.register_prepared_record(
+                decision=decision_1,
+                envelope=envelope_1,
+                target=decision_1.targets[0],
+            )
+        )
+        second = (
+            self.delivery_registry.register_prepared_record(
+                decision=decision_2,
+                envelope=envelope_2,
+                target=decision_2.targets[0],
+            )
+        )
+
+        self.assertTrue(first.created)
+        self.assertTrue(second.created)
+
+        self.assertNotEqual(
+            first.record.delivery_id,
+            second.record.delivery_id,
+        )
+        self.assertNotEqual(
+            first.record.summary_id,
+            second.record.summary_id,
+        )
+
+        summary_1 = (
+            self.delivery_registry.get_message_summary(
+                "msg-1",
+                tenant_id="tenant-1",
+            )
+        )
+        summary_2 = (
+            self.delivery_registry.get_message_summary(
+                "msg-1",
+                tenant_id="tenant-2",
+            )
+        )
+
+        self.assertIsNotNone(summary_1)
+        self.assertIsNotNone(summary_2)
+
+        self.assertEqual(
+            summary_1.tenant_id,
+            "tenant-1",
+        )
+        self.assertEqual(
+            summary_2.tenant_id,
+            "tenant-2",
+        )
+        self.assertEqual(
+            summary_1.message_id,
+            "msg-1",
+        )
+        self.assertEqual(
+            summary_2.message_id,
+            "msg-1",
+        )
+        self.assertNotEqual(
+            summary_1.summary_id,
+            summary_2.summary_id,
+        )
+
+        self.assertEqual(
+            summary_1.delivery_count,
+            1,
+        )
+        self.assertEqual(
+            summary_2.delivery_count,
+            1,
+        )
+        self.assertEqual(
+            summary_1.accepted_count,
+            1,
+        )
+        self.assertEqual(
+            summary_2.accepted_count,
+            1,
+        )
+
+        self.assertEqual(
+            first.record.summary_id,
+            summary_1.summary_id,
+        )
+        self.assertEqual(
+            second.record.summary_id,
+            summary_2.summary_id,
+        )
+
+        self.assertIsNone(
+            self.delivery_registry.get_message_summary(
+                "msg-1"
+            )
+        )
+        self.assertEqual(
+            len(
+                self.delivery_registry.list_message_summaries()
+            ),
+            2,
+        )
+        self.assertEqual(
+            len(
+                self.delivery_registry.list_records()
+            ),
+            2,
         )
 
     def _create_ack_waiting_delivery(self):
