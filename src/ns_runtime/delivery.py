@@ -1222,29 +1222,37 @@ class RuntimeDeliveryRegistry:
             target_count,
         )
 
-        summary = self._ensure_message_summary(
-            envelope=envelope,
-            source_connection_id=source_connection_id,
-            source_tenant_id=source_tenant_id,
-            target_count=resolved_target_count,
-            now=now,
+        existing_summary = self.get_message_summary(
+            envelope.message_id,
+            tenant_id=source_tenant_id,
         )
 
-        if summary.delivery_count > 0:
+        if (
+                existing_summary is not None
+                and existing_summary.delivery_count > 0
+        ):
             raise NsRuntimeDeliveryStateError(
-                "Cannot register an all-target rejection after delivery records were created.",
+                "Cannot register an all-target rejection after "
+                "delivery records were created.",
                 details={
                     "message_id": envelope.message_id,
-                    "summary_id": summary.summary_id,
-                    "delivery_count": summary.delivery_count,
-                    "rejected_count": summary.rejected_count,
+                    "summary_id": (
+                        existing_summary.summary_id
+                    ),
+                    "delivery_count": (
+                        existing_summary.delivery_count
+                    ),
+                    "rejected_count": (
+                        existing_summary.rejected_count
+                    ),
                 },
             )
 
         if (
-                summary.rejected_count > 0
-                and summary.last_rejection_code
-                and summary.last_rejection_code
+                existing_summary is not None
+                and existing_summary.rejected_count > 0
+                and existing_summary.last_rejection_code
+                and existing_summary.last_rejection_code
                 not in _RETRYABLE_ADMISSION_REJECTION_CODES
         ):
             raise NsRuntimeDeliveryStateError(
@@ -1252,16 +1260,29 @@ class RuntimeDeliveryRegistry:
                 "cannot be reused for another admission result.",
                 details={
                     "message_id": envelope.message_id,
-                    "summary_id": summary.summary_id,
-                    "existing_rejection_code": (
-                        summary.last_rejection_code
+                    "summary_id": (
+                        existing_summary.summary_id
                     ),
-                    "incoming_rejection_code": reason_code,
+                    "existing_rejection_code": (
+                        existing_summary
+                        .last_rejection_code
+                    ),
+                    "incoming_rejection_code": (
+                        reason_code
+                    ),
                     "rejected_count": (
-                        summary.rejected_count
+                        existing_summary.rejected_count
                     ),
                 },
             )
+
+        summary = self._ensure_message_summary(
+            envelope=envelope,
+            source_connection_id=source_connection_id,
+            source_tenant_id=source_tenant_id,
+            target_count=resolved_target_count,
+            now=now,
+        )
 
         summary.target_count = max(
             summary.target_count,
