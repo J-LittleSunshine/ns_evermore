@@ -363,6 +363,9 @@ class RuntimeMessageDeliverySummary:
     transferred_count: int
     created_at: str
     updated_at: str
+    last_rejection_code: str = ""
+    last_rejection_message: str = ""
+    last_rejected_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -390,6 +393,9 @@ class RuntimeMessageDeliverySummary:
             "transferred_count": self.transferred_count,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "last_rejection_code": self.last_rejection_code,
+            "last_rejection_message": self.last_rejection_message,
+            "last_rejected_at": self.last_rejected_at,
         }
 
 
@@ -505,8 +511,9 @@ class RuntimeDeliveryRegistry:
         delivery_id = str(uuid.uuid4())
         now = utc_now_iso()
         summary = self._ensure_message_summary(
-            decision=decision,
             envelope=envelope,
+            source_connection_id=decision.source_connection_id,
+            source_tenant_id=decision.source_tenant_id,
             target_count=decision.target_count,
             now=now,
         )
@@ -984,6 +991,70 @@ class RuntimeDeliveryRegistry:
             for key in sorted(self._records.keys())
         )
 
+    def register_rejected_summary(
+            self,
+            *,
+            envelope: Envelope,
+            source_connection_id: str,
+            source_tenant_id: str,
+            target_count: int,
+            rejected_count: int,
+            reason_code: str,
+            reason_message: str,
+    ) -> RuntimeMessageDeliverySummary:
+        now = utc_now_iso()
+        resolved_rejected_count = max(1, rejected_count)
+        resolved_target_count = max(
+            resolved_rejected_count,
+            target_count,
+        )
+
+        summary = self._ensure_message_summary(
+            envelope=envelope,
+            source_connection_id=source_connection_id,
+            source_tenant_id=source_tenant_id,
+            target_count=resolved_target_count,
+            now=now,
+        )
+
+        if summary.delivery_count > 0:
+            raise NsRuntimeDeliveryStateError(
+                "Cannot register an all-target rejection after delivery records were created.",
+                details={
+                    "message_id": envelope.message_id,
+                    "summary_id": summary.summary_id,
+                    "delivery_count": summary.delivery_count,
+                    "rejected_count": summary.rejected_count,
+                },
+            )
+
+        summary.target_count = max(
+            summary.target_count,
+            resolved_target_count,
+        )
+        summary.rejected_count = max(
+            summary.rejected_count,
+            resolved_rejected_count,
+        )
+        summary.last_rejection_code = reason_code
+        summary.last_rejection_message = reason_message
+        summary.last_rejected_at = now
+        summary.updated_at = now
+
+        refreshed = self._refresh_message_summary(
+            summary.summary_id
+        )
+        if refreshed is None:
+            raise NsRuntimeDeliveryStateError(
+                "Rejected MessageDeliverySummary disappeared during refresh.",
+                details={
+                    "message_id": envelope.message_id,
+                    "summary_id": summary.summary_id,
+                },
+            )
+
+        return refreshed
+
     def get_summary(self, summary_id: str) -> RuntimeMessageDeliverySummary | None:
         return self._summaries.get(summary_id)
 
@@ -1042,11 +1113,14 @@ class RuntimeDeliveryRegistry:
 
         return self._refresh_message_summary(record.summary_id)
 
-    def _ensure_message_summary(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target_count: int, now: str) -> RuntimeMessageDeliverySummary:
+    def _ensure_message_summary(self, *, envelope: Envelope, source_connection_id: str, source_tenant_id: str, target_count: int, now: str, ) -> RuntimeMessageDeliverySummary:
         summary_id = self._summary_id_by_message.get(envelope.message_id)
         if summary_id is not None:
             summary = self._summaries[summary_id]
-            summary.target_count = max(summary.target_count, target_count)
+            summary.target_count = max(
+                summary.target_count,
+                target_count,
+            )
             summary.updated_at = now
             return summary
 
@@ -1054,9 +1128,9 @@ class RuntimeDeliveryRegistry:
         summary = RuntimeMessageDeliverySummary(
             summary_id=summary_id,
             message_id=envelope.message_id,
-            tenant_id=decision.source_tenant_id,
+            tenant_id=source_tenant_id,
             message_type=envelope.message_type,
-            source_connection_id=decision.source_connection_id,
+            source_connection_id=source_connection_id,
             state="initializing",
             target_count=target_count,
             accepted_count=0,

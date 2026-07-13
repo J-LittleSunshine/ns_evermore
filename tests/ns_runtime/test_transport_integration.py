@@ -20,6 +20,11 @@ if TYPE_CHECKING:
 
 
 class RuntimeTransportIntegrationTestCase(unittest.TestCase):
+    def test_websocket_task_dispatch_to_unavailable_target_returns_delivery_rejected(self) -> None:
+        asyncio.run(
+            self._run_websocket_task_dispatch_to_unavailable_target_returns_delivery_rejected()
+        )
+
     def test_websocket_connection_hello_then_runtime_health(self) -> None:
         asyncio.run(self._run_websocket_connection_hello_then_runtime_health())
 
@@ -350,12 +355,20 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
         ) as server:
             port = server.sockets[0].getsockname()[1]
             async with connect(f"ws://127.0.0.1:{port}", max_size=config.max_frame_bytes) as receiver:
-                await receiver.send(self._build_hello_frame(token="secret", capabilities=["task.execute"]))
+                await receiver.send(self._build_hello_frame(token="secret", capabilities=[
+                    "task.execute"
+                ]
+                )
+                )
                 receiver_accepted = self._read_json(await receiver.recv())
                 receiver_connection_id = receiver_accepted["payload"]["inline"]["connection_id"]
 
                 async with connect(f"ws://127.0.0.1:{port}", max_size=config.max_frame_bytes) as sender:
-                    await sender.send(self._build_hello_frame(token="secret", capabilities=["task.dispatch"]))
+                    await sender.send(self._build_hello_frame(token="secret", capabilities=[
+                        "task.dispatch"
+                    ]
+                    )
+                    )
                     await sender.recv()
 
                     await sender.send(self._build_task_dispatch_frame(target_connection_id=receiver_connection_id))
@@ -389,6 +402,105 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                     self.assertIsNotNone(delivery_record)
                     self.assertEqual(delivery_record.state, "ack_waiting")
                     self.assertNotEqual(delivery_record.ack_deadline_at, original_deadline)
+
+    async def _run_websocket_task_dispatch_to_unavailable_target_returns_delivery_rejected(self) -> None:
+        try:
+            from websockets.asyncio.client import connect
+            from websockets.asyncio.server import serve
+        except ImportError as exc:
+            raise RuntimeError(
+                "Install requirements-runtime.txt before running runtime integration tests."
+            ) from exc
+
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            authenticator=LocalTokenRuntimeAuthenticator(
+                expected_token="secret"
+            ),
+        )
+        config = RuntimeWebSocketTransportConfig(
+            host="127.0.0.1",
+            port=0,
+            handshake_timeout_seconds=2.0,
+        )
+        transport = service.build_transport(config)
+
+        async with serve(
+                transport.handle_connection,
+                config.host,
+                0,
+                compression=None,
+                max_size=config.max_frame_bytes,
+                max_queue=config.read_queue_high_water,
+                write_limit=config.write_limit_bytes,
+                ping_interval=None,
+                server_header=None,
+        ) as server:
+            port = server.sockets[0].getsockname()[1]
+
+            async with connect(
+                    f"ws://127.0.0.1:{port}",
+                    max_size=config.max_frame_bytes,
+            ) as sender:
+                await sender.send(
+                    self._build_hello_frame(
+                        token="secret",
+                        capabilities=[
+                            "task.dispatch"
+                        ],
+                    )
+                )
+                sender_accepted = self._read_json(
+                    await sender.recv()
+                )
+                sender_connection_id = sender_accepted[
+                    "payload"
+                ]["inline"]["connection_id"]
+
+                dispatch_frame = self._build_task_dispatch_frame(
+                    target_connection_id="missing-connection"
+                )
+                dispatch_request = self._read_json(
+                    dispatch_frame
+                )
+                dispatch_message_id = dispatch_request[
+                    "message"
+                ]["message_id"]
+
+                await sender.send(dispatch_frame)
+
+                rejected = self._read_json(
+                    await sender.recv()
+                )
+                inline = rejected["payload"]["inline"]
+
+                self.assertEqual(
+                    rejected["message"]["type"],
+                    "delivery.rejected",
+                )
+                self.assertEqual(
+                    rejected["target"]["connection_id"],
+                    sender_connection_id,
+                )
+                self.assertEqual(
+                    inline["message_id"],
+                    dispatch_message_id,
+                )
+                self.assertEqual(
+                    inline["reason_code"],
+                    "RUNTIME_TARGET_UNAVAILABLE",
+                )
+                self.assertTrue(inline["retryable"])
+                self.assertNotIn("delivery", rejected)
+
+                summary = service.get_message_summary(
+                    dispatch_message_id
+                )
+
+                self.assertIsNotNone(summary)
+                self.assertEqual(summary.rejected_count, 1)
+                self.assertEqual(summary.delivery_count, 0)
+                self.assertEqual(summary.state, "failed")
 
     @staticmethod
     def _build_hello_frame(*, token: str, capabilities: list[str] | None = None) -> str:

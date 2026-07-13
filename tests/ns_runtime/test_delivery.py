@@ -974,6 +974,45 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
         self.assertEqual(snapshot["by_state"]["ack_waiting"], 1)
         self.assertEqual(record.summary_id, self.delivery_registry.get_message_summary(record.message_id).summary_id)
 
+    def test_register_rejected_summary_creates_failed_summary_without_delivery(self) -> None:
+        envelope = self.codec.parse_inbound(
+            self._build_task_dispatch_frame(
+                target_connection_id="missing-connection"
+            ),
+            self.source_session,
+        )
+
+        summary = self.delivery_registry.register_rejected_summary(
+            envelope=envelope,
+            source_connection_id=self.source_session.connection_id,
+            source_tenant_id=self.source_session.tenant_id,
+            target_count=1,
+            rejected_count=1,
+            reason_code="RUNTIME_TARGET_UNAVAILABLE",
+            reason_message="Runtime target is unavailable.",
+        )
+
+        self.assertEqual(summary.message_id, envelope.message_id)
+        self.assertEqual(summary.target_count, 1)
+        self.assertEqual(summary.accepted_count, 0)
+        self.assertEqual(summary.rejected_count, 1)
+        self.assertEqual(summary.delivery_count, 0)
+        self.assertEqual(summary.pending_count, 0)
+        self.assertEqual(summary.state, "failed")
+        self.assertEqual(
+            summary.last_rejection_code,
+            "RUNTIME_TARGET_UNAVAILABLE",
+        )
+        self.assertEqual(
+            summary.last_rejection_message,
+            "Runtime target is unavailable.",
+        )
+        self.assertTrue(summary.last_rejected_at)
+        self.assertEqual(
+            self.delivery_registry.list_records(),
+            (),
+        )
+
     def _create_ack_waiting_delivery(self):
         envelope = self.codec.parse_inbound(
             self._build_task_dispatch_frame(

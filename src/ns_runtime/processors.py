@@ -17,8 +17,10 @@ from ns_common.exceptions import (
     NsEvermoreError,
     NsRuntimeDeliveryStateError,
     NsRuntimeEnvelopeSchemaError,
+    NsRuntimeTargetUnavailableError,
+    NsRuntimeTenantMismatchError,
     NsRuntimeUnauthorizedMessageTypeError,
-    NsRuntimeUnsupportedMessageTypeError,
+    NsRuntimeUnsupportedMessageTypeError
 )
 from ns_runtime.delivery import (
     RuntimeDeliveryRegistry,
@@ -102,16 +104,22 @@ class MessageTypeAuthProcessor(BaseRuntimeProcessor):
 
 
 class TargetLookupProcessor(BaseRuntimeProcessor):
-    def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver) -> None:
+    def __init__(self,*,codec: EnvelopeCodec,target_resolver: RuntimeTargetResolver) -> None:
         self._codec = codec
         self._target_resolver = target_resolver
 
-    async def process(self, request: ProcessorRequest) -> ProcessorResponse:
+    async def process(self,request: ProcessorRequest) -> ProcessorResponse:
+        if request.envelope.message_type == "task.dispatch":
+            return ProcessorResponse.continue_next()
+
         if "target" not in request.envelope.raw:
             return ProcessorResponse.continue_next()
 
         try:
-            self._target_resolver.resolve(request.envelope, request.session)
+            self._target_resolver.resolve(
+                request.envelope,
+                request.session,
+            )
             return ProcessorResponse.continue_next()
         except NsEvermoreError as exc:
             return ProcessorResponse.reject(
@@ -121,7 +129,6 @@ class TargetLookupProcessor(BaseRuntimeProcessor):
                     request=request.envelope,
                 )
             )
-
 
 class AuditMarkProcessor(BaseRuntimeProcessor):
     async def process(self, request: ProcessorRequest) -> ProcessorResponse:
@@ -146,7 +153,9 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
         self._local_forwarder = local_forwarder
         self._delivery_registry = delivery_registry
 
-    async def process(self, request: ProcessorRequest) -> ProcessorResponse:
+    async def process(self,request: ProcessorRequest ) -> ProcessorResponse:
+        decision = None
+
         try:
             decision = self._target_resolver.resolve(
                 request.envelope,
@@ -183,6 +192,33 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                     summary=summary,
                 )
             )
+
+        except (
+                NsRuntimeTargetUnavailableError,
+                NsRuntimeTenantMismatchError,
+        ) as exc:
+            summary = self._delivery_registry.register_rejected_summary(
+                envelope=request.envelope,
+                source_connection_id=request.session.connection_id,
+                source_tenant_id=request.session.tenant_id,
+                target_count=(
+                    decision.target_count
+                    if decision is not None
+                    else 1
+                ),
+                rejected_count=1,
+                reason_code=exc.code,
+                reason_message=exc.message,
+            )
+
+            return ProcessorResponse.reject(
+                self._build_delivery_rejected(
+                    request=request,
+                    summary=summary,
+                    exc=exc,
+                )
+            )
+
         except NsEvermoreError as exc:
             return ProcessorResponse.reject(
                 self._codec.build_error_envelope(
@@ -229,6 +265,65 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                     "message_id": request.envelope.message_id,
                     "summary_id": summary.summary_id,
                     "accepted_at": accepted_at,
+                    "status_query_hint": "delivery.status_query",
+                },
+            },
+            "trace": {
+                "trace_id": request.envelope.raw.get(
+                    "trace",
+                    {},
+                ).get(
+                    "trace_id",
+                    request.envelope.message_id,
+                ),
+                "request_id": request.envelope.message_id,
+            },
+        }
+
+    def _build_delivery_rejected(self,*,request: ProcessorRequest,summary: RuntimeMessageDeliverySummary, exc: NsEvermoreError) -> dict[str, Any]:
+        rejected_at = summary.last_rejected_at or utc_now_iso()
+        retryable = isinstance(
+            exc,
+            NsRuntimeTargetUnavailableError,
+        )
+
+        return {
+            "protocol": {
+                "version": self._codec.protocol_version_text,
+            },
+            "message": {
+                "message_id": f"{request.envelope.message_id}.rejected",
+                "type": "delivery.rejected",
+                "category": "delivery",
+                "priority": 100,
+                "created_at": rejected_at,
+                "reliability": "best_effort",
+            },
+            "source": {
+                "runtime_id": request.session.runtime_id,
+                "connection_id": "runtime",
+                "session_id": "runtime",
+                "identity": request.session.runtime_id,
+                "tenant_id": request.session.tenant_id,
+                "component_type": "runtime",
+                "capabilities_summary": [
+                    "delivery.rejected",
+                ],
+                "connection_epoch": 0,
+            },
+            "target": {
+                "kind": "connection",
+                "connection_id": request.session.connection_id,
+            },
+            "payload": {
+                "mode": "inline",
+                "inline": {
+                    "message_id": request.envelope.message_id,
+                    "summary_id": summary.summary_id,
+                    "rejected_at": rejected_at,
+                    "reason_code": exc.code,
+                    "reason_message": exc.message,
+                    "retryable": retryable,
                     "status_query_hint": "delivery.status_query",
                 },
             },
@@ -766,6 +861,7 @@ def _build_builtin_message_type_specs() -> tuple[MessageTypeSpec, ...]:
         {"message_type": "task.dispatch", "category": "task", "required_groups": ("target",), "required_capabilities": ("task.dispatch",), "reliability": "critical", "implemented": True},
         {"message_type": "task.result", "category": "task", "required_groups": ("target",), "reliability": "reliable", "implemented": False},
         {"message_type": "delivery.accepted", "category": "delivery", "reliability": "best_effort", "implemented": False},
+        {"message_type": "delivery.rejected", "category": "delivery", "reliability": "best_effort", "implemented": False},
         {"message_type": "delivery.ack", "category": "delivery", "required_groups": ("delivery",), "reliability": "critical", "implemented": True},
         {"message_type": "delivery.ack_result", "category": "delivery", "required_groups": ("delivery",), "reliability": "best_effort", "implemented": False},
         {"message_type": "delivery.nack", "category": "delivery", "required_groups": ("delivery", "payload"), "reliability": "critical", "implemented": True},
