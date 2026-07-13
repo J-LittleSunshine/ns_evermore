@@ -40,6 +40,7 @@ class RuntimeProcessorTestCase(unittest.TestCase):
 
         self.assertIn("connection.heartbeat", message_types)
         self.assertIn("task.dispatch", message_types)
+        self.assertIn("delivery.accepted", message_types)
         self.assertIn("delivery.ack", message_types)
         self.assertIn("delivery.nack", message_types)
         self.assertIn("delivery.defer", message_types)
@@ -48,6 +49,7 @@ class RuntimeProcessorTestCase(unittest.TestCase):
         self.assertIn("cluster.event.node_joined", message_types)
         self.assertIn("runtime.control.config_update", message_types)
         self.assertIn("runtime.error", message_types)
+        self.assertNotIn("runtime.control.forward_result", message_types)
 
     def test_connection_heartbeat_returns_heartbeat_ack(self) -> None:
         response = asyncio.run(
@@ -157,6 +159,19 @@ class RuntimeProcessorTestCase(unittest.TestCase):
         self.assertIsNotNone(response.envelope)
         self.assertEqual(response.envelope["message"]["type"], "runtime.error")
         self.assertEqual(response.envelope["payload"]["inline"]["error"]["code"], "RUNTIME_DEFER_REJECTED")
+
+    def test_delivery_accepted_is_registered_as_best_effort_outbound_type(self) -> None:
+        specs = {
+            item["message_type"]: item
+            for item in self.service.list_message_type_specs()
+        }
+
+        accepted_spec = specs["delivery.accepted"]
+
+        self.assertEqual(accepted_spec["category"], "delivery")
+        self.assertEqual(accepted_spec["reliability"], "best_effort")
+        self.assertFalse(accepted_spec["implemented"])
+        self.assertEqual(accepted_spec["required_groups"], [])
 
     def _build_frame(self, message_type: str, *, category: str, target: dict[str, Any] | None = None) -> str:
         raw: dict[str, Any] = {

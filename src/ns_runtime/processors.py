@@ -15,11 +15,15 @@ from typing import (
 
 from ns_common.exceptions import (
     NsEvermoreError,
+    NsRuntimeDeliveryStateError,
     NsRuntimeEnvelopeSchemaError,
     NsRuntimeUnauthorizedMessageTypeError,
     NsRuntimeUnsupportedMessageTypeError,
 )
-from ns_runtime.delivery import RuntimeDeliveryRegistry
+from ns_runtime.delivery import (
+    RuntimeDeliveryRegistry,
+    RuntimeMessageDeliverySummary,
+)
 from ns_runtime.models import (
     Envelope,
     MessageTypeSpec,
@@ -136,14 +140,18 @@ class AuditMarkProcessor(BaseRuntimeProcessor):
 
 
 class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
-    def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver, local_forwarder: RuntimeLocalEnvelopeForwarder) -> None:
+    def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver, local_forwarder: RuntimeLocalEnvelopeForwarder, delivery_registry: RuntimeDeliveryRegistry) -> None:
         self._codec = codec
         self._target_resolver = target_resolver
         self._local_forwarder = local_forwarder
+        self._delivery_registry = delivery_registry
 
     async def process(self, request: ProcessorRequest) -> ProcessorResponse:
         try:
-            decision = self._target_resolver.resolve(request.envelope, request.session)
+            decision = self._target_resolver.resolve(
+                request.envelope,
+                request.session,
+            )
             if decision is None:
                 raise NsRuntimeEnvelopeSchemaError(
                     "task.dispatch must contain target group.",
@@ -152,16 +160,27 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                     },
                 )
 
-            write_results = await self._local_forwarder.forward(
+            await self._local_forwarder.forward(
                 decision=decision,
                 envelope=request.envelope,
             )
 
+            summary = self._delivery_registry.get_message_summary(
+                request.envelope.message_id
+            )
+            if summary is None:
+                raise NsRuntimeDeliveryStateError(
+                    "Accepted task dispatch is missing MessageDeliverySummary.",
+                    details={
+                        "message_id": request.envelope.message_id,
+                        "message_type": request.envelope.message_type,
+                    },
+                )
+
             return ProcessorResponse.respond(
-                self._build_forward_result(
+                self._build_delivery_accepted(
                     request=request,
-                    decision=decision,
-                    write_results=write_results,
+                    summary=summary,
                 )
             )
         except NsEvermoreError as exc:
@@ -173,17 +192,19 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                 )
             )
 
-    def _build_forward_result(self, *, request: ProcessorRequest, decision, write_results) -> dict[str, Any]:
+    def _build_delivery_accepted(self, *, request: ProcessorRequest, summary: RuntimeMessageDeliverySummary) -> dict[str, Any]:
+        accepted_at = utc_now_iso()
+
         return {
             "protocol": {
                 "version": self._codec.protocol_version_text,
             },
             "message": {
-                "message_id": f"{request.envelope.message_id}.forwarded",
-                "type": "runtime.control.forward_result",
-                "category": "control",
+                "message_id": f"{request.envelope.message_id}.accepted",
+                "type": "delivery.accepted",
+                "category": "delivery",
                 "priority": 100,
-                "created_at": utc_now_iso(),
+                "created_at": accepted_at,
                 "reliability": "best_effort",
             },
             "source": {
@@ -194,7 +215,7 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                 "tenant_id": request.session.tenant_id,
                 "component_type": "runtime",
                 "capabilities_summary": [
-                    "runtime.control.forward_result",
+                    "delivery.accepted",
                 ],
                 "connection_epoch": 0,
             },
@@ -205,21 +226,20 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
             "payload": {
                 "mode": "inline",
                 "inline": {
-                    "status": "forwarded",
                     "message_id": request.envelope.message_id,
-                    "message_type": request.envelope.message_type,
-                    "target_kind": decision.target_kind,
-                    "target_count": decision.target_count,
-                    "write_count": len(write_results),
-                    "writes": [
-                        item.to_dict()
-                        for item in write_results
-                    ],
-                    "reliability_note": "websocket_send_only_no_delivery_ack",
+                    "summary_id": summary.summary_id,
+                    "accepted_at": accepted_at,
+                    "status_query_hint": "delivery.status_query",
                 },
             },
             "trace": {
-                "trace_id": request.envelope.raw.get("trace", {}).get("trace_id", request.envelope.message_id),
+                "trace_id": request.envelope.raw.get(
+                    "trace",
+                    {},
+                ).get(
+                    "trace_id",
+                    request.envelope.message_id,
+                ),
                 "request_id": request.envelope.message_id,
             },
         }
@@ -682,11 +702,12 @@ def build_default_processor_registry(
                 codec=codec,
                 health_snapshot_provider=health_snapshot_provider,
             )
-        elif spec.message_type == "task.dispatch" and target_resolver is not None and local_forwarder is not None:
+        elif spec.message_type == "task.dispatch" and target_resolver is not None and local_forwarder is not None and delivery_registry is not None:
             processor = LocalTaskDispatchProcessor(
                 codec=codec,
                 target_resolver=target_resolver,
                 local_forwarder=local_forwarder,
+                delivery_registry=delivery_registry,
             )
         elif spec.message_type == "delivery.ack" and delivery_registry is not None:
             processor = DeliveryAckProcessor(
@@ -744,6 +765,7 @@ def _build_builtin_message_type_specs() -> tuple[MessageTypeSpec, ...]:
         {"message_type": "connection.drain", "category": "control", "reliability": "reliable", "implemented": False},
         {"message_type": "task.dispatch", "category": "task", "required_groups": ("target",), "required_capabilities": ("task.dispatch",), "reliability": "critical", "implemented": True},
         {"message_type": "task.result", "category": "task", "required_groups": ("target",), "reliability": "reliable", "implemented": False},
+        {"message_type": "delivery.accepted", "category": "delivery", "reliability": "best_effort", "implemented": False},
         {"message_type": "delivery.ack", "category": "delivery", "required_groups": ("delivery",), "reliability": "critical", "implemented": True},
         {"message_type": "delivery.ack_result", "category": "delivery", "required_groups": ("delivery",), "reliability": "best_effort", "implemented": False},
         {"message_type": "delivery.nack", "category": "delivery", "required_groups": ("delivery", "payload"), "reliability": "critical", "implemented": True},
@@ -762,7 +784,6 @@ def _build_builtin_message_type_specs() -> tuple[MessageTypeSpec, ...]:
         {"message_type": "stream.status_query", "category": "stream", "required_capabilities": ("stream.status_query",), "reliability": "best_effort", "implemented": False},
         {"message_type": "runtime.control.health", "category": "control", "reliability": "best_effort", "implemented": True},
         {"message_type": "runtime.control.health_result", "category": "control", "reliability": "best_effort", "implemented": False},
-        {"message_type": "runtime.control.forward_result", "category": "control", "reliability": "best_effort", "implemented": False},
         {"message_type": "runtime.control.node_status", "category": "control", "required_capabilities": ("runtime.management",), "reliability": "best_effort", "implemented": False},
         {"message_type": "runtime.control.connection_status", "category": "control", "required_capabilities": ("runtime.management",), "reliability": "best_effort", "implemented": False},
         {"message_type": "runtime.control.kick_connection", "category": "control", "required_capabilities": ("runtime.management",), "reliability": "critical", "implemented": False},

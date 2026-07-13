@@ -438,7 +438,8 @@
 
 - [x] 【实现进度 1.13】已新增单进程内存版 `RuntimeMessageDeliverySummary` 骨架；当前在创建 DeliveryRecord 时自动创建或复用同一 `message_id` 下的 summary，并在 ACK、NACK、Defer、ACK timeout、retry expired 等本地状态迁移后刷新 prepared、queued、sending、ack_waiting、retry_scheduled、acked、dead_lettered、expired、cancelled 和 pending 等计数。该进度只表示本地内存
   summary 聚合 foundation 完成，不表示强一致 summary store、rejected target 完整受理路径、fanout shard summary、delivery.accepted/rejected 响应、管理查询 processor、prepared 激活调度、lease/fencing、跨节点 summary merge 或生产级可靠投递完成。
-
+- [x] 【实现进度 1.14】已新增本地直连场景的 best-effort `delivery.accepted` 受理响应骨架；当前 `task.dispatch` 经本地 forward 路径完成并且对应 `RuntimeMessageDeliverySummary` 已创建后，向原发送连接返回仅包含 `message_id`、`summary_id`、`accepted_at`、`status_query_hint` 和 trace 的轻量响应，不再返回临时的 `runtime.control.forward_result`、完整 delivery_id
+  列表或 WebSocket write 明细。`delivery.accepted` 只表示 runtime 已完成当前阶段的本地受理，不表示目标连接已发送 ACK，也不作为可靠投递成功依据。该进度不表示 rejected/duplicate 受理响应、受理原子性、rejected summary、去重窗口、跨节点受理、accepted response 重试、管理查询 processor、强一致 summary/delivery store 或生产级可靠投递完成。s
 - MessageDeliverySummary 由可靠投递层维护，用于聚合同一个 message_id 下所有 delivery、rejected target、cancelled、expired、dead_lettered 和 acked 的整体状态。
 - MessageDeliverySummary 应保留 target_count、accepted_count、rejected_count、delivery_count、acked_count、dead_lettered_count、expired_count、cancelled_count、pending_count、prepared_count、queued_count 等关键计数，以便管理端无需扫描全部 delivery 也能判断整体状态。
 - 受理阶段如果全部目标都 rejected，也必须创建 MessageDeliverySummary，以便管理端能够查询这条 message 为什么没有产生有效 delivery。

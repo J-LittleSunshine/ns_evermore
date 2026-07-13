@@ -80,10 +80,16 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                     sender_accepted = self._read_json(await sender.recv())
                     sender_connection_id = sender_accepted["payload"]["inline"]["connection_id"]
 
-                    await sender.send(self._build_task_dispatch_frame(target_connection_id=receiver_connection_id))
+                    dispatch_frame = self._build_task_dispatch_frame(
+                        target_connection_id=receiver_connection_id
+                    )
+                    dispatch_request = self._read_json(dispatch_frame)
+                    dispatch_message_id = dispatch_request["message"]["message_id"]
+
+                    await sender.send(dispatch_frame)
 
                     forwarded = self._read_json(await receiver.recv())
-                    forward_result = self._read_json(await sender.recv())
+                    accepted = self._read_json(await sender.recv())
 
                     self.assertEqual(forwarded["message"]["type"], "task.dispatch")
                     self.assertEqual(forwarded["source"]["connection_id"], sender_connection_id)
@@ -94,16 +100,107 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                     self.assertEqual(forwarded["delivery"]["attempt"], 1)
                     self.assertEqual(forwarded["delivery"]["replay_epoch"], 0)
 
-                    self.assertEqual(forward_result["message"]["type"], "runtime.control.forward_result")
-                    self.assertEqual(forward_result["payload"]["inline"]["status"], "forwarded")
-                    self.assertEqual(forward_result["payload"]["inline"]["write_count"], 1)
-                    self.assertEqual(forward_result["payload"]["inline"]["writes"][0]["status"], "sent_to_transport")
-                    self.assertEqual(forward_result["payload"]["inline"]["writes"][0]["delivery_state"], "ack_waiting")
-                    self.assertEqual(forward_result["payload"]["inline"]["writes"][0]["delivery_id"], forwarded["delivery"]["delivery_id"])
+                    accepted_inline = accepted["payload"]["inline"]
+
+                    self.assertEqual(accepted["message"]["type"], "delivery.accepted")
+                    self.assertEqual(accepted["message"]["category"], "delivery")
+                    self.assertEqual(accepted["message"]["reliability"], "best_effort")
                     self.assertEqual(
-                        forward_result["payload"]["inline"]["reliability_note"],
-                        "websocket_send_only_no_delivery_ack",
+                        accepted["target"]["connection_id"],
+                        sender_connection_id,
                     )
+                    self.assertEqual(
+                        accepted_inline["message_id"],
+                        dispatch_message_id,
+                    )
+                    self.assertEqual(
+                        accepted_inline["summary_id"],
+                        forwarded["delivery"]["summary_id"],
+                    )
+                    self.assertTrue(accepted_inline["accepted_at"])
+                    self.assertEqual(
+                        accepted_inline["status_query_hint"],
+                        "delivery.status_query",
+                    )
+                    self.assertEqual(
+                        accepted["trace"]["request_id"],
+                        dispatch_message_id,
+                    )
+
+                    self.assertEqual(
+                        set(accepted_inline.keys()),
+                        {
+                            "message_id",
+                            "summary_id",
+                            "accepted_at",
+                            "status_query_hint",
+                        },
+                    )
+                    self.assertNotIn("delivery", accepted)
+                    self.assertNotIn("writes", accepted_inline)
+                    self.assertNotIn("write_count", accepted_inline)
+                    self.assertNotIn("delivery_id", accepted_inline)
+
+                    summary_before_ack = service.get_message_summary(
+                        dispatch_message_id
+                    )
+
+                    self.assertIsNotNone(summary_before_ack)
+                    self.assertEqual(
+                        summary_before_ack.summary_id,
+                        accepted_inline["summary_id"],
+                    )
+                    self.assertEqual(summary_before_ack.acked_count, 0)
+                    self.assertEqual(summary_before_ack.ack_waiting_count, 1)
+                    self.assertEqual(summary_before_ack.pending_count, 1)
+                    self.assertEqual(summary_before_ack.state, "pending")
+
+                    delivery_id = forwarded["delivery"]["delivery_id"]
+
+                    await receiver.send(
+                        self._build_ack_frame(
+                            delivery_id=delivery_id
+                        )
+                    )
+                    ack_result = self._read_json(await receiver.recv())
+
+                    self.assertEqual(
+                        ack_result["message"]["type"],
+                        "delivery.ack_result",
+                    )
+                    self.assertEqual(
+                        ack_result["payload"]["inline"]["status"],
+                        "acked",
+                    )
+                    self.assertEqual(
+                        ack_result["payload"]["inline"]["delivery_state"],
+                        "acked",
+                    )
+                    self.assertEqual(
+                        ack_result["payload"]["inline"]["delivery_id"],
+                        delivery_id,
+                    )
+                    self.assertFalse(
+                        ack_result["payload"]["inline"]["duplicate"]
+                    )
+
+                    delivery_record = service.delivery_registry.get_record(
+                        delivery_id
+                    )
+                    self.assertIsNotNone(delivery_record)
+                    self.assertEqual(delivery_record.state, "acked")
+
+                    # 目标连接发送 ACK 后，summary 才进入 all_acked。
+                    summary_after_ack = service.get_message_summary(
+                        dispatch_message_id
+                    )
+
+                    self.assertIsNotNone(summary_after_ack)
+                    self.assertEqual(summary_after_ack.acked_count, 1)
+                    self.assertEqual(summary_after_ack.ack_waiting_count, 0)
+                    self.assertEqual(summary_after_ack.pending_count, 0)
+                    self.assertEqual(summary_after_ack.state, "all_acked")
+
                     delivery_id = forwarded["delivery"]["delivery_id"]
                     await receiver.send(self._build_ack_frame(delivery_id=delivery_id))
                     ack_result = self._read_json(await receiver.recv())
