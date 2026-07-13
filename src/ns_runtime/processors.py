@@ -104,11 +104,11 @@ class MessageTypeAuthProcessor(BaseRuntimeProcessor):
 
 
 class TargetLookupProcessor(BaseRuntimeProcessor):
-    def __init__(self,*,codec: EnvelopeCodec,target_resolver: RuntimeTargetResolver) -> None:
+    def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver) -> None:
         self._codec = codec
         self._target_resolver = target_resolver
 
-    async def process(self,request: ProcessorRequest) -> ProcessorResponse:
+    async def process(self, request: ProcessorRequest) -> ProcessorResponse:
         if request.envelope.message_type == "task.dispatch":
             return ProcessorResponse.continue_next()
 
@@ -129,6 +129,7 @@ class TargetLookupProcessor(BaseRuntimeProcessor):
                     request=request.envelope,
                 )
             )
+
 
 class AuditMarkProcessor(BaseRuntimeProcessor):
     async def process(self, request: ProcessorRequest) -> ProcessorResponse:
@@ -153,7 +154,7 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
         self._local_forwarder = local_forwarder
         self._delivery_registry = delivery_registry
 
-    async def process(self,request: ProcessorRequest ) -> ProcessorResponse:
+    async def process(self, request: ProcessorRequest) -> ProcessorResponse:
         decision = None
 
         try:
@@ -193,40 +194,41 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                 )
             )
 
-        except (
-                NsRuntimeTargetUnavailableError,
-                NsRuntimeTenantMismatchError,
-        ) as exc:
-            summary = self._delivery_registry.register_rejected_summary(
-                envelope=request.envelope,
-                source_connection_id=request.session.connection_id,
-                source_tenant_id=request.session.tenant_id,
-                target_count=(
-                    decision.target_count
-                    if decision is not None
-                    else 1
-                ),
-                rejected_count=1,
-                reason_code=exc.code,
-                reason_message=exc.message,
+        except NsRuntimeTargetUnavailableError as exc:
+            existing_summary = (self._delivery_registry.get_message_summary(request.envelope.message_id))
+            if existing_summary is not None and existing_summary.delivery_count > 0:
+                return ProcessorResponse.respond(self._build_delivery_accepted(request=request, summary=existing_summary))
+
+            return self._reject_admission(request=request, exc=exc,
+                target_count=(decision.target_count if decision is not None else 1),
             )
 
-            return ProcessorResponse.reject(
-                self._build_delivery_rejected(
-                    request=request,
-                    summary=summary,
-                    exc=exc,
-                )
-            )
+        except NsRuntimeTenantMismatchError as exc:
+            return self._reject_admission(request=request, exc=exc, target_count=1)
 
         except NsEvermoreError as exc:
             return ProcessorResponse.reject(
-                self._codec.build_error_envelope(
-                    exc,
-                    session=request.session,
-                    request=request.envelope,
-                )
+                self._codec.build_error_envelope(exc, session=request.session, request=request.envelope)
             )
+
+    def _reject_admission(self, *, request: ProcessorRequest, exc: NsEvermoreError, target_count: int) -> ProcessorResponse:
+        summary = self._delivery_registry.register_rejected_summary(
+            envelope=request.envelope,
+            source_connection_id=request.session.connection_id,
+            source_tenant_id=request.session.tenant_id,
+            target_count=target_count,
+            rejected_count=1,
+            reason_code=exc.code,
+            reason_message=exc.message,
+        )
+
+        return ProcessorResponse.reject(
+            self._build_delivery_rejected(
+                request=request,
+                summary=summary,
+                exc=exc,
+            )
+        )
 
     def _build_delivery_accepted(self, *, request: ProcessorRequest, summary: RuntimeMessageDeliverySummary) -> dict[str, Any]:
         accepted_at = utc_now_iso()
@@ -280,7 +282,7 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
             },
         }
 
-    def _build_delivery_rejected(self,*,request: ProcessorRequest,summary: RuntimeMessageDeliverySummary, exc: NsEvermoreError) -> dict[str, Any]:
+    def _build_delivery_rejected(self, *, request: ProcessorRequest, summary: RuntimeMessageDeliverySummary, exc: NsEvermoreError) -> dict[str, Any]:
         rejected_at = summary.last_rejected_at or utc_now_iso()
         retryable = isinstance(
             exc,
