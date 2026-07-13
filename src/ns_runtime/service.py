@@ -150,8 +150,11 @@ class RuntimeService:
     def delivery_registry(self) -> RuntimeDeliveryRegistry:
         return self._delivery_registry
 
-    def get_message_summary(self, message_id: str) -> RuntimeMessageDeliverySummary | None:
-        return self._delivery_registry.get_message_summary(message_id)
+    def get_message_summary(self,message_id: str,*,tenant_id: str | None = None) -> RuntimeMessageDeliverySummary | None:
+        return self._delivery_registry.get_message_summary(
+            message_id,
+            tenant_id=tenant_id,
+        )
 
     def list_message_summaries(self) -> tuple[RuntimeMessageDeliverySummary, ...]:
         return self._delivery_registry.list_message_summaries()

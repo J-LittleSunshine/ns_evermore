@@ -1199,6 +1199,48 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
             1,
         )
 
+    def test_same_message_id_in_different_tenants_uses_separate_summaries(
+            self,
+    ) -> None:
+        source_tenant_2 = self._activate(
+            identity="source-2",
+            tenant_id="tenant-2",
+            component_type="management",
+            capabilities=("task.dispatch",),
+        )
+        target_tenant_2 = self._activate(
+            identity="target-2",
+            tenant_id="tenant-2",
+            component_type="client",
+            capabilities=("task.execute",),
+        )
+
+        envelope_1 = self.codec.parse_inbound(
+            self._build_task_dispatch_frame(
+                target_connection_id=(
+                    self.target_session.connection_id
+                ),
+            ),
+            self.source_session,
+        )
+        decision_1 = self.target_resolver.resolve(
+            envelope_1,
+            self.source_session,
+        )
+
+        envelope_2 = self.codec.parse_inbound(
+            self._build_task_dispatch_frame(
+                target_connection_id=(
+                    target_tenant_2.connection_id
+                ),
+            ),
+            source_tenant_2,
+        )
+        decision_2 = self.target_resolver.resolve(
+            envelope_2,
+            source_tenant_2,
+        )
+
     def _create_ack_waiting_delivery(self):
         envelope = self.codec.parse_inbound(
             self._build_task_dispatch_frame(

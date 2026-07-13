@@ -172,9 +172,18 @@ class RuntimeProcessorTestCase(unittest.TestCase):
             inline["message_id"],
             "msg-1",
         )
+        summary = self.service.get_message_summary(
+            "msg-1",
+            tenant_id=self.session.tenant_id,
+        )
+
+        self.assertIsNotNone(summary)
         self.assertEqual(
             inline["summary_id"],
-            "summary:msg-1",
+            summary.summary_id,
+        )
+        self.assertTrue(
+            inline["summary_id"].startswith("summary:")
         )
         self.assertEqual(
             inline["reason_code"],

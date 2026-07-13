@@ -210,7 +210,8 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                 )
 
             summary = self._delivery_registry.get_message_summary(
-                request.envelope.message_id
+                request.envelope.message_id,
+                tenant_id=request.session.tenant_id,
             )
             if summary is None:
                 raise NsRuntimeDeliveryStateError(
@@ -229,7 +230,12 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
             )
 
         except NsRuntimeTargetUnavailableError as exc:
-            existing_summary = (self._delivery_registry.get_message_summary(request.envelope.message_id))
+            existing_summary = (
+                self._delivery_registry.get_message_summary(
+                    request.envelope.message_id,
+                    tenant_id=request.session.tenant_id,
+                )
+            )
             if existing_summary is not None and existing_summary.delivery_count > 0:
                 return ProcessorResponse.respond(self._build_delivery_accepted(request=request, summary=existing_summary))
 

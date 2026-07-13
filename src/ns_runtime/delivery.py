@@ -529,7 +529,7 @@ class RuntimeDeliveryRegistry:
         self._dead_letters: dict[str, RuntimeDeadLetterRecord] = {}
         self._dead_letter_id_by_delivery: dict[str, str] = {}
         self._summaries: dict[str, RuntimeMessageDeliverySummary] = {}
-        self._summary_id_by_message: dict[str, str] = {}
+        self._summary_id_by_tenant_message: dict[tuple[str, str], str] = {}
         self._dedupe_window_seconds = max(0, dedupe_window_seconds)
         self._delivery_id_by_dedupe_key: dict[tuple[str, str, str], str] = {}
         self._dedupe_expires_at_by_key: dict[tuple[str, str, str], datetime] = {}
@@ -582,12 +582,7 @@ class RuntimeDeliveryRegistry:
                         raise NsRuntimeDeliveryStateError(
                             "message_id and target were reused with different envelope content.",
                             details={
-                                "tenant_id": decision.source_tenant_id,
                                 "message_id": envelope.message_id,
-                                "target_fingerprint": target_fingerprint,
-                                "existing_delivery_id": (
-                                    existing_record.delivery_id
-                                ),
                             },
                         )
 
@@ -1178,12 +1173,30 @@ class RuntimeDeliveryRegistry:
     def get_summary(self, summary_id: str) -> RuntimeMessageDeliverySummary | None:
         return self._summaries.get(summary_id)
 
-    def get_message_summary(self, message_id: str) -> RuntimeMessageDeliverySummary | None:
-        summary_id = self._summary_id_by_message.get(message_id)
-        if summary_id is None:
+    def get_message_summary(self, message_id: str, *, tenant_id: str | None = None) -> RuntimeMessageDeliverySummary | None:
+        if tenant_id is not None:
+            summary_id = (
+                self._summary_id_by_tenant_message.get(
+                    (
+                        tenant_id,
+                        message_id,
+                    )
+                )
+            )
+            if summary_id is None:
+                return None
+
+            return self._summaries.get(summary_id)
+
+        matches = tuple(
+            summary
+            for summary in self._summaries.values()
+            if summary.message_id == message_id
+        )
+        if len(matches) != 1:
             return None
 
-        return self._summaries.get(summary_id)
+        return matches[0]
 
     def list_message_summaries(self) -> tuple[RuntimeMessageDeliverySummary, ...]:
         return tuple(
@@ -1234,7 +1247,16 @@ class RuntimeDeliveryRegistry:
         return self._refresh_message_summary(record.summary_id)
 
     def _ensure_message_summary(self, *, envelope: Envelope, source_connection_id: str, source_tenant_id: str, target_count: int, now: str, ) -> RuntimeMessageDeliverySummary:
-        summary_id = self._summary_id_by_message.get(envelope.message_id)
+        tenant_message_key = (
+            source_tenant_id,
+            envelope.message_id,
+        )
+        summary_id = (
+            self._summary_id_by_tenant_message.get(
+                tenant_message_key
+            )
+        )
+
         if summary_id is not None:
             summary = self._summaries[summary_id]
             summary.target_count = max(
@@ -1244,7 +1266,11 @@ class RuntimeDeliveryRegistry:
             summary.updated_at = now
             return summary
 
-        summary_id = f"summary:{envelope.message_id}"
+        summary_id = self._build_summary_id(
+            tenant_id=source_tenant_id,
+            message_id=envelope.message_id,
+        )
+
         summary = RuntimeMessageDeliverySummary(
             summary_id=summary_id,
             message_id=envelope.message_id,
@@ -1271,8 +1297,12 @@ class RuntimeDeliveryRegistry:
             created_at=now,
             updated_at=now,
         )
+
         self._summaries[summary_id] = summary
-        self._summary_id_by_message[envelope.message_id] = summary_id
+        self._summary_id_by_tenant_message[
+            tenant_message_key
+        ] = summary_id
+
         return summary
 
     def _refresh_message_summary(self, summary_id: str) -> RuntimeMessageDeliverySummary | None:
@@ -1814,3 +1844,11 @@ class RuntimeDeliveryRegistry:
                     "attempt_id": attempt.attempt_id,
                 },
             )
+
+    @staticmethod
+    def _build_summary_id(*, tenant_id: str, message_id: str) -> str:
+        digest = hashlib.sha256(
+            f"{tenant_id}\0{message_id}".encode("utf-8")
+        ).hexdigest()[:24]
+
+        return f"summary:{digest}"
