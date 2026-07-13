@@ -1105,6 +1105,195 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
             2,
         )
 
+    def test_retryable_target_unavailable_can_be_accepted_after_target_recovers(self) -> None:
+        validator = _SequencePayloadReferenceValidator(
+            RuntimeError(
+                "inline payload must not call validator"
+            )
+        )
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            payload_reference_validator=validator,
+        )
+        source = self._build_source_session(
+            tenant_id="tenant-1",
+            connection_id="source-1",
+        )
+
+        target_record = (
+            service.session_registry
+            .create_handshaking(
+                remote_address="test"
+            )
+        )
+
+        frame = self._build_dispatch_frame(
+            message_id="target-unavailable-retry-1",
+            target_connection_id=(
+                target_record.connection_id
+            ),
+            payload={
+                "mode": "inline",
+                "inline": {
+                    "task_name": "demo-task",
+                },
+            },
+        )
+
+        first_response = asyncio.run(
+            service.process_frame(
+                frame,
+                source,
+            )
+        )
+
+        self.assertEqual(
+            first_response.action,
+            "reject",
+        )
+        self.assertEqual(
+            first_response.envelope["message"]["type"],
+            "delivery.rejected",
+        )
+        self.assertEqual(
+            first_response.envelope[
+                "payload"
+            ]["inline"]["reason_code"],
+            "RUNTIME_TARGET_UNAVAILABLE",
+        )
+        self.assertTrue(
+            first_response.envelope[
+                "payload"
+            ]["inline"]["retryable"]
+        )
+
+        summary_before = service.get_message_summary(
+            "target-unavailable-retry-1",
+            tenant_id="tenant-1",
+        )
+        self.assertIsNotNone(summary_before)
+        self.assertEqual(
+            summary_before.delivery_count,
+            0,
+        )
+        self.assertEqual(
+            summary_before.rejected_count,
+            1,
+        )
+        self.assertEqual(
+            summary_before.state,
+            "failed",
+        )
+        summary_id = summary_before.summary_id
+
+        target_session = (
+            service.session_registry.activate(
+                target_record,
+                RuntimeAuthResult(
+                    accepted=True,
+                    identity="late-target",
+                    tenant_id="tenant-1",
+                    component_type="client",
+                    capabilities=("task.execute",),
+                    snapshot_id="snapshot:late-target",
+                    issued_at=utc_now_iso(),
+                    expires_at=utc_now_iso(),
+                    iam_mode="cached",
+                    role="singleton",
+                ),
+            )
+        )
+
+        websocket = _MemoryWebSocket()
+        service.writer_registry.register(
+            connection_id=(
+                target_session.connection_id
+            ),
+            connection_epoch=(
+                target_session.connection_epoch
+            ),
+            websocket=websocket,
+        )
+
+        second_response = asyncio.run(
+            service.process_frame(
+                frame,
+                source,
+            )
+        )
+
+        self.assertEqual(
+            second_response.action,
+            "respond",
+        )
+        self.assertEqual(
+            second_response.envelope["message"]["type"],
+            "delivery.accepted",
+        )
+
+        summary_after = service.get_message_summary(
+            "target-unavailable-retry-1",
+            tenant_id="tenant-1",
+        )
+        self.assertIsNotNone(summary_after)
+        self.assertEqual(
+            summary_after.summary_id,
+            summary_id,
+        )
+        self.assertEqual(
+            summary_after.target_count,
+            1,
+        )
+        self.assertEqual(
+            summary_after.accepted_count,
+            1,
+        )
+        self.assertEqual(
+            summary_after.rejected_count,
+            0,
+        )
+        self.assertEqual(
+            summary_after.delivery_count,
+            1,
+        )
+        self.assertEqual(
+            summary_after.state,
+            "pending",
+        )
+        self.assertEqual(
+            summary_after.last_rejection_code,
+            "",
+        )
+        self.assertEqual(
+            summary_after.last_rejection_message,
+            "",
+        )
+        self.assertEqual(
+            summary_after.last_rejected_at,
+            "",
+        )
+
+        snapshot = (
+            service.delivery_registry
+            .build_delivery_snapshot()
+        )
+        self.assertEqual(
+            snapshot["delivery_count"],
+            1,
+        )
+        self.assertEqual(
+            snapshot["attempt_count"],
+            1,
+        )
+        self.assertEqual(
+            len(websocket.frames),
+            1,
+        )
+        self.assertEqual(
+            validator.requests,
+            [],
+        )
+
     def _build_runtime(self, *, validator: PayloadReferenceValidator) -> tuple[RuntimeService, RuntimeSessionContext, RuntimeSessionContext, _MemoryWebSocket]:
         service = RuntimeService.build_default(
             runtime_id="runtime-test",

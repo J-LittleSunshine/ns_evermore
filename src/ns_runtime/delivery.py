@@ -22,6 +22,7 @@ from ns_common.exceptions import (
     NsRuntimeDeliveryStateError,
     NsRuntimeEnvelopeSchemaError,
     NsRuntimeNackRejectedError,
+    NsRuntimeTargetUnavailableError,
     RUNTIME_NACK_REASON_ERROR_CODES,
 )
 from ns_runtime.models import (
@@ -81,6 +82,12 @@ RuntimeDeadLetterReplayability = Literal[
     "not_replayable",
     "manual_confirm_required",
 ]
+
+_RETRYABLE_ADMISSION_REJECTION_CODES: frozenset[str] = frozenset(
+    {
+        NsRuntimeTargetUnavailableError.code,
+    }
+)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -626,14 +633,20 @@ class RuntimeDeliveryRegistry:
         existing_summary = self.get_message_summary(envelope.message_id, tenant_id=decision.source_tenant_id)
 
         if existing_summary is not None and existing_summary.delivery_count == 0 and existing_summary.rejected_count > 0:
-            details = {
-                "message_id": envelope.message_id,
-                "summary_id": existing_summary.summary_id,
-                "rejected_count": (
-                    existing_summary.rejected_count
-                ),
-            }
-            raise NsRuntimeDeliveryStateError("Previously rejected task dispatch message_id cannot be reused for a new delivery.", details=details)
+            if existing_summary.last_rejection_code in _RETRYABLE_ADMISSION_REJECTION_CODES:
+                self._reset_retryable_rejection_summary(summary=existing_summary, target_count=decision.target_count)
+            else:
+                details = {
+                    "message_id": envelope.message_id,
+                    "summary_id": existing_summary.summary_id,
+                    "rejected_count": (
+                        existing_summary.rejected_count
+                    ),
+                    "last_rejection_code": (
+                        existing_summary.last_rejection_code
+                    ),
+                }
+                raise NsRuntimeDeliveryStateError("Previously rejected task dispatch message_id cannot be reused for a new delivery.", details=details)
         delivery_id = str(uuid.uuid4())
         now = utc_now_iso()
         summary = self._ensure_message_summary(
@@ -1331,6 +1344,19 @@ class RuntimeDeliveryRegistry:
         ] = summary_id
 
         return summary
+
+    @staticmethod
+    def _reset_retryable_rejection_summary(*, summary: RuntimeMessageDeliverySummary, target_count: int) -> None:
+        summary.state = "initializing"
+        summary.target_count = max(1, target_count)
+        summary.accepted_count = 0
+        summary.rejected_count = 0
+        summary.delivery_count = 0
+
+        summary.last_rejection_code = ""
+        summary.last_rejection_message = ""
+        summary.last_rejected_at = ""
+        summary.updated_at = utc_now_iso()
 
     def _refresh_message_summary(self, summary_id: str) -> RuntimeMessageDeliverySummary | None:
         summary = self._summaries.get(summary_id)
