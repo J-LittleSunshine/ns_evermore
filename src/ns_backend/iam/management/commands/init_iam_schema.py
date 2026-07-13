@@ -20,16 +20,8 @@ class Command(BaseCommand):
     SQL_GROUP = "iam"
 
     def add_arguments(self, parser: "ArgumentParser") -> None:
-        parser.add_argument(
-            "--database",
-            default="default",
-            help="Django database alias to initialize. Default: default.",
-        )
-        parser.add_argument(
-            "--sql-file",
-            default="",
-            help="Optional explicit SQL file path. Normally omit this and let the command choose by database vendor."
-        )
+        parser.add_argument("--database", default="default", help="Django database alias to initialize. Default: default.")
+        parser.add_argument("--sql-file", default="", help="Optional explicit SQL file path. Normally omit this and let the command choose by database vendor.")
 
     def handle(self, *args: object, **options: object) -> None:
         database_alias = str(options["database"]).strip()
@@ -40,15 +32,6 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.NOTICE(f"Initializing IAM schema on database alias '{database_alias}'."))
 
-        vendor, sql_file_path = SqlScriptRunner.run_create_script(
-            database_alias=database_alias,
-            sql_group=self.SQL_GROUP,
-            explicit_sql_file=explicit_sql_file,
-        )
+        vendor, sql_file_path = SqlScriptRunner.run_create_script(database_alias=database_alias, sql_group=self.SQL_GROUP, explicit_sql_file=explicit_sql_file)
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"IAM schema initialized on database alias '{database_alias}' "
-                f"with vendor '{vendor}' using SQL file: {sql_file_path}"
-            )
-        )
+        self.stdout.write(self.style.SUCCESS(f"IAM schema initialized on database alias '{database_alias}' with vendor '{vendor}' using SQL file: {sql_file_path}"))

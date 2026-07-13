@@ -100,15 +100,10 @@ class JwtService:
             "typ": cls.TOKEN_TYPE,
             "alg": cls.ALGORITHM,
         }
-
-        return jwt.encode(
-            header,
-            payload,
-            cls._get_key(),
-            algorithms=[
-                cls.ALGORITHM,
-            ],
-        )
+        algorithms = [
+            cls.ALGORITHM,
+        ]
+        return jwt.encode(header, payload, cls._get_key(), algorithms=algorithms)
 
     @classmethod
     def _decode(cls, token: str, expected_type: str) -> dict[str, Any] | None:
@@ -118,13 +113,10 @@ class JwtService:
             return None
 
         try:
-            token_obj = jwt.decode(
-                token,
-                cls._get_key(),
-                algorithms=[
-                    cls.ALGORITHM,
-                ],
-            )
+            algorithms = [
+                cls.ALGORITHM,
+            ]
+            token_obj = jwt.decode(token, cls._get_key(), algorithms=algorithms)
         except JoseError:
             return None
 
@@ -216,27 +208,26 @@ class JwtService:
 
     @classmethod
     def _claims_registry(cls):
-        return jwt.JWTClaimsRegistry(
-            iss={
-                "essential": True,
-                "value": cls._issuer(),
-            },
-            sub={
-                "essential": True,
-            },
-            exp={
-                "essential": True,
-            },
-            nbf={
-                "essential": True,
-            },
-            iat={
-                "essential": True,
-            },
-            jti={
-                "essential": True,
-            },
-        )
+        iss = {
+            "essential": True,
+            "value": cls._issuer(),
+        }
+        sub = {
+            "essential": True,
+        }
+        exp = {
+            "essential": True,
+        }
+        nbf = {
+            "essential": True,
+        }
+        iat = {
+            "essential": True,
+        }
+        jti = {
+            "essential": True,
+        }
+        return jwt.JWTClaimsRegistry(iss=iss, sub=sub, exp=exp, nbf=nbf, iat=iat, jti=jti)
 
     @staticmethod
     def _secret_key() -> str:

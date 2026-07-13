@@ -19,12 +19,10 @@ if TYPE_CHECKING:
 def normalize_kwargs(*, value: dict[str, Any] | None, field_name: str) -> dict[str, Any]:
     kwargs = {} if value is None else value
     if not isinstance(kwargs, dict):
-        raise IamRuntimeRequestInvalidError(
-            f"{field_name} must be an object.",
-            details={
-                "field": field_name,
-            },
-        )
+        details = {
+            "field": field_name,
+        }
+        raise IamRuntimeRequestInvalidError(f"{field_name} must be an object.", details=details)
 
     return kwargs
 
@@ -40,16 +38,9 @@ async def invoke_callable(*, target: Callable[..., Any], args: tuple[Any, ...], 
 class KnowledgeRetrieverIamFacade:
     @staticmethod
     async def invoke_retriever(*, retriever_callable: Callable[..., Any], allowed_items: list[dict[str, Any]], retriever_kwargs: dict[str, Any] | None) -> Any:
-        kwargs = normalize_kwargs(
-            value=retriever_kwargs,
-            field_name="retriever_kwargs",
-        )
+        kwargs = normalize_kwargs(value=retriever_kwargs, field_name="retriever_kwargs")
 
-        return await invoke_callable(
-            target=retriever_callable,
-            args=(allowed_items,),
-            kwargs=kwargs,
-        )
+        return await invoke_callable(target=retriever_callable, args=(allowed_items,), kwargs=kwargs)
 
     @classmethod
     async def recall_with_iam(
@@ -67,12 +58,10 @@ class KnowledgeRetrieverIamFacade:
             trace_id: str | None = None,
     ) -> dict[str, Any]:
         if not callable(retriever_callable):
-            raise IamRuntimeRequestInvalidError(
-                "retriever_callable is required.",
-                details={
-                    "field": "retriever_callable",
-                },
-            )
+            details = {
+                "field": "retriever_callable",
+            }
+            raise IamRuntimeRequestInvalidError("retriever_callable is required.", details=details)
 
         filter_result = await KnowledgeAuthorizationFilter.filter_candidates(
             user=user,
@@ -102,11 +91,7 @@ class KnowledgeRetrieverIamFacade:
                 "trace_id": trace_id,
             }
 
-        retriever_result = await cls.invoke_retriever(
-            retriever_callable=retriever_callable,
-            allowed_items=allowed_items,
-            retriever_kwargs=retriever_kwargs,
-        )
+        retriever_result = await cls.invoke_retriever(retriever_callable=retriever_callable, allowed_items=allowed_items, retriever_kwargs=retriever_kwargs)
 
         return {
             "allowed_items": allowed_items,
@@ -133,26 +118,17 @@ class AgentToolIamFacade:
         if isinstance(tool_args, list):
             return tuple(tool_args)
 
-        raise IamRuntimeRequestInvalidError(
-            "tool_args must be a list or tuple.",
-            details={
-                "field": "tool_args",
-            },
-        )
+        details = {
+            "field": "tool_args",
+        }
+        raise IamRuntimeRequestInvalidError("tool_args must be a list or tuple.", details=details)
 
     @staticmethod
     async def invoke_tool(*, tool_callable: Callable[..., Any], tool_args: list[Any] | tuple[Any, ...] | None, tool_kwargs: dict[str, Any] | None) -> Any:
         normalized_args = AgentToolIamFacade.normalize_tool_args(tool_args)
-        kwargs = normalize_kwargs(
-            value=tool_kwargs,
-            field_name="tool_kwargs",
-        )
+        kwargs = normalize_kwargs(value=tool_kwargs, field_name="tool_kwargs")
 
-        return await invoke_callable(
-            target=tool_callable,
-            args=normalized_args,
-            kwargs=kwargs,
-        )
+        return await invoke_callable(target=tool_callable, args=normalized_args, kwargs=kwargs)
 
     @classmethod
     async def execute_tool_with_iam(
@@ -168,26 +144,14 @@ class AgentToolIamFacade:
             trace_id: str | None = None,
     ) -> dict[str, Any]:
         if not callable(tool_callable):
-            raise IamRuntimeRequestInvalidError(
-                "tool_callable is required.",
-                details={
-                    "field": "tool_callable",
-                },
-            )
+            details = {
+                "field": "tool_callable",
+            }
+            raise IamRuntimeRequestInvalidError("tool_callable is required.", details=details)
 
-        decision = await AgentToolAuthorizationGuard.ensure_tool_allowed(
-            user=user,
-            tool_name=tool_name,
-            resource_id=resource_id,
-            context=context,
-            trace_id=trace_id,
-        )
+        decision = await AgentToolAuthorizationGuard.ensure_tool_allowed(user=user, tool_name=tool_name, resource_id=resource_id, context=context, trace_id=trace_id)
 
-        tool_result = await cls.invoke_tool(
-            tool_callable=tool_callable,
-            tool_args=tool_args,
-            tool_kwargs=tool_kwargs,
-        )
+        tool_result = await cls.invoke_tool(tool_callable=tool_callable, tool_args=tool_args, tool_kwargs=tool_kwargs)
 
         return {
             "decision": decision,

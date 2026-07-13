@@ -38,11 +38,10 @@ class PasswordTransportService:
         elif mode == cls.MODE_RSA_OAEP:
             raw_password = cls.decrypt_rsa_oaep(password_payload)
         else:
-            raise IamPasswordTransportConfigError(
-                details={
-                    "mode": mode,
-                },
-            )
+            details = {
+                "mode": mode,
+            }
+            raise IamPasswordTransportConfigError(details=details)
 
         cls._validate_raw_password(raw_password)
 
@@ -63,11 +62,10 @@ class PasswordTransportService:
 
         max_length = cls._get_positive_int_setting("PASSWORD_TRANSPORT_MAX_PAYLOAD_LENGTH", 4096)
         if len(password_payload) > max_length:
-            raise IamPasswordTransportInvalidError(
-                details={
-                    "max_length": max_length,
-                },
-            )
+            details = {
+                "max_length": max_length,
+            }
+            raise IamPasswordTransportInvalidError(details=details)
 
     @classmethod
     def _validate_raw_password(cls, raw_password: str) -> None:
@@ -76,11 +74,10 @@ class PasswordTransportService:
 
         max_length = cls._get_positive_int_setting("PASSWORD_PLAINTEXT_MAX_LENGTH", 256)
         if len(raw_password) > max_length:
-            raise IamPasswordTransportInvalidError(
-                details={
-                    "max_length": max_length,
-                },
-            )
+            details = {
+                "max_length": max_length,
+            }
+            raise IamPasswordTransportInvalidError(details=details)
 
     @staticmethod
     def _get_positive_int_setting(setting_name: str, default: int) -> int:
@@ -114,14 +111,7 @@ class PasswordTransportService:
             raise IamPasswordTransportInvalidError() from exc
 
         try:
-            plaintext = cls._load_private_key().decrypt(
-                ciphertext,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None,
-                ),
-            )
+            plaintext = cls._load_private_key().decrypt(ciphertext, padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
             return plaintext.decode("utf-8")
         except IamPasswordTransportConfigError:
             raise
@@ -136,16 +126,12 @@ class PasswordTransportService:
         password = passphrase.encode("utf-8") if passphrase else None
 
         try:
-            return serialization.load_pem_private_key(
-                key_data,
-                password=password,
-            )
+            return serialization.load_pem_private_key(key_data, password=password)
         except Exception as exc:
-            raise IamPasswordTransportConfigError(
-                details={
-                    "source": "private_key",
-                },
-            ) from exc
+            details = {
+                "source": "private_key",
+            }
+            raise IamPasswordTransportConfigError(details=details) from exc
 
     @staticmethod
     def _load_private_key_bytes() -> bytes:
@@ -158,15 +144,13 @@ class PasswordTransportService:
             try:
                 return Path(key_file).expanduser().read_bytes()
             except Exception as exc:
-                raise IamPasswordTransportConfigError(
-                    details={
-                        "source": "private_key_file",
-                        "path": key_file,
-                    },
-                ) from exc
+                details = {
+                    "source": "private_key_file",
+                    "path": key_file,
+                }
+                raise IamPasswordTransportConfigError(details=details) from exc
 
-        raise IamPasswordTransportConfigError(
-            details={
-                "source": "private_key",
-            },
-        )
+        details = {
+            "source": "private_key",
+        }
+        raise IamPasswordTransportConfigError(details=details)

@@ -17,20 +17,18 @@ class BaseRepository:
 
     @staticmethod
     def ensure_model_class(model_class: Any) -> None:
+        details = {
+            "field": "model_class",
+        }
         if model_class is None:
-            raise NsDependencyError("model_class is not configured.",
-                details={
-                    "field": "model_class",
-                },
-            )
+            raise NsDependencyError("model_class is not configured.", details=details)
 
         meta = getattr(model_class, "_meta", None)
         if meta is None:
-            raise NsDependencyError("model_class is not a Django model.",
-                details={
-                    "model_class": repr(model_class),
-                },
-            )
+            details = {
+                "model_class": repr(model_class),
+            }
+            raise NsDependencyError("model_class is not a Django model.", details=details)
 
     @classmethod
     def resolve_db_alias(cls, model_class: Any, db_alias: str | None = None) -> str:

@@ -30,31 +30,34 @@ def normalize_db_vendor(value: object) -> str:
     text = value.strip().lower()
     if not text:
         raise ValueError(f"unsupported db vendor: {value}")
-
-    if text in {
+    sqlite_text = {
         "sqlite",
-        "sqlite3",
-    }:
-        return DB_VENDOR_SQLITE
-
-    if text in {
+        "sqlite3"
+    }
+    mysql_text = {
         "mysql",
-        "mariadb",
-    }:
-        return DB_VENDOR_MYSQL
-
-    if text in {
+        "mariadb"
+    }
+    postgres_text = {
         "postgres",
         "postgresql",
-        "pgsql",
-    }:
-        return DB_VENDOR_POSTGRESQL
-
-    if text in {
+        "pgsql"
+    }
+    dm_text = {
         "dm",
         "dm8",
-        "dameng",
-    }:
+        "dameng"
+    }
+    if text in sqlite_text:
+        return DB_VENDOR_SQLITE
+
+    if text in mysql_text:
+        return DB_VENDOR_MYSQL
+
+    if text in postgres_text:
+        return DB_VENDOR_POSTGRESQL
+
+    if text in dm_text:
         return DB_VENDOR_DM8
 
     raise ValueError(f"unsupported db vendor: {value}")
@@ -64,11 +67,7 @@ def detect_db_vendor_from_config(db_config: dict[str, Any]) -> str:
     if not isinstance(db_config, dict):
         return DB_VENDOR_UNKNOWN
 
-    for key in (
-            "NS_VENDOR",
-            "VENDOR",
-            "vendor",
-    ):
+    for key in ("NS_VENDOR", "VENDOR", "vendor"):
         value = db_config.get(key)
         if isinstance(value, str) and value.strip():
             try:
@@ -85,7 +84,7 @@ def detect_db_vendor_from_config(db_config: dict[str, Any]) -> str:
 
     if engine in {
         "django.db.backends.mysql",
-        "mysql.connector.django",
+        "mysql.connector.django"
     }:
         return DB_VENDOR_MYSQL
 
@@ -94,7 +93,7 @@ def detect_db_vendor_from_config(db_config: dict[str, Any]) -> str:
 
     if engine in {
         "django.db.backends.postgresql",
-        "django.db.backends.postgresql_psycopg2",
+        "django.db.backends.postgresql_psycopg2"
     }:
         return DB_VENDOR_POSTGRESQL
 

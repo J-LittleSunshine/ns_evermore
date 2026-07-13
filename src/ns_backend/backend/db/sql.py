@@ -30,10 +30,7 @@ class SqlScriptRunner:
 
         if alias not in connections.databases:
             available_aliases = ", ".join(sorted(connections.databases))
-            raise CommandError(
-                f"Unknown database alias: {alias}. "
-                f"Available aliases: {available_aliases}"
-            )
+            raise CommandError(f"Unknown database alias: {alias}. Available aliases: {available_aliases}")
 
         return connections[alias]
 
@@ -42,10 +39,7 @@ class SqlScriptRunner:
         vendor = detect_db_vendor_from_connection(connection)
 
         if vendor == DB_VENDOR_UNKNOWN:
-            raise CommandError(
-                f"Cannot detect database vendor for alias "
-                f"'{connection.alias}'."
-            )
+            raise CommandError(f"Cannot detect database vendor for alias '{connection.alias}'.")
 
         return vendor
 
@@ -76,17 +70,10 @@ class SqlScriptRunner:
         connection = cls.get_connection(database_alias)
         vendor = cls.detect_vendor(connection)
 
-        sql_file_path = cls.get_sql_file_path(
-            sql_group=sql_group,
-            database_vendor=vendor,
-            explicit_sql_file=explicit_sql_file,
-        )
+        sql_file_path = cls.get_sql_file_path(sql_group=sql_group, database_vendor=vendor, explicit_sql_file=explicit_sql_file)
         sql_text = cls.read_sql(sql_file_path)
 
-        cls.execute_sql_script(
-            connection=connection,
-            sql_text=sql_text,
-        )
+        cls.execute_sql_script(connection=connection, sql_text=sql_text)
 
         return vendor, sql_file_path
 
@@ -111,10 +98,7 @@ class SqlScriptRunner:
             raw_connection.executescript(sql_text)
             raw_connection.commit()
         except Exception as exc:
-            raise CommandError(
-                f"Failed to execute SQL script on database alias "
-                f"'{connection.alias}': {exc}"
-            ) from exc
+            raise CommandError(f"Failed to execute SQL script on database alias '{connection.alias}': {exc}") from exc
 
     @staticmethod
     def execute_prepared_script(*, connection: "BaseDatabaseWrapper", sql_text: str) -> None:
@@ -132,7 +116,4 @@ class SqlScriptRunner:
 
                     cursor.execute(normalized_statement)
         except Exception as exc:
-            raise CommandError(
-                f"Failed to execute SQL script on database alias "
-                f"'{connection.alias}' with vendor '{connection.vendor}': {exc}"
-            ) from exc
+            raise CommandError(f"Failed to execute SQL script on database alias '{connection.alias}' with vendor '{connection.vendor}': {exc}") from exc

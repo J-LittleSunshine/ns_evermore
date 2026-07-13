@@ -51,37 +51,15 @@ def build_error_body(*, code: int, error: str, message: str, details: Mapping[st
 
 
 def success_response(data: Any = None, *, message: str = OK_MESSAGE, status: int = HTTP_200_OK, request_id: str | None = None) -> Response:
-    return Response(
-        data=build_success_body(
-            data=data,
-            message=message,
-            request_id=request_id,
-        ),
-        status=status,
-    )
+    data = build_success_body(data=data, message=message, request_id=request_id)
+    return Response(data=data, status=status)
 
 
 def error_response(error: NsEvermoreError, *, status: int = HTTP_400_BAD_REQUEST, request_id: str | None = None) -> Response:
-    return Response(
-        data=build_error_body(
-            code=error.numeric_code,
-            error=error.code,
-            message=error.message,
-            details=error.details,
-            request_id=request_id,
-        ),
-        status=status,
-    )
+    data = build_error_body(code=error.numeric_code, error=error.code, message=error.message, details=error.details, request_id=request_id)
+    return Response(data=data, status=status)
 
 
 def internal_error_response(*, request_id: str | None = None) -> Response:
-    return Response(
-        data=build_error_body(
-            code=INTERNAL_SERVER_ERROR_CODE,
-            error=INTERNAL_SERVER_ERROR,
-            message=INTERNAL_SERVER_ERROR_MESSAGE,
-            details={},
-            request_id=request_id,
-        ),
-        status=HTTP_500_INTERNAL_SERVER_ERROR,
-    )
+    data = build_error_body(code=INTERNAL_SERVER_ERROR_CODE, error=INTERNAL_SERVER_ERROR, message=INTERNAL_SERVER_ERROR_MESSAGE, details={}, request_id=request_id)
+    return Response(data=data, status=HTTP_500_INTERNAL_SERVER_ERROR)

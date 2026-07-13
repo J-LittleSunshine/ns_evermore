@@ -623,6 +623,17 @@ class RuntimeDeliveryRegistry:
         )
 
     def create_prepared_record(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target: RuntimeRouteTarget) -> RuntimeDeliveryRecord:
+        existing_summary = self.get_message_summary(envelope.message_id, tenant_id=decision.source_tenant_id)
+
+        if existing_summary is not None and existing_summary.delivery_count == 0 and existing_summary.rejected_count > 0:
+            details = {
+                "message_id": envelope.message_id,
+                "summary_id": existing_summary.summary_id,
+                "rejected_count": (
+                    existing_summary.rejected_count
+                ),
+            }
+            raise NsRuntimeDeliveryStateError("Previously rejected task dispatch message_id cannot be reused for a new delivery.", details=details)
         delivery_id = str(uuid.uuid4())
         now = utc_now_iso()
         summary = self._ensure_message_summary(
@@ -666,7 +677,11 @@ class RuntimeDeliveryRegistry:
         return record
 
     def start_sending(self, *, record: RuntimeDeliveryRecord) -> RuntimeDeliveryAttempt:
-        if record.state not in {"prepared", "queued", "retry_scheduled"}:
+        if record.state not in {
+            "prepared",
+            "queued",
+            "retry_scheduled"
+        }:
             raise NsRuntimeDeliveryStateError(
                 "Delivery cannot enter sending from current state.",
                 details={
@@ -753,7 +768,11 @@ class RuntimeDeliveryRegistry:
                 duplicate=True,
             )
 
-        if record.state not in {"sending", "ack_waiting", "retry_scheduled"}:
+        if record.state not in {
+            "sending",
+            "ack_waiting",
+            "retry_scheduled"
+        }:
             raise NsRuntimeAckRejectedError(
                 "ACK is not allowed from current delivery state.",
                 details={
@@ -826,7 +845,11 @@ class RuntimeDeliveryRegistry:
                 duplicate=True,
             )
 
-        if record.state not in {"sending", "ack_waiting", "retry_scheduled"}:
+        if record.state not in {
+            "sending",
+            "ack_waiting",
+            "retry_scheduled"
+        }:
             raise NsRuntimeNackRejectedError(
                 "NACK is not allowed from current delivery state.",
                 details={
@@ -896,7 +919,11 @@ class RuntimeDeliveryRegistry:
             session_tenant_id=session_tenant_id,
         )
 
-        if record.state not in {"sending", "ack_waiting", "retry_scheduled"}:
+        if record.state not in {
+            "sending",
+            "ack_waiting",
+            "retry_scheduled"
+        }:
             raise NsRuntimeDeferRejectedError(
                 "Defer is not allowed from current delivery state.",
                 details={

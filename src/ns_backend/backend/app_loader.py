@@ -38,13 +38,11 @@ def normalize_backend_app_keys(app_keys: list[str]) -> list[str]:
         normalized_app_key = app_key.strip()
 
         if normalized_app_key in seen:
-            raise NsConfigError(
-                "backend.installed_apps contains duplicated item.",
-                details={
-                    "field": "backend.installed_apps",
-                    "value": normalized_app_key,
-                },
-            )
+            details = {
+                "field": "backend.installed_apps",
+                "value": normalized_app_key,
+            }
+            raise NsConfigError("backend.installed_apps contains duplicated item.", details=details)
 
         seen.add(normalized_app_key)
         normalized.append(normalized_app_key)
@@ -59,7 +57,6 @@ def build_effective_backend_app_keys(app_keys: list[str]) -> list[str]:
 
     for app_key in configured_app_keys:
         if app_key in base_backend_app_set:
-            # 兼容旧配置：system 已经是基础 app，配置里再写不报错，但不重复加载。
             continue
 
         effective_app_keys.append(app_key)
@@ -71,14 +68,12 @@ def assert_backend_app_package_exists(app_key: str) -> None:
     package_name = f"ns_backend.{app_key}"
 
     if importlib.util.find_spec(package_name) is None:
-        raise NsConfigError(
-            "backend.installed_apps contains unknown backend app.",
-            details={
-                "field": "backend.installed_apps",
-                "value": app_key,
-                "expected_package": package_name,
-            },
-        )
+        details = {
+            "field": "backend.installed_apps",
+            "value": app_key,
+            "expected_package": package_name,
+        }
+        raise NsConfigError("backend.installed_apps contains unknown backend app.", details=details)
 
 
 def discover_app_config_path(app_key: str) -> str | None:
@@ -104,28 +99,24 @@ def discover_app_config_path(app_key: str) -> str | None:
         app_config_classes.append(value)
 
     if not app_config_classes:
-        raise NsConfigError(
-            "backend app apps.py exists but AppConfig was not found.",
-            details={
-                "field": "backend.installed_apps",
-                "value": app_key,
-                "module": apps_module_name,
-            },
-        )
+        details = {
+            "field": "backend.installed_apps",
+            "value": app_key,
+            "module": apps_module_name,
+        }
+        raise NsConfigError("backend app apps.py exists but AppConfig was not found.", details=details)
 
     if len(app_config_classes) > 1:
-        raise NsConfigError(
-            "backend app apps.py contains multiple AppConfig classes.",
-            details={
-                "field": "backend.installed_apps",
-                "value": app_key,
-                "module": apps_module_name,
-                "classes": [
-                    app_config_class.__name__
-                    for app_config_class in app_config_classes
-                ],
-            },
-        )
+        details = {
+            "field": "backend.installed_apps",
+            "value": app_key,
+            "module": apps_module_name,
+            "classes": [
+                app_config_class.__name__
+                for app_config_class in app_config_classes
+            ],
+        }
+        raise NsConfigError("backend app apps.py contains multiple AppConfig classes.", details=details)
 
     app_config_class = app_config_classes[0]
     return f"{apps_module_name}.{app_config_class.__name__}"
@@ -163,8 +154,6 @@ def build_urlpatterns(app_keys: list[str]) -> list["URLPattern | URLResolver"]:
         urlconf = discover_urlconf(app_key)
 
         if urlconf:
-            urlpatterns.append(
-                path(f"api/{app_key}/", include(urlconf))
-            )
+            urlpatterns.append(path(f"api/{app_key}/", include(urlconf)))
 
     return urlpatterns

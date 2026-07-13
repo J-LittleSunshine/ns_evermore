@@ -500,12 +500,9 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                 existing_summary is not None
                 and existing_summary.delivery_count > 0
         ):
-            return ProcessorResponse.reject(
-                self._build_delivery_rejected(
-                    request=request,
-                    summary=existing_summary,
-                    exc=exc,
-                )
+            return self._build_payload_reference_runtime_error(
+                request=request,
+                exc=exc,
             )
 
         return self._reject_admission(

@@ -386,7 +386,7 @@ class EnvelopeCodec:
         if "message_id" in delivery:
             raise NsRuntimeEnvelopeSchemaError("delivery.message_id is forbidden; use message.message_id only.")
 
-    def _validate_payload(self,raw: Mapping[str, Any]) -> None:
+    def _validate_payload(self, raw: Mapping[str, Any]) -> None:
         payload = raw.get("payload")
         if payload is None:
             return
@@ -446,7 +446,7 @@ class EnvelopeCodec:
                 },
             )
 
-    def _validate_reference_payload(self,payload: Mapping[str, Any]) -> None:
+    def _validate_reference_payload(self, payload: Mapping[str, Any]) -> None:
         if "inline" in payload:
             raise NsRuntimeEnvelopeSchemaError(
                 "payload.inline is forbidden when payload.mode=reference.",
@@ -508,7 +508,7 @@ class EnvelopeCodec:
             "payload",
         )
 
-    def _validate_optional_payload_metadata(self,payload: Mapping[str, Any]) -> None:
+    def _validate_optional_payload_metadata(self, payload: Mapping[str, Any]) -> None:
         if "content_type" in payload:
             self._require_non_empty_str(
                 payload,

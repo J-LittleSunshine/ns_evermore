@@ -23,49 +23,41 @@ def _normalize_sqlite_name(*, alias: str, name: Any) -> Path:
     raw_name = str(name or "").strip()
 
     if not raw_name:
-        raise NsConfigError(
-            "SQLite database NAME must be configured as a filename.",
-            details={
-                "field": f"backend.databases.{alias}.NAME",
-                "alias": alias,
-            },
-        )
+        details = {
+            "field": f"backend.databases.{alias}.NAME",
+            "alias": alias,
+        }
+        raise NsConfigError("SQLite database NAME must be configured as a filename.", details=details)
 
     if raw_name in {
         ".",
         "..",
     }:
-        raise NsConfigError(
-            "SQLite database NAME must be a filename, not a relative directory reference.",
-            details={
-                "field": f"backend.databases.{alias}.NAME",
-                "alias": alias,
-                "value": raw_name,
-            },
-        )
+        details = {
+            "field": f"backend.databases.{alias}.NAME",
+            "alias": alias,
+            "value": raw_name,
+        }
+        raise NsConfigError("SQLite database NAME must be a filename, not a relative directory reference.", details=details)
 
     if "/" in raw_name or "\\" in raw_name:
-        raise NsConfigError(
-            "SQLite database NAME must be a filename only. Do not include directory paths.",
-            details={
-                "field": f"backend.databases.{alias}.NAME",
-                "alias": alias,
-                "value": raw_name,
-                "expected": "filename only, for example: iam.sqlite3",
-            },
-        )
+        details = {
+            "field": f"backend.databases.{alias}.NAME",
+            "alias": alias,
+            "value": raw_name,
+            "expected": "filename only, for example: iam.sqlite3",
+        }
+        raise NsConfigError("SQLite database NAME must be a filename only. Do not include directory paths.", details=details)
 
     candidate = Path(raw_name)
     if candidate.is_absolute() or candidate.name != raw_name:
-        raise NsConfigError(
-            "SQLite database NAME must be a filename only. Absolute or relative paths are not allowed.",
-            details={
-                "field": f"backend.databases.{alias}.NAME",
-                "alias": alias,
-                "value": raw_name,
-                "expected": "filename only, for example: iam.sqlite3",
-            },
-        )
+        details = {
+            "field": f"backend.databases.{alias}.NAME",
+            "alias": alias,
+            "value": raw_name,
+            "expected": "filename only, for example: iam.sqlite3",
+        }
+        raise NsConfigError("SQLite database NAME must be a filename only. Absolute or relative paths are not allowed.", details=details)
 
     return DATA_DIR / raw_name
 
@@ -84,31 +76,24 @@ def _build_django_databases(raw_databases: dict[str, dict[str, Any]]) -> dict[st
     for alias, raw_database_config in raw_databases.items():
         alias_text = str(alias or "").strip()
         if not alias_text:
-            raise NsConfigError(
-                "Database alias must not be empty.",
-                details={
-                    "field": "backend.databases",
-                    "alias": alias,
-                },
-            )
+            details = {
+                "field": "backend.databases",
+                "alias": alias,
+            }
+            raise NsConfigError("Database alias must not be empty.", details=details)
 
         if not isinstance(raw_database_config, dict):
-            raise NsConfigError(
-                "Database config must be a JSON object.",
-                details={
-                    "field": f"backend.databases.{alias_text}",
-                    "actual_type": type(raw_database_config).__name__,
-                },
-            )
+            details = {
+                "field": f"backend.databases.{alias_text}",
+                "actual_type": type(raw_database_config).__name__,
+            }
+            raise NsConfigError("Database config must be a JSON object.", details=details)
 
         database_config = dict(raw_database_config)
         engine = database_config.get("ENGINE")
 
         if _is_sqlite_engine(engine):
-            database_config["NAME"] = _normalize_sqlite_name(
-                alias=alias_text,
-                name=database_config.get("NAME"),
-            )
+            database_config["NAME"] = _normalize_sqlite_name(alias=alias_text, name=database_config.get("NAME"))
 
         databases[alias_text] = database_config
 

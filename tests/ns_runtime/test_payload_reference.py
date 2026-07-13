@@ -39,7 +39,7 @@ class _SequencePayloadReferenceValidator(PayloadReferenceValidator):
         self._outcomes = outcomes
         self.requests: list[PayloadReferenceValidationRequest] = []
 
-    async def validate(self,request: PayloadReferenceValidationRequest) -> PayloadReferenceValidationResult:
+    async def validate(self, request: PayloadReferenceValidationRequest) -> PayloadReferenceValidationResult:
         self.requests.append(request)
 
         index = min(
@@ -74,16 +74,16 @@ class RuntimePayloadReferenceProtocolTestCase(unittest.TestCase):
         )
 
     def test_valid_reference_payload_is_parsed(self) -> None:
-        envelope = self.codec.parse_inbound(self._build_frame(payload=self._reference_payload()),self.session)
+        envelope = self.codec.parse_inbound(self._build_frame(payload=self._reference_payload()), self.session)
 
         reference = RuntimePayloadReference.from_envelope(envelope)
 
         self.assertIsNotNone(reference)
-        self.assertEqual(reference.object_id,"object-1")
+        self.assertEqual(reference.object_id, "object-1")
         self.assertEqual(reference.version, "version-1")
-        self.assertEqual(reference.checksum,"sha256:abcdef")
-        self.assertEqual(reference.content_type,"application/json")
-        self.assertEqual(reference.size_bytes,1024)
+        self.assertEqual(reference.checksum, "sha256:abcdef")
+        self.assertEqual(reference.content_type, "application/json")
+        self.assertEqual(reference.size_bytes, 1024)
 
     def test_inline_payload_remains_supported(self) -> None:
         envelope = self.codec.parse_inbound(
@@ -239,8 +239,9 @@ class RuntimePayloadReferenceProtocolTestCase(unittest.TestCase):
         }
 
     @staticmethod
-    def _build_frame(*,payload: dict[str, Any]) -> str:
-        return json.dumps({
+    def _build_frame(*, payload: dict[str, Any]) -> str:
+        return json.dumps(
+            {
                 "protocol": {
                     "version": "1.0.0",
                 },
@@ -257,11 +258,12 @@ class RuntimePayloadReferenceProtocolTestCase(unittest.TestCase):
                     "connection_id": "target-1",
                 },
                 "payload": payload,
-            },ensure_ascii=False)
+            }, ensure_ascii=False
+        )
 
 
 class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
-    def test_inline_payload_does_not_call_validator(self,) -> None:
+    def test_inline_payload_does_not_call_validator(self, ) -> None:
         validator = _SequencePayloadReferenceValidator(
             RuntimeError(
                 "inline payload must not call validator"
@@ -308,7 +310,7 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
             1,
         )
 
-    def test_valid_reference_is_accepted(self,) -> None:
+    def test_valid_reference_is_accepted(self, ) -> None:
         validator = _SequencePayloadReferenceValidator(
             PayloadReferenceValidationResult.valid()
         )
@@ -376,7 +378,7 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
             target.connection_id,
         )
 
-    def test_rejected_reference_does_not_create_delivery(self,) -> None:
+    def test_rejected_reference_does_not_create_delivery(self, ) -> None:
         cases = (
             (
                 "invalid",
@@ -522,7 +524,7 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
                     0,
                 )
 
-    def test_unavailable_reference_validation_is_runtime_error(self,) -> None:
+    def test_unavailable_reference_validation_is_runtime_error(self, ) -> None:
         cases: tuple[
             tuple[
                 object,
@@ -657,7 +659,7 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
                     0,
                 )
 
-    def test_multi_target_reference_rejection_rejects_all_targets(self,) -> None:
+    def test_multi_target_reference_rejection_rejects_all_targets(self, ) -> None:
         validator = _SequencePayloadReferenceValidator(
             PayloadReferenceValidationResult.rejected(
                 reason="denied"
@@ -743,7 +745,7 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
             target_2.connection_id,
         )
 
-    def test_valid_duplicate_reference_does_not_write_twice(self,) -> None:
+    def test_valid_duplicate_reference_does_not_write_twice(self, ) -> None:
         validator = _SequencePayloadReferenceValidator(
             PayloadReferenceValidationResult.valid(),
             PayloadReferenceValidationResult.valid(),
@@ -812,7 +814,7 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
             2,
         )
 
-    def test_same_rejected_message_id_isolated_by_tenant(self,) -> None:
+    def test_same_rejected_message_id_isolated_by_tenant(self, ) -> None:
         validator = _SequencePayloadReferenceValidator(
             PayloadReferenceValidationResult.rejected(
                 reason="invalid"
@@ -903,7 +905,207 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
             (),
         )
 
-    def _build_runtime(self,*,validator: PayloadReferenceValidator) -> tuple[RuntimeService,RuntimeSessionContext,RuntimeSessionContext,_MemoryWebSocket]:
+    def test_rejected_validation_after_accepted_delivery_keeps_existing_summary(self) -> None:
+        validator = _SequencePayloadReferenceValidator(
+            PayloadReferenceValidationResult.valid(),
+            PayloadReferenceValidationResult.rejected(
+                reason="denied"
+            ),
+        )
+        service, source, target, websocket = (
+            self._build_runtime(
+                validator=validator,
+            )
+        )
+
+        frame = self._build_dispatch_frame(
+            message_id="accepted-then-denied-1",
+            target_connection_id=(
+                target.connection_id
+            ),
+            payload=self._reference_payload(),
+        )
+
+        first_response = asyncio.run(
+            service.process_frame(
+                frame,
+                source,
+            )
+        )
+
+        summary_before = service.get_message_summary(
+            "accepted-then-denied-1",
+            tenant_id="tenant-1",
+        )
+        self.assertIsNotNone(summary_before)
+        summary_before_snapshot = summary_before.to_dict()
+
+        second_response = asyncio.run(
+            service.process_frame(
+                frame,
+                source,
+            )
+        )
+
+        self.assertEqual(
+            first_response.envelope["message"]["type"],
+            "delivery.accepted",
+        )
+        self.assertEqual(
+            second_response.action,
+            "reject",
+        )
+        self.assertEqual(
+            second_response.envelope["message"]["type"],
+            "runtime.error",
+        )
+        self.assertEqual(
+            second_response.envelope[
+                "payload"
+            ]["inline"]["error"]["code"],
+            "RUNTIME_PAYLOAD_REF_DENIED",
+        )
+
+        summary_after = service.get_message_summary(
+            "accepted-then-denied-1",
+            tenant_id="tenant-1",
+        )
+        self.assertIsNotNone(summary_after)
+        self.assertEqual(
+            summary_after.to_dict(),
+            summary_before_snapshot,
+        )
+
+        snapshot = (
+            service.delivery_registry
+            .build_delivery_snapshot()
+        )
+        self.assertEqual(
+            snapshot["delivery_count"],
+            1,
+        )
+        self.assertEqual(
+            snapshot["attempt_count"],
+            1,
+        )
+        self.assertEqual(
+            len(websocket.frames),
+            1,
+        )
+        self.assertEqual(
+            len(validator.requests),
+            2,
+        )
+
+    def test_previously_rejected_message_id_cannot_be_accepted(self) -> None:
+        validator = _SequencePayloadReferenceValidator(
+            PayloadReferenceValidationResult.rejected(
+                reason="invalid"
+            ),
+            PayloadReferenceValidationResult.valid(),
+        )
+        service, source, target, websocket = (
+            self._build_runtime(
+                validator=validator,
+            )
+        )
+
+        frame = self._build_dispatch_frame(
+            message_id="rejected-then-valid-1",
+            target_connection_id=(
+                target.connection_id
+            ),
+            payload=self._reference_payload(),
+        )
+
+        first_response = asyncio.run(
+            service.process_frame(
+                frame,
+                source,
+            )
+        )
+
+        summary_before = service.get_message_summary(
+            "rejected-then-valid-1",
+            tenant_id="tenant-1",
+        )
+        self.assertIsNotNone(summary_before)
+        summary_before_snapshot = summary_before.to_dict()
+
+        second_response = asyncio.run(
+            service.process_frame(
+                frame,
+                source,
+            )
+        )
+
+        self.assertEqual(
+            first_response.envelope["message"]["type"],
+            "delivery.rejected",
+        )
+        self.assertEqual(
+            second_response.action,
+            "reject",
+        )
+        self.assertEqual(
+            second_response.envelope["message"]["type"],
+            "runtime.error",
+        )
+        self.assertEqual(
+            second_response.envelope[
+                "payload"
+            ]["inline"]["error"]["code"],
+            "RUNTIME_DELIVERY_STATE_ERROR",
+        )
+
+        summary_after = service.get_message_summary(
+            "rejected-then-valid-1",
+            tenant_id="tenant-1",
+        )
+        self.assertIsNotNone(summary_after)
+        self.assertEqual(
+            summary_after.to_dict(),
+            summary_before_snapshot,
+        )
+        self.assertEqual(
+            summary_after.delivery_count,
+            0,
+        )
+        self.assertEqual(
+            summary_after.rejected_count,
+            1,
+        )
+        self.assertEqual(
+            summary_after.target_count,
+            1,
+        )
+        self.assertEqual(
+            summary_after.state,
+            "failed",
+        )
+
+        snapshot = (
+            service.delivery_registry
+            .build_delivery_snapshot()
+        )
+        self.assertEqual(
+            snapshot["delivery_count"],
+            0,
+        )
+        self.assertEqual(
+            snapshot["attempt_count"],
+            0,
+        )
+        self.assertEqual(
+            len(websocket.frames),
+            0,
+        )
+        self.assertEqual(
+            len(validator.requests),
+            2,
+        )
+
+    def _build_runtime(self, *, validator: PayloadReferenceValidator) -> tuple[RuntimeService, RuntimeSessionContext, RuntimeSessionContext, _MemoryWebSocket]:
         service = RuntimeService.build_default(
             runtime_id="runtime-test",
             payload_reference_validator=validator,
@@ -926,7 +1128,7 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
         )
 
     @staticmethod
-    def _build_source_session(*,tenant_id: str,connection_id: str) -> RuntimeSessionContext:
+    def _build_source_session(*, tenant_id: str, connection_id: str) -> RuntimeSessionContext:
         return RuntimeSessionContext(
             runtime_id="runtime-test",
             connection_id=connection_id,
@@ -946,7 +1148,7 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
         )
 
     @staticmethod
-    def _activate_target(*,service: RuntimeService,tenant_id: str,identity: str) -> tuple[RuntimeSessionContext,_MemoryWebSocket]:
+    def _activate_target(*, service: RuntimeService, tenant_id: str, identity: str) -> tuple[RuntimeSessionContext, _MemoryWebSocket]:
         record = (
             service.session_registry
             .create_handshaking(
@@ -992,7 +1194,7 @@ class RuntimePayloadReferenceProcessorTestCase(unittest.TestCase):
         }
 
     @staticmethod
-    def _build_dispatch_frame(*,message_id: str,payload: dict[str, Any],target_connection_id: str | None = None,target: dict[str, Any] | None = None) -> str:
+    def _build_dispatch_frame(*, message_id: str, payload: dict[str, Any], target_connection_id: str | None = None, target: dict[str, Any] | None = None) -> str:
         resolved_target = target
 
         if resolved_target is None:

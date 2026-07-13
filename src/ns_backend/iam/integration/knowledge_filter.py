@@ -21,24 +21,20 @@ class KnowledgeAuthorizationFilter:
     @staticmethod
     def normalize_candidates(candidates: Any) -> list[dict[str, Any]]:
         if not isinstance(candidates, list):
-            raise IamRuntimeRequestInvalidError(
-                "candidates must be a list.",
-                details={
-                    "field": "candidates",
-                },
-            )
+            details = {
+                "field": "candidates",
+            }
+            raise IamRuntimeRequestInvalidError("candidates must be a list.", details=details)
 
         normalized_candidates: list[dict[str, Any]] = []
         for index, item in enumerate(candidates):
             if not isinstance(item, dict):
-                raise IamRuntimeRequestInvalidError(
-                    "candidate item must be an object.",
-                    details={
-                        "field": "candidates",
-                        "index": index,
-                        "actual_type": type(item).__name__,
-                    },
-                )
+                details = {
+                    "field": "candidates",
+                    "index": index,
+                    "actual_type": type(item).__name__,
+                }
+                raise IamRuntimeRequestInvalidError("candidate item must be an object.", details=details)
 
             normalized_candidates.append(dict(item))
 
@@ -57,10 +53,7 @@ class KnowledgeAuthorizationFilter:
 
     @classmethod
     def matches_data_scope_filters(cls, *, candidate: dict[str, Any], data_scope_filters: Any) -> tuple[bool, str | None]:
-        if data_scope_filters in (
-                None,
-                {},
-        ):
+        if data_scope_filters in (None, {}):
             return True, None
 
         if not isinstance(data_scope_filters, dict):
@@ -84,10 +77,7 @@ class KnowledgeAuthorizationFilter:
 
             if filter_key_text.endswith("__in"):
                 field_name = filter_key_text[:-4]
-                field_exists, candidate_value = cls.read_candidate_field(
-                    candidate=candidate,
-                    field_name=field_name,
-                )
+                field_exists, candidate_value = cls.read_candidate_field(candidate=candidate, field_name=field_name)
 
                 if not field_exists:
                     return False, f"MISSING_FILTER_FIELD:{field_name}"
@@ -100,10 +90,7 @@ class KnowledgeAuthorizationFilter:
 
                 continue
 
-            field_exists, candidate_value = cls.read_candidate_field(
-                candidate=candidate,
-                field_name=filter_key_text,
-            )
+            field_exists, candidate_value = cls.read_candidate_field(candidate=candidate, field_name=filter_key_text)
 
             if not field_exists:
                 return False, f"MISSING_FILTER_FIELD:{filter_key_text}"
@@ -141,22 +128,14 @@ class KnowledgeAuthorizationFilter:
         decision_items: list[dict[str, Any]] = []
 
         for index, candidate in enumerate(candidates):
-            exists, resource_id_value = cls.read_candidate_field(
-                candidate=candidate,
-                field_name=resource_id_field,
-            )
+            exists, resource_id_value = cls.read_candidate_field(candidate=candidate, field_name=resource_id_field, )
 
-            if not exists or resource_id_value in (
-                    None,
-                    "",
-            ):
-                raise IamRuntimeRequestInvalidError(
-                    "candidate missing resource id field.",
-                    details={
-                        "index": index,
-                        "resource_id_field": resource_id_field,
-                    },
-                )
+            if not exists or resource_id_value in (None, ""):
+                details = {
+                    "index": index,
+                    "resource_id_field": resource_id_field,
+                }
+                raise IamRuntimeRequestInvalidError("candidate missing resource id field.", details=details)
 
             resource_id = str(resource_id_value)
             allowed = False
@@ -179,10 +158,7 @@ class KnowledgeAuthorizationFilter:
                 reason = "RBAC_ALLOW"
 
             if allowed:
-                matches_scope, scope_reason = cls.matches_data_scope_filters(
-                    candidate=candidate,
-                    data_scope_filters=data_scope_filters,
-                )
+                matches_scope, scope_reason = cls.matches_data_scope_filters(candidate=candidate, data_scope_filters=data_scope_filters)
 
                 if not matches_scope:
                     allowed = False
@@ -253,24 +229,11 @@ class KnowledgeAuthorizationFilter:
                 "trace_id": trace_id,
             }
 
-        retrieval_filter = await ResourceAccessFilterService.resolve_retrieval_filter(
-            user=user,
-            resource_type=resource_type,
-            action_code=action_code,
-            permission_code=permission_code,
-            field_map=field_map,
-        )
+        retrieval_filter = await ResourceAccessFilterService.resolve_retrieval_filter(user=user, resource_type=resource_type, action_code=action_code, permission_code=permission_code, field_map=field_map)
 
-        decision_items = cls.build_decision_items_from_retrieval_filter(
-            candidates=normalized_candidates,
-            retrieval_filter=retrieval_filter,
-            resource_id_field=str(resource_id_field or cls.DEFAULT_RESOURCE_ID_FIELD).strip() or cls.DEFAULT_RESOURCE_ID_FIELD,
-        )
+        decision_items = cls.build_decision_items_from_retrieval_filter(candidates=normalized_candidates, retrieval_filter=retrieval_filter, resource_id_field=str(resource_id_field or cls.DEFAULT_RESOURCE_ID_FIELD).strip() or cls.DEFAULT_RESOURCE_ID_FIELD)
 
-        allowed_items, denied_items = cls.split_candidates_by_decision(
-            candidates=normalized_candidates,
-            decision_items=decision_items,
-        )
+        allowed_items, denied_items = cls.split_candidates_by_decision(candidates=normalized_candidates, decision_items=decision_items)
 
         return {
             "allowed_items": allowed_items,

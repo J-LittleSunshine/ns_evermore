@@ -43,45 +43,18 @@ class Command(BaseCommand):
     GENERATED_PASSWORD_LENGTH = 24
 
     def add_arguments(self, parser: "ArgumentParser") -> None:
-        parser.add_argument(
-            "--database",
-            default="",
-            help="Django database alias. Default: resolve by IAM database router mapping."
-        )
-
-        parser.add_argument(
-            "--admin-username",
-            default=self.DEFAULT_ADMIN_USERNAME,
-            help=f"Admin username. Default: {self.DEFAULT_ADMIN_USERNAME}.",
-        )
-        parser.add_argument(
-            "--admin-password",
-            default="",
-            help="Admin password. If omitted, a random password will be generated.",
-        )
-
-        parser.add_argument(
-            "--dev-username",
-            default=self.DEFAULT_DEV_USERNAME,
-            help=f"Dev username. Default: {self.DEFAULT_DEV_USERNAME}.",
-        )
-        parser.add_argument(
-            "--dev-password",
-            default="",
-            help="Dev password. If omitted, a random password will be generated.",
-        )
-
-        parser.add_argument(
-            "--no-reset-password",
-            action="store_true",
-            help="Do not reset password if user already exists.",
-        )
+        parser.add_argument("--database", default="", help="Django database alias. Default: resolve by IAM database router mapping.")
+        parser.add_argument("--admin-username", default=self.DEFAULT_ADMIN_USERNAME, help=f"Admin username. Default: {self.DEFAULT_ADMIN_USERNAME}.")
+        parser.add_argument("--admin-password", default="", help="Admin password. If omitted, a random password will be generated.")
+        parser.add_argument("--dev-username", default=self.DEFAULT_DEV_USERNAME, help=f"Dev username. Default: {self.DEFAULT_DEV_USERNAME}.")
+        parser.add_argument("--dev-password", default="", help="Dev password. If omitted, a random password will be generated.")
+        parser.add_argument("--no-reset-password", action="store_true", help="Do not reset password if user already exists.")
 
     def handle(self, *args: object, **options: object) -> None:
         database_alias = self.resolve_database_alias(str(options.get("database", "") or "").strip())
 
-        admin_username = self.normalize_username(options["admin_username"],"admin_username")
-        dev_username = self.normalize_username(options["dev_username"],"dev_username")
+        admin_username = self.normalize_username(options["admin_username"], "admin_username")
+        dev_username = self.normalize_username(options["dev_username"], "dev_username")
 
         if admin_username == dev_username:
             raise CommandError("admin username and dev username must be different.")
@@ -110,28 +83,12 @@ class Command(BaseCommand):
             password_generated=dev_password_generated,
         )
 
-        self.stdout.write(
-            self.style.NOTICE(
-                f"Initializing IAM built-in users on database alias '{database_alias}'."
-            )
-        )
+        self.stdout.write(self.style.NOTICE(f"Initializing IAM built-in users on database alias '{database_alias}'."))
 
         results = []
         with transaction.atomic(using=database_alias):
-            results.append(
-                self.upsert_user(
-                    database_alias=database_alias,
-                    spec=admin_spec,
-                    no_reset_password=no_reset_password,
-                )
-            )
-            results.append(
-                self.upsert_user(
-                    database_alias=database_alias,
-                    spec=dev_spec,
-                    no_reset_password=no_reset_password,
-                )
-            )
+            results.append(self.upsert_user(database_alias=database_alias, spec=admin_spec, no_reset_password=no_reset_password))
+            results.append(self.upsert_user(database_alias=database_alias, spec=dev_spec, no_reset_password=no_reset_password))
 
         self.stdout.write("")
 
@@ -142,32 +99,16 @@ class Command(BaseCommand):
             raw_password = result["raw_password"]
             password_generated = result["password_generated"]
 
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f"IAM user '{username}' {action}."
-                )
-            )
+            self.stdout.write(self.style.SUCCESS(f"IAM user '{username}' {action}."))
 
             if password_changed:
                 password_source = "generated" if password_generated else "provided"
-                self.stdout.write(
-                    self.style.WARNING(
-                        f"Initial password for '{username}' ({password_source}, shown once): {raw_password}"
-                    )
-                )
+                self.stdout.write(self.style.WARNING(f"Initial password for '{username}' ({password_source}, shown once): {raw_password}"))
             else:
-                self.stdout.write(
-                    self.style.NOTICE(
-                        f"Password for '{username}' was not changed."
-                    )
-                )
+                self.stdout.write(self.style.NOTICE(f"Password for '{username}' was not changed."))
 
         self.stdout.write("")
-        self.stdout.write(
-            self.style.WARNING(
-                "Store generated passwords securely. They cannot be displayed again."
-            )
-        )
+        self.stdout.write(self.style.WARNING("Store generated passwords securely. They cannot be displayed again."))
 
     @staticmethod
     def normalize_username(value: object, field_name: str) -> str:
@@ -225,22 +166,15 @@ class Command(BaseCommand):
 
         if resolved_alias not in connections.databases:
             available_aliases = ", ".join(sorted(connections.databases))
-            raise CommandError(
-                f"Unknown database alias: {resolved_alias}. "
-                f"Available aliases: {available_aliases}"
-            )
+            raise CommandError(f"Unknown database alias: {resolved_alias}. Available aliases: {available_aliases}")
 
         return resolved_alias
 
     @staticmethod
-    def upsert_user(*,database_alias: str,spec: SeedUserSpec,no_reset_password: bool) -> dict[str, object]:
+    def upsert_user(*, database_alias: str, spec: SeedUserSpec, no_reset_password: bool) -> dict[str, object]:
         now = timezone.now()
 
-        user = (
-            IamUser.objects.using(database_alias)
-            .filter(username=spec.username)
-            .first()
-        )
+        user = IamUser.objects.using(database_alias).filter(username=spec.username).first()
 
         if user is None:
             IamUser.objects.using(database_alias).create(
@@ -298,10 +232,7 @@ class Command(BaseCommand):
             user.password = make_password(spec.raw_password)
             update_fields.append("password")
 
-        user.save(
-            using=database_alias,
-            update_fields=update_fields,
-        )
+        user.save(using=database_alias, update_fields=update_fields)
 
         return {
             "username": spec.username,
