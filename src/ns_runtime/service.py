@@ -31,6 +31,10 @@ from ns_runtime.outbound import (
     RuntimeLocalEnvelopeForwarder,
     RuntimeLocalRetryScanResult,
 )
+from ns_runtime.payload_reference import (
+    PayloadReferenceValidator,
+    UnavailablePayloadReferenceValidator,
+)
 from ns_runtime.processors import (
     ProcessorPipeline,
     ProcessorRegistry,
@@ -84,32 +88,66 @@ class RuntimeService:
         self._logger = get_ns_logger("ns_runtime", True)
 
     @classmethod
-    def build_default(cls, *, runtime_id: str, authenticator: RuntimeAuthenticator | None = None) -> "RuntimeService":
-        codec = EnvelopeCodec(runtime_id=runtime_id)
-        session_registry = RuntimeSessionRegistry(runtime_id=runtime_id)
-        writer_registry = RuntimeConnectionWriterRegistry()
+    def build_default(
+            cls,
+            *,
+            runtime_id: str,
+            authenticator: RuntimeAuthenticator | None = None,
+            payload_reference_validator: (
+                    PayloadReferenceValidator | None
+            ) = None,
+    ) -> "RuntimeService":
+        codec = EnvelopeCodec(
+            runtime_id=runtime_id
+        )
+        session_registry = RuntimeSessionRegistry(
+            runtime_id=runtime_id
+        )
+        writer_registry = (
+            RuntimeConnectionWriterRegistry()
+        )
         delivery_registry = RuntimeDeliveryRegistry()
-        local_forwarder = RuntimeLocalEnvelopeForwarder(
-            writer_registry=writer_registry,
-            delivery_registry=delivery_registry,
+
+        local_forwarder = (
+            RuntimeLocalEnvelopeForwarder(
+                writer_registry=writer_registry,
+                delivery_registry=delivery_registry,
+            )
         )
         target_resolver = RuntimeTargetResolver(
             runtime_id=runtime_id,
             session_registry=session_registry,
         )
+
+        resolved_payload_reference_validator = (
+                payload_reference_validator
+                or UnavailablePayloadReferenceValidator()
+        )
+
         registry = build_default_processor_registry(
             codec,
-            health_snapshot_provider=session_registry.build_health_snapshot,
+            health_snapshot_provider=(
+                session_registry.build_health_snapshot
+            ),
             target_resolver=target_resolver,
             local_forwarder=local_forwarder,
             delivery_registry=delivery_registry,
+            payload_reference_validator=(
+                resolved_payload_reference_validator
+            ),
         )
         pipeline = build_default_processor_pipeline(
             codec,
             registry,
             target_resolver=target_resolver,
         )
-        resolved_authenticator = authenticator or LocalTokenRuntimeAuthenticator(expected_token="local-dev-token")
+
+        resolved_authenticator = (
+                authenticator
+                or LocalTokenRuntimeAuthenticator(
+            expected_token="local-dev-token"
+        )
+        )
         handshake_service = RuntimeHandshakeService(
             runtime_id=runtime_id,
             codec=codec,
@@ -150,7 +188,7 @@ class RuntimeService:
     def delivery_registry(self) -> RuntimeDeliveryRegistry:
         return self._delivery_registry
 
-    def get_message_summary(self,message_id: str,*,tenant_id: str | None = None) -> RuntimeMessageDeliverySummary | None:
+    def get_message_summary(self, message_id: str, *, tenant_id: str | None = None) -> RuntimeMessageDeliverySummary | None:
         return self._delivery_registry.get_message_summary(
             message_id,
             tenant_id=tenant_id,
@@ -164,7 +202,7 @@ class RuntimeService:
 
     async def scan_retry_scheduled(self) -> RuntimeLocalRetryScanResult:
         return await self._local_forwarder.scan_retry_scheduled()
-    
+
     def scan_dead_letters(self) -> RuntimeDeadLetterScanResult:
         return self._delivery_registry.scan_dead_letters()
 

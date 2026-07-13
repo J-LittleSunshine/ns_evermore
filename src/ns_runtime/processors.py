@@ -17,10 +17,17 @@ from ns_common.exceptions import (
     NsEvermoreError,
     NsRuntimeDeliveryStateError,
     NsRuntimeEnvelopeSchemaError,
+    NsRuntimePayloadRefChecksumMismatchError,
+    NsRuntimePayloadRefDeniedError,
+    NsRuntimePayloadRefExpiredError,
+    NsRuntimePayloadRefInvalidError,
+    NsRuntimePayloadRefValidationTimeoutError,
+    NsRuntimePayloadRefValidationUnavailableError,
+    NsRuntimePayloadRefVersionMismatchError,
     NsRuntimeTargetUnavailableError,
     NsRuntimeTenantMismatchError,
     NsRuntimeUnauthorizedMessageTypeError,
-    NsRuntimeUnsupportedMessageTypeError
+    NsRuntimeUnsupportedMessageTypeError,
 )
 from ns_runtime.delivery import (
     RuntimeDeliveryRegistry,
@@ -35,11 +42,33 @@ from ns_runtime.models import (
     utc_now_iso,
 )
 from ns_runtime.outbound import RuntimeLocalEnvelopeForwarder
+from ns_runtime.payload_reference import (
+    PayloadReferenceValidationRequest,
+    PayloadReferenceValidationResult,
+    PayloadReferenceValidator,
+    RuntimePayloadReference,
+    UnavailablePayloadReferenceValidator,
+)
 from ns_runtime.protocol import EnvelopeCodec
-from ns_runtime.routing import RuntimeTargetResolver
+from ns_runtime.routing import (
+    RuntimeRouteDecision,
+    RuntimeTargetResolver,
+)
 
 if TYPE_CHECKING:
     pass
+
+_PAYLOAD_REFERENCE_REJECTION_ERROR_TYPES: dict[str, type[NsEvermoreError]] = {
+    "invalid": NsRuntimePayloadRefInvalidError,
+    "denied": NsRuntimePayloadRefDeniedError,
+    "expired": NsRuntimePayloadRefExpiredError,
+    "checksum_mismatch": (
+        NsRuntimePayloadRefChecksumMismatchError
+    ),
+    "version_mismatch": (
+        NsRuntimePayloadRefVersionMismatchError
+    ),
+}
 
 
 class BaseRuntimeProcessor(ABC):
@@ -148,14 +177,17 @@ class AuditMarkProcessor(BaseRuntimeProcessor):
 
 
 class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
-    def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver, local_forwarder: RuntimeLocalEnvelopeForwarder, delivery_registry: RuntimeDeliveryRegistry) -> None:
+    def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver, local_forwarder: RuntimeLocalEnvelopeForwarder, delivery_registry: RuntimeDeliveryRegistry, payload_reference_validator: PayloadReferenceValidator) -> None:
         self._codec = codec
         self._target_resolver = target_resolver
         self._local_forwarder = local_forwarder
         self._delivery_registry = delivery_registry
+        self._payload_reference_validator = (
+            payload_reference_validator
+        )
 
     async def process(self, request: ProcessorRequest) -> ProcessorResponse:
-        decision = None
+        decision: RuntimeRouteDecision | None = None
 
         try:
             decision = self._target_resolver.resolve(
@@ -166,9 +198,20 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                 raise NsRuntimeEnvelopeSchemaError(
                     "task.dispatch must contain target group.",
                     details={
-                        "message_id": request.envelope.message_id,
+                        "message_id": (
+                            request.envelope.message_id
+                        ),
                     },
                 )
+
+            payload_reference_response = (
+                await self._validate_payload_reference(
+                    request=request,
+                    decision=decision,
+                )
+            )
+            if payload_reference_response is not None:
+                return payload_reference_response
 
             forward_results = (
                 await self._local_forwarder.forward(
@@ -176,6 +219,7 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                     envelope=request.envelope,
                 )
             )
+
             if (
                     len(forward_results) == 1
                     and forward_results[0].status
@@ -188,7 +232,8 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                 )
                 if summary is None:
                     raise NsRuntimeDeliveryStateError(
-                        "Duplicate task dispatch is missing MessageDeliverySummary.",
+                        "Duplicate task dispatch is missing "
+                        "MessageDeliverySummary.",
                         details={
                             "message_id": (
                                 request.envelope.message_id
@@ -209,16 +254,23 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                     )
                 )
 
-            summary = self._delivery_registry.get_message_summary(
-                request.envelope.message_id,
-                tenant_id=request.session.tenant_id,
+            summary = (
+                self._delivery_registry.get_message_summary(
+                    request.envelope.message_id,
+                    tenant_id=request.session.tenant_id,
+                )
             )
             if summary is None:
                 raise NsRuntimeDeliveryStateError(
-                    "Accepted task dispatch is missing MessageDeliverySummary.",
+                    "Accepted task dispatch is missing "
+                    "MessageDeliverySummary.",
                     details={
-                        "message_id": request.envelope.message_id,
-                        "message_type": request.envelope.message_type,
+                        "message_id": (
+                            request.envelope.message_id
+                        ),
+                        "message_type": (
+                            request.envelope.message_type
+                        ),
                     },
                 )
 
@@ -236,30 +288,257 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                     tenant_id=request.session.tenant_id,
                 )
             )
-            if existing_summary is not None and existing_summary.delivery_count > 0:
-                return ProcessorResponse.respond(self._build_delivery_accepted(request=request, summary=existing_summary))
+            if (
+                    existing_summary is not None
+                    and existing_summary.delivery_count > 0
+            ):
+                return ProcessorResponse.respond(
+                    self._build_delivery_accepted(
+                        request=request,
+                        summary=existing_summary,
+                    )
+                )
 
-            return self._reject_admission(request=request, exc=exc,
-                target_count=(decision.target_count if decision is not None else 1),
+            return self._reject_admission(
+                request=request,
+                exc=exc,
+                target_count=(
+                    decision.target_count
+                    if decision is not None
+                    else 1
+                ),
             )
 
         except NsRuntimeTenantMismatchError as exc:
-            return self._reject_admission(request=request, exc=exc, target_count=1)
+            return self._reject_admission(
+                request=request,
+                exc=exc,
+                target_count=1,
+            )
 
         except NsEvermoreError as exc:
             return ProcessorResponse.reject(
-                self._codec.build_error_envelope(exc, session=request.session, request=request.envelope)
+                self._codec.build_error_envelope(
+                    exc,
+                    session=request.session,
+                    request=request.envelope,
+                )
             )
 
-    def _reject_admission(self, *, request: ProcessorRequest, exc: NsEvermoreError, target_count: int) -> ProcessorResponse:
-        summary = self._delivery_registry.register_rejected_summary(
-            envelope=request.envelope,
-            source_connection_id=request.session.connection_id,
-            source_tenant_id=request.session.tenant_id,
-            target_count=target_count,
-            rejected_count=1,
-            reason_code=exc.code,
-            reason_message=exc.message,
+    async def _validate_payload_reference(self, *, request: ProcessorRequest, decision: RuntimeRouteDecision) -> ProcessorResponse | None:
+        reference = RuntimePayloadReference.from_envelope(
+            request.envelope
+        )
+
+        if reference is None:
+            return None
+
+        validation_request = (
+            PayloadReferenceValidationRequest(
+                reference=reference,
+                message_id=request.envelope.message_id,
+                message_type=request.envelope.message_type,
+                message_reliability=(
+                    request.envelope.reliability
+                ),
+                source_connection_id=(
+                    request.session.connection_id
+                ),
+                source_identity=request.session.identity,
+                source_tenant_id=request.session.tenant_id,
+                source_component_type=(
+                    request.session.component_type
+                ),
+                source_capabilities=tuple(
+                    sorted(
+                        request.session.capabilities
+                    )
+                ),
+                auth_snapshot_id=(
+                    request.session.auth_snapshot_id
+                ),
+                targets=decision.targets,
+            )
+        )
+
+        try:
+            validation_result = (
+                await self._payload_reference_validator.validate(
+                    validation_request
+                )
+            )
+        except TimeoutError:
+            error = (
+                NsRuntimePayloadRefValidationTimeoutError(
+                    details={
+                        "message_id": (
+                            request.envelope.message_id
+                        ),
+                    },
+                )
+            )
+            return self._build_payload_reference_runtime_error(
+                request=request,
+                exc=error,
+            )
+        except Exception:  # noqa
+            error = (
+                NsRuntimePayloadRefValidationUnavailableError(
+                    details={
+                        "message_id": (
+                            request.envelope.message_id
+                        ),
+                    },
+                )
+            )
+            return self._build_payload_reference_runtime_error(
+                request=request,
+                exc=error,
+            )
+
+        if not isinstance(
+                validation_result,
+                PayloadReferenceValidationResult,
+        ):
+            error = (
+                NsRuntimePayloadRefValidationUnavailableError(
+                    details={
+                        "message_id": (
+                            request.envelope.message_id
+                        ),
+                    },
+                )
+            )
+            return self._build_payload_reference_runtime_error(
+                request=request,
+                exc=error,
+            )
+
+        if (
+                validation_result.status == "valid"
+                and validation_result.reason == "valid"
+        ):
+            return None
+
+        if validation_result.status == "rejected":
+            error_type = (
+                _PAYLOAD_REFERENCE_REJECTION_ERROR_TYPES.get(
+                    validation_result.reason
+                )
+            )
+
+            if error_type is None:
+                error = (
+                    NsRuntimePayloadRefValidationUnavailableError(
+                        details={
+                            "message_id": (
+                                request.envelope.message_id
+                            ),
+                        },
+                    )
+                )
+                return (
+                    self._build_payload_reference_runtime_error(
+                        request=request,
+                        exc=error,
+                    )
+                )
+
+            error = error_type(
+                details={
+                    "message_id": (
+                        request.envelope.message_id
+                    ),
+                },
+            )
+
+            return self._reject_payload_reference(
+                request=request,
+                decision=decision,
+                exc=error,
+            )
+
+        if (
+                validation_result.status == "unavailable"
+                and validation_result.reason
+                == "validation_timeout"
+        ):
+            error = (
+                NsRuntimePayloadRefValidationTimeoutError(
+                    details={
+                        "message_id": (
+                            request.envelope.message_id
+                        ),
+                    },
+                )
+            )
+        else:
+            error = (
+                NsRuntimePayloadRefValidationUnavailableError(
+                    details={
+                        "message_id": (
+                            request.envelope.message_id
+                        ),
+                    },
+                )
+            )
+
+        return self._build_payload_reference_runtime_error(
+            request=request,
+            exc=error,
+        )
+
+    def _reject_payload_reference(self, *, request: ProcessorRequest, decision: RuntimeRouteDecision, exc: NsEvermoreError) -> ProcessorResponse:
+        existing_summary = (
+            self._delivery_registry.get_message_summary(
+                request.envelope.message_id,
+                tenant_id=request.session.tenant_id,
+            )
+        )
+
+        if (
+                existing_summary is not None
+                and existing_summary.delivery_count > 0
+        ):
+            return ProcessorResponse.reject(
+                self._build_delivery_rejected(
+                    request=request,
+                    summary=existing_summary,
+                    exc=exc,
+                )
+            )
+
+        return self._reject_admission(
+            request=request,
+            exc=exc,
+            target_count=decision.target_count,
+            rejected_count=decision.target_count,
+        )
+
+    def _build_payload_reference_runtime_error(self, *, request: ProcessorRequest, exc: NsEvermoreError) -> ProcessorResponse:
+        return ProcessorResponse.reject(
+            self._codec.build_error_envelope(
+                exc,
+                session=request.session,
+                request=request.envelope,
+            )
+        )
+
+    def _reject_admission(self, *, request: ProcessorRequest, exc: NsEvermoreError, target_count: int, rejected_count: int = 1) -> ProcessorResponse:
+        summary = (
+            self._delivery_registry.register_rejected_summary(
+                envelope=request.envelope,
+                source_connection_id=(
+                    request.session.connection_id
+                ),
+                source_tenant_id=(
+                    request.session.tenant_id
+                ),
+                target_count=target_count,
+                rejected_count=rejected_count,
+                reason_code=exc.code,
+                reason_message=exc.message,
+            )
         )
 
         return ProcessorResponse.reject(
@@ -270,13 +549,7 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
             )
         )
 
-    def _build_delivery_duplicate(
-            self,
-            *,
-            request: ProcessorRequest,
-            summary: RuntimeMessageDeliverySummary,
-            duplicate_status: str,
-    ) -> dict[str, Any]:
+    def _build_delivery_duplicate(self, *, request: ProcessorRequest, summary: RuntimeMessageDeliverySummary, duplicate_status: str) -> dict[str, Any]:
         duplicate_at = utc_now_iso()
 
         return {
@@ -894,50 +1167,89 @@ class ProcessorPipeline:
 
 
 def build_default_processor_registry(
-        codec: EnvelopeCodec,
-        *,
-        health_snapshot_provider: Callable[[], Mapping[str, Any]] | None = None,
+        codec: EnvelopeCodec, *,
+        health_snapshot_provider: (
+                Callable[[], Mapping[str, Any]] | None
+        ) = None,
         target_resolver: RuntimeTargetResolver | None = None,
         local_forwarder: RuntimeLocalEnvelopeForwarder | None = None,
         delivery_registry: RuntimeDeliveryRegistry | None = None,
+        payload_reference_validator: (
+                PayloadReferenceValidator | None
+        ) = None,
 ) -> ProcessorRegistry:
     registry = ProcessorRegistry()
-    registered_only = RegisteredOnlyProcessor(codec=codec)
+    registered_only = RegisteredOnlyProcessor(
+        codec=codec
+    )
+    resolved_payload_reference_validator = (
+            payload_reference_validator
+            or UnavailablePayloadReferenceValidator()
+    )
 
     for spec in _build_builtin_message_type_specs():
         processor: BaseRuntimeProcessor = registered_only
 
         if spec.message_type == "connection.heartbeat":
-            processor = HeartbeatProcessor(codec=codec)
+            processor = HeartbeatProcessor(
+                codec=codec
+            )
+
         elif spec.message_type == "runtime.control.health":
             processor = RuntimeHealthProcessor(
                 codec=codec,
-                health_snapshot_provider=health_snapshot_provider,
+                health_snapshot_provider=(
+                    health_snapshot_provider
+                ),
             )
-        elif spec.message_type == "task.dispatch" and target_resolver is not None and local_forwarder is not None and delivery_registry is not None:
+
+        elif (
+                spec.message_type == "task.dispatch"
+                and target_resolver is not None
+                and local_forwarder is not None
+                and delivery_registry is not None
+        ):
             processor = LocalTaskDispatchProcessor(
                 codec=codec,
                 target_resolver=target_resolver,
                 local_forwarder=local_forwarder,
                 delivery_registry=delivery_registry,
+                payload_reference_validator=(
+                    resolved_payload_reference_validator
+                ),
             )
-        elif spec.message_type == "delivery.ack" and delivery_registry is not None:
+
+        elif (
+                spec.message_type == "delivery.ack"
+                and delivery_registry is not None
+        ):
             processor = DeliveryAckProcessor(
                 codec=codec,
                 delivery_registry=delivery_registry,
             )
-        elif spec.message_type == "delivery.nack" and delivery_registry is not None:
+
+        elif (
+                spec.message_type == "delivery.nack"
+                and delivery_registry is not None
+        ):
             processor = DeliveryNackProcessor(
                 codec=codec,
                 delivery_registry=delivery_registry,
             )
-        elif spec.message_type == "delivery.defer" and delivery_registry is not None:
+
+        elif (
+                spec.message_type == "delivery.defer"
+                and delivery_registry is not None
+        ):
             processor = DeliveryDeferProcessor(
                 codec=codec,
                 delivery_registry=delivery_registry,
             )
 
-        registry.register(spec, processor)
+        registry.register(
+            spec,
+            processor,
+        )
 
     return registry
 

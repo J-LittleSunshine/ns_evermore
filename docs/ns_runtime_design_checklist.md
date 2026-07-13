@@ -485,6 +485,10 @@
 - 关键消息可以按策略进入 `dead_lettered`、`wait` 或 `retry_scheduled`；普通消息可以按策略选择 `reject`、`wait` 或 `dead_letter`。
 - 只要 payload_ref 需要安全确认，就不能使用过期缓存、诊断缓存或观测缓存作为投递授权依据。
 - payload_ref 校验异常必须进入细粒度 `RUNTIME_*` 错误码体系，例如 `RUNTIME_PAYLOAD_REF_INVALID`、`RUNTIME_PAYLOAD_REF_DENIED`、`RUNTIME_PAYLOAD_REF_EXPIRED`、`RUNTIME_PAYLOAD_REF_CHECKSUM_MISMATCH`、`RUNTIME_PAYLOAD_REF_VALIDATION_UNAVAILABLE`、`RUNTIME_PAYLOAD_REF_VALIDATION_TIMEOUT`。
+- [x] 【实现进度 1.17】已新增单进程、本地受理阶段的 Payload Reference 校验骨架；当前协议层支持 `payload.mode=inline` 与 `payload.mode=reference` 的基础结构校验，reference 使用类型化 `RuntimePayloadReference`、`PayloadReferenceValidationRequest`、`PayloadReferenceValidationResult` 和异步 `PayloadReferenceValidator` 接口。`task.dispatch` 在目标解析完成且创建
+  DeliveryRecord 前执行 reference 校验；明确无效、拒绝、过期、checksum 不匹配或 version 不匹配时返回 `delivery.rejected`，不创建 DeliveryRecord、DeliveryAttempt 或 WebSocket write，并写入 tenant 隔离的 rejected summary。validator 暂时不可用或超时时采用 fail-closed 行为，返回独立 `RUNTIME_PAYLOAD_REF_VALIDATION_UNAVAILABLE` 或
+  `RUNTIME_PAYLOAD_REF_VALIDATION_TIMEOUT` runtime error，不绕过校验继续投递。当前默认 validator 始终返回 unavailable，inline payload 不受影响。该进度不表示真实 `ns_backend` HTTP/RPC 校验、IAM 授权、对象下载、checksum 下载计算、callback reference 校验、校验缓存授权、wait/retry/dead-letter admission policy、重投前重新校验、完整安全审计落库、多目标 partial
+  acceptance、跨 runtime 校验或生产级分布式受理事务已完成。
 
 ## 18. 优先级、公平调度与背压
 

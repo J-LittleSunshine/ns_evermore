@@ -171,6 +171,50 @@ class NsRuntimeClusterCoordinationError(NsRuntimeError):
     default_message = "Runtime cluster coordination error."
 
 
+class NsRuntimePayloadRefInvalidError(NsRuntimeProtocolError):
+    code = "RUNTIME_PAYLOAD_REF_INVALID"
+    numeric_code = 200116
+    default_message = "Runtime payload reference is invalid."
+
+
+class NsRuntimePayloadRefExpiredError(NsRuntimeProtocolError):
+    code = "RUNTIME_PAYLOAD_REF_EXPIRED"
+    numeric_code = 200117
+    default_message = "Runtime payload reference has expired."
+
+
+class NsRuntimePayloadRefChecksumMismatchError(NsRuntimeProtocolError):
+    code = "RUNTIME_PAYLOAD_REF_CHECKSUM_MISMATCH"
+    numeric_code = 200118
+    default_message = (
+        "Runtime payload reference checksum does not match."
+    )
+
+
+class NsRuntimePayloadRefVersionMismatchError(NsRuntimeProtocolError):
+    code = "RUNTIME_PAYLOAD_REF_VERSION_MISMATCH"
+    numeric_code = 200119
+    default_message = (
+        "Runtime payload reference version does not match."
+    )
+
+
+class NsRuntimePayloadRefValidationUnavailableError(NsRuntimeError):
+    code = "RUNTIME_PAYLOAD_REF_VALIDATION_UNAVAILABLE"
+    numeric_code = 200120
+    default_message = (
+        "Runtime payload reference validation is unavailable."
+    )
+
+
+class NsRuntimePayloadRefValidationTimeoutError(NsRuntimePayloadRefValidationUnavailableError):
+    code = "RUNTIME_PAYLOAD_REF_VALIDATION_TIMEOUT"
+    numeric_code = 200121
+    default_message = (
+        "Runtime payload reference validation timed out."
+    )
+
+
 RUNTIME_NACK_REASON_ERROR_CODES: tuple[tuple[str, str], ...] = (
     ("target_overloaded", NsRuntimeBackpressureError.code),
     ("temporarily_unavailable", NsRuntimeTargetUnavailableError.code),

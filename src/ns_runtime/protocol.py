@@ -79,6 +79,27 @@ _RELIABILITY_VALUES: frozenset[str] = frozenset(
     }
 )
 
+_ALLOWED_PAYLOAD_MODES: frozenset[str] = frozenset(
+    {
+        "inline",
+        "reference",
+    }
+)
+
+_ALLOWED_PAYLOAD_REF_FIELDS: frozenset[str] = frozenset(
+    {
+        "object_id",
+        "version",
+    }
+)
+
+_REQUIRED_PAYLOAD_REF_FIELDS: frozenset[str] = frozenset(
+    {
+        "object_id",
+        "version",
+    }
+)
+
 
 @dataclass(slots=True, kw_only=True)
 class ProtocolCompatibilityPolicy:
@@ -113,6 +134,7 @@ class EnvelopeCodec:
         message_id, message_type, category, reliability = self._validate_message(raw)
         self._validate_target(raw)
         self._validate_delivery(raw)
+        self._validate_payload(raw)
         self._validate_extensions(raw)
         normalized_raw = self.inject_runtime_context(raw, session)
 
@@ -141,6 +163,7 @@ class EnvelopeCodec:
         self._validate_group_fields(raw)
         self._validate_protocol(raw)
         _message_id, message_type, category, _reliability = self._validate_message(raw)
+        self._validate_payload(raw)
         self._validate_extensions(raw)
 
         if message_type != "connection.hello":
@@ -362,6 +385,154 @@ class EnvelopeCodec:
 
         if "message_id" in delivery:
             raise NsRuntimeEnvelopeSchemaError("delivery.message_id is forbidden; use message.message_id only.")
+
+    def _validate_payload(self,raw: Mapping[str, Any]) -> None:
+        payload = raw.get("payload")
+        if payload is None:
+            return
+
+        mode = self._require_non_empty_str(
+            payload,
+            "mode",
+            "payload",
+        )
+
+        if mode not in _ALLOWED_PAYLOAD_MODES:
+            raise NsRuntimeEnvelopeSchemaError(
+                "payload.mode is invalid.",
+                details={
+                    "allowed_values": sorted(
+                        _ALLOWED_PAYLOAD_MODES
+                    ),
+                },
+            )
+
+        self._validate_optional_payload_metadata(
+            payload
+        )
+
+        if mode == "inline":
+            self._validate_inline_payload(payload)
+            return
+
+        self._validate_reference_payload(payload)
+
+    @staticmethod
+    def _validate_inline_payload(payload: Mapping[str, Any]) -> None:
+        if "inline" not in payload:
+            raise NsRuntimeEnvelopeSchemaError(
+                "payload.inline is required when payload.mode=inline.",
+                details={
+                    "group": "payload",
+                    "field": "inline",
+                },
+            )
+
+        inline = payload.get("inline")
+        if not isinstance(inline, dict):
+            raise NsRuntimeEnvelopeSchemaError(
+                "payload.inline must be an object.",
+                details={
+                    "actual_type": type(inline).__name__,
+                },
+            )
+
+        if "payload_ref" in payload:
+            raise NsRuntimeEnvelopeSchemaError(
+                "payload.payload_ref is forbidden when payload.mode=inline.",
+                details={
+                    "group": "payload",
+                    "field": "payload_ref",
+                },
+            )
+
+    def _validate_reference_payload(self,payload: Mapping[str, Any]) -> None:
+        if "inline" in payload:
+            raise NsRuntimeEnvelopeSchemaError(
+                "payload.inline is forbidden when payload.mode=reference.",
+                details={
+                    "group": "payload",
+                    "field": "inline",
+                },
+            )
+
+        payload_ref = payload.get("payload_ref")
+        if not isinstance(payload_ref, dict) or not payload_ref:
+            raise NsRuntimeEnvelopeSchemaError(
+                "payload.payload_ref must be a non-empty object "
+                "when payload.mode=reference.",
+                details={
+                    "actual_type": type(
+                        payload_ref
+                    ).__name__,
+                },
+            )
+
+        unknown_fields = sorted(
+            set(payload_ref.keys())
+            - _ALLOWED_PAYLOAD_REF_FIELDS
+        )
+        if unknown_fields:
+            raise NsRuntimeEnvelopeSchemaError(
+                "payload.payload_ref contains unknown field.",
+                details={
+                    "unknown_fields": unknown_fields,
+                },
+            )
+
+        missing_fields = sorted(
+            _REQUIRED_PAYLOAD_REF_FIELDS
+            - set(payload_ref.keys())
+        )
+        if missing_fields:
+            raise NsRuntimeEnvelopeSchemaError(
+                "payload.payload_ref misses required field.",
+                details={
+                    "missing_fields": missing_fields,
+                },
+            )
+
+        self._require_non_empty_str(
+            payload_ref,
+            "object_id",
+            "payload.payload_ref",
+        )
+        self._require_non_empty_str(
+            payload_ref,
+            "version",
+            "payload.payload_ref",
+        )
+        self._require_non_empty_str(
+            payload,
+            "checksum",
+            "payload",
+        )
+
+    def _validate_optional_payload_metadata(self,payload: Mapping[str, Any]) -> None:
+        if "content_type" in payload:
+            self._require_non_empty_str(
+                payload,
+                "content_type",
+                "payload",
+            )
+
+        if "size_bytes" not in payload:
+            return
+
+        size_bytes = payload.get("size_bytes")
+        if (
+                isinstance(size_bytes, bool)
+                or not isinstance(size_bytes, int)
+                or size_bytes < 0
+        ):
+            raise NsRuntimeEnvelopeSchemaError(
+                "payload.size_bytes must be a non-negative integer.",
+                details={
+                    "actual_type": type(
+                        size_bytes
+                    ).__name__,
+                },
+            )
 
     def _validate_extensions(self, raw: Mapping[str, Any]) -> None:
         extensions = raw.get("extensions")

@@ -52,6 +52,17 @@ from ns_runtime.outbound import (
     RuntimeLocalRetryScanResult,
     RuntimeLocalWriteResult
 )
+from ns_runtime.payload_reference import (
+    PayloadReferenceRejectionReason,
+    PayloadReferenceUnavailableReason,
+    PayloadReferenceValidationReason,
+    PayloadReferenceValidationRequest,
+    PayloadReferenceValidationResult,
+    PayloadReferenceValidationStatus,
+    PayloadReferenceValidator,
+    RuntimePayloadReference,
+    UnavailablePayloadReferenceValidator,
+)
 from ns_runtime.processors import (
     BaseRuntimeProcessor,
     ProcessorPipeline,
@@ -132,6 +143,15 @@ __all__ = [
     "RuntimeLocalRetryScanResult",
     "RuntimeDeliveryDuplicateStatus",
     "RuntimeDeliveryRegistrationResult",
+    "RuntimePayloadReference",
+    "PayloadReferenceValidationStatus",
+    "PayloadReferenceValidationReason",
+    "PayloadReferenceRejectionReason",
+    "PayloadReferenceUnavailableReason",
+    "PayloadReferenceValidationRequest",
+    "PayloadReferenceValidationResult",
+    "PayloadReferenceValidator",
+    "UnavailablePayloadReferenceValidator",
 ]
 
 __version__ = "0.2.0"
