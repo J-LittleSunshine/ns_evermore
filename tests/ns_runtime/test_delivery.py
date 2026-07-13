@@ -16,7 +16,8 @@ from typing import (
 from ns_common.exceptions import (
     NsRuntimeAckRejectedError,
     NsRuntimeDeferRejectedError,
-    NsRuntimeNackRejectedError,
+    NsRuntimeDeliveryStateError,
+    NsRuntimeNackRejectedError
 )
 from ns_runtime.auth import RuntimeAuthResult
 from ns_runtime.delivery import RuntimeDeliveryRegistry
@@ -1011,6 +1012,191 @@ class RuntimeDeliveryRegistryTestCase(unittest.TestCase):
         self.assertEqual(
             self.delivery_registry.list_records(),
             (),
+        )
+
+    def test_register_prepared_record_reuses_in_progress_delivery(self) -> None:
+        envelope = self.codec.parse_inbound(
+            self._build_task_dispatch_frame(
+                target_connection_id=(
+                    self.target_session.connection_id
+                ),
+            ),
+            self.source_session,
+        )
+        decision = self.target_resolver.resolve(
+            envelope,
+            self.source_session,
+        )
+        self.assertIsNotNone(decision)
+
+        first = (
+            self.delivery_registry.register_prepared_record(
+                decision=decision,
+                envelope=envelope,
+                target=decision.targets[0],
+            )
+        )
+        second = (
+            self.delivery_registry.register_prepared_record(
+                decision=decision,
+                envelope=envelope,
+                target=decision.targets[0],
+            )
+        )
+
+        self.assertTrue(first.created)
+        self.assertFalse(second.created)
+        self.assertEqual(
+            first.record.delivery_id,
+            second.record.delivery_id,
+        )
+        self.assertEqual(
+            second.duplicate_status,
+            "delivery_in_progress",
+        )
+        self.assertEqual(
+            len(self.delivery_registry.list_records()),
+            1,
+        )
+
+    def test_register_prepared_record_returns_already_delivered_after_ack(self) -> None:
+        envelope = self.codec.parse_inbound(
+            self._build_task_dispatch_frame(
+                target_connection_id=(
+                    self.target_session.connection_id
+                ),
+            ),
+            self.source_session,
+        )
+        decision = self.target_resolver.resolve(
+            envelope,
+            self.source_session,
+        )
+        self.assertIsNotNone(decision)
+
+        registration = (
+            self.delivery_registry.register_prepared_record(
+                decision=decision,
+                envelope=envelope,
+                target=decision.targets[0],
+            )
+        )
+        record = registration.record
+
+        attempt = self.delivery_registry.start_sending(
+            record=record
+        )
+        self.delivery_registry.mark_sent_to_transport(
+            record=record,
+            attempt=attempt,
+            write_result=RuntimeLocalWriteResult(
+                connection_id=(
+                    self.target_session.connection_id
+                ),
+                connection_epoch=(
+                    self.target_session.connection_epoch
+                ),
+                status="sent",
+            ),
+        )
+
+        ack_envelope = self.codec.parse_inbound(
+            self._build_ack_frame(
+                delivery_id=record.delivery_id
+            ),
+            self.target_session,
+        )
+        self.delivery_registry.mark_acked(
+            envelope=ack_envelope,
+            session_connection_id=(
+                self.target_session.connection_id
+            ),
+            session_connection_epoch=(
+                self.target_session.connection_epoch
+            ),
+            session_tenant_id=(
+                self.target_session.tenant_id
+            ),
+        )
+
+        duplicate = (
+            self.delivery_registry.register_prepared_record(
+                decision=decision,
+                envelope=envelope,
+                target=decision.targets[0],
+            )
+        )
+
+        self.assertFalse(duplicate.created)
+        self.assertEqual(
+            duplicate.duplicate_status,
+            "already_delivered",
+        )
+        self.assertEqual(
+            duplicate.record.delivery_id,
+            record.delivery_id,
+        )
+        self.assertEqual(
+            len(self.delivery_registry.list_records()),
+            1,
+        )
+
+    def test_register_prepared_record_rejects_message_id_content_conflict(self) -> None:
+        frame = self._build_task_dispatch_frame(
+            target_connection_id=(
+                self.target_session.connection_id
+            ),
+        )
+        envelope = self.codec.parse_inbound(
+            frame,
+            self.source_session,
+        )
+        decision = self.target_resolver.resolve(
+            envelope,
+            self.source_session,
+        )
+        self.assertIsNotNone(decision)
+
+        self.delivery_registry.register_prepared_record(
+            decision=decision,
+            envelope=envelope,
+            target=decision.targets[0],
+        )
+
+        conflicting_raw = json.loads(frame)
+        conflicting_raw["payload"]["inline"][
+            "task_name"
+        ] = "different-task"
+
+        conflicting_envelope = (
+            self.codec.parse_inbound(
+                json.dumps(
+                    conflicting_raw,
+                    ensure_ascii=False,
+                ),
+                self.source_session,
+            )
+        )
+        conflicting_decision = (
+            self.target_resolver.resolve(
+                conflicting_envelope,
+                self.source_session,
+            )
+        )
+        self.assertIsNotNone(conflicting_decision)
+
+        with self.assertRaises(
+                NsRuntimeDeliveryStateError
+        ):
+            self.delivery_registry.register_prepared_record(
+                decision=conflicting_decision,
+                envelope=conflicting_envelope,
+                target=conflicting_decision.targets[0],
+            )
+
+        self.assertEqual(
+            len(self.delivery_registry.list_records()),
+            1,
         )
 
     def _create_ack_waiting_delivery(self):

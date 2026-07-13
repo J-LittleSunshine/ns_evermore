@@ -170,10 +170,44 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                     },
                 )
 
-            await self._local_forwarder.forward(
-                decision=decision,
-                envelope=request.envelope,
+            forward_results = (
+                await self._local_forwarder.forward(
+                    decision=decision,
+                    envelope=request.envelope,
+                )
             )
+            if (
+                    len(forward_results) == 1
+                    and forward_results[0].status
+                    == "duplicate"
+            ):
+                duplicate_result = forward_results[0]
+
+                summary = self._delivery_registry.get_summary(
+                    duplicate_result.summary_id
+                )
+                if summary is None:
+                    raise NsRuntimeDeliveryStateError(
+                        "Duplicate task dispatch is missing MessageDeliverySummary.",
+                        details={
+                            "message_id": (
+                                request.envelope.message_id
+                            ),
+                            "summary_id": (
+                                duplicate_result.summary_id
+                            ),
+                        },
+                    )
+
+                return ProcessorResponse.respond(
+                    self._build_delivery_duplicate(
+                        request=request,
+                        summary=summary,
+                        duplicate_status=(
+                            duplicate_result.duplicate_status
+                        ),
+                    )
+                )
 
             summary = self._delivery_registry.get_message_summary(
                 request.envelope.message_id
@@ -229,6 +263,81 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
                 exc=exc,
             )
         )
+
+    def _build_delivery_duplicate(
+            self,
+            *,
+            request: ProcessorRequest,
+            summary: RuntimeMessageDeliverySummary,
+            duplicate_status: str,
+    ) -> dict[str, Any]:
+        duplicate_at = utc_now_iso()
+
+        return {
+            "protocol": {
+                "version": (
+                    self._codec.protocol_version_text
+                ),
+            },
+            "message": {
+                "message_id": (
+                    f"{request.envelope.message_id}.duplicate"
+                ),
+                "type": "delivery.duplicate",
+                "category": "delivery",
+                "priority": 100,
+                "created_at": duplicate_at,
+                "reliability": "best_effort",
+            },
+            "source": {
+                "runtime_id": request.session.runtime_id,
+                "connection_id": "runtime",
+                "session_id": "runtime",
+                "identity": request.session.runtime_id,
+                "tenant_id": request.session.tenant_id,
+                "component_type": "runtime",
+                "capabilities_summary": [
+                    "delivery.duplicate",
+                ],
+                "connection_epoch": 0,
+            },
+            "target": {
+                "kind": "connection",
+                "connection_id": (
+                    request.session.connection_id
+                ),
+            },
+            "payload": {
+                "mode": "inline",
+                "inline": {
+                    "message_id": (
+                        request.envelope.message_id
+                    ),
+                    "summary_id": summary.summary_id,
+                    "duplicate_at": duplicate_at,
+                    "duplicate_status": (
+                        duplicate_status
+                    ),
+                    "status_query_hint": (
+                        "delivery.status_query"
+                    ),
+                },
+            },
+            "trace": {
+                "trace_id": (
+                    request.envelope.raw.get(
+                        "trace",
+                        {},
+                    ).get(
+                        "trace_id",
+                        request.envelope.message_id,
+                    )
+                ),
+                "request_id": (
+                    request.envelope.message_id
+                ),
+            },
+        }
 
     def _build_delivery_accepted(self, *, request: ProcessorRequest, summary: RuntimeMessageDeliverySummary) -> dict[str, Any]:
         accepted_at = utc_now_iso()
@@ -864,6 +973,7 @@ def _build_builtin_message_type_specs() -> tuple[MessageTypeSpec, ...]:
         {"message_type": "task.result", "category": "task", "required_groups": ("target",), "reliability": "reliable", "implemented": False},
         {"message_type": "delivery.accepted", "category": "delivery", "reliability": "best_effort", "implemented": False},
         {"message_type": "delivery.rejected", "category": "delivery", "reliability": "best_effort", "implemented": False},
+        {"message_type": "delivery.duplicate", "category": "delivery", "reliability": "best_effort", "implemented": False},
         {"message_type": "delivery.ack", "category": "delivery", "required_groups": ("delivery",), "reliability": "critical", "implemented": True},
         {"message_type": "delivery.ack_result", "category": "delivery", "required_groups": ("delivery",), "reliability": "best_effort", "implemented": False},
         {"message_type": "delivery.nack", "category": "delivery", "required_groups": ("delivery", "payload"), "reliability": "critical", "implemented": True},

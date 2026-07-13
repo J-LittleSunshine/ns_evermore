@@ -34,6 +34,8 @@ class RuntimeLocalWriteResult:
     attempt_id: str = ""
     delivery_state: str = ""
     ack_deadline_at: str = ""
+    summary_id: str = ""
+    duplicate_status: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = {
@@ -50,7 +52,12 @@ class RuntimeLocalWriteResult:
             data["delivery_state"] = self.delivery_state
         if self.ack_deadline_at:
             data["ack_deadline_at"] = self.ack_deadline_at
-
+        if self.summary_id:
+            data["summary_id"] = self.summary_id
+        if self.duplicate_status:
+            data["duplicate_status"] = (
+                self.duplicate_status
+            )
         return data
 
 
@@ -234,11 +241,37 @@ class RuntimeLocalEnvelopeForwarder:
                 envelope=envelope.to_dict(),
             )
 
-        record = self._delivery_registry.create_prepared_record(
-            decision=decision,
-            envelope=envelope,
-            target=target,
-        )
+        if decision.target_count == 1:
+            registration = (
+                self._delivery_registry.register_prepared_record(
+                    decision=decision,
+                    envelope=envelope,
+                    target=target,
+                )
+            )
+            record = registration.record
+
+            if not registration.created:
+                return RuntimeLocalWriteResult(
+                    connection_id=target.connection_id,
+                    connection_epoch=target.connection_epoch,
+                    status="duplicate",
+                    delivery_id=record.delivery_id,
+                    summary_id=record.summary_id,
+                    delivery_state=record.state,
+                    duplicate_status=(
+                            registration.duplicate_status
+                            or "delivery_in_progress"
+                    ),
+                )
+        else:
+            record = (
+                self._delivery_registry.create_prepared_record(
+                    decision=decision,
+                    envelope=envelope,
+                    target=target,
+                )
+            )
         self._retry_envelopes_by_delivery[record.delivery_id] = envelope.to_dict()
         attempt = self._delivery_registry.start_sending(record=record)
         envelope_data = self._delivery_registry.inject_delivery_group(
@@ -266,6 +299,7 @@ class RuntimeLocalEnvelopeForwarder:
                 attempt_id=attempt.attempt_id,
                 delivery_state=record.state,
                 ack_deadline_at=record.ack_deadline_at,
+                summary_id=record.summary_id,
             )
         except Exception as exc:
             self._delivery_registry.mark_write_failed(

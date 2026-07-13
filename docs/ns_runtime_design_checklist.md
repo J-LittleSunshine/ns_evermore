@@ -443,6 +443,9 @@
 - [x] 【实现进度 1.15】已新增本地 `delivery.rejected` 与 rejected summary 骨架；当前 `task.dispatch` 已通过 message type、capability 和基础 schema 校验，但因本地目标不可用、跨 tenant 目标或本地 route decision 无可写连接而无法受理时，会创建不含 DeliveryRecord、`rejected_count = 1` 且状态为 `failed` 的内存版 `RuntimeMessageDeliverySummary`，并向原发送连接返回包含
   `message_id`、`summary_id`、`rejected_at`、`reason_code`、`reason_message`、`retryable`、`status_query_hint` 和 trace 的 best-effort `delivery.rejected`。协议 schema 错误仍返回 `runtime.error`。该进度只表示单进程单拒绝目标的本地受理失败骨架完成，不表示 partial acceptance、多目标 rejected 明细、完整 rejection audit record、payload_ref
   拒绝、去重/duplicate、强一致受理事务、跨节点受理或生产级可靠投递完成。
+- [x] 【实现进度 1.16】已新增单进程单目标场景的内存投递去重与 best-effort `delivery.duplicate` 响应骨架；当前同一 tenant 下相同 `message_id + target_fingerprint` 在默认 300 秒去重窗口内重复进入时，会复用已有 DeliveryRecord，不创建新的 delivery、attempt 或 WebSocket write。已有 delivery 处于
+  prepared、queued、sending、ack_waiting、retry_scheduled、replay_requested 或 transferred 时返回 `delivery_in_progress`，处于 acked 时返回 `already_delivered`，处于 dead_lettered、expired 或 cancelled 时返回对应终态语义。相同幂等键但稳定 envelope 内容不同视为 message_id 内容冲突并返回 `runtime.error`。该进度不表示多目标 partial duplicate、跨 runtime
+  原子去重、Redis/Valkey 去重登记、策略化重复允许/合并、后台 TTL 清理、强一致幂等事务或生产级分布式去重完成。
 - MessageDeliverySummary 由可靠投递层维护，用于聚合同一个 message_id 下所有 delivery、rejected target、cancelled、expired、dead_lettered 和 acked 的整体状态。
 - MessageDeliverySummary 应保留 target_count、accepted_count、rejected_count、delivery_count、acked_count、dead_lettered_count、expired_count、cancelled_count、pending_count、prepared_count、queued_count 等关键计数，以便管理端无需扫描全部 delivery 也能判断整体状态。
 - 受理阶段如果全部目标都 rejected，也必须创建 MessageDeliverySummary，以便管理端能够查询这条 message 为什么没有产生有效 delivery。

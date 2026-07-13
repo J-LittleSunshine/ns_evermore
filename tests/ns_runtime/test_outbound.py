@@ -241,6 +241,72 @@ class RuntimeConnectionWriterRegistryTestCase(unittest.IsolatedAsyncioTestCase):
     def test_retry_scheduled_expired_delivery_refreshes_message_summary(self) -> None:
         asyncio.run(self._run_retry_scheduled_expired_delivery_refreshes_message_summary())
 
+    def test_duplicate_forward_does_not_write_or_create_second_attempt(self) -> None:
+        asyncio.run(
+            self._run_duplicate_forward_does_not_write_or_create_second_attempt()
+        )
+
+    async def _run_duplicate_forward_does_not_write_or_create_second_attempt(self) -> None:
+        writer_registry = (
+            RuntimeConnectionWriterRegistry()
+        )
+        delivery_registry = RuntimeDeliveryRegistry(
+            default_ack_timeout_ms=1000
+        )
+        forwarder = RuntimeLocalEnvelopeForwarder(
+            writer_registry=writer_registry,
+            delivery_registry=delivery_registry,
+        )
+
+        websocket = _MemoryWebSocket()
+        writer_registry.register(
+            connection_id=self.target.connection_id,
+            connection_epoch=(
+                self.target.connection_epoch
+            ),
+            websocket=websocket,
+        )
+
+        first = await forwarder.forward(
+            decision=self.decision,
+            envelope=self.envelope,
+        )
+        second = await forwarder.forward(
+            decision=self.decision,
+            envelope=self.envelope,
+        )
+
+        self.assertEqual(
+            first[0].status,
+            "sent_to_transport",
+        )
+        self.assertEqual(
+            second[0].status,
+            "duplicate",
+        )
+        self.assertEqual(
+            second[0].duplicate_status,
+            "delivery_in_progress",
+        )
+        self.assertEqual(
+            first[0].delivery_id,
+            second[0].delivery_id,
+        )
+        self.assertEqual(len(websocket.sent), 1)
+
+        records = delivery_registry.list_records()
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].attempt_count, 1)
+        self.assertEqual(
+            len(
+                delivery_registry.list_attempts_for_delivery(
+                    records[0].delivery_id
+                )
+            ),
+            1,
+        )
+
     async def _run_retry_scheduled_expired_delivery_refreshes_message_summary(self) -> None:
         writer_registry = RuntimeConnectionWriterRegistry()
         delivery_registry = RuntimeDeliveryRegistry(default_ack_timeout_ms=1000)

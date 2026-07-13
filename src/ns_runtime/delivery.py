@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import (
@@ -47,6 +49,14 @@ RuntimeDeliveryState = Literal[
     "cancelled",
     "expired",
     "transferred",
+]
+
+RuntimeDeliveryDuplicateStatus = Literal[
+    "delivery_in_progress",
+    "already_delivered",
+    "dead_lettered",
+    "expired",
+    "cancelled",
 ]
 
 RuntimeDeliveryAttemptWriteStatus = Literal[
@@ -458,6 +468,20 @@ class RuntimeDeliveryRecord:
 
 
 @dataclass(slots=True, kw_only=True)
+class RuntimeDeliveryRegistrationResult:
+    created: bool
+    record: RuntimeDeliveryRecord
+    duplicate_status: RuntimeDeliveryDuplicateStatus | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "created": self.created,
+            "duplicate_status": self.duplicate_status,
+            "delivery": self.record.to_dict(),
+        }
+
+
+@dataclass(slots=True, kw_only=True)
 class RuntimeDeliveryAttempt:
     attempt_id: str
     delivery_id: str
@@ -486,7 +510,7 @@ class RuntimeDeliveryAttempt:
 
 
 class RuntimeDeliveryRegistry:
-    def __init__(self, *, default_ack_timeout_ms: int = 30000, max_defer_count: int = 3, max_single_defer_ms: int = 30000, max_total_defer_ms: int = 90000) -> None:
+    def __init__(self, *, default_ack_timeout_ms: int = 30000, max_defer_count: int = 3, max_single_defer_ms: int = 30000, max_total_defer_ms: int = 90000, dedupe_window_seconds: int = 300) -> None:
         self._default_ack_timeout_ms = default_ack_timeout_ms
         self._records: dict[str, RuntimeDeliveryRecord] = {}
         self._attempts: dict[str, RuntimeDeliveryAttempt] = {}
@@ -506,6 +530,102 @@ class RuntimeDeliveryRegistry:
         self._dead_letter_id_by_delivery: dict[str, str] = {}
         self._summaries: dict[str, RuntimeMessageDeliverySummary] = {}
         self._summary_id_by_message: dict[str, str] = {}
+        self._dedupe_window_seconds = max(0, dedupe_window_seconds)
+        self._delivery_id_by_dedupe_key: dict[tuple[str, str, str], str] = {}
+        self._dedupe_expires_at_by_key: dict[tuple[str, str, str], datetime] = {}
+        self._dedupe_fingerprint_by_key: dict[tuple[str, str, str], str] = {}
+
+    def register_prepared_record(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target: RuntimeRouteTarget) -> RuntimeDeliveryRegistrationResult:
+        target_fingerprint = self._build_target_fingerprint(
+            target
+        )
+        dedupe_key = (
+            decision.source_tenant_id,
+            envelope.message_id,
+            target_fingerprint,
+        )
+        request_fingerprint = self._build_dedupe_request_fingerprint(envelope)
+        now = datetime.now(timezone.utc)
+
+        if self._dedupe_window_seconds > 0:
+            existing_delivery_id = (
+                self._delivery_id_by_dedupe_key.get(
+                    dedupe_key
+                )
+            )
+            dedupe_expires_at = (
+                self._dedupe_expires_at_by_key.get(
+                    dedupe_key
+                )
+            )
+
+            if (
+                    existing_delivery_id is not None
+                    and dedupe_expires_at is not None
+                    and dedupe_expires_at > now
+            ):
+                existing_record = self._records.get(
+                    existing_delivery_id
+                )
+
+                if existing_record is not None:
+                    existing_fingerprint = (
+                        self._dedupe_fingerprint_by_key.get(
+                            dedupe_key
+                        )
+                    )
+
+                    if (
+                            existing_fingerprint
+                            != request_fingerprint
+                    ):
+                        raise NsRuntimeDeliveryStateError(
+                            "message_id and target were reused with different envelope content.",
+                            details={
+                                "tenant_id": decision.source_tenant_id,
+                                "message_id": envelope.message_id,
+                                "target_fingerprint": target_fingerprint,
+                                "existing_delivery_id": (
+                                    existing_record.delivery_id
+                                ),
+                            },
+                        )
+
+                    return RuntimeDeliveryRegistrationResult(
+                        created=False,
+                        record=existing_record,
+                        duplicate_status=(
+                            self._resolve_duplicate_status(
+                                existing_record.state
+                            )
+                        ),
+                    )
+
+            self._remove_dedupe_key(dedupe_key)
+
+        record = self.create_prepared_record(
+            decision=decision,
+            envelope=envelope,
+            target=target,
+        )
+
+        if self._dedupe_window_seconds > 0:
+            self._delivery_id_by_dedupe_key[
+                dedupe_key
+            ] = record.delivery_id
+            self._dedupe_expires_at_by_key[
+                dedupe_key
+            ] = now + timedelta(
+                seconds=self._dedupe_window_seconds
+            )
+            self._dedupe_fingerprint_by_key[
+                dedupe_key
+            ] = request_fingerprint
+
+        return RuntimeDeliveryRegistrationResult(
+            created=True,
+            record=record,
+        )
 
     def create_prepared_record(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target: RuntimeRouteTarget) -> RuntimeDeliveryRecord:
         delivery_id = str(uuid.uuid4())
@@ -1222,6 +1342,58 @@ class RuntimeDeliveryRegistry:
             return "partial_acked"
 
         return "pending"
+
+    @staticmethod
+    def _resolve_duplicate_status(state: RuntimeDeliveryState) -> RuntimeDeliveryDuplicateStatus:
+        if state == "acked":
+            return "already_delivered"
+
+        if state == "dead_lettered":
+            return "dead_lettered"
+
+        if state == "expired":
+            return "expired"
+
+        if state == "cancelled":
+            return "cancelled"
+
+        return "delivery_in_progress"
+
+    @staticmethod
+    def _build_dedupe_request_fingerprint(envelope: Envelope) -> str:
+        raw = envelope.to_dict()
+
+        stable_envelope = {
+            key: value
+            for key, value in raw.items()
+            if key not in {
+                "source",
+                "auth_context",
+                "trace",
+                "delivery",
+            }
+        }
+
+        message = stable_envelope.get("message")
+        if isinstance(message, dict):
+            stable_message = dict(message)
+
+            stable_message.pop("created_at", None)
+            stable_envelope["message"] = stable_message
+
+        encoded = json.dumps(
+            stable_envelope,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _remove_dedupe_key(self, dedupe_key: tuple[str, str, str]) -> None:
+        self._delivery_id_by_dedupe_key.pop(dedupe_key, None)
+        self._dedupe_expires_at_by_key.pop(dedupe_key, None)
+        self._dedupe_fingerprint_by_key.pop(dedupe_key, None)
 
     @staticmethod
     def _build_target_fingerprint(target: RuntimeRouteTarget) -> str:

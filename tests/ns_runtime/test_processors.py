@@ -45,6 +45,7 @@ class RuntimeProcessorTestCase(unittest.TestCase):
         self.assertIn("delivery.ack", message_types)
         self.assertIn("delivery.nack", message_types)
         self.assertIn("delivery.defer", message_types)
+        self.assertIn("delivery.duplicate", message_types)
         self.assertIn("stream.start", message_types)
         self.assertIn("runtime.control.health", message_types)
         self.assertIn("cluster.event.node_joined", message_types)
@@ -337,6 +338,32 @@ class RuntimeProcessorTestCase(unittest.TestCase):
         self.assertFalse(rejected_spec["implemented"])
         self.assertEqual(
             rejected_spec["required_groups"],
+            [],
+        )
+
+    def test_delivery_duplicate_is_registered_as_best_effort_outbound_type(self) -> None:
+        specs = {
+            item["message_type"]: item
+            for item in (
+                self.service.list_message_type_specs()
+            )
+        }
+
+        duplicate_spec = specs["delivery.duplicate"]
+
+        self.assertEqual(
+            duplicate_spec["category"],
+            "delivery",
+        )
+        self.assertEqual(
+            duplicate_spec["reliability"],
+            "best_effort",
+        )
+        self.assertFalse(
+            duplicate_spec["implemented"]
+        )
+        self.assertEqual(
+            duplicate_spec["required_groups"],
             [],
         )
 

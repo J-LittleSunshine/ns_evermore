@@ -20,7 +20,9 @@ from ns_runtime.delivery import (
     RuntimeDeferResult,
     RuntimeDeliveryAttempt,
     RuntimeDeliveryAttemptWriteStatus,
+    RuntimeDeliveryDuplicateStatus,
     RuntimeDeliveryRecord,
+    RuntimeDeliveryRegistrationResult,
     RuntimeDeliveryRegistry,
     RuntimeDeliveryState,
     RuntimeMessageDeliverySummary,
@@ -128,6 +130,8 @@ __all__ = [
     "RuntimeDeadLetterScanResult",
     "RuntimeLocalRetryResult",
     "RuntimeLocalRetryScanResult",
+    "RuntimeDeliveryDuplicateStatus",
+    "RuntimeDeliveryRegistrationResult",
 ]
 
 __version__ = "0.2.0"
