@@ -190,7 +190,6 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                     self.assertIsNotNone(delivery_record)
                     self.assertEqual(delivery_record.state, "acked")
 
-                    # 目标连接发送 ACK 后，summary 才进入 all_acked。
                     summary_after_ack = service.get_message_summary(
                         dispatch_message_id
                     )
@@ -200,20 +199,6 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
                     self.assertEqual(summary_after_ack.ack_waiting_count, 0)
                     self.assertEqual(summary_after_ack.pending_count, 0)
                     self.assertEqual(summary_after_ack.state, "all_acked")
-
-                    delivery_id = forwarded["delivery"]["delivery_id"]
-                    await receiver.send(self._build_ack_frame(delivery_id=delivery_id))
-                    ack_result = self._read_json(await receiver.recv())
-
-                    self.assertEqual(ack_result["message"]["type"], "delivery.ack_result")
-                    self.assertEqual(ack_result["payload"]["inline"]["status"], "acked")
-                    self.assertEqual(ack_result["payload"]["inline"]["delivery_state"], "acked")
-                    self.assertEqual(ack_result["payload"]["inline"]["delivery_id"], delivery_id)
-                    self.assertFalse(ack_result["payload"]["inline"]["duplicate"])
-
-                    delivery_record = service.delivery_registry.get_record(delivery_id)
-                    self.assertIsNotNone(delivery_record)
-                    self.assertEqual(delivery_record.state, "acked")
 
     async def _run_websocket_connection_hello_then_runtime_health(self) -> None:
         try:
