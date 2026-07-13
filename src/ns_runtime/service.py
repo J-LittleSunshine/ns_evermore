@@ -8,6 +8,11 @@ from typing import (
 )
 
 from ns_common.logger import get_ns_logger
+from ns_runtime.admission import (
+    LocalRuntimeAdmissionController,
+    RuntimeAdmissionController,
+    RuntimeAdmissionPolicy,
+)
 from ns_runtime.auth import (
     LocalTokenRuntimeAuthenticator,
     RuntimeAuthenticator
@@ -67,6 +72,7 @@ class RuntimeService:
             session_registry: RuntimeSessionRegistry,
             writer_registry: RuntimeConnectionWriterRegistry,
             delivery_registry: RuntimeDeliveryRegistry,
+            admission_controller: RuntimeAdmissionController,
             local_forwarder: RuntimeLocalEnvelopeForwarder,
             handshake_service: RuntimeHandshakeService,
             target_resolver: RuntimeTargetResolver,
@@ -80,6 +86,7 @@ class RuntimeService:
         self._session_registry = session_registry
         self._writer_registry = writer_registry
         self._delivery_registry = delivery_registry
+        self._admission_controller = admission_controller
         self._local_forwarder = local_forwarder
         self._handshake_service = handshake_service
         self._target_resolver = target_resolver
@@ -96,6 +103,12 @@ class RuntimeService:
             payload_reference_validator: (
                     PayloadReferenceValidator | None
             ) = None,
+            admission_policy: (
+                    RuntimeAdmissionPolicy | None
+            ) = None,
+            admission_controller: (
+                    RuntimeAdmissionController | None
+            ) = None,
     ) -> "RuntimeService":
         codec = EnvelopeCodec(
             runtime_id=runtime_id
@@ -107,6 +120,23 @@ class RuntimeService:
             RuntimeConnectionWriterRegistry()
         )
         delivery_registry = RuntimeDeliveryRegistry()
+
+        if (
+                admission_policy is not None
+                and admission_controller is not None
+        ):
+            raise ValueError(
+                "admission_policy and admission_controller "
+                "cannot be provided together."
+            )
+
+        resolved_admission_controller = (
+                admission_controller
+                or LocalRuntimeAdmissionController(
+            delivery_registry=delivery_registry,
+            policy=admission_policy,
+        )
+        )
 
         local_forwarder = (
             RuntimeLocalEnvelopeForwarder(
@@ -126,15 +156,12 @@ class RuntimeService:
 
         registry = build_default_processor_registry(
             codec,
-            health_snapshot_provider=(
-                session_registry.build_health_snapshot
-            ),
+            health_snapshot_provider=session_registry.build_health_snapshot,
             target_resolver=target_resolver,
             local_forwarder=local_forwarder,
             delivery_registry=delivery_registry,
-            payload_reference_validator=(
-                resolved_payload_reference_validator
-            ),
+            payload_reference_validator=resolved_payload_reference_validator,
+            admission_controller=resolved_admission_controller
         )
         pipeline = build_default_processor_pipeline(
             codec,
@@ -166,6 +193,7 @@ class RuntimeService:
             local_forwarder=local_forwarder,
             handshake_service=handshake_service,
             target_resolver=target_resolver,
+            admission_controller=resolved_admission_controller
         )
 
     @property
@@ -187,6 +215,10 @@ class RuntimeService:
     @property
     def delivery_registry(self) -> RuntimeDeliveryRegistry:
         return self._delivery_registry
+
+    @property
+    def admission_controller(self) -> RuntimeAdmissionController:
+        return self._admission_controller
 
     def get_message_summary(self, message_id: str, *, tenant_id: str | None = None) -> RuntimeMessageDeliverySummary | None:
         return self._delivery_registry.get_message_summary(

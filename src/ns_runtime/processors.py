@@ -15,6 +15,7 @@ from typing import (
 
 from ns_common.exceptions import (
     NsEvermoreError,
+    NsRuntimeBackpressureError,
     NsRuntimeDeliveryStateError,
     NsRuntimeEnvelopeSchemaError,
     NsRuntimePayloadRefChecksumMismatchError,
@@ -28,6 +29,11 @@ from ns_common.exceptions import (
     NsRuntimeTenantMismatchError,
     NsRuntimeUnauthorizedMessageTypeError,
     NsRuntimeUnsupportedMessageTypeError,
+)
+from ns_runtime.admission import (
+    LocalRuntimeAdmissionController,
+    RuntimeAdmissionController,
+    RuntimeAdmissionDecision,
 )
 from ns_runtime.delivery import (
     RuntimeDeliveryRegistry,
@@ -177,14 +183,13 @@ class AuditMarkProcessor(BaseRuntimeProcessor):
 
 
 class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
-    def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver, local_forwarder: RuntimeLocalEnvelopeForwarder, delivery_registry: RuntimeDeliveryRegistry, payload_reference_validator: PayloadReferenceValidator) -> None:
+    def __init__(self, *, codec: EnvelopeCodec, target_resolver: RuntimeTargetResolver, local_forwarder: RuntimeLocalEnvelopeForwarder, delivery_registry: RuntimeDeliveryRegistry, payload_reference_validator: PayloadReferenceValidator, admission_controller: RuntimeAdmissionController) -> None:
         self._codec = codec
         self._target_resolver = target_resolver
         self._local_forwarder = local_forwarder
         self._delivery_registry = delivery_registry
-        self._payload_reference_validator = (
-            payload_reference_validator
-        )
+        self._payload_reference_validator = payload_reference_validator
+        self._admission_controller = admission_controller
 
     async def process(self, request: ProcessorRequest) -> ProcessorResponse:
         decision: RuntimeRouteDecision | None = None
@@ -212,6 +217,22 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
             )
             if payload_reference_response is not None:
                 return payload_reference_response
+
+            admission_decision = (
+                self._admission_controller.evaluate(
+                    envelope=request.envelope,
+                    decision=decision,
+                )
+            )
+
+            if not admission_decision.accepted:
+                return self._reject_backpressure(
+                    request=request,
+                    decision=decision,
+                    admission_decision=(
+                        admission_decision
+                    ),
+                )
 
             forward_results = (
                 await self._local_forwarder.forward(
@@ -488,6 +509,45 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
             exc=error,
         )
 
+    def _reject_backpressure(self, *, request: ProcessorRequest, decision: RuntimeRouteDecision, admission_decision: RuntimeAdmissionDecision) -> ProcessorResponse:
+        error = NsRuntimeBackpressureError(
+            details=(
+                admission_decision.to_error_details(
+                    message_id=(
+                        request.envelope.message_id
+                    )
+                )
+            )
+        )
+
+        existing_summary = (
+            self._delivery_registry.get_message_summary(
+                request.envelope.message_id,
+                tenant_id=(
+                    request.session.tenant_id
+                ),
+            )
+        )
+
+        if (
+                existing_summary is not None
+                and existing_summary.delivery_count > 0
+        ):
+            return ProcessorResponse.reject(
+                self._codec.build_error_envelope(
+                    error,
+                    session=request.session,
+                    request=request.envelope,
+                )
+            )
+
+        return self._reject_admission(
+            request=request,
+            exc=error,
+            target_count=decision.target_count,
+            rejected_count=decision.target_count,
+        )
+
     def _reject_payload_reference(self, *, request: ProcessorRequest, decision: RuntimeRouteDecision, exc: NsEvermoreError) -> ProcessorResponse:
         existing_summary = (
             self._delivery_registry.get_message_summary(
@@ -671,7 +731,10 @@ class LocalTaskDispatchProcessor(BaseRuntimeProcessor):
         rejected_at = summary.last_rejected_at or utc_now_iso()
         retryable = isinstance(
             exc,
-            NsRuntimeTargetUnavailableError,
+            (
+                NsRuntimeBackpressureError,
+                NsRuntimeTargetUnavailableError,
+            ),
         )
 
         return {
@@ -1156,7 +1219,10 @@ class ProcessorPipeline:
 
         for processor in self._generic_processors:
             response = await processor.process(request)
-            if response.action in {"respond", "reject"}:
+            if response.action in {
+                "respond",
+                "reject"
+            }:
                 return response
 
         message_processor = self._registry.get_processor(envelope.message_type)
@@ -1164,7 +1230,8 @@ class ProcessorPipeline:
 
 
 def build_default_processor_registry(
-        codec: EnvelopeCodec, *,
+        codec: EnvelopeCodec,
+        *,
         health_snapshot_provider: (
                 Callable[[], Mapping[str, Any]] | None
         ) = None,
@@ -1173,6 +1240,9 @@ def build_default_processor_registry(
         delivery_registry: RuntimeDeliveryRegistry | None = None,
         payload_reference_validator: (
                 PayloadReferenceValidator | None
+        ) = None,
+        admission_controller: (
+                RuntimeAdmissionController | None
         ) = None,
 ) -> ProcessorRegistry:
     registry = ProcessorRegistry()
@@ -1183,6 +1253,20 @@ def build_default_processor_registry(
             payload_reference_validator
             or UnavailablePayloadReferenceValidator()
     )
+
+    resolved_admission_controller = (
+        admission_controller
+    )
+
+    if (
+            resolved_admission_controller is None
+            and delivery_registry is not None
+    ):
+        resolved_admission_controller = (
+            LocalRuntimeAdmissionController(
+                delivery_registry=delivery_registry,
+            )
+        )
 
     for spec in _build_builtin_message_type_specs():
         processor: BaseRuntimeProcessor = registered_only
@@ -1213,6 +1297,9 @@ def build_default_processor_registry(
                 delivery_registry=delivery_registry,
                 payload_reference_validator=(
                     resolved_payload_reference_validator
+                ),
+                admission_controller=(
+                    resolved_admission_controller
                 ),
             )
 

@@ -3,6 +3,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ns_runtime.admission import (
+    LocalRuntimeAdmissionController,
+    RuntimeAdmissionController,
+    RuntimeAdmissionDecision,
+    RuntimeAdmissionPolicy,
+    RuntimeAdmissionReason,
+    RuntimeAdmissionScope,
+    RuntimeAdmissionSnapshot,
+)
 from ns_runtime.auth import (
     LocalTokenRuntimeAuthenticator,
     RuntimeAuthResult,
@@ -152,6 +161,13 @@ __all__ = [
     "PayloadReferenceValidationResult",
     "PayloadReferenceValidator",
     "UnavailablePayloadReferenceValidator",
+    "RuntimeAdmissionScope",
+    "RuntimeAdmissionReason",
+    "RuntimeAdmissionPolicy",
+    "RuntimeAdmissionSnapshot",
+    "RuntimeAdmissionDecision",
+    "RuntimeAdmissionController",
+    "LocalRuntimeAdmissionController",
 ]
 
 __version__ = "0.2.0"

@@ -531,6 +531,9 @@
 - recovery pool 采用“固定保留底线 + 动态上浮”的容量策略，默认保留总调度能力的 `10%` 左右，必要时可上浮到 `20%～30%`。
 - recovery pool 不得挤占最高优先级 system pool，也不得无限挤压普通 tenant pool。
 - recovery pool 内部采用分级优先级模型：最高级处理 lease 失效、owner 风险、旧 owner fencing、current owner 不可用；第二级处理节点恢复后的 delivery recovery scan 和 ack_waiting 风险 delivery；第三级处理人工 replay；第四级处理 dead letter 清理、历史状态归档和低优先级恢复统计。
+- [x] 【实现进度 1.18】已新增单进程本地 `task.dispatch` admission/backpressure 骨架；当前在 target resolve 与 Payload Reference 安全校验完成后、创建 DeliveryRecord 前，通过 `RuntimeAdmissionController` 对 runtime tenant pool active 水位、system reserved capacity、tenant active/inflight/retry backlog 和 target inflight 水位进行同步裁决。默认 runtime active
+  上限为 10,000，并为 system pool 保留 1,500；tenant active、tenant inflight、tenant retry backlog 和单 target inflight 默认上限分别为 1,000、256、256 和 64。超限时返回 retryable 的 `RUNTIME_BACKPRESSURE` `delivery.rejected`，不创建 DeliveryRecord、DeliveryAttempt 或 WebSocket write；水位恢复后，同一 message_id 可以清除原 retryable rejected summary
+  并重新受理。去重窗口内的单目标 duplicate 投影为 0 个新 delivery，不因当前水位已满而被错误拒绝。该进度不表示 priority queue、prepared -> queued 激活、WFQ/DRR、priority aging、activation rate limit、真实 WebSocket write queue pressure、system/recovery worker pool、Redis/Valkey 原子配额、多目标并发容量预留、跨进程 admission 或生产级分布式背压已完成。
 
 ## 19. 集群协调模型
 

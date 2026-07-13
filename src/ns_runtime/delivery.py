@@ -18,12 +18,13 @@ from typing import (
 
 from ns_common.exceptions import (
     NsRuntimeAckRejectedError,
+    NsRuntimeBackpressureError,
     NsRuntimeDeferRejectedError,
     NsRuntimeDeliveryStateError,
     NsRuntimeEnvelopeSchemaError,
     NsRuntimeNackRejectedError,
     NsRuntimeTargetUnavailableError,
-    RUNTIME_NACK_REASON_ERROR_CODES,
+    RUNTIME_NACK_REASON_ERROR_CODES
 )
 from ns_runtime.models import (
     Envelope,
@@ -85,6 +86,7 @@ RuntimeDeadLetterReplayability = Literal[
 
 _RETRYABLE_ADMISSION_REJECTION_CODES: frozenset[str] = frozenset(
     {
+        NsRuntimeBackpressureError.code,
         NsRuntimeTargetUnavailableError.code,
     }
 )
@@ -628,6 +630,62 @@ class RuntimeDeliveryRegistry:
             created=True,
             record=record,
         )
+
+    def estimate_new_delivery_count(self, *, decision: RuntimeRouteDecision, envelope: Envelope, now: datetime | None = None) -> int:
+        writable_targets = tuple(
+            target
+            for target in decision.targets
+            if target.connection_id != "runtime"
+        )
+
+        if not writable_targets:
+            return 0
+
+        if (
+                decision.target_count != 1
+                or len(writable_targets) != 1
+        ):
+            return len(writable_targets)
+
+        if self._dedupe_window_seconds <= 0:
+            return 1
+
+        target = writable_targets[0]
+        target_fingerprint = (
+            self._build_target_fingerprint(
+                target
+            )
+        )
+        dedupe_key = (
+            decision.source_tenant_id,
+            envelope.message_id,
+            target_fingerprint,
+        )
+
+        existing_delivery_id = (
+            self._delivery_id_by_dedupe_key.get(
+                dedupe_key
+            )
+        )
+        dedupe_expires_at = (
+            self._dedupe_expires_at_by_key.get(
+                dedupe_key
+            )
+        )
+        resolved_now = (
+                now
+                or datetime.now(timezone.utc)
+        )
+
+        if (
+                existing_delivery_id is not None
+                and dedupe_expires_at is not None
+                and dedupe_expires_at > resolved_now
+                and existing_delivery_id in self._records
+        ):
+            return 0
+
+        return 1
 
     def create_prepared_record(self, *, decision: RuntimeRouteDecision, envelope: Envelope, target: RuntimeRouteTarget) -> RuntimeDeliveryRecord:
         existing_summary = self.get_message_summary(envelope.message_id, tenant_id=decision.source_tenant_id)
