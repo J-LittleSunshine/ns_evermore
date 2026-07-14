@@ -127,24 +127,29 @@ class RuntimeRouteDecision:
 
 
 class RuntimeTargetResolver:
-    _MULTI_TARGET_KINDS: frozenset[str] = frozenset(
-        {
-            "identity",
-            "tenant",
-            "broadcast",
-            "component_type",
-            "capability",
-        }
+    _SINGLE_TARGET_STRATEGIES: frozenset[str] = (
+        frozenset(
+            {
+                "single",
+                "first",
+                "policy.default_single",
+            }
+        )
     )
 
-    _SUPPORTED_STRATEGIES: frozenset[str] = frozenset(
-        {
-            "single",
-            "first",
-            "all",
-            "broadcast",
-            "policy.default_all",
-        }
+    _MULTI_TARGET_STRATEGIES: frozenset[str] = (
+        frozenset(
+            {
+                "all",
+                "broadcast",
+                "policy.default_all",
+            }
+        )
+    )
+
+    _SUPPORTED_STRATEGIES: frozenset[str] = (
+            _SINGLE_TARGET_STRATEGIES
+            | _MULTI_TARGET_STRATEGIES
     )
 
     def __init__(self, *, runtime_id: str, session_registry: RuntimeSessionRegistry) -> None:
@@ -192,6 +197,11 @@ class RuntimeTargetResolver:
                 },
             )
 
+        route_targets = self._apply_strategy(
+            strategy=strategy,
+            targets=route_targets,
+        )
+
         if not route_targets:
             raise NsRuntimeTargetUnavailableError(
                 "Runtime target is unavailable in local session index.",
@@ -199,6 +209,7 @@ class RuntimeTargetResolver:
                     "target_kind": target_kind,
                     "message_type": envelope.message_type,
                     "message_id": envelope.message_id,
+                    "strategy": strategy,
                 },
             )
 
@@ -319,23 +330,108 @@ class RuntimeTargetResolver:
 
         return tenant_id
 
-    def _resolve_strategy(self, target_kind: str, target: Mapping[str, Any]) -> str:
-        strategy = self._optional_str(target, "strategy")
+    def _resolve_strategy(
+            self,
+            target_kind: str,
+            target: Mapping[str, Any],
+    ) -> str:
+        strategy = self._optional_str(
+            target,
+            "strategy",
+        )
+
         if strategy is None:
-            if target_kind in self._MULTI_TARGET_KINDS:
+            if target_kind in {
+                "identity",
+                "component_type",
+                "capability",
+            }:
+                return "policy.default_single"
+
+            if target_kind == "tenant":
                 return "policy.default_all"
+
+            if target_kind == "broadcast":
+                return "broadcast"
+
             return "single"
 
         if strategy not in self._SUPPORTED_STRATEGIES:
             raise NsRuntimeEnvelopeSchemaError(
-                "target.strategy is unsupported by local runtime resolver.",
+                "target.strategy is unsupported by "
+                "local runtime resolver.",
                 details={
                     "strategy": strategy,
-                    "allowed_values": sorted(self._SUPPORTED_STRATEGIES),
+                    "allowed_values": sorted(
+                        self._SUPPORTED_STRATEGIES
+                    ),
+                },
+            )
+
+        if (
+                target_kind == "broadcast"
+                and strategy
+                not in self._MULTI_TARGET_STRATEGIES
+        ):
+            raise NsRuntimeEnvelopeSchemaError(
+                "broadcast target requires a "
+                "multi-target routing strategy.",
+                details={
+                    "target_kind": target_kind,
+                    "strategy": strategy,
+                    "allowed_values": sorted(
+                        self._MULTI_TARGET_STRATEGIES
+                    ),
                 },
             )
 
         return strategy
+
+    def _apply_strategy(
+            self,
+            *,
+            strategy: str,
+            targets: tuple[
+                RuntimeRouteTarget,
+                ...,
+            ],
+    ) -> tuple[
+        RuntimeRouteTarget,
+        ...,
+    ]:
+        ordered_targets = tuple(
+            sorted(
+                targets,
+                key=lambda target: (
+                    target.runtime_id,
+                    target.connection_id,
+                    target.connection_epoch,
+                ),
+            )
+        )
+
+        if (
+                strategy
+                in self._SINGLE_TARGET_STRATEGIES
+        ):
+            return ordered_targets[:1]
+
+        if (
+                strategy
+                in self._MULTI_TARGET_STRATEGIES
+        ):
+            return ordered_targets
+
+        raise NsRuntimeEnvelopeSchemaError(
+            "Resolved routing strategy is "
+            "unsupported.",
+            details={
+                "strategy": strategy,
+                "allowed_values": sorted(
+                    self._SUPPORTED_STRATEGIES
+                ),
+            },
+        )
 
     @staticmethod
     def _to_route_targets(records: tuple[RuntimeConnectionRecord, ...]) -> tuple[RuntimeRouteTarget, ...]:

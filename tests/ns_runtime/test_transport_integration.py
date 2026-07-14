@@ -548,7 +548,12 @@ class RuntimeTransportIntegrationTestCase(unittest.TestCase):
 
                 self.assertEqual(health_result["message"]["type"], "runtime.control.health_result")
                 self.assertEqual(health_result["payload"]["inline"]["status"], "ok")
-                self.assertEqual(health_result["payload"]["inline"]["runtime"]["active_connection_count"], 1)
+                self.assertEqual(
+                    health_result["payload"]["inline"]["runtime"][
+                        "connections"
+                    ]["active_connection_count"],
+                    1,
+                )
 
     async def _run_websocket_task_dispatch_then_nack_moves_delivery_to_retry_scheduled(self) -> None:
         try:

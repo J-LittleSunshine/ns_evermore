@@ -117,6 +117,8 @@
       WebSocket 写出、DeliveryRecord、ACK/NACK/Defer、跨节点路由或负载均衡策略已完成。
     - [x] 【实现进度 1.5】已提供本地 active WebSocket writer registry 和 `task.dispatch` 本地直连转发基础能力：runtime 可将已通过 Envelope 校验、权限校验和 target lookup 的 normalized envelope 写出到本机 active target connection，并向发送方返回 `runtime.control.forward_result`。该进度只表示 WebSocket send 层面的本地写出完成，不表示
       DeliveryRecord、ACK/NACK/Defer 状态机、可靠重试、死信、跨节点转发或 delivery 成功语义已完成；WebSocket send 成功不得解释为 delivery ACK。
+    - [x] 【边界修复 1.20.2】本地 `RuntimeTargetResolver` 已开始实际执行 target routing strategy，而不是只把 strategy 写入 `RuntimeRouteDecision` 后仍对全部候选连接 fan-out。`identity`、`capability` 和 `component_type` 当前默认使用 `policy.default_single`，通过 `runtime_id + connection_id + connection_epoch` 确定性选择一个本地目标；`tenant` 默认使用
+      `policy.default_all`，`broadcast` 默认保留全部匹配连接；显式 `all` 或 `broadcast` 才会执行多目标转发，broadcast target 不允许使用 single-target strategy。当前确定性首目标选择仅是未接入策略引擎和健康评分前的本地 fallback，不表示 target health score、weighted selection、sticky routing、quorum、all_required、跨节点 RoutingPlan 或生产级调度已经完成。
 - `delivery` 分组只在可靠投递相关消息中出现，包含 `delivery_id`、`summary_id`、`root_delivery_id`、`parent_delivery_id`、`attempt`、`ack_timeout_ms`、`replay_epoch` 等投递维度字段；`message_id` 只从 `message.message_id` 读取，不在 delivery 中重复。
 - `payload` 必须支持 inline 小 payload 和 `payload_ref` 对象存储引用两种模式；inline 大小上限完全由 runtime 策略决定，payload_ref 必须实时调用 `ns_backend` 校验。
 - 当 inline payload 超过 runtime 策略允许大小、JSON 深度或帧大小限制时，应返回错误 envelope 或按严重错误策略断开连接，并且不能为了兼容发送方自动转为 payload_ref。

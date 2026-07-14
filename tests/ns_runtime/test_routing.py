@@ -9,6 +9,7 @@ from typing import (
 )
 
 from ns_common.exceptions import (
+    NsRuntimeEnvelopeSchemaError,
     NsRuntimeTargetUnavailableError,
     NsRuntimeTenantMismatchError
 )
@@ -79,7 +80,10 @@ class RuntimeTargetResolverTestCase(unittest.TestCase):
         self.assertIsNotNone(decision)
         self.assertEqual(decision.target_count, 1)
         self.assertEqual(decision.targets[0].identity, "client-1")
-        self.assertEqual(decision.strategy, "policy.default_all")
+        self.assertEqual(
+            decision.strategy,
+            "policy.default_single",
+        )
 
     def test_resolve_tenant_target(self) -> None:
         decision = self.resolver.resolve(
@@ -93,7 +97,14 @@ class RuntimeTargetResolverTestCase(unittest.TestCase):
         )
 
         self.assertIsNotNone(decision)
-        self.assertEqual(decision.target_count, 3)
+        self.assertEqual(
+            decision.strategy,
+            "policy.default_all",
+        )
+        self.assertEqual(
+            decision.target_count,
+            3,
+        )
 
     def test_resolve_component_type_target(self) -> None:
         decision = self.resolver.resolve(
@@ -210,6 +221,158 @@ class RuntimeTargetResolverTestCase(unittest.TestCase):
         }
         return self.codec.parse_inbound(json.dumps(frame, ensure_ascii=False), self.source_session)
 
+    def test_identity_default_strategy_selects_one_connection(
+            self,
+    ) -> None:
+        second_session = self._activate(
+            identity="client-1",
+            tenant_id="tenant-1",
+            component_type="client",
+            capabilities=(
+                "task.execute",
+            ),
+        )
+
+        decision = self.resolver.resolve(
+            self._parse_target(
+                {
+                    "kind": "identity",
+                    "identity": "client-1",
+                }
+            ),
+            self.source_session,
+        )
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(
+            decision.strategy,
+            "policy.default_single",
+        )
+        self.assertEqual(
+            decision.target_count,
+            1,
+        )
+
+        expected_connection_id = min(
+            self.client_session.connection_id,
+            second_session.connection_id,
+        )
+
+        self.assertEqual(
+            decision.targets[0].connection_id,
+            expected_connection_id,
+        )
+
+    def test_capability_default_strategy_selects_one_connection(
+            self,
+    ) -> None:
+        decision = self.resolver.resolve(
+            self._parse_target(
+                {
+                    "kind": "capability",
+                    "capabilities": [
+                        "task.execute",
+                    ],
+                }
+            ),
+            self.source_session,
+        )
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(
+            decision.strategy,
+            "policy.default_single",
+        )
+        self.assertEqual(
+            decision.target_count,
+            1,
+        )
+
+        expected_connection_id = min(
+            self.client_session.connection_id,
+            self.node_session.connection_id,
+        )
+
+        self.assertEqual(
+            decision.targets[0].connection_id,
+            expected_connection_id,
+        )
+
+    def test_capability_all_strategy_keeps_all_connections(
+            self,
+    ) -> None:
+        decision = self.resolver.resolve(
+            self._parse_target(
+                {
+                    "kind": "capability",
+                    "capabilities": [
+                        "task.execute",
+                    ],
+                    "strategy": "all",
+                }
+            ),
+            self.source_session,
+        )
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(
+            decision.strategy,
+            "all",
+        )
+        self.assertEqual(
+            decision.target_count,
+            2,
+        )
+        self.assertEqual(
+            {
+                target.connection_id
+                for target in decision.targets
+            },
+            {
+                self.client_session.connection_id,
+                self.node_session.connection_id,
+            },
+        )
+
+    def test_broadcast_default_strategy_keeps_all_connections(
+            self,
+    ) -> None:
+        decision = self.resolver.resolve(
+            self._parse_target(
+                {
+                    "kind": "broadcast",
+                    "tenant_id": "tenant-1",
+                }
+            ),
+            self.source_session,
+        )
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(
+            decision.strategy,
+            "broadcast",
+        )
+        self.assertEqual(
+            decision.target_count,
+            3,
+        )
+
+    def test_broadcast_rejects_single_strategy(
+            self,
+    ) -> None:
+        with self.assertRaises(
+                NsRuntimeEnvelopeSchemaError
+        ):
+            self.resolver.resolve(
+                self._parse_target(
+                    {
+                        "kind": "broadcast",
+                        "tenant_id": "tenant-1",
+                        "strategy": "single",
+                    }
+                ),
+                self.source_session,
+            )
 
 if __name__ == "__main__":
     unittest.main()
