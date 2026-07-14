@@ -24,6 +24,12 @@ from ns_runtime.cluster import (
     RuntimeClusterState,
     RuntimeLeaderLease,
 )
+from ns_runtime.cluster_store import (
+    InMemoryRuntimeLeaderLeaseStore,
+    RuntimeLeaderLeaseStore,
+    RuntimeLeaderLeaseStoreSnapshot,
+    StateStoreRuntimeLeaderLeaseStore,
+)
 from ns_runtime.delivery import (
     RuntimeAckRecord,
     RuntimeAckResult,
@@ -96,6 +102,14 @@ from ns_runtime.service import RuntimeService
 from ns_runtime.session import (
     RuntimeConnectionRecord,
     RuntimeSessionRegistry,
+)
+from ns_runtime.state_store import (
+    InMemoryRuntimeStateStore,
+    RuntimeStateEntry,
+    RuntimeStateStore,
+    RuntimeStateStoreCapabilities,
+    RuntimeStateWriteResult,
+    RuntimeStateWriteStatus,
 )
 from ns_runtime.transport import (
     RuntimeWebSocketTransport,
@@ -180,6 +194,16 @@ __all__ = [
     "RuntimeClusterSnapshot",
     "RuntimeClusterCoordinator",
     "LocalRuntimeClusterCoordinator",
+    "RuntimeLeaderLeaseStoreSnapshot",
+    "RuntimeLeaderLeaseStore",
+    "StateStoreRuntimeLeaderLeaseStore",
+    "InMemoryRuntimeLeaderLeaseStore",
+    "RuntimeStateWriteStatus",
+    "RuntimeStateStoreCapabilities",
+    "RuntimeStateEntry",
+    "RuntimeStateWriteResult",
+    "RuntimeStateStore",
+    "InMemoryRuntimeStateStore",
 ]
 
 __version__ = "0.2.0"

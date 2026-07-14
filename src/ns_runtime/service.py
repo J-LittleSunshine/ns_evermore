@@ -21,6 +21,9 @@ from ns_runtime.cluster import (
     LocalRuntimeClusterCoordinator,
     RuntimeClusterCoordinator,
 )
+from ns_runtime.cluster_store import (
+    RuntimeLeaderLeaseStore,
+)
 from ns_runtime.delivery import (
     RuntimeAckTimeoutScanResult,
     RuntimeDeadLetterScanResult,
@@ -120,6 +123,9 @@ class RuntimeService:
             cluster_coordinator: (
                     RuntimeClusterCoordinator | None
             ) = None,
+            leader_lease_store: (
+                    RuntimeLeaderLeaseStore | None
+            ) = None,
     ) -> "RuntimeService":
         codec = EnvelopeCodec(
             runtime_id=runtime_id
@@ -158,12 +164,23 @@ class RuntimeService:
                 "cannot be provided together."
             )
 
+        if (
+                cluster_coordinator is not None
+                and leader_lease_store is not None
+        ):
+            raise ValueError(
+                "cluster_coordinator and "
+                "leader_lease_store cannot be "
+                "provided together."
+            )
+
         resolved_cluster_coordinator = (
                 cluster_coordinator
                 or LocalRuntimeClusterCoordinator(
-                    runtime_id=runtime_id,
-                    initial_role=runtime_role,
-                )
+            runtime_id=runtime_id,
+            initial_role=runtime_role,
+            lease_store=leader_lease_store,
+        )
         )
 
         if (

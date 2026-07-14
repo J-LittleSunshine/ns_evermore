@@ -562,7 +562,9 @@
 - [x] 【实现进度 1.19】已新增单进程本地 runtime 集群角色与 leader lease/fencing 骨架；当前通过 `RuntimeClusterCoordinator` 抽象和 `LocalRuntimeClusterCoordinator` 维护 `singleton`、`sub_node`、`standby_master`、`active_master`、`transitioning` 等基础角色状态，并支持 standby master 显式获取 leader lease、active master 续约、释放以及 lease 过期后撤销集群写权限。leader
   lease 包含 `holder_runtime_id`、`epoch`、`fencing_token`、`acquired_at`、`renewed_at` 和 `expires_at`，错误 fencing token 不得修改当前集群状态。`RuntimeService` 已暴露 cluster snapshot，`connection.accepted`、heartbeat 和 health 响应返回当前服务端 runtime role，而不是连接 session role。当前进度不表示 Redis/Valkey leader lease、多进程选举、standby
   自动接管、runtime 节点间 WebSocket、master/sub_node 跨节点路由、后台 lease renew worker、管理切换 envelope、delivery ownership/fencing、split-brain 防护或生产级集群协调已完成。
-
+- [x] 【实现进度 1.20】已新增 runtime 状态存储抽象和 leader lease store 边界。`RuntimeStateStore` 当前定义 namespace/key 隔离、原子创建、compare-and-swap、按版本删除、TTL、单调版本以及后端能力声明，首个 `InMemoryRuntimeStateStore` 仅作为单进程开发与测试实现，不具备持久化或分布式权威能力。leader lease 权威状态已从 `LocalRuntimeClusterCoordinator` 内部迁移至
+  `RuntimeLeaderLeaseStore`，当前 `StateStoreRuntimeLeaderLeaseStore` 通过状态存储的 atomic create 和 CAS 原子维护 current lease、last_epoch 和历史 fencing token 集合，并支持 acquire、renew、release、lease expiry、版本冲突及历史 token 防重。多个 coordinator 共享同一 lease store 时只能有一个节点持有有效 lease，store 写入失败时不得提前切换本地 runtime
+  role。当前进度不表示 SQLite WAL、Redis/Valkey、Lua 原子脚本、Sentinel/Cluster、跨进程持久化、后台续约 worker、自动 takeover、delivery 状态迁移或生产级状态存储已完成。
 
 ## 20. 状态存储与一致性模型
 

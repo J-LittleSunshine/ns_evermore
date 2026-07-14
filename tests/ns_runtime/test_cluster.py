@@ -15,6 +15,9 @@ from ns_common.exceptions import (
 from ns_runtime.cluster import (
     LocalRuntimeClusterCoordinator,
 )
+from ns_runtime.cluster_store import (
+    InMemoryRuntimeLeaderLeaseStore,
+)
 from ns_runtime.service import RuntimeService
 
 
@@ -599,6 +602,58 @@ class RuntimeClusterCoordinatorTestCase(
             RuntimeService.build_default(
                 runtime_id="runtime-1",
                 cluster_coordinator=coordinator,
+            )
+
+    def test_service_injects_leader_lease_store(
+            self,
+    ) -> None:
+        lease_store = (
+            InMemoryRuntimeLeaderLeaseStore()
+        )
+
+        service = RuntimeService.build_default(
+            runtime_id="runtime-1",
+            runtime_role="standby_master",
+            leader_lease_store=lease_store,
+        )
+
+        self.assertIs(
+            service.cluster_coordinator
+            .lease_store,
+            lease_store,
+        )
+
+        lease = (
+            service.cluster_coordinator
+            .acquire_leadership()
+        )
+
+        self.assertEqual(
+            lease.epoch,
+            1,
+        )
+        self.assertEqual(
+            service.cluster_coordinator.role,
+            "active_master",
+        )
+
+    def test_service_rejects_coordinator_and_store_together(
+            self,
+    ) -> None:
+        coordinator = (
+            LocalRuntimeClusterCoordinator(
+                runtime_id="runtime-1",
+            )
+        )
+        lease_store = (
+            InMemoryRuntimeLeaderLeaseStore()
+        )
+
+        with self.assertRaises(ValueError):
+            RuntimeService.build_default(
+                runtime_id="runtime-1",
+                cluster_coordinator=coordinator,
+                leader_lease_store=lease_store,
             )
 
 if __name__ == "__main__":

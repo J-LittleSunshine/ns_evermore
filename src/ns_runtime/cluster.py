@@ -9,23 +9,23 @@ from abc import (
 from dataclasses import dataclass
 from datetime import (
     datetime,
-    timedelta,
     timezone,
 )
 from typing import (
     Callable,
     Literal,
-    TYPE_CHECKING,
 )
 
 from ns_common.exceptions import (
-    NsRuntimeClusterFencingError,
     NsRuntimeClusterStateError,
 )
+from ns_runtime.cluster_store import (
+    InMemoryRuntimeLeaderLeaseStore,
+    RuntimeLeaderLease,
+    RuntimeLeaderLeaseStore,
+    RuntimeLeaderLeaseStoreSnapshot,
+)
 from ns_runtime.models import RuntimeRole
-
-if TYPE_CHECKING:
-    pass
 
 RuntimeClusterState = Literal[
     "starting",
@@ -43,53 +43,6 @@ _STARTUP_ROLES: frozenset[str] = frozenset(
         "standby_master",
     }
 )
-
-
-@dataclass(
-    slots=True,
-    frozen=True,
-    kw_only=True,
-)
-class RuntimeLeaderLease:
-    holder_runtime_id: str
-    epoch: int
-    fencing_token: str
-    acquired_at: str
-    renewed_at: str
-    expires_at: str
-
-    def __post_init__(self) -> None:
-        if (
-                not isinstance(
-                    self.holder_runtime_id,
-                    str,
-                )
-                or not self.holder_runtime_id.strip()
-        ):
-            raise ValueError(
-                "holder_runtime_id must be non-empty."
-            )
-
-        if (
-                isinstance(self.epoch, bool)
-                or not isinstance(self.epoch, int)
-                or self.epoch < 1
-        ):
-            raise ValueError(
-                "epoch must be an integer greater "
-                "than or equal to 1."
-            )
-
-        if (
-                not isinstance(
-                    self.fencing_token,
-                    str,
-                )
-                or not self.fencing_token.strip()
-        ):
-            raise ValueError(
-                "fencing_token must be non-empty."
-            )
 
 
 @dataclass(
@@ -196,8 +149,12 @@ class LocalRuntimeClusterCoordinator(
             fencing_token_factory: (
                     Callable[[], str] | None
             ) = None,
+            lease_store: (
+                    RuntimeLeaderLeaseStore | None
+            ) = None,
     ) -> None:
         resolved_runtime_id = runtime_id.strip()
+
         if not resolved_runtime_id:
             raise ValueError(
                 "runtime_id must be non-empty."
@@ -249,17 +206,22 @@ class LocalRuntimeClusterCoordinator(
                     lambda: str(uuid.uuid4())
                 )
         )
+        self._lease_store = (
+                lease_store
+                or InMemoryRuntimeLeaderLeaseStore(
+            clock=self._clock
+        )
+        )
 
-        now = self._now()
-
-        self._lease: RuntimeLeaderLease | None = None
-        self._lease_expires_at: (
-                datetime | None
-        ) = None
-
-        self._last_epoch = 0
-        self._issued_fencing_tokens: set[str] = set()
-        self._updated_at = self._to_iso(now)
+        initial_store_snapshot = (
+            self._lease_store.read()
+        )
+        self._observed_store_version = (
+            initial_store_snapshot.version
+        )
+        self._updated_at = self._to_iso(
+            self._now()
+        )
 
     @property
     def runtime_id(self) -> str:
@@ -270,6 +232,12 @@ class LocalRuntimeClusterCoordinator(
         self.refresh()
         return self._role
 
+    @property
+    def lease_store(
+            self,
+    ) -> RuntimeLeaderLeaseStore:
+        return self._lease_store
+
     def build_snapshot(
             self,
     ) -> RuntimeClusterSnapshot:
@@ -278,8 +246,7 @@ class LocalRuntimeClusterCoordinator(
     def acquire_leadership(
             self,
     ) -> RuntimeLeaderLease:
-        now = self._now()
-        self._expire_if_needed(now)
+        self.refresh()
 
         if self._role != "standby_master":
             raise NsRuntimeClusterStateError(
@@ -308,68 +275,41 @@ class LocalRuntimeClusterCoordinator(
                 "a non-empty string."
             )
 
-        resolved_fencing_token = (
-            fencing_token.strip()
+        before = self._lease_store.read()
+
+        after = self._lease_store.try_acquire(
+            runtime_id=self._runtime_id,
+            fencing_token=fencing_token.strip(),
+            ttl_seconds=self._lease_ttl_seconds,
+            expected_version=before.version,
         )
+
+        lease = after.lease
 
         if (
-                resolved_fencing_token
-                in self._issued_fencing_tokens
+                lease is None
+                or not after.lease_valid
         ):
-            raise NsRuntimeClusterFencingError(
-                "New leader lease must not reuse "
-                "a previously issued fencing token.",
-                details={
-                    "runtime_id": self._runtime_id,
-                    "previous_epoch": (
-                        self._last_epoch
-                    ),
-                },
+            raise NsRuntimeClusterStateError(
+                "Leader lease store did not return "
+                "an active lease after acquire."
             )
 
-        next_epoch = self._last_epoch + 1
-
-        expires_at = now + timedelta(
-            seconds=self._lease_ttl_seconds
-        )
-        now_iso = self._to_iso(now)
-
-        new_lease = RuntimeLeaderLease(
-            holder_runtime_id=self._runtime_id,
-            epoch=next_epoch,
-            fencing_token=(
-                resolved_fencing_token
-            ),
-            acquired_at=now_iso,
-            renewed_at=now_iso,
-            expires_at=self._to_iso(expires_at),
-        )
-
-        self._last_epoch = next_epoch
-        self._issued_fencing_tokens.add(
-            resolved_fencing_token
-        )
-        self._lease = new_lease
-        self._lease_expires_at = expires_at
+        # 只有 store 写入成功后才提升本地角色。
         self._role = "active_master"
         self._state = "ready"
-        self._updated_at = now_iso
+        self._observe_store_snapshot(after)
 
-        return new_lease
+        return lease
 
     def renew_leadership(
             self,
             *,
             fencing_token: str,
     ) -> RuntimeLeaderLease:
-        now = self._now()
-        self._expire_if_needed(now)
+        self.refresh()
 
-        if (
-                self._role != "active_master"
-                or self._lease is None
-                or self._lease_expires_at is None
-        ):
+        if self._role != "active_master":
             raise NsRuntimeClusterStateError(
                 "Only active_master with a valid "
                 "leader lease can renew leadership.",
@@ -380,45 +320,61 @@ class LocalRuntimeClusterCoordinator(
                 },
             )
 
-        self._validate_fencing_token(
-            fencing_token
-        )
+        before = self._lease_store.read()
+        lease = before.lease
 
-        expires_at = now + timedelta(
-            seconds=self._lease_ttl_seconds
-        )
-        now_iso = self._to_iso(now)
+        if (
+                lease is None
+                or not before.lease_valid
+                or lease.holder_runtime_id
+                != self._runtime_id
+        ):
+            self._enter_transitioning()
 
-        self._lease = RuntimeLeaderLease(
-            holder_runtime_id=(
-                self._lease.holder_runtime_id
-            ),
-            epoch=self._lease.epoch,
-            fencing_token=(
-                self._lease.fencing_token
-            ),
-            acquired_at=self._lease.acquired_at,
-            renewed_at=now_iso,
-            expires_at=self._to_iso(expires_at),
-        )
-        self._lease_expires_at = expires_at
-        self._updated_at = now_iso
+            raise NsRuntimeClusterStateError(
+                "Current runtime no longer owns "
+                "a valid leader lease."
+            )
 
-        return self._lease
+        try:
+            after = self._lease_store.try_renew(
+                runtime_id=self._runtime_id,
+                epoch=lease.epoch,
+                fencing_token=fencing_token,
+                ttl_seconds=(
+                    self._lease_ttl_seconds
+                ),
+                expected_version=before.version,
+            )
+        except NsRuntimeClusterStateError:
+            # CAS 冲突或 lease 状态变化后，
+            # 立即重新读取权威状态。
+            self.refresh()
+            raise
+
+        renewed = after.lease
+
+        if (
+                renewed is None
+                or not after.lease_valid
+        ):
+            raise NsRuntimeClusterStateError(
+                "Leader lease store did not return "
+                "an active lease after renew."
+            )
+
+        self._observe_store_snapshot(after)
+
+        return renewed
 
     def release_leadership(
             self,
             *,
             fencing_token: str,
     ) -> RuntimeClusterSnapshot:
-        now = self._now()
-        self._expire_if_needed(now)
+        self.refresh()
 
-        if (
-                self._role != "active_master"
-                or self._lease is None
-                or self._lease_expires_at is None
-        ):
+        if self._role != "active_master":
             raise NsRuntimeClusterStateError(
                 "Only active_master with a valid "
                 "leader lease can release leadership.",
@@ -429,23 +385,48 @@ class LocalRuntimeClusterCoordinator(
                 },
             )
 
-        self._validate_fencing_token(
-            fencing_token
-        )
+        before = self._lease_store.read()
+        lease = before.lease
 
+        if (
+                lease is None
+                or not before.lease_valid
+                or lease.holder_runtime_id
+                != self._runtime_id
+        ):
+            self._enter_transitioning()
+
+            raise NsRuntimeClusterStateError(
+                "Current runtime no longer owns "
+                "a valid leader lease."
+            )
+
+        try:
+            after = self._lease_store.try_release(
+                runtime_id=self._runtime_id,
+                epoch=lease.epoch,
+                fencing_token=fencing_token,
+                expected_version=before.version,
+            )
+        except NsRuntimeClusterStateError:
+            self.refresh()
+            raise
+
+        # 只有 store release 成功后才降级本地角色。
         self._role = "standby_master"
         self._state = "ready"
-        self._lease = None
-        self._lease_expires_at = None
-        self._updated_at = self._to_iso(now)
+        self._observe_store_snapshot(after)
 
-        return self._build_snapshot(now)
+        return self._build_snapshot(after)
 
     def complete_leadership_loss(
             self,
     ) -> RuntimeClusterSnapshot:
-        now = self._now()
-        self._expire_if_needed(now)
+        store_snapshot = self._lease_store.read()
+
+        self._observe_store_snapshot(
+            store_snapshot
+        )
 
         if self._role != "transitioning":
             raise NsRuntimeClusterStateError(
@@ -460,29 +441,60 @@ class LocalRuntimeClusterCoordinator(
 
         self._role = "standby_master"
         self._state = "ready"
-        self._lease = None
-        self._lease_expires_at = None
-        self._updated_at = self._to_iso(now)
+        self._updated_at = self._to_iso(
+            self._now()
+        )
 
-        return self._build_snapshot(now)
+        return self._build_snapshot(
+            store_snapshot
+        )
 
     def refresh(
             self,
     ) -> RuntimeClusterSnapshot:
-        now = self._now()
-        self._expire_if_needed(now)
+        store_snapshot = self._lease_store.read()
 
-        return self._build_snapshot(now)
+        self._observe_store_snapshot(
+            store_snapshot
+        )
+
+        if self._role == "active_master":
+            lease = store_snapshot.lease
+
+            if (
+                    lease is None
+                    or not store_snapshot.lease_valid
+                    or lease.holder_runtime_id
+                    != self._runtime_id
+            ):
+                self._enter_transitioning()
+
+        return self._build_snapshot(
+            store_snapshot
+        )
 
     def _build_snapshot(
             self,
-            now: datetime,
+            store_snapshot: (
+                    RuntimeLeaderLeaseStoreSnapshot
+            ),
     ) -> RuntimeClusterSnapshot:
+        visible_lease = store_snapshot.lease
+
+        if self._role == "singleton":
+            visible_lease = None
+        elif (
+                visible_lease is not None
+                and not store_snapshot.lease_valid
+                and self._role != "transitioning"
+        ):
+            # standby/sub_node 不将过期 lease
+            # 对外表现为当前 leader。
+            visible_lease = None
+
         lease_valid = (
-                self._role == "active_master"
-                and self._lease is not None
-                and self._lease_expires_at is not None
-                and now < self._lease_expires_at
+                visible_lease is not None
+                and store_snapshot.lease_valid
         )
 
         can_write_cluster_state = (
@@ -490,33 +502,35 @@ class LocalRuntimeClusterCoordinator(
                         self._role == "singleton"
                         and self._state == "ready"
                 )
-                or lease_valid
+                or (
+                        self._role == "active_master"
+                        and lease_valid
+                        and visible_lease is not None
+                        and visible_lease.holder_runtime_id
+                        == self._runtime_id
+                )
         )
-
-        lease = self._lease
 
         return RuntimeClusterSnapshot(
             runtime_id=self._runtime_id,
             role=self._role,
             state=self._state,
             leader_runtime_id=(
-                lease.holder_runtime_id
-                if lease is not None
+                visible_lease.holder_runtime_id
+                if visible_lease is not None
                 else ""
             ),
             leader_epoch=(
-                lease.epoch
-                if lease is not None
-                else self._last_epoch
+                store_snapshot.last_epoch
             ),
             fencing_token=(
-                lease.fencing_token
-                if lease is not None
+                visible_lease.fencing_token
+                if visible_lease is not None
                 else ""
             ),
             lease_expires_at=(
-                lease.expires_at
-                if lease is not None
+                visible_lease.expires_at
+                if visible_lease is not None
                 else ""
             ),
             lease_valid=lease_valid,
@@ -526,48 +540,35 @@ class LocalRuntimeClusterCoordinator(
             updated_at=self._updated_at,
         )
 
-    def _expire_if_needed(
+    def _observe_store_snapshot(
             self,
-            now: datetime,
+            snapshot: RuntimeLeaderLeaseStoreSnapshot,
     ) -> None:
         if (
-                self._role != "active_master"
-                or self._lease is None
-                or self._lease_expires_at is None
-                or now < self._lease_expires_at
+                snapshot.version
+                == self._observed_store_version
+        ):
+            return
+
+        self._observed_store_version = (
+            snapshot.version
+        )
+        self._updated_at = snapshot.observed_at
+
+    def _enter_transitioning(
+            self,
+    ) -> None:
+        if (
+                self._role == "transitioning"
+                and self._state == "transitioning"
         ):
             return
 
         self._role = "transitioning"
         self._state = "transitioning"
-        self._updated_at = self._to_iso(now)
-
-    def _validate_fencing_token(
-            self,
-            fencing_token: str,
-    ) -> None:
-        lease = self._lease
-
-        if lease is None:
-            raise NsRuntimeClusterStateError(
-                "Runtime does not hold a leader lease.",
-                details={
-                    "runtime_id": self._runtime_id,
-                    "role": self._role,
-                    "state": self._state,
-                },
-            )
-
-        if fencing_token != lease.fencing_token:
-            raise NsRuntimeClusterFencingError(
-                "Leader fencing token does not "
-                "match the current lease.",
-                details={
-                    "runtime_id": self._runtime_id,
-                    "role": self._role,
-                    "leader_epoch": lease.epoch,
-                },
-            )
+        self._updated_at = self._to_iso(
+            self._now()
+        )
 
     def _now(self) -> datetime:
         now = self._clock()
@@ -586,7 +587,9 @@ class LocalRuntimeClusterCoordinator(
         return now.astimezone(timezone.utc)
 
     @staticmethod
-    def _to_iso(value: datetime) -> str:
+    def _to_iso(
+            value: datetime,
+    ) -> str:
         return value.isoformat(
             timespec="milliseconds"
         )
