@@ -656,5 +656,41 @@ class RuntimeClusterCoordinatorTestCase(
                 leader_lease_store=lease_store,
             )
 
+    def test_fencing_token_factory_must_return_string(
+            self,
+    ) -> None:
+        coordinator = (
+            LocalRuntimeClusterCoordinator(
+                runtime_id="runtime-1",
+                initial_role="standby_master",
+                fencing_token_factory=(
+                    lambda: 123  # type: ignore[return-value]
+                ),
+            )
+        )
+
+        snapshot_before = (
+            coordinator.build_snapshot()
+        )
+
+        with self.assertRaisesRegex(
+                ValueError,
+                "fencing_token_factory must return",
+        ):
+            coordinator.acquire_leadership()
+
+        snapshot_after = (
+            coordinator.build_snapshot()
+        )
+
+        self.assertEqual(
+            snapshot_after.to_dict(),
+            snapshot_before.to_dict(),
+        )
+        self.assertEqual(
+            snapshot_after.role,
+            "standby_master",
+        )
+
 if __name__ == "__main__":
     unittest.main()

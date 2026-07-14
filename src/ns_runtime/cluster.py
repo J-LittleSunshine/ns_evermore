@@ -265,9 +265,6 @@ class LocalRuntimeClusterCoordinator(
         fencing_token = (
             self._fencing_token_factory()
         )
-        resolved_fencing_token = (
-            fencing_token.strip()
-        )
 
         if (
                 not isinstance(
@@ -280,6 +277,10 @@ class LocalRuntimeClusterCoordinator(
                 "fencing_token_factory must return "
                 "a non-empty string."
             )
+
+        resolved_fencing_token = (
+            fencing_token.strip()
+        )
 
         before = self._lease_store.read()
 
