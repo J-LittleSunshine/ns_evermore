@@ -406,6 +406,70 @@ class RuntimeClusterCoordinatorTestCase(
             "",
         )
 
+    def test_new_epoch_cannot_reuse_previous_fencing_token(
+            self,
+    ) -> None:
+        tokens = iter(
+            (
+                "fencing-1",
+                "fencing-1",
+            )
+        )
+
+        coordinator = (
+            LocalRuntimeClusterCoordinator(
+                runtime_id="runtime-1",
+                initial_role="standby_master",
+                fencing_token_factory=(
+                    lambda: next(tokens)
+                ),
+            )
+        )
+
+        first_lease = (
+            coordinator.acquire_leadership()
+        )
+
+        coordinator.release_leadership(
+            fencing_token=(
+                first_lease.fencing_token
+            ),
+        )
+
+        snapshot_before = (
+            coordinator.build_snapshot()
+        )
+
+        with self.assertRaises(
+                NsRuntimeClusterFencingError
+        ) as raised:
+            coordinator.acquire_leadership()
+
+        self.assertEqual(
+            raised.exception.code,
+            "RUNTIME_CLUSTER_FENCING_ERROR",
+        )
+
+        snapshot_after = (
+            coordinator.build_snapshot()
+        )
+
+        self.assertEqual(
+            snapshot_after.role,
+            "standby_master",
+        )
+        self.assertEqual(
+            snapshot_after.leader_epoch,
+            snapshot_before.leader_epoch,
+        )
+        self.assertFalse(
+            snapshot_after.lease_valid
+        )
+        self.assertFalse(
+            snapshot_after
+            .can_write_cluster_state
+        )
+
     def test_service_exposes_cluster_snapshot(
             self,
     ) -> None:
@@ -437,6 +501,20 @@ class RuntimeClusterCoordinatorTestCase(
             "runtime-1",
         )
 
+    def test_service_rejects_mismatched_coordinator_runtime_id(
+            self,
+    ) -> None:
+        coordinator = (
+            LocalRuntimeClusterCoordinator(
+                runtime_id="runtime-2",
+            )
+        )
+
+        with self.assertRaises(ValueError):
+            RuntimeService.build_default(
+                runtime_id="runtime-1",
+                cluster_coordinator=coordinator,
+            )
 
 if __name__ == "__main__":
     unittest.main()

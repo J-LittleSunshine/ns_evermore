@@ -166,6 +166,15 @@ class RuntimeService:
                 )
         )
 
+        if (
+                resolved_cluster_coordinator.runtime_id
+                != runtime_id
+        ):
+            raise ValueError(
+                "cluster_coordinator runtime_id "
+                "must match RuntimeService runtime_id."
+            )
+
         local_forwarder = (
             RuntimeLocalEnvelopeForwarder(
                 writer_registry=writer_registry,

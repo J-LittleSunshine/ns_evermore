@@ -120,7 +120,6 @@ class RuntimeClusterSnapshot:
                 self.leader_runtime_id
             ),
             "leader_epoch": self.leader_epoch,
-            "fencing_token": self.fencing_token,
             "lease_expires_at": (
                 self.lease_expires_at
             ),
@@ -259,6 +258,7 @@ class LocalRuntimeClusterCoordinator(
         ) = None
 
         self._last_epoch = 0
+        self._last_fencing_token = ""
         self._updated_at = self._to_iso(now)
 
     @property
@@ -308,27 +308,54 @@ class LocalRuntimeClusterCoordinator(
                 "a non-empty string."
             )
 
-        self._last_epoch += 1
+        resolved_fencing_token = (
+            fencing_token.strip()
+        )
+
+        if (
+                resolved_fencing_token
+                == self._last_fencing_token
+        ):
+            raise NsRuntimeClusterFencingError(
+                "New leader lease must use a "
+                "different fencing token.",
+                details={
+                    "runtime_id": self._runtime_id,
+                    "previous_epoch": (
+                        self._last_epoch
+                    ),
+                },
+            )
+
+        next_epoch = self._last_epoch + 1
 
         expires_at = now + timedelta(
             seconds=self._lease_ttl_seconds
         )
         now_iso = self._to_iso(now)
 
-        self._lease = RuntimeLeaderLease(
+        new_lease = RuntimeLeaderLease(
             holder_runtime_id=self._runtime_id,
-            epoch=self._last_epoch,
-            fencing_token=fencing_token.strip(),
+            epoch=next_epoch,
+            fencing_token=(
+                resolved_fencing_token
+            ),
             acquired_at=now_iso,
             renewed_at=now_iso,
             expires_at=self._to_iso(expires_at),
         )
+
+        self._last_epoch = next_epoch
+        self._last_fencing_token = (
+            resolved_fencing_token
+        )
+        self._lease = new_lease
         self._lease_expires_at = expires_at
         self._role = "active_master"
         self._state = "ready"
         self._updated_at = now_iso
 
-        return self._lease
+        return new_lease
 
     def renew_leadership(
             self,

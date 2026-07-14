@@ -119,6 +119,51 @@ class RuntimeProcessorTestCase(unittest.TestCase):
             health_inline["runtime"],
         )
 
+    def test_runtime_health_does_not_expose_fencing_token(
+            self,
+    ) -> None:
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            runtime_role="standby_master",
+        )
+
+        lease = (
+            service.cluster_coordinator
+            .acquire_leadership()
+        )
+
+        self.assertTrue(lease.fencing_token)
+
+        response = asyncio.run(
+            service.process_frame(
+                self._build_frame(
+                    "runtime.control.health",
+                    category="control",
+                ),
+                self.session,
+            )
+        )
+
+        cluster = response.envelope[
+            "payload"
+        ]["inline"]["runtime"]["cluster"]
+
+        self.assertEqual(
+            cluster["role"],
+            "active_master",
+        )
+        self.assertTrue(
+            cluster["lease_valid"]
+        )
+        self.assertNotIn(
+            "fencing_token",
+            cluster,
+        )
+        self.assertNotIn(
+            lease.fencing_token,
+            str(response.envelope),
+        )
+
     def test_task_dispatch_without_target_is_rejected_by_type_schema(self) -> None:
         response = asyncio.run(
             self.service.process_frame(
