@@ -89,6 +89,9 @@
 - Envelope 协议层必须严格独立，只做 JSON envelope 解析、schema 校验、版本校验、基础字段规范化、错误 envelope 构造和序列化；它不处理业务、不调度任务、不决定路由。
 - Processor 流水线层负责所有可执行行为，ACK、NACK、Defer、管理控制、健康检查、集群事件、任务调度和业务扩展都必须进入 processor，不允许另开绕过 processor 的控制通道。
 - 事件与观测层是旁路通知和扩展机制；核心链路采用显式调用和明确流水线，不能把所有模块之间的主通信都变成事件总线，以免调试和可靠性变得不可控。
+    - [x] 【边界修复 1.20.3】已新增 processor pipeline 本地审计出口。`RuntimeAuditEvent` 当前记录 message、session、tenant、auth snapshot、capability summary、trace、config/policy version、最终 processor、response action、response message type、错误码和异常摘要；`RuntimeAuditSink` 定义异步 append 与基础查询边界，默认 `InMemoryRuntimeAuditSink` 以 append-only
+      方式保存单进程审计事件。`AuditMarkProcessor` 已移动至 message type auth、schema 和 target lookup 之前，pipeline 会保留其 audit action，并在 respond、reject、continue 和未捕获 processor exception 路径中写入且只写入一个最终审计事件；正常 processor response 只有在 audit append 成功后才允许返回。当前进度仅覆盖已经通过 `EnvelopeCodec.parse_inbound` 的
+      processor pipeline 消息，不表示 handshake/protocol parse failure 审计、持久化 audit store、Redis/Valkey append-only log、审计与 delivery/control 状态原子提交、脱敏策略、retention、管理查询、导出或生产级强审计已经完成。
 - 管理控制不作为独立顶级链路层，而是作为 Processor 流水线层中的特殊 processor 组；健康检查也归入管理控制 processor 组。
 
 ## 6. 统一 Envelope 协议模型

@@ -13,6 +13,12 @@ from ns_runtime.admission import (
     RuntimeAdmissionController,
     RuntimeAdmissionPolicy,
 )
+from ns_runtime.audit import (
+    InMemoryRuntimeAuditSink,
+    RuntimeAuditEvent,
+    RuntimeAuditOutcome,
+    RuntimeAuditSink,
+)
 from ns_runtime.auth import (
     LocalTokenRuntimeAuthenticator,
     RuntimeAuthenticator
@@ -126,6 +132,9 @@ class RuntimeService:
             leader_lease_store: (
                     RuntimeLeaderLeaseStore | None
             ) = None,
+            audit_sink: (
+                    RuntimeAuditSink | None
+            ) = None,
     ) -> "RuntimeService":
         codec = EnvelopeCodec(
             runtime_id=runtime_id
@@ -137,6 +146,10 @@ class RuntimeService:
             RuntimeConnectionWriterRegistry()
         )
         delivery_registry = RuntimeDeliveryRegistry()
+        resolved_audit_sink = (
+            audit_sink
+            or InMemoryRuntimeAuditSink()
+        )
 
         if (
                 admission_policy is not None
@@ -237,6 +250,7 @@ class RuntimeService:
             codec,
             registry,
             target_resolver=target_resolver,
+            audit_sink=resolved_audit_sink,
         )
 
         resolved_authenticator = (
@@ -303,6 +317,25 @@ class RuntimeService:
             self,
     ) -> RuntimeClusterCoordinator:
         return self._cluster_coordinator
+
+    @property
+    def audit_sink(self) -> RuntimeAuditSink:
+        return self._pipeline.audit_sink
+
+    def list_audit_events(
+            self,
+            *,
+            message_id: str | None = None,
+            tenant_id: str | None = None,
+            audit_action: str | None = None,
+            outcome: RuntimeAuditOutcome | None = None,
+    ) -> tuple[RuntimeAuditEvent, ...]:
+        return self._pipeline.audit_sink.list_events(
+            message_id=message_id,
+            tenant_id=tenant_id,
+            audit_action=audit_action,
+            outcome=outcome,
+        )
 
     def build_runtime_snapshot(
             self,

@@ -12,6 +12,13 @@ from ns_runtime.admission import (
     RuntimeAdmissionScope,
     RuntimeAdmissionSnapshot,
 )
+from ns_runtime.audit import (
+    InMemoryRuntimeAuditSink,
+    RuntimeAuditEvent,
+    RuntimeAuditOutcome,
+    RuntimeAuditResultAction,
+    RuntimeAuditSink,
+)
 from ns_runtime.auth import (
     LocalTokenRuntimeAuthenticator,
     RuntimeAuthResult,
@@ -204,6 +211,11 @@ __all__ = [
     "RuntimeStateWriteResult",
     "RuntimeStateStore",
     "InMemoryRuntimeStateStore",
+    "RuntimeAuditOutcome",
+    "RuntimeAuditResultAction",
+    "RuntimeAuditEvent",
+    "RuntimeAuditSink",
+    "InMemoryRuntimeAuditSink",
 ]
 
 __version__ = "0.2.0"

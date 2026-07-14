@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import uuid
 from abc import (
     ABC,
     abstractmethod
@@ -34,6 +35,13 @@ from ns_runtime.admission import (
     LocalRuntimeAdmissionController,
     RuntimeAdmissionController,
     RuntimeAdmissionDecision,
+)
+from ns_runtime.audit import (
+    InMemoryRuntimeAuditSink,
+    RuntimeAuditEvent,
+    RuntimeAuditOutcome,
+    RuntimeAuditResultAction,
+    RuntimeAuditSink,
 )
 from ns_runtime.delivery import (
     RuntimeDeliveryRegistry,
@@ -168,17 +176,34 @@ class TargetLookupProcessor(BaseRuntimeProcessor):
 
 
 class AuditMarkProcessor(BaseRuntimeProcessor):
-    async def process(self, request: ProcessorRequest) -> ProcessorResponse:
+    def __init__(
+            self,
+            *,
+            registry: "ProcessorRegistry",
+    ) -> None:
+        self._registry = registry
+
+    async def process(
+            self,
+            request: ProcessorRequest,
+    ) -> ProcessorResponse:
+        spec = self._registry.get_spec(
+            request.envelope.message_type
+        )
+
+        audit_action = (
+            spec.audit_action
+            if spec is not None
+            else (
+                "runtime.message."
+                f"{request.envelope.message_type}"
+            )
+        )
+
         return ProcessorResponse(
             action="continue",
             audit_event={
-                "audit_action": "runtime.processor.accepted",
-                "message_id": request.envelope.message_id,
-                "message_type": request.envelope.message_type,
-                "tenant_id": request.session.tenant_id,
-                "received_at": request.received_at,
-                "config_version": request.config_version,
-                "policy_version": request.policy_version,
+                "audit_action": audit_action,
             },
         )
 
@@ -1309,12 +1334,35 @@ class ProcessorRegistry:
 
 
 class ProcessorPipeline:
-    def __init__(self, *, codec: EnvelopeCodec, registry: ProcessorRegistry, generic_processors: Iterable[BaseRuntimeProcessor]) -> None:
+    def __init__(
+            self,
+            *,
+            codec: EnvelopeCodec,
+            registry: ProcessorRegistry,
+            generic_processors: Iterable[
+                BaseRuntimeProcessor
+            ],
+            audit_sink: RuntimeAuditSink,
+    ) -> None:
         self._codec = codec
         self._registry = registry
-        self._generic_processors = tuple(generic_processors)
+        self._generic_processors = tuple(
+            generic_processors
+        )
+        self._audit_sink = audit_sink
 
-    async def process(self, envelope: Envelope, session: RuntimeSessionContext, *, config_version: str, policy_version: str) -> ProcessorResponse:
+    @property
+    def audit_sink(self) -> RuntimeAuditSink:
+        return self._audit_sink
+
+    async def process(
+            self,
+            envelope: Envelope,
+            session: RuntimeSessionContext,
+            *,
+            config_version: str,
+            policy_version: str,
+    ) -> ProcessorResponse:
         request = ProcessorRequest(
             envelope=envelope,
             session=session,
@@ -1323,16 +1371,357 @@ class ProcessorPipeline:
             policy_version=policy_version,
         )
 
-        for processor in self._generic_processors:
-            response = await processor.process(request)
-            if response.action in {
-                "respond",
-                "reject"
-            }:
-                return response
+        audit_context: dict[str, str] = {}
+        processor_name = (
+            self.__class__.__name__
+        )
 
-        message_processor = self._registry.get_processor(envelope.message_type)
-        return await message_processor.process(request)
+        try:
+            response: ProcessorResponse | None = None
+
+            for processor in self._generic_processors:
+                processor_name = (
+                    processor.__class__.__name__
+                )
+
+                processor_response = (
+                    await processor.process(request)
+                )
+
+                self._merge_audit_context(
+                    audit_context,
+                    processor_response,
+                )
+
+                if processor_response.action in {
+                    "respond",
+                    "reject",
+                }:
+                    response = processor_response
+                    break
+
+            if response is None:
+                processor_name = (
+                    "ProcessorRegistry"
+                )
+
+                message_processor = (
+                    self._registry.get_processor(
+                        envelope.message_type
+                    )
+                )
+
+                processor_name = (
+                    message_processor
+                    .__class__
+                    .__name__
+                )
+
+                response = (
+                    await message_processor.process(
+                        request
+                    )
+                )
+
+                self._merge_audit_context(
+                    audit_context,
+                    response,
+                )
+
+        except Exception as exc:
+            event = self._build_audit_event(
+                request=request,
+                audit_context=audit_context,
+                processor_name=processor_name,
+                response=None,
+                exc=exc,
+            )
+
+            try:
+                await self._audit_sink.append(
+                    event
+                )
+            except Exception as audit_exc:
+                raise exc from audit_exc
+
+            raise
+
+        event = self._build_audit_event(
+            request=request,
+            audit_context=audit_context,
+            processor_name=processor_name,
+            response=response,
+            exc=None,
+        )
+
+        # 正常结果必须先完成审计写入，
+        # 才能返回 processor response。
+        await self._audit_sink.append(event)
+
+        return response
+
+    @staticmethod
+    def _merge_audit_context(
+            audit_context: dict[str, str],
+            response: ProcessorResponse,
+    ) -> None:
+        raw_event = response.audit_event
+
+        if not isinstance(raw_event, Mapping):
+            return
+
+        audit_action = raw_event.get(
+            "audit_action"
+        )
+
+        if (
+                isinstance(audit_action, str)
+                and audit_action.strip()
+        ):
+            audit_context[
+                "audit_action"
+            ] = audit_action.strip()
+
+    def _build_audit_event(
+            self,
+            *,
+            request: ProcessorRequest,
+            audit_context: Mapping[str, str],
+            processor_name: str,
+            response: ProcessorResponse | None,
+            exc: Exception | None,
+    ) -> RuntimeAuditEvent:
+        spec = self._registry.get_spec(
+            request.envelope.message_type
+        )
+
+        audit_action = audit_context.get(
+            "audit_action",
+            (
+                spec.audit_action
+                if spec is not None
+                else (
+                    "runtime.message."
+                    f"{request.envelope.message_type}"
+                )
+            ),
+        )
+
+        (
+            trace_id,
+            request_id,
+        ) = self._read_trace_context(
+            request.envelope
+        )
+
+        if exc is not None:
+            outcome: RuntimeAuditOutcome = (
+                "exception"
+            )
+            result_action: (
+                RuntimeAuditResultAction
+            ) = "exception"
+            response_message_type = ""
+            should_close = False
+            exception_class = (
+                exc.__class__.__name__
+            )
+            exception_message = str(exc)
+            error_code = self._read_exception_code(
+                exc
+            )
+        else:
+            if response is None:
+                raise RuntimeError(
+                    "processor response is missing."
+                )
+
+            outcome = self._resolve_outcome(
+                response
+            )
+            result_action = response.action
+            (
+                response_message_type,
+                error_code,
+            ) = self._read_response_metadata(
+                response
+            )
+            should_close = response.should_close
+            exception_class = ""
+            exception_message = ""
+
+        return RuntimeAuditEvent(
+            audit_id=str(uuid.uuid4()),
+            audit_action=audit_action,
+            outcome=outcome,
+            message_id=(
+                request.envelope.message_id
+            ),
+            message_type=(
+                request.envelope.message_type
+            ),
+            message_category=(
+                request.envelope.category
+            ),
+            message_reliability=(
+                request.envelope.reliability
+            ),
+            runtime_id=request.session.runtime_id,
+            connection_id=(
+                request.session.connection_id
+            ),
+            connection_epoch=(
+                request.session.connection_epoch
+            ),
+            session_id=request.session.session_id,
+            identity=request.session.identity,
+            tenant_id=request.session.tenant_id,
+            component_type=(
+                request.session.component_type
+            ),
+            auth_snapshot_id=(
+                request.session.auth_snapshot_id
+            ),
+            iam_mode=request.session.iam_mode,
+            capabilities_summary=tuple(
+                request.session.capabilities
+            ),
+            processor_name=processor_name,
+            result_action=result_action,
+            response_message_type=(
+                response_message_type
+            ),
+            error_code=error_code,
+            should_close=should_close,
+            exception_class=exception_class,
+            exception_message=exception_message,
+            trace_id=trace_id,
+            request_id=request_id,
+            received_at=request.received_at,
+            completed_at=utc_now_iso(),
+            config_version=(
+                request.config_version
+            ),
+            policy_version=(
+                request.policy_version
+            ),
+        )
+
+    @staticmethod
+    def _resolve_outcome(
+            response: ProcessorResponse,
+    ) -> RuntimeAuditOutcome:
+        if response.action == "respond":
+            return "responded"
+
+        if response.action == "reject":
+            return "rejected"
+
+        return "continued"
+
+    @staticmethod
+    def _read_trace_context(
+            envelope: Envelope,
+    ) -> tuple[str, str]:
+        trace = envelope.raw.get("trace")
+
+        if not isinstance(trace, Mapping):
+            return (
+                envelope.message_id,
+                envelope.message_id,
+            )
+
+        trace_id = trace.get("trace_id")
+        request_id = trace.get("request_id")
+
+        return (
+            (
+                trace_id.strip()
+                if isinstance(trace_id, str)
+                   and trace_id.strip()
+                else envelope.message_id
+            ),
+            (
+                request_id.strip()
+                if isinstance(request_id, str)
+                   and request_id.strip()
+                else envelope.message_id
+            ),
+        )
+
+    @staticmethod
+    def _read_response_metadata(
+            response: ProcessorResponse,
+    ) -> tuple[str, str]:
+        envelope = response.envelope
+
+        if not isinstance(envelope, Mapping):
+            return "", ""
+
+        response_message_type = ""
+        error_code = ""
+
+        message = envelope.get("message")
+
+        if isinstance(message, Mapping):
+            raw_message_type = message.get("type")
+
+            if isinstance(raw_message_type, str):
+                response_message_type = (
+                    raw_message_type
+                )
+
+        payload = envelope.get("payload")
+
+        if not isinstance(payload, Mapping):
+            return (
+                response_message_type,
+                error_code,
+            )
+
+        inline = payload.get("inline")
+
+        if not isinstance(inline, Mapping):
+            return (
+                response_message_type,
+                error_code,
+            )
+
+        error = inline.get("error")
+
+        if isinstance(error, Mapping):
+            raw_error_code = error.get("code")
+
+            if isinstance(raw_error_code, str):
+                error_code = raw_error_code
+
+        if not error_code:
+            reason_code = inline.get(
+                "reason_code"
+            )
+
+            if isinstance(reason_code, str):
+                error_code = reason_code
+
+        return (
+            response_message_type,
+            error_code,
+        )
+
+    @staticmethod
+    def _read_exception_code(
+            exc: Exception,
+    ) -> str:
+        code = getattr(
+            exc,
+            "code",
+            "",
+        )
+
+        if isinstance(code, str):
+            return code
+
+        return ""
 
 
 def build_default_processor_registry(
@@ -1453,9 +1842,32 @@ def build_default_processor_registry(
     return registry
 
 
-def build_default_processor_pipeline(codec: EnvelopeCodec, registry: ProcessorRegistry, *, target_resolver: RuntimeTargetResolver | None = None) -> ProcessorPipeline:
-    generic_processors: list[BaseRuntimeProcessor] = [
-        MessageTypeAuthProcessor(registry=registry, codec=codec),
+def build_default_processor_pipeline(
+        codec: EnvelopeCodec,
+        registry: ProcessorRegistry,
+        *,
+        target_resolver: (
+                RuntimeTargetResolver | None
+        ) = None,
+        audit_sink: RuntimeAuditSink | None = None,
+) -> ProcessorPipeline:
+    resolved_audit_sink = (
+            audit_sink
+            or InMemoryRuntimeAuditSink()
+    )
+
+    generic_processors: list[
+        BaseRuntimeProcessor
+    ] = [
+        # Audit mark 必须在 auth/schema/target
+        # 拒绝之前执行，确保早期拒绝也有审计入口。
+        AuditMarkProcessor(
+            registry=registry
+        ),
+        MessageTypeAuthProcessor(
+            registry=registry,
+            codec=codec,
+        ),
     ]
 
     if target_resolver is not None:
@@ -1466,12 +1878,13 @@ def build_default_processor_pipeline(codec: EnvelopeCodec, registry: ProcessorRe
             )
         )
 
-    generic_processors.append(AuditMarkProcessor())
-
     return ProcessorPipeline(
         codec=codec,
         registry=registry,
-        generic_processors=tuple(generic_processors),
+        generic_processors=tuple(
+            generic_processors
+        ),
+        audit_sink=resolved_audit_sink,
     )
 
 
