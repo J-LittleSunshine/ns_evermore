@@ -184,6 +184,11 @@ class InMemoryRuntimeStateStore(
             _StoredRuntimeStateEntry,
         ] = {}
 
+        self._last_versions: dict[
+            tuple[str, str],
+            int,
+        ] = {}
+
         self._lock = RLock()
 
         self._capabilities = (
@@ -262,11 +267,24 @@ class InMemoryRuntimeStateStore(
                     ),
                 )
 
+            identity = (
+                resolved_namespace,
+                resolved_key,
+            )
+
+            next_version = (
+                    self._last_versions.get(
+                        identity,
+                        0,
+                    )
+                    + 1
+            )
+
             stored = _StoredRuntimeStateEntry(
                 namespace=resolved_namespace,
                 key=resolved_key,
                 value=resolved_value,
-                version=1,
+                version=next_version,
                 created_at=now,
                 updated_at=now,
                 expires_at=self._build_expires_at(
@@ -275,12 +293,10 @@ class InMemoryRuntimeStateStore(
                 ),
             )
 
-            self._entries[
-                (
-                    resolved_namespace,
-                    resolved_key,
-                )
-            ] = stored
+            self._entries[identity] = stored
+            self._last_versions[
+                identity
+            ] = next_version
 
             return RuntimeStateWriteResult(
                 success=True,
@@ -344,22 +360,28 @@ class InMemoryRuntimeStateStore(
                     resolved_ttl,
                 )
 
+            identity = (
+                resolved_namespace,
+                resolved_key,
+            )
+            next_version = (
+                    current.version + 1
+            )
+
             updated = _StoredRuntimeStateEntry(
                 namespace=current.namespace,
                 key=current.key,
                 value=resolved_value,
-                version=current.version + 1,
+                version=next_version,
                 created_at=current.created_at,
                 updated_at=now,
                 expires_at=expires_at,
             )
 
-            self._entries[
-                (
-                    resolved_namespace,
-                    resolved_key,
-                )
-            ] = updated
+            self._entries[identity] = updated
+            self._last_versions[
+                identity
+            ] = next_version
 
             return RuntimeStateWriteResult(
                 success=True,
@@ -409,12 +431,22 @@ class InMemoryRuntimeStateStore(
 
             deleted = self._copy_entry(current)
 
-            del self._entries[
-                (
-                    resolved_namespace,
-                    resolved_key,
-                )
-            ]
+            identity = (
+                resolved_namespace,
+                resolved_key,
+            )
+
+            self._last_versions[
+                identity
+            ] = max(
+                self._last_versions.get(
+                    identity,
+                    0,
+                ),
+                current.version,
+            )
+
+            del self._entries[identity]
 
             return RuntimeStateWriteResult(
                 success=True,
@@ -439,6 +471,16 @@ class InMemoryRuntimeStateStore(
                 and stored.expires_at is not None
                 and now >= stored.expires_at
         ):
+            self._last_versions[
+                identity
+            ] = max(
+                self._last_versions.get(
+                    identity,
+                    0,
+                ),
+                stored.version,
+            )
+
             del self._entries[identity]
             return None
 

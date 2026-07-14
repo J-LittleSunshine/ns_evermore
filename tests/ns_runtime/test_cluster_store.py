@@ -436,6 +436,88 @@ class RuntimeLeaderLeaseStoreTestCase(
             .can_write_cluster_state
         )
 
+    def test_stale_same_runtime_coordinator_loses_authority(
+            self,
+    ) -> None:
+        coordinator_1 = (
+            LocalRuntimeClusterCoordinator(
+                runtime_id="runtime-1",
+                initial_role="standby_master",
+                lease_ttl_seconds=15,
+                clock=self.clock,
+                fencing_token_factory=(
+                    lambda: "token-1"
+                ),
+                lease_store=self.store,
+            )
+        )
+
+        coordinator_2 = (
+            LocalRuntimeClusterCoordinator(
+                runtime_id="runtime-1",
+                initial_role="standby_master",
+                lease_ttl_seconds=15,
+                clock=self.clock,
+                fencing_token_factory=(
+                    lambda: "token-2"
+                ),
+                lease_store=self.store,
+            )
+        )
+
+        first = (
+            coordinator_1
+            .acquire_leadership()
+        )
+
+        self.assertEqual(
+            first.epoch,
+            1,
+        )
+        self.assertEqual(
+            coordinator_1.role,
+            "active_master",
+        )
+
+        self.clock.advance(
+            seconds=16
+        )
+
+        second = (
+            coordinator_2
+            .acquire_leadership()
+        )
+
+        self.assertEqual(
+            second.epoch,
+            2,
+        )
+        self.assertEqual(
+            second.fencing_token,
+            "token-2",
+        )
+
+        stale_snapshot = (
+            coordinator_1.refresh()
+        )
+
+        self.assertEqual(
+            stale_snapshot.role,
+            "transitioning",
+        )
+        self.assertEqual(
+            stale_snapshot.state,
+            "transitioning",
+        )
+        self.assertEqual(
+            stale_snapshot.leader_epoch,
+            2,
+        )
+        self.assertFalse(
+            stale_snapshot
+            .can_write_cluster_state
+        )
+
     def test_store_failure_does_not_promote_coordinator(
             self,
     ) -> None:

@@ -335,6 +335,103 @@ class RuntimeStateStoreTestCase(
             )
         )
 
+    def test_version_does_not_reset_after_delete(
+            self,
+    ) -> None:
+        first = self.store.put_if_absent(
+            namespace="system",
+            key="aba-delete",
+            value={
+                "generation": 1,
+            },
+        )
+
+        deleted = self.store.delete_if_version(
+            namespace="system",
+            key="aba-delete",
+            expected_version=(
+                first.entry.version
+            ),
+        )
+
+        self.assertTrue(deleted.success)
+
+        second = self.store.put_if_absent(
+            namespace="system",
+            key="aba-delete",
+            value={
+                "generation": 2,
+            },
+        )
+
+        self.assertTrue(second.success)
+        self.assertGreater(
+            second.entry.version,
+            first.entry.version,
+        )
+
+        stale = self.store.compare_and_swap(
+            namespace="system",
+            key="aba-delete",
+            expected_version=(
+                first.entry.version
+            ),
+            value={
+                "generation": 999,
+            },
+        )
+
+        self.assertFalse(stale.success)
+        self.assertEqual(
+            stale.status,
+            "conflict",
+        )
+        self.assertEqual(
+            self.store.get(
+                namespace="system",
+                key="aba-delete",
+            ).value,
+            {
+                "generation": 2,
+            },
+        )
+
+    def test_version_does_not_reset_after_expiry(
+            self,
+    ) -> None:
+        first = self.store.put_if_absent(
+            namespace="system",
+            key="aba-expiry",
+            value={
+                "generation": 1,
+            },
+            ttl_seconds=10,
+        )
+
+        self.clock.advance(
+            seconds=10
+        )
+
+        self.assertIsNone(
+            self.store.get(
+                namespace="system",
+                key="aba-expiry",
+            )
+        )
+
+        second = self.store.put_if_absent(
+            namespace="system",
+            key="aba-expiry",
+            value={
+                "generation": 2,
+            },
+        )
+
+        self.assertTrue(second.success)
+        self.assertGreater(
+            second.entry.version,
+            first.entry.version,
+        )
 
 if __name__ == "__main__":
     unittest.main()

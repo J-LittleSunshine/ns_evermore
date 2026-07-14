@@ -219,6 +219,9 @@ class LocalRuntimeClusterCoordinator(
         self._observed_store_version = (
             initial_store_snapshot.version
         )
+        self._owned_epoch: int | None = None
+        self._owned_fencing_token = ""
+
         self._updated_at = self._to_iso(
             self._now()
         )
@@ -262,6 +265,9 @@ class LocalRuntimeClusterCoordinator(
         fencing_token = (
             self._fencing_token_factory()
         )
+        resolved_fencing_token = (
+            fencing_token.strip()
+        )
 
         if (
                 not isinstance(
@@ -279,7 +285,9 @@ class LocalRuntimeClusterCoordinator(
 
         after = self._lease_store.try_acquire(
             runtime_id=self._runtime_id,
-            fencing_token=fencing_token.strip(),
+            fencing_token=(
+                resolved_fencing_token
+            ),
             ttl_seconds=self._lease_ttl_seconds,
             expected_version=before.version,
         )
@@ -289,13 +297,21 @@ class LocalRuntimeClusterCoordinator(
         if (
                 lease is None
                 or not after.lease_valid
+                or lease.holder_runtime_id
+                != self._runtime_id
+                or lease.fencing_token
+                != resolved_fencing_token
         ):
             raise NsRuntimeClusterStateError(
                 "Leader lease store did not return "
-                "an active lease after acquire."
+                "the acquired lease authority."
             )
 
-        # 只有 store 写入成功后才提升本地角色。
+        self._owned_epoch = lease.epoch
+        self._owned_fencing_token = (
+            lease.fencing_token
+        )
+
         self._role = "active_master"
         self._state = "ready"
         self._observe_store_snapshot(after)
@@ -322,12 +338,21 @@ class LocalRuntimeClusterCoordinator(
 
         before = self._lease_store.read()
         lease = before.lease
+        owned_epoch = self._owned_epoch
+        owned_token = (
+            self._owned_fencing_token
+        )
 
         if (
                 lease is None
                 or not before.lease_valid
+                or owned_epoch is None
+                or not owned_token
                 or lease.holder_runtime_id
                 != self._runtime_id
+                or lease.epoch != owned_epoch
+                or lease.fencing_token
+                != owned_token
         ):
             self._enter_transitioning()
 
@@ -339,7 +364,7 @@ class LocalRuntimeClusterCoordinator(
         try:
             after = self._lease_store.try_renew(
                 runtime_id=self._runtime_id,
-                epoch=lease.epoch,
+                epoch=owned_epoch,
                 fencing_token=fencing_token,
                 ttl_seconds=(
                     self._lease_ttl_seconds
@@ -357,7 +382,14 @@ class LocalRuntimeClusterCoordinator(
         if (
                 renewed is None
                 or not after.lease_valid
+                or renewed.holder_runtime_id
+                != self._runtime_id
+                or renewed.epoch
+                != owned_epoch
+                or renewed.fencing_token
+                != owned_token
         ):
+            self._enter_transitioning()
             raise NsRuntimeClusterStateError(
                 "Leader lease store did not return "
                 "an active lease after renew."
@@ -387,12 +419,21 @@ class LocalRuntimeClusterCoordinator(
 
         before = self._lease_store.read()
         lease = before.lease
+        owned_epoch = self._owned_epoch
+        owned_token = (
+            self._owned_fencing_token
+        )
 
         if (
                 lease is None
                 or not before.lease_valid
+                or owned_epoch is None
+                or not owned_token
                 or lease.holder_runtime_id
                 != self._runtime_id
+                or lease.epoch != owned_epoch
+                or lease.fencing_token
+                != owned_token
         ):
             self._enter_transitioning()
 
@@ -404,7 +445,7 @@ class LocalRuntimeClusterCoordinator(
         try:
             after = self._lease_store.try_release(
                 runtime_id=self._runtime_id,
-                epoch=lease.epoch,
+                epoch=owned_epoch,
                 fencing_token=fencing_token,
                 expected_version=before.version,
             )
@@ -412,7 +453,20 @@ class LocalRuntimeClusterCoordinator(
             self.refresh()
             raise
 
-        # 只有 store release 成功后才降级本地角色。
+        if (
+                after.lease is not None
+                or after.lease_valid
+        ):
+            self._enter_transitioning()
+
+            raise NsRuntimeClusterStateError(
+                "Leader lease store did not clear "
+                "the released lease authority."
+            )
+
+        self._owned_epoch = None
+        self._owned_fencing_token = ""
+
         self._role = "standby_master"
         self._state = "ready"
         self._observe_store_snapshot(after)
@@ -439,6 +493,9 @@ class LocalRuntimeClusterCoordinator(
                 },
             )
 
+        self._owned_epoch = None
+        self._owned_fencing_token = ""
+
         self._role = "standby_master"
         self._state = "ready"
         self._updated_at = self._to_iso(
@@ -464,8 +521,14 @@ class LocalRuntimeClusterCoordinator(
             if (
                     lease is None
                     or not store_snapshot.lease_valid
+                    or self._owned_epoch is None
+                    or not self._owned_fencing_token
                     or lease.holder_runtime_id
                     != self._runtime_id
+                    or lease.epoch
+                    != self._owned_epoch
+                    or lease.fencing_token
+                    != self._owned_fencing_token
             ):
                 self._enter_transitioning()
 
