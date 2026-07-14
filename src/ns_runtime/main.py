@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import TYPE_CHECKING
+from typing import (
+    TYPE_CHECKING,
+    cast
+)
 
 from ns_runtime.auth import LocalTokenRuntimeAuthenticator
+from ns_runtime.models import RuntimeRole
 from ns_runtime.service import RuntimeService
 from ns_runtime.transport import RuntimeWebSocketTransportConfig
 
@@ -29,6 +33,29 @@ def _read_float_env(name: str, default: float) -> float:
     return float(raw_value)
 
 
+def _read_runtime_role_env() -> RuntimeRole:
+    raw_value = os.getenv(
+        "NS_RUNTIME_ROLE",
+        "singleton",
+    ).strip() or "singleton"
+
+    allowed_roles = {
+        "singleton",
+        "sub_node",
+        "standby_master",
+    }
+
+    if raw_value not in allowed_roles:
+        raise ValueError(
+            "NS_RUNTIME_ROLE must be one of: "
+            "singleton, sub_node, standby_master."
+        )
+
+    return cast(
+        RuntimeRole,
+        raw_value,
+    )
+
 async def run_service() -> None:
     runtime_id = os.getenv("NS_RUNTIME_ID", "runtime-local-1").strip() or "runtime-local-1"
     host = os.getenv("NS_RUNTIME_HOST", "0.0.0.0").strip() or "0.0.0.0"
@@ -39,6 +66,7 @@ async def run_service() -> None:
     service = RuntimeService.build_default(
         runtime_id=runtime_id,
         authenticator=authenticator,
+        runtime_role=_read_runtime_role_env(),
     )
     transport_config = RuntimeWebSocketTransportConfig(
         host=host,

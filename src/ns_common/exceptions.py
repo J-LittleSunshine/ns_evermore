@@ -214,6 +214,20 @@ class NsRuntimePayloadRefValidationTimeoutError(NsRuntimePayloadRefValidationUna
         "Runtime payload reference validation timed out."
     )
 
+class NsRuntimeClusterStateError(NsRuntimeClusterCoordinationError):
+    code = "RUNTIME_CLUSTER_STATE_ERROR"
+    numeric_code = 200122
+    default_message = (
+        "Runtime cluster state transition is invalid."
+    )
+
+
+class NsRuntimeClusterFencingError(NsRuntimeClusterCoordinationError):
+    code = "RUNTIME_CLUSTER_FENCING_ERROR"
+    numeric_code = 200123
+    default_message = (
+        "Runtime cluster fencing validation failed."
+    )
 
 RUNTIME_NACK_REASON_ERROR_CODES: tuple[tuple[str, str], ...] = (
     ("target_overloaded", NsRuntimeBackpressureError.code),

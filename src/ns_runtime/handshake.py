@@ -5,8 +5,9 @@ import uuid
 from dataclasses import dataclass
 from typing import (
     Any,
+    Callable,
     Mapping,
-    TYPE_CHECKING
+    TYPE_CHECKING,
 )
 
 from ns_common.exceptions import (
@@ -18,8 +19,9 @@ from ns_runtime.auth import (
 )
 from ns_runtime.models import (
     RuntimeComponentType,
+    RuntimeRole,
     RuntimeSessionContext,
-    utc_now_iso
+    utc_now_iso,
 )
 from ns_runtime.protocol import EnvelopeCodec
 from ns_runtime.session import (
@@ -61,11 +63,24 @@ class RuntimeHandshakeOutcome:
 
 
 class RuntimeHandshakeService:
-    def __init__(self, *, runtime_id: str, codec: EnvelopeCodec, authenticator: RuntimeAuthenticator, session_registry: RuntimeSessionRegistry) -> None:
+    def __init__(
+            self,
+            *,
+            runtime_id: str,
+            codec: EnvelopeCodec,
+            authenticator: RuntimeAuthenticator,
+            session_registry: RuntimeSessionRegistry,
+            runtime_role_provider: (
+                    Callable[[], RuntimeRole] | None
+            ) = None,
+    ) -> None:
         self._runtime_id = runtime_id
         self._codec = codec
         self._authenticator = authenticator
         self._session_registry = session_registry
+        self._runtime_role_provider = (
+            runtime_role_provider
+        )
 
     async def accept(self, *, frame_text: str, record: RuntimeConnectionRecord, remote_address: str) -> RuntimeHandshakeOutcome:
         try:
@@ -187,7 +202,11 @@ class RuntimeHandshakeService:
                     "session_expires_at": session.auth_expires_at,
                     "server_time": utc_now_iso(),
                     "runtime_id": self._runtime_id,
-                    "role": session.role,
+                    "role": (
+                        self._runtime_role_provider()
+                        if self._runtime_role_provider is not None
+                        else session.role
+                    ),
                 },
             },
             "trace": {

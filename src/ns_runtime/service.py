@@ -17,6 +17,10 @@ from ns_runtime.auth import (
     LocalTokenRuntimeAuthenticator,
     RuntimeAuthenticator
 )
+from ns_runtime.cluster import (
+    LocalRuntimeClusterCoordinator,
+    RuntimeClusterCoordinator,
+)
 from ns_runtime.delivery import (
     RuntimeAckTimeoutScanResult,
     RuntimeDeadLetterScanResult,
@@ -29,7 +33,8 @@ from ns_runtime.handshake import (
 )
 from ns_runtime.models import (
     ProcessorResponse,
-    RuntimeSessionContext
+    RuntimeRole,
+    RuntimeSessionContext,
 )
 from ns_runtime.outbound import (
     RuntimeConnectionWriterRegistry,
@@ -73,6 +78,7 @@ class RuntimeService:
             writer_registry: RuntimeConnectionWriterRegistry,
             delivery_registry: RuntimeDeliveryRegistry,
             admission_controller: RuntimeAdmissionController,
+            cluster_coordinator: RuntimeClusterCoordinator,
             local_forwarder: RuntimeLocalEnvelopeForwarder,
             handshake_service: RuntimeHandshakeService,
             target_resolver: RuntimeTargetResolver,
@@ -87,6 +93,7 @@ class RuntimeService:
         self._writer_registry = writer_registry
         self._delivery_registry = delivery_registry
         self._admission_controller = admission_controller
+        self._cluster_coordinator = cluster_coordinator
         self._local_forwarder = local_forwarder
         self._handshake_service = handshake_service
         self._target_resolver = target_resolver
@@ -108,6 +115,10 @@ class RuntimeService:
             ) = None,
             admission_controller: (
                     RuntimeAdmissionController | None
+            ) = None,
+            runtime_role: RuntimeRole = "singleton",
+            cluster_coordinator: (
+                    RuntimeClusterCoordinator | None
             ) = None,
     ) -> "RuntimeService":
         codec = EnvelopeCodec(
@@ -138,6 +149,23 @@ class RuntimeService:
         )
         )
 
+        if (
+                cluster_coordinator is not None
+                and runtime_role != "singleton"
+        ):
+            raise ValueError(
+                "runtime_role and cluster_coordinator "
+                "cannot be provided together."
+            )
+
+        resolved_cluster_coordinator = (
+                cluster_coordinator
+                or LocalRuntimeClusterCoordinator(
+                    runtime_id=runtime_id,
+                    initial_role=runtime_role,
+                )
+        )
+
         local_forwarder = (
             RuntimeLocalEnvelopeForwarder(
                 writer_registry=writer_registry,
@@ -154,9 +182,25 @@ class RuntimeService:
                 or UnavailablePayloadReferenceValidator()
         )
 
+        def build_health_snapshot() -> dict[str, object]:
+            return {
+                "cluster": (
+                    resolved_cluster_coordinator
+                    .build_snapshot()
+                    .to_dict()
+                ),
+                "connections": (
+                    session_registry
+                    .build_health_snapshot()
+                ),
+            }
+
         registry = build_default_processor_registry(
             codec,
-            health_snapshot_provider=session_registry.build_health_snapshot,
+            health_snapshot_provider=build_health_snapshot,
+            runtime_role_provider=lambda: (
+                resolved_cluster_coordinator.role
+            ),
             target_resolver=target_resolver,
             local_forwarder=local_forwarder,
             delivery_registry=delivery_registry,
@@ -180,6 +224,9 @@ class RuntimeService:
             codec=codec,
             authenticator=resolved_authenticator,
             session_registry=session_registry,
+            runtime_role_provider=lambda: (
+                resolved_cluster_coordinator.role
+            ),
         )
 
         return cls(
@@ -193,7 +240,12 @@ class RuntimeService:
             local_forwarder=local_forwarder,
             handshake_service=handshake_service,
             target_resolver=target_resolver,
-            admission_controller=resolved_admission_controller
+            admission_controller=(
+                resolved_admission_controller
+            ),
+            cluster_coordinator=(
+                resolved_cluster_coordinator
+            ),
         )
 
     @property
@@ -219,6 +271,27 @@ class RuntimeService:
     @property
     def admission_controller(self) -> RuntimeAdmissionController:
         return self._admission_controller
+
+    @property
+    def cluster_coordinator(
+            self,
+    ) -> RuntimeClusterCoordinator:
+        return self._cluster_coordinator
+
+    def build_runtime_snapshot(
+            self,
+    ) -> dict[str, object]:
+        return {
+            "cluster": (
+                self._cluster_coordinator
+                .build_snapshot()
+                .to_dict()
+            ),
+            "connections": (
+                self._session_registry
+                .build_health_snapshot()
+            ),
+        }
 
     def get_message_summary(self, message_id: str, *, tenant_id: str | None = None) -> RuntimeMessageDeliverySummary | None:
         return self._delivery_registry.get_message_summary(
@@ -315,6 +388,9 @@ class RuntimeService:
             "runtime service initialized",
             extra={
                 "runtime_id": self._runtime_id,
+                "runtime_role": (
+                    self._cluster_coordinator.role
+                ),
                 "message_type_count": len(self._registry.list_specs()),
                 "config_version": self._config_version,
                 "policy_version": self._policy_version,

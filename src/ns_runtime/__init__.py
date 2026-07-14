@@ -17,6 +17,13 @@ from ns_runtime.auth import (
     RuntimeAuthResult,
     RuntimeAuthenticator
 )
+from ns_runtime.cluster import (
+    LocalRuntimeClusterCoordinator,
+    RuntimeClusterCoordinator,
+    RuntimeClusterSnapshot,
+    RuntimeClusterState,
+    RuntimeLeaderLease,
+)
 from ns_runtime.delivery import (
     RuntimeAckRecord,
     RuntimeAckResult,
@@ -168,6 +175,11 @@ __all__ = [
     "RuntimeAdmissionDecision",
     "RuntimeAdmissionController",
     "LocalRuntimeAdmissionController",
+    "RuntimeClusterState",
+    "RuntimeLeaderLease",
+    "RuntimeClusterSnapshot",
+    "RuntimeClusterCoordinator",
+    "LocalRuntimeClusterCoordinator",
 ]
 
 __version__ = "0.2.0"

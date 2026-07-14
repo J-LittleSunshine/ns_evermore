@@ -559,6 +559,10 @@
 - `force takeover` 用于 active master 不响应、leader lease 过期、节点健康失败或集群协调中断等场景，必须要求高级管理 capability，并重新校验 active master 状态、leader lease、epoch/term、fencing_token、Redis/Valkey 连通性和 `ns_backend` 授权。
 - `emergency isolate` 用于 suspected split-brain、旧 owner 持续写入、关键配置漂移、fencing 异常、跨 tenant 风险或安全事故，只允许最高级安全/运维 capability 发起，并必须强审计。
 - master 切换不能只依赖 WebSocket 断开、心跳失败或管理端命令；任何 active master 变更都必须通过 Redis/Valkey 的 leader lease、epoch/term 和 fencing_token 原子确认。
+- [x] 【实现进度 1.19】已新增单进程本地 runtime 集群角色与 leader lease/fencing 骨架；当前通过 `RuntimeClusterCoordinator` 抽象和 `LocalRuntimeClusterCoordinator` 维护 `singleton`、`sub_node`、`standby_master`、`active_master`、`transitioning` 等基础角色状态，并支持 standby master 显式获取 leader lease、active master 续约、释放以及 lease 过期后撤销集群写权限。leader
+  lease 包含 `holder_runtime_id`、`epoch`、`fencing_token`、`acquired_at`、`renewed_at` 和 `expires_at`，错误 fencing token 不得修改当前集群状态。`RuntimeService` 已暴露 cluster snapshot，`connection.accepted`、heartbeat 和 health 响应返回当前服务端 runtime role，而不是连接 session role。当前进度不表示 Redis/Valkey leader lease、多进程选举、standby
+  自动接管、runtime 节点间 WebSocket、master/sub_node 跨节点路由、后台 lease renew worker、管理切换 envelope、delivery ownership/fencing、split-brain 防护或生产级集群协调已完成。
+
 
 ## 20. 状态存储与一致性模型
 

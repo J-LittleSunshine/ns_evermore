@@ -65,6 +65,60 @@ class RuntimeProcessorTestCase(unittest.TestCase):
         self.assertIsNotNone(response.envelope)
         self.assertEqual(response.envelope["message"]["type"], "connection.heartbeat_ack")
 
+    def test_health_and_heartbeat_report_runtime_role(
+            self,
+    ) -> None:
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            runtime_role="standby_master",
+        )
+
+        heartbeat_response = asyncio.run(
+            service.process_frame(
+                self._build_frame(
+                    "connection.heartbeat",
+                    category="control",
+                ),
+                self.session,
+            )
+        )
+
+        self.assertEqual(
+            heartbeat_response.envelope[
+                "payload"
+            ]["inline"]["role"],
+            "standby_master",
+        )
+
+        health_response = asyncio.run(
+            service.process_frame(
+                self._build_frame(
+                    "runtime.control.health",
+                    category="control",
+                ),
+                self.session,
+            )
+        )
+
+        health_inline = health_response.envelope[
+            "payload"
+        ]["inline"]
+
+        self.assertEqual(
+            health_inline["role"],
+            "standby_master",
+        )
+        self.assertEqual(
+            health_inline[
+                "runtime"
+            ]["cluster"]["role"],
+            "standby_master",
+        )
+        self.assertIn(
+            "connections",
+            health_inline["runtime"],
+        )
+
     def test_task_dispatch_without_target_is_rejected_by_type_schema(self) -> None:
         response = asyncio.run(
             self.service.process_frame(

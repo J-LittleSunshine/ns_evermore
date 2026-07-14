@@ -44,6 +44,7 @@ from ns_runtime.models import (
     MessageTypeSpec,
     ProcessorRequest,
     ProcessorResponse,
+    RuntimeRole,
     RuntimeSessionContext,
     utc_now_iso,
 )
@@ -1071,29 +1072,62 @@ class RegisteredOnlyProcessor(BaseRuntimeProcessor):
 
 
 class HeartbeatProcessor(BaseRuntimeProcessor):
-    def __init__(self, *, codec: EnvelopeCodec) -> None:
+    def __init__(
+            self,
+            *,
+            codec: EnvelopeCodec,
+            runtime_role_provider: (
+                    Callable[[], RuntimeRole] | None
+            ) = None,
+    ) -> None:
         self._codec = codec
+        self._runtime_role_provider = (
+            runtime_role_provider
+        )
 
-    async def process(self, request: ProcessorRequest) -> ProcessorResponse:
+    async def process(
+            self,
+            request: ProcessorRequest,
+    ) -> ProcessorResponse:
+        runtime_role = (
+            self._runtime_role_provider()
+            if self._runtime_role_provider is not None
+            else request.session.role
+        )
+
         return ProcessorResponse.respond(
             {
                 "protocol": {
-                    "version": self._codec.protocol_version_text,
+                    "version": (
+                        self._codec
+                        .protocol_version_text
+                    ),
                 },
                 "message": {
-                    "message_id": f"{request.envelope.message_id}.ack",
-                    "type": "connection.heartbeat_ack",
+                    "message_id": (
+                        f"{request.envelope.message_id}"
+                        ".ack"
+                    ),
+                    "type": (
+                        "connection.heartbeat_ack"
+                    ),
                     "category": "control",
                     "priority": 100,
                     "created_at": utc_now_iso(),
                     "reliability": "best_effort",
                 },
                 "source": {
-                    "runtime_id": request.session.runtime_id,
+                    "runtime_id": (
+                        request.session.runtime_id
+                    ),
                     "connection_id": "runtime",
                     "session_id": "runtime",
-                    "identity": request.session.runtime_id,
-                    "tenant_id": request.session.tenant_id,
+                    "identity": (
+                        request.session.runtime_id
+                    ),
+                    "tenant_id": (
+                        request.session.tenant_id
+                    ),
                     "component_type": "runtime",
                     "capabilities_summary": [
                         "connection.heartbeat_ack"
@@ -1102,59 +1136,119 @@ class HeartbeatProcessor(BaseRuntimeProcessor):
                 },
                 "target": {
                     "kind": "connection",
-                    "connection_id": request.session.connection_id,
+                    "connection_id": (
+                        request.session.connection_id
+                    ),
                 },
                 "payload": {
                     "mode": "inline",
                     "inline": {
                         "server_time": utc_now_iso(),
-                        "runtime_id": request.session.runtime_id,
-                        "role": request.session.role,
+                        "runtime_id": (
+                            request.session.runtime_id
+                        ),
+                        "role": runtime_role,
                     },
                 },
                 "trace": {
-                    "trace_id": request.envelope.raw.get("trace", {}).get("trace_id", request.envelope.message_id),
-                    "request_id": request.envelope.message_id,
+                    "trace_id": (
+                        request.envelope.raw.get(
+                            "trace",
+                            {},
+                        ).get(
+                            "trace_id",
+                            request.envelope.message_id,
+                        )
+                    ),
+                    "request_id": (
+                        request.envelope.message_id
+                    ),
                 },
             }
         )
 
 
 class RuntimeHealthProcessor(BaseRuntimeProcessor):
-    def __init__(self, *, codec: EnvelopeCodec, health_snapshot_provider: Callable[[], Mapping[str, Any]] | None = None) -> None:
+    def __init__(
+            self,
+            *,
+            codec: EnvelopeCodec,
+            health_snapshot_provider: (
+                    Callable[
+                        [],
+                        Mapping[str, Any],
+                    ]
+                    | None
+            ) = None,
+            runtime_role_provider: (
+                    Callable[[], RuntimeRole] | None
+            ) = None,
+    ) -> None:
         self._codec = codec
-        self._health_snapshot_provider = health_snapshot_provider
+        self._health_snapshot_provider = (
+            health_snapshot_provider
+        )
+        self._runtime_role_provider = (
+            runtime_role_provider
+        )
 
-    async def process(self, request: ProcessorRequest) -> ProcessorResponse:
+    async def process(
+            self,
+            request: ProcessorRequest,
+    ) -> ProcessorResponse:
+        runtime_role = (
+            self._runtime_role_provider()
+            if self._runtime_role_provider is not None
+            else request.session.role
+        )
+
         inline_payload: dict[str, Any] = {
             "status": "ok",
-            "runtime_id": request.session.runtime_id,
-            "role": request.session.role,
+            "runtime_id": (
+                request.session.runtime_id
+            ),
+            "role": runtime_role,
             "server_time": utc_now_iso(),
         }
 
         if self._health_snapshot_provider is not None:
-            inline_payload["runtime"] = dict(self._health_snapshot_provider())
+            inline_payload["runtime"] = dict(
+                self._health_snapshot_provider()
+            )
 
         return ProcessorResponse.respond(
             {
                 "protocol": {
-                    "version": self._codec.protocol_version_text,
+                    "version": (
+                        self._codec
+                        .protocol_version_text
+                    ),
                 },
                 "message": {
-                    "message_id": f"{request.envelope.message_id}.result",
-                    "type": "runtime.control.health_result",
+                    "message_id": (
+                        f"{request.envelope.message_id}"
+                        ".result"
+                    ),
+                    "type": (
+                        "runtime.control.health_result"
+                    ),
                     "category": "control",
                     "priority": 100,
                     "created_at": utc_now_iso(),
                     "reliability": "best_effort",
                 },
                 "source": {
-                    "runtime_id": request.session.runtime_id,
+                    "runtime_id": (
+                        request.session.runtime_id
+                    ),
                     "connection_id": "runtime",
                     "session_id": "runtime",
-                    "identity": request.session.runtime_id,
-                    "tenant_id": request.session.tenant_id,
+                    "identity": (
+                        request.session.runtime_id
+                    ),
+                    "tenant_id": (
+                        request.session.tenant_id
+                    ),
                     "component_type": "runtime",
                     "capabilities_summary": [
                         "runtime.control.health_result"
@@ -1163,15 +1257,27 @@ class RuntimeHealthProcessor(BaseRuntimeProcessor):
                 },
                 "target": {
                     "kind": "connection",
-                    "connection_id": request.session.connection_id,
+                    "connection_id": (
+                        request.session.connection_id
+                    ),
                 },
                 "payload": {
                     "mode": "inline",
                     "inline": inline_payload,
                 },
                 "trace": {
-                    "trace_id": request.envelope.raw.get("trace", {}).get("trace_id", request.envelope.message_id),
-                    "request_id": request.envelope.message_id,
+                    "trace_id": (
+                        request.envelope.raw.get(
+                            "trace",
+                            {},
+                        ).get(
+                            "trace_id",
+                            request.envelope.message_id,
+                        )
+                    ),
+                    "request_id": (
+                        request.envelope.message_id
+                    ),
                 },
             }
         )
@@ -1235,6 +1341,9 @@ def build_default_processor_registry(
         health_snapshot_provider: (
                 Callable[[], Mapping[str, Any]] | None
         ) = None,
+        runtime_role_provider: (
+                Callable[[], RuntimeRole] | None
+        ) = None,
         target_resolver: RuntimeTargetResolver | None = None,
         local_forwarder: RuntimeLocalEnvelopeForwarder | None = None,
         delivery_registry: RuntimeDeliveryRegistry | None = None,
@@ -1273,7 +1382,10 @@ def build_default_processor_registry(
 
         if spec.message_type == "connection.heartbeat":
             processor = HeartbeatProcessor(
-                codec=codec
+                codec=codec,
+                runtime_role_provider=(
+                    runtime_role_provider
+                ),
             )
 
         elif spec.message_type == "runtime.control.health":
@@ -1281,6 +1393,9 @@ def build_default_processor_registry(
                 codec=codec,
                 health_snapshot_provider=(
                     health_snapshot_provider
+                ),
+                runtime_role_provider=(
+                    runtime_role_provider
                 ),
             )
 

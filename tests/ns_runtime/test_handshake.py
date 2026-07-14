@@ -13,6 +13,7 @@ from ns_runtime.auth import LocalTokenRuntimeAuthenticator
 from ns_runtime.handshake import RuntimeHandshakeService
 from ns_runtime.models import utc_now_iso
 from ns_runtime.protocol import EnvelopeCodec
+from ns_runtime.service import RuntimeService
 from ns_runtime.session import RuntimeSessionRegistry
 
 if TYPE_CHECKING:
@@ -81,6 +82,54 @@ class RuntimeHandshakeTestCase(unittest.TestCase):
         self.assertEqual(outcome.envelope["message"]["type"], "connection.rejected")
         self.assertEqual(outcome.envelope["payload"]["inline"]["code"], "RUNTIME_ENVELOPE_SCHEMA_ERROR")
         self.assertEqual(record.state, "protocol_failed")
+
+    def test_connection_accepted_reports_server_runtime_role(
+            self,
+    ) -> None:
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            runtime_role="standby_master",
+            authenticator=(
+                LocalTokenRuntimeAuthenticator(
+                    expected_token="secret"
+                )
+            ),
+        )
+
+        record = (
+            service.session_registry
+            .create_handshaking(
+                remote_address="test"
+            )
+        )
+
+        outcome = asyncio.run(
+            service.accept_connection_hello(
+                self._build_hello_frame(
+                    token="secret"
+                ),
+                record,
+                remote_address="test",
+            )
+        )
+
+        self.assertTrue(outcome.accepted)
+        self.assertIsNotNone(outcome.session)
+
+        # LocalToken authenticator 当前仍给 peer session
+        # 设置 singleton role。
+        self.assertEqual(
+            outcome.session.role,
+            "singleton",
+        )
+
+        # 对外返回的必须是服务端 runtime 自身角色。
+        self.assertEqual(
+            outcome.envelope[
+                "payload"
+            ]["inline"]["role"],
+            "standby_master",
+        )
 
     def _build_hello_frame(self, *, token: str) -> str:
         raw: dict[str, Any] = {
