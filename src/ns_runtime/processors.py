@@ -1526,7 +1526,11 @@ class ProcessorPipeline:
             exception_class = (
                 exc.__class__.__name__
             )
-            exception_message = str(exc)
+            exception_message = (
+                self._read_exception_summary(
+                    exc
+                )
+            )
             error_code = self._read_exception_code(
                 exc
             )
@@ -1706,6 +1710,33 @@ class ProcessorPipeline:
         return (
             response_message_type,
             error_code,
+        )
+
+    @staticmethod
+    def _read_exception_summary(
+            exc: Exception,
+    ) -> str:
+        # NsEvermoreError 的 default_message 是代码中
+        # 预定义的受控文本，不包含运行时 details。
+        if isinstance(exc, NsEvermoreError):
+            default_message = getattr(
+                exc,
+                "default_message",
+                "",
+            )
+
+            if (
+                    isinstance(default_message, str)
+                    and default_message.strip()
+            ):
+                return default_message.strip()
+
+        # 不可信 processor、第三方库和系统异常的
+        # str(exc) 可能包含 token、payload 或内部数据，
+        # 审计中只保留受控摘要。
+        return (
+            "Processor raised an unexpected "
+            "exception."
         )
 
     @staticmethod

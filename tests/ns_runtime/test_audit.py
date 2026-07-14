@@ -32,7 +32,7 @@ class _RaisingProcessor(
             request: ProcessorRequest,
     ) -> ProcessorResponse:
         raise RuntimeError(
-            "processor boom"
+            "processor boom token=top-secret"
         )
 
 
@@ -276,7 +276,7 @@ class RuntimeAuditTestCase(unittest.TestCase):
 
         with self.assertRaisesRegex(
                 RuntimeError,
-                "processor boom",
+                "processor boom token=top-secret",
         ):
             asyncio.run(
                 pipeline.process(
@@ -320,7 +320,18 @@ class RuntimeAuditTestCase(unittest.TestCase):
         )
         self.assertEqual(
             event.exception_message,
+            (
+                "Processor raised an unexpected "
+                "exception."
+            ),
+        )
+        self.assertNotIn(
+            "top-secret",
+            str(event.to_dict()),
+        )
+        self.assertNotIn(
             "processor boom",
+            str(event.to_dict()),
         )
         self.assertEqual(
             event.config_version,
