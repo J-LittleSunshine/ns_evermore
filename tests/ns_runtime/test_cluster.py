@@ -470,6 +470,91 @@ class RuntimeClusterCoordinatorTestCase(
             .can_write_cluster_state
         )
 
+    def test_new_epoch_cannot_reuse_any_historical_fencing_token(
+            self,
+    ) -> None:
+        tokens = iter(
+            (
+                "fencing-1",
+                "fencing-2",
+                "fencing-1",
+            )
+        )
+
+        coordinator = (
+            LocalRuntimeClusterCoordinator(
+                runtime_id="runtime-1",
+                initial_role="standby_master",
+                fencing_token_factory=(
+                    lambda: next(tokens)
+                ),
+            )
+        )
+
+        first_lease = (
+            coordinator.acquire_leadership()
+        )
+        coordinator.release_leadership(
+            fencing_token=(
+                first_lease.fencing_token
+            ),
+        )
+
+        second_lease = (
+            coordinator.acquire_leadership()
+        )
+        coordinator.release_leadership(
+            fencing_token=(
+                second_lease.fencing_token
+            ),
+        )
+
+        snapshot_before = (
+            coordinator.build_snapshot()
+        )
+
+        self.assertEqual(
+            snapshot_before.leader_epoch,
+            2,
+        )
+        self.assertEqual(
+            snapshot_before.role,
+            "standby_master",
+        )
+
+        with self.assertRaises(
+                NsRuntimeClusterFencingError
+        ) as raised:
+            coordinator.acquire_leadership()
+
+        self.assertEqual(
+            raised.exception.code,
+            "RUNTIME_CLUSTER_FENCING_ERROR",
+        )
+
+        snapshot_after = (
+            coordinator.build_snapshot()
+        )
+
+        self.assertEqual(
+            snapshot_after.role,
+            "standby_master",
+        )
+        self.assertEqual(
+            snapshot_after.leader_epoch,
+            2,
+        )
+        self.assertFalse(
+            snapshot_after.lease_valid
+        )
+        self.assertFalse(
+            snapshot_after.can_write_cluster_state
+        )
+        self.assertEqual(
+            snapshot_after.to_dict(),
+            snapshot_before.to_dict(),
+        )
+
     def test_service_exposes_cluster_snapshot(
             self,
     ) -> None:

@@ -258,7 +258,7 @@ class LocalRuntimeClusterCoordinator(
         ) = None
 
         self._last_epoch = 0
-        self._last_fencing_token = ""
+        self._issued_fencing_tokens: set[str] = set()
         self._updated_at = self._to_iso(now)
 
     @property
@@ -314,11 +314,11 @@ class LocalRuntimeClusterCoordinator(
 
         if (
                 resolved_fencing_token
-                == self._last_fencing_token
+                in self._issued_fencing_tokens
         ):
             raise NsRuntimeClusterFencingError(
-                "New leader lease must use a "
-                "different fencing token.",
+                "New leader lease must not reuse "
+                "a previously issued fencing token.",
                 details={
                     "runtime_id": self._runtime_id,
                     "previous_epoch": (
@@ -346,7 +346,7 @@ class LocalRuntimeClusterCoordinator(
         )
 
         self._last_epoch = next_epoch
-        self._last_fencing_token = (
+        self._issued_fencing_tokens.add(
             resolved_fencing_token
         )
         self._lease = new_lease
