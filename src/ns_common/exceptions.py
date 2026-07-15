@@ -237,6 +237,16 @@ class NsRuntimeRoleAdmissionError(NsRuntimeError):
         "the operation."
     )
 
+class NsRuntimeStartupSecurityError(
+        NsConfigError
+):
+    code = "RUNTIME_STARTUP_SECURITY_ERROR"
+    numeric_code = 200125
+    default_message = (
+        "Runtime startup security validation "
+        "failed."
+    )
+
 RUNTIME_NACK_REASON_ERROR_CODES: tuple[tuple[str, str], ...] = (
     ("target_overloaded", NsRuntimeBackpressureError.code),
     ("temporarily_unavailable", NsRuntimeTargetUnavailableError.code),

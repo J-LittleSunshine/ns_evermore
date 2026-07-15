@@ -18,26 +18,20 @@ from ns_common.exceptions import (
 from ns_runtime.auth import (
     RuntimeAuthenticator
 )
-from ns_runtime.role_admission import (
-    RuntimeRoleAdmissionDecision,
-    RuntimeRoleAdmissionPolicy,
-)
 from ns_runtime.cluster import (
     RuntimeClusterSnapshot,
 )
-
 from ns_runtime.models import (
     RuntimeComponentType,
     RuntimeRole,
     RuntimeSessionContext,
     utc_now_iso,
 )
-
+from ns_runtime.protocol import EnvelopeCodec
 from ns_runtime.role_admission import (
+    RuntimeRoleAdmissionDecision,
     RuntimeRoleAdmissionPolicy,
 )
-
-from ns_runtime.protocol import EnvelopeCodec
 from ns_runtime.session import (
     RuntimeConnectionRecord,
     RuntimeSessionRegistry

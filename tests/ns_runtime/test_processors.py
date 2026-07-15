@@ -597,6 +597,9 @@ class RuntimeProcessorTestCase(unittest.TestCase):
                 self._build_frame(
                     "task.dispatch",
                     category="task",
+                    message_id=(
+                        "msg-role-task"
+                    ),
                     target={
                         "kind": "runtime",
                         "runtime_id": (
@@ -645,13 +648,13 @@ class RuntimeProcessorTestCase(unittest.TestCase):
 
         task_events = (
             service.list_audit_events(
-                message_id="msg-1",
+                message_id="msg-role-task",
             )
         )
 
         self.assertEqual(
             len(task_events),
-            2,
+            1,
         )
         self.assertEqual(
             task_events[0].processor_name,

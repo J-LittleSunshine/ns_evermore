@@ -51,6 +51,13 @@ from ns_runtime.outbound import (
     RuntimeLocalEnvelopeForwarder,
     RuntimeLocalRetryScanResult,
 )
+
+from ns_runtime.startup import (
+    DEFAULT_LOCAL_DEVELOPMENT_TOKEN,
+    RuntimeEnvironment,
+    validate_runtime_startup_security,
+)
+
 from ns_runtime.payload_reference import (
     PayloadReferenceValidator,
     UnavailablePayloadReferenceValidator,
@@ -85,6 +92,9 @@ class RuntimeService:
             self,
             *,
             runtime_id: str,
+            runtime_environment: (
+                    RuntimeEnvironment
+            ),
             codec: EnvelopeCodec,
             registry: ProcessorRegistry,
             pipeline: ProcessorPipeline,
@@ -103,6 +113,9 @@ class RuntimeService:
             policy_version: str = "local:1",
     ) -> None:
         self._runtime_id = runtime_id
+        self._runtime_environment = (
+            runtime_environment
+        )
         self._codec = codec
         self._registry = registry
         self._pipeline = pipeline
@@ -126,7 +139,12 @@ class RuntimeService:
             cls,
             *,
             runtime_id: str,
-            authenticator: RuntimeAuthenticator | None = None,
+            runtime_environment: (
+                    RuntimeEnvironment
+            ) = "development",
+            authenticator: (
+                    RuntimeAuthenticator | None
+            ) = None,
             payload_reference_validator: (
                     PayloadReferenceValidator | None
             ) = None,
@@ -150,6 +168,24 @@ class RuntimeService:
                     RuntimeRoleAdmissionPolicy | None
             ) = None,
     ) -> "RuntimeService":
+        resolved_authenticator = (
+                authenticator
+                or LocalTokenRuntimeAuthenticator(
+            expected_token=(
+                DEFAULT_LOCAL_DEVELOPMENT_TOKEN
+            )
+        )
+        )
+
+        resolved_runtime_environment = (
+            validate_runtime_startup_security(
+                environment=runtime_environment,
+                authenticator=(
+                    resolved_authenticator
+                ),
+            )
+        )
+
         codec = EnvelopeCodec(
             runtime_id=runtime_id
         )
@@ -292,12 +328,6 @@ class RuntimeService:
             ),
         )
 
-        resolved_authenticator = (
-                authenticator
-                or LocalTokenRuntimeAuthenticator(
-            expected_token="local-dev-token"
-        )
-        )
         handshake_service = RuntimeHandshakeService(
             runtime_id=runtime_id,
             codec=codec,
@@ -319,6 +349,9 @@ class RuntimeService:
 
         return cls(
             runtime_id=runtime_id,
+            runtime_environment=(
+                resolved_runtime_environment
+            ),
             codec=codec,
             registry=registry,
             pipeline=pipeline,
@@ -342,6 +375,12 @@ class RuntimeService:
     @property
     def runtime_id(self) -> str:
         return self._runtime_id
+
+    @property
+    def runtime_environment(
+            self,
+    ) -> RuntimeEnvironment:
+        return self._runtime_environment
 
     @property
     def session_registry(self) -> RuntimeSessionRegistry:

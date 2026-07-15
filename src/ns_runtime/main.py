@@ -11,7 +11,14 @@ from typing import (
 from ns_runtime.auth import LocalTokenRuntimeAuthenticator
 from ns_runtime.models import RuntimeRole
 from ns_runtime.service import RuntimeService
-from ns_runtime.transport import RuntimeWebSocketTransportConfig
+from ns_runtime.startup import (
+    DEFAULT_LOCAL_DEVELOPMENT_TOKEN,
+    RuntimeEnvironment,
+    normalize_runtime_environment,
+)
+from ns_runtime.transport import (
+    RuntimeWebSocketTransportConfig,
+)
 
 if TYPE_CHECKING:
     pass
@@ -31,6 +38,18 @@ def _read_float_env(name: str, default: float) -> float:
         return default
 
     return float(raw_value)
+
+
+def _read_runtime_environment_env(
+) -> RuntimeEnvironment:
+    raw_value = os.getenv(
+        "NS_RUNTIME_ENVIRONMENT",
+        "production",
+    )
+
+    return normalize_runtime_environment(
+        raw_value
+    )
 
 
 def _read_runtime_role_env() -> RuntimeRole:
@@ -56,15 +75,26 @@ def _read_runtime_role_env() -> RuntimeRole:
         raw_value,
     )
 
+
 async def run_service() -> None:
+    runtime_environment = (
+        _read_runtime_environment_env()
+    )
+
     runtime_id = os.getenv("NS_RUNTIME_ID", "runtime-local-1").strip() or "runtime-local-1"
     host = os.getenv("NS_RUNTIME_HOST", "0.0.0.0").strip() or "0.0.0.0"
     port = _read_int_env("NS_RUNTIME_PORT", 8765)
-    local_token = os.getenv("NS_RUNTIME_LOCAL_TOKEN", "local-dev-token").strip() or "local-dev-token"
+    local_token = os.getenv(
+        "NS_RUNTIME_LOCAL_TOKEN",
+        DEFAULT_LOCAL_DEVELOPMENT_TOKEN,
+    ).strip() or DEFAULT_LOCAL_DEVELOPMENT_TOKEN
 
     authenticator = LocalTokenRuntimeAuthenticator(expected_token=local_token)
     service = RuntimeService.build_default(
         runtime_id=runtime_id,
+        runtime_environment=(
+            runtime_environment
+        ),
         authenticator=authenticator,
         runtime_role=_read_runtime_role_env(),
     )

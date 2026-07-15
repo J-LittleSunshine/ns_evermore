@@ -73,9 +73,9 @@
 - Runtime Service 层必须维护角色状态机，至少表达 `singleton`、`sub_node`、`standby_master`、`active_master`、`transitioning`、`draining` 等角色/过渡状态。
 - `degraded`、`isolated`、`unavailable` 这类状态应作为角色之外的健康/能力附加状态，因此一个节点可以表达为 `active_master + degraded`、`sub_node + isolated` 或 `singleton + degraded`。
 - 当 runtime 进入 `transitioning` 或 `draining` 时，普通业务消息和新任务调度默认返回标准错误 envelope；ACK、NACK、Defer、管理控制、健康检查和集群事件仍允许继续处理。
-  - [x] 【边界修复 1.20.4】已新增本地 runtime role admission policy，并同时接入 connection handshake 和 processor pipeline。`singleton`、`sub_node` 在 ready 状态下允许普通连接；`standby_master`、`transitioning`、`draining` 默认只接受 `runtime`、`sub_node`、`management` 连接；`active_master` 在当前没有 active sub_node 时允许普通客户端降级接入，在存在 active
-  sub_node 后只限制后续新的普通连接。受限角色会拒绝新的普通业务消息和 `task.dispatch`，但继续允许 `connection.heartbeat`、`connection.drain`、`delivery.ack`、`delivery.nack`、`delivery.defer`、`runtime.control.*` 和 `cluster.event.*`。role admission rejection 使用标准 `RUNTIME_ROLE_ADMISSION_REJECTED` 错误并进入 processor audit sink。当前本地 fallback
-  不主动关闭或迁移角色变化前已建立的普通连接，也不表示 master/sub_node 跨节点拓扑、可配置 connection drain/close 策略、isolated 分级策略、生产 IAM 或动态策略热更新已经完成。
+    - [x] 【边界修复 1.20.4】已新增本地 runtime role admission policy，并同时接入 connection handshake 和 processor pipeline。`singleton`、`sub_node` 在 ready 状态下允许普通连接；`standby_master`、`transitioning`、`draining` 默认只接受 `runtime`、`sub_node`、`management` 连接；`active_master` 在当前没有 active sub_node 时允许普通客户端降级接入，在存在 active
+      sub_node 后只限制后续新的普通连接。受限角色会拒绝新的普通业务消息和 `task.dispatch`，但继续允许 `connection.heartbeat`、`connection.drain`、`delivery.ack`、`delivery.nack`、`delivery.defer`、`runtime.control.*` 和 `cluster.event.*`。role admission rejection 使用标准 `RUNTIME_ROLE_ADMISSION_REJECTED` 错误并进入 processor audit sink。当前本地 fallback
+      不主动关闭或迁移角色变化前已建立的普通连接，也不表示 master/sub_node 跨节点拓扑、可配置 connection drain/close 策略、isolated 分级策略、生产 IAM 或动态策略热更新已经完成。
 - 当节点进入 `isolated` 时，隔离程度必须由策略配置；策略可以表达只禁止新普通连接、禁止作为路由目标、禁止参与集群转发、只保留管理健康通道等不同等级。
 - `draining` 状态应表达“不再接收新普通连接或新普通业务流量，但尽量完成已有投递、通知客户端重连或由外部发现机制重新接入，并在超时后按策略强制关闭或转移未完成 delivery”的收尾语义。
 - standby master 即使维持健康、状态观察和切换准备连接，也不能在未持有有效 leader lease/fencing_token 时执行全局协调写入。
@@ -196,6 +196,8 @@
 ## 8. 身份、权限与安全模型
 
 - 连接鉴权和消息鉴权都必须使用 `ns_backend` IAM；连接建立时的 IAM 鉴权结果由 runtime 保存为 session 权限上下文，并由 runtime 注入 source/auth_context。
+    - [x] 【边界修复 1.20.5】已新增 runtime startup security guard。`RuntimeService.build_default()` 现在显式接受 `runtime_environment`，并在对象构建早期验证 authenticator；`production` 环境禁止使用任何 `LocalTokenRuntimeAuthenticator`，无论 token 是否为默认值，也不会在启动错误中记录或比较 token 明文。命令行启动入口 `NS_RUNTIME_ENVIRONMENT` 未设置时默认按
+      `production` 处理，因此当前尚未配置生产 IAM authenticator 的 CLI 会 fail closed；本地启动必须显式设置 `development` 或 `test`。当前进度仅建立生产启动安全底线，不表示 `ns_backend` IAM authenticator、节点凭证获取、缓存凭证、凭证续期、撤销检查、密钥管理或生产配置加载已经完成。
 - 消息级鉴权支持严格模式和缓存模式；严格模式下每条消息实时调用 `ns_backend` IAM 判定，缓存模式下使用连接权限快照并按 TTL、权限版本或失效事件刷新。
 - `ns_runtime` 与 `ns_backend` IAM 的通信可以走 HTTP/RPC 主动调用；这条调用链是 runtime 作为服务端的外部依赖，不是普通客户端接入 runtime 的 WebSocket 通道。
 - runtime 节点之间的连接使用 `ns_backend` 签发的节点凭证；如果启动时暂时无法获取或刷新节点凭证，可以按配置使用本地缓存凭证进入降级模式。

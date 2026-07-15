@@ -115,6 +115,12 @@ from ns_runtime.session import (
     RuntimeConnectionRecord,
     RuntimeSessionRegistry,
 )
+from ns_runtime.startup import (
+    DEFAULT_LOCAL_DEVELOPMENT_TOKEN,
+    RuntimeEnvironment,
+    normalize_runtime_environment,
+    validate_runtime_startup_security,
+)
 from ns_runtime.state_store import (
     InMemoryRuntimeStateStore,
     RuntimeStateEntry,
@@ -224,6 +230,10 @@ __all__ = [
     "RuntimeRoleAdmissionDecision",
     "RuntimeRoleAdmissionPolicy",
     "LocalRuntimeRoleAdmissionPolicy",
+    "RuntimeEnvironment",
+    "DEFAULT_LOCAL_DEVELOPMENT_TOKEN",
+    "normalize_runtime_environment",
+    "validate_runtime_startup_security",
 ]
 
 __version__ = "0.2.0"
