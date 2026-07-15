@@ -116,14 +116,11 @@ class RuntimeHandshakeTestCase(unittest.TestCase):
         self.assertTrue(outcome.accepted)
         self.assertIsNotNone(outcome.session)
 
-        # LocalToken authenticator 当前仍给 peer session
-        # 设置 singleton role。
         self.assertEqual(
             outcome.session.role,
             "singleton",
         )
 
-        # 对外返回的必须是服务端 runtime 自身角色。
         self.assertEqual(
             outcome.envelope[
                 "payload"
@@ -131,7 +128,72 @@ class RuntimeHandshakeTestCase(unittest.TestCase):
             "standby_master",
         )
 
-    def _build_hello_frame(self, *, token: str) -> str:
+    def test_standby_master_rejects_ordinary_client_connection(
+            self,
+    ) -> None:
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            runtime_role="standby_master",
+            authenticator=(
+                LocalTokenRuntimeAuthenticator(
+                    expected_token="secret"
+                )
+            ),
+        )
+
+        record = (
+            service.session_registry
+            .create_handshaking(
+                remote_address="test"
+            )
+        )
+
+        outcome = asyncio.run(
+            service.accept_connection_hello(
+                self._build_hello_frame(
+                    token="secret",
+                    component_type="client",
+                ),
+                record,
+                remote_address="test",
+            )
+        )
+
+        self.assertFalse(outcome.accepted)
+        self.assertIsNone(outcome.session)
+        self.assertEqual(
+            outcome.envelope[
+                "message"
+            ]["type"],
+            "connection.rejected",
+        )
+        self.assertEqual(
+            outcome.envelope[
+                "payload"
+            ]["inline"]["code"],
+            (
+                "RUNTIME_ROLE_"
+                "ADMISSION_REJECTED"
+            ),
+        )
+        self.assertEqual(
+            record.state,
+            "rejected",
+        )
+        self.assertEqual(
+            len(
+                service.session_registry
+                .list_active_records()
+            ),
+            0,
+        )
+
+    def _build_hello_frame(
+            self,
+            *,
+            token: str,
+            component_type: str = "management",
+    ) -> str:
         raw: dict[str, Any] = {
             "protocol": {
                 "version": "1.0.0",
@@ -148,7 +210,9 @@ class RuntimeHandshakeTestCase(unittest.TestCase):
                 "mode": "inline",
                 "inline": {
                     "token": token,
-                    "component_type": "management",
+                    "component_type": (
+                        component_type
+                    ),
                     "requested_capabilities": [
                         "runtime.management",
                         "task.dispatch",

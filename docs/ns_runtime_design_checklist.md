@@ -73,6 +73,9 @@
 - Runtime Service 层必须维护角色状态机，至少表达 `singleton`、`sub_node`、`standby_master`、`active_master`、`transitioning`、`draining` 等角色/过渡状态。
 - `degraded`、`isolated`、`unavailable` 这类状态应作为角色之外的健康/能力附加状态，因此一个节点可以表达为 `active_master + degraded`、`sub_node + isolated` 或 `singleton + degraded`。
 - 当 runtime 进入 `transitioning` 或 `draining` 时，普通业务消息和新任务调度默认返回标准错误 envelope；ACK、NACK、Defer、管理控制、健康检查和集群事件仍允许继续处理。
+  - [x] 【边界修复 1.20.4】已新增本地 runtime role admission policy，并同时接入 connection handshake 和 processor pipeline。`singleton`、`sub_node` 在 ready 状态下允许普通连接；`standby_master`、`transitioning`、`draining` 默认只接受 `runtime`、`sub_node`、`management` 连接；`active_master` 在当前没有 active sub_node 时允许普通客户端降级接入，在存在 active
+  sub_node 后只限制后续新的普通连接。受限角色会拒绝新的普通业务消息和 `task.dispatch`，但继续允许 `connection.heartbeat`、`connection.drain`、`delivery.ack`、`delivery.nack`、`delivery.defer`、`runtime.control.*` 和 `cluster.event.*`。role admission rejection 使用标准 `RUNTIME_ROLE_ADMISSION_REJECTED` 错误并进入 processor audit sink。当前本地 fallback
+  不主动关闭或迁移角色变化前已建立的普通连接，也不表示 master/sub_node 跨节点拓扑、可配置 connection drain/close 策略、isolated 分级策略、生产 IAM 或动态策略热更新已经完成。
 - 当节点进入 `isolated` 时，隔离程度必须由策略配置；策略可以表达只禁止新普通连接、禁止作为路由目标、禁止参与集群转发、只保留管理健康通道等不同等级。
 - `draining` 状态应表达“不再接收新普通连接或新普通业务流量，但尽量完成已有投递、通知客户端重连或由外部发现机制重新接入，并在超时后按策略强制关闭或转移未完成 delivery”的收尾语义。
 - standby master 即使维持健康、状态观察和切换准备连接，也不能在未持有有效 leader lease/fencing_token 时执行全局协调写入。

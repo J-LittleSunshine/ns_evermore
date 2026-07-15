@@ -26,10 +26,11 @@ from ns_common.exceptions import (
     NsRuntimePayloadRefValidationTimeoutError,
     NsRuntimePayloadRefValidationUnavailableError,
     NsRuntimePayloadRefVersionMismatchError,
+    NsRuntimeRoleAdmissionError,
     NsRuntimeTargetUnavailableError,
     NsRuntimeTenantMismatchError,
     NsRuntimeUnauthorizedMessageTypeError,
-    NsRuntimeUnsupportedMessageTypeError,
+    NsRuntimeUnsupportedMessageTypeError
 )
 from ns_runtime.admission import (
     LocalRuntimeAdmissionController,
@@ -42,6 +43,9 @@ from ns_runtime.audit import (
     RuntimeAuditOutcome,
     RuntimeAuditResultAction,
     RuntimeAuditSink,
+)
+from ns_runtime.cluster import (
+    RuntimeClusterSnapshot,
 )
 from ns_runtime.delivery import (
     RuntimeDeliveryRegistry,
@@ -65,6 +69,9 @@ from ns_runtime.payload_reference import (
     UnavailablePayloadReferenceValidator,
 )
 from ns_runtime.protocol import EnvelopeCodec
+from ns_runtime.role_admission import (
+    RuntimeRoleAdmissionPolicy,
+)
 from ns_runtime.routing import (
     RuntimeRouteDecision,
     RuntimeTargetResolver,
@@ -145,6 +152,82 @@ class MessageTypeAuthProcessor(BaseRuntimeProcessor):
             )
 
         return None
+
+
+class RuntimeRoleAdmissionProcessor(
+    BaseRuntimeProcessor
+):
+    def __init__(
+            self,
+            *,
+            codec: EnvelopeCodec,
+            role_admission_policy: (
+                    RuntimeRoleAdmissionPolicy
+            ),
+            cluster_snapshot_provider: Callable[
+                [],
+                RuntimeClusterSnapshot,
+            ],
+    ) -> None:
+        self._codec = codec
+        self._role_admission_policy = (
+            role_admission_policy
+        )
+        self._cluster_snapshot_provider = (
+            cluster_snapshot_provider
+        )
+
+    async def process(
+            self,
+            request: ProcessorRequest,
+    ) -> ProcessorResponse:
+        snapshot = (
+            self._cluster_snapshot_provider()
+        )
+
+        decision = (
+            self._role_admission_policy
+            .evaluate_message(
+                snapshot=snapshot,
+                component_type=(
+                    request.session.component_type
+                ),
+                message_type=(
+                    request.envelope.message_type
+                ),
+                message_category=(
+                    request.envelope.category
+                ),
+            )
+        )
+
+        if decision.accepted:
+            return (
+                ProcessorResponse
+                .continue_next()
+            )
+
+        error = NsRuntimeRoleAdmissionError(
+            details={
+                "runtime_id": snapshot.runtime_id,
+                "runtime_role": snapshot.role,
+                "runtime_state": snapshot.state,
+                "component_type": (
+                    request.session.component_type
+                ),
+                "message_type": (
+                    request.envelope.message_type
+                ),
+            }
+        )
+
+        return ProcessorResponse.reject(
+            self._codec.build_error_envelope(
+                error,
+                session=request.session,
+                request=request.envelope,
+            )
+        )
 
 
 class TargetLookupProcessor(BaseRuntimeProcessor):
@@ -1881,17 +1964,39 @@ def build_default_processor_pipeline(
                 RuntimeTargetResolver | None
         ) = None,
         audit_sink: RuntimeAuditSink | None = None,
+        role_admission_policy: (
+                RuntimeRoleAdmissionPolicy | None
+        ) = None,
+        cluster_snapshot_provider: (
+                Callable[
+                    [],
+                    RuntimeClusterSnapshot,
+                ]
+                | None
+        ) = None,
 ) -> ProcessorPipeline:
     resolved_audit_sink = (
             audit_sink
             or InMemoryRuntimeAuditSink()
     )
 
+    if (
+            (
+                    role_admission_policy is None
+            )
+            != (
+            cluster_snapshot_provider is None
+    )
+    ):
+        raise ValueError(
+            "role_admission_policy and "
+            "cluster_snapshot_provider must be "
+            "configured together."
+        )
+
     generic_processors: list[
         BaseRuntimeProcessor
     ] = [
-        # Audit mark 必须在 auth/schema/target
-        # 拒绝之前执行，确保早期拒绝也有审计入口。
         AuditMarkProcessor(
             registry=registry
         ),
@@ -1900,6 +2005,23 @@ def build_default_processor_pipeline(
             codec=codec,
         ),
     ]
+
+    if (
+            role_admission_policy is not None
+            and cluster_snapshot_provider
+            is not None
+    ):
+        generic_processors.append(
+            RuntimeRoleAdmissionProcessor(
+                codec=codec,
+                role_admission_policy=(
+                    role_admission_policy
+                ),
+                cluster_snapshot_provider=(
+                    cluster_snapshot_provider
+                ),
+            )
+        )
 
     if target_resolver is not None:
         generic_processors.append(

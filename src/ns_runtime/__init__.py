@@ -100,6 +100,11 @@ from ns_runtime.processors import (
     build_default_processor_registry,
 )
 from ns_runtime.protocol import EnvelopeCodec
+from ns_runtime.role_admission import (
+    LocalRuntimeRoleAdmissionPolicy,
+    RuntimeRoleAdmissionDecision,
+    RuntimeRoleAdmissionPolicy,
+)
 from ns_runtime.routing import (
     RuntimeRouteDecision,
     RuntimeRouteTarget,
@@ -216,6 +221,9 @@ __all__ = [
     "RuntimeAuditEvent",
     "RuntimeAuditSink",
     "InMemoryRuntimeAuditSink",
+    "RuntimeRoleAdmissionDecision",
+    "RuntimeRoleAdmissionPolicy",
+    "LocalRuntimeRoleAdmissionPolicy",
 ]
 
 __version__ = "0.2.0"

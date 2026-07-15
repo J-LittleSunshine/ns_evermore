@@ -229,6 +229,14 @@ class NsRuntimeClusterFencingError(NsRuntimeClusterCoordinationError):
         "Runtime cluster fencing validation failed."
     )
 
+class NsRuntimeRoleAdmissionError(NsRuntimeError):
+    code = "RUNTIME_ROLE_ADMISSION_REJECTED"
+    numeric_code = 200124
+    default_message = (
+        "Runtime role admission rejected "
+        "the operation."
+    )
+
 RUNTIME_NACK_REASON_ERROR_CODES: tuple[tuple[str, str], ...] = (
     ("target_overloaded", NsRuntimeBackpressureError.code),
     ("temporarily_unavailable", NsRuntimeTargetUnavailableError.code),

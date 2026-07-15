@@ -14,10 +14,37 @@ from ns_runtime.models import (
     utc_now_iso
 )
 from ns_runtime.service import RuntimeService
-
+from datetime import (
+    datetime,
+    timedelta,
+    timezone,
+)
+from ns_runtime.cluster import (
+    LocalRuntimeClusterCoordinator,
+)
 if TYPE_CHECKING:
     pass
 
+class _MutableClock:
+    def __init__(self) -> None:
+        self.current = datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        )
+
+    def __call__(self) -> datetime:
+        return self.current
+
+    def advance(
+            self,
+            *,
+            seconds: float,
+    ) -> None:
+        self.current += timedelta(
+            seconds=seconds
+        )
 
 class RuntimeProcessorTestCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -535,13 +562,118 @@ class RuntimeProcessorTestCase(unittest.TestCase):
             [],
         )
 
-    def _build_frame(self, message_type: str, *, category: str, target: dict[str, Any] | None = None) -> str:
+    def test_transitioning_runtime_rejects_new_task_but_allows_heartbeat(
+            self,
+    ) -> None:
+        clock = _MutableClock()
+
+        coordinator = (
+            LocalRuntimeClusterCoordinator(
+                runtime_id="runtime-test",
+                initial_role="standby_master",
+                lease_ttl_seconds=1,
+                clock=clock,
+                fencing_token_factory=(
+                    lambda: "fencing-1"
+                ),
+            )
+        )
+
+        coordinator.acquire_leadership()
+        clock.advance(seconds=2)
+
+        self.assertEqual(
+            coordinator.build_snapshot().role,
+            "transitioning",
+        )
+
+        service = RuntimeService.build_default(
+            runtime_id="runtime-test",
+            cluster_coordinator=coordinator,
+        )
+
+        task_response = asyncio.run(
+            service.process_frame(
+                self._build_frame(
+                    "task.dispatch",
+                    category="task",
+                    target={
+                        "kind": "runtime",
+                        "runtime_id": (
+                            "runtime-test"
+                        ),
+                    },
+                ),
+                self.session,
+            )
+        )
+
+        self.assertEqual(
+            task_response.action,
+            "reject",
+        )
+        self.assertEqual(
+            task_response.envelope[
+                "payload"
+            ]["inline"]["error"]["code"],
+            (
+                "RUNTIME_ROLE_"
+                "ADMISSION_REJECTED"
+            ),
+        )
+
+        heartbeat_response = asyncio.run(
+            service.process_frame(
+                self._build_frame(
+                    "connection.heartbeat",
+                    category="control",
+                ),
+                self.session,
+            )
+        )
+
+        self.assertEqual(
+            heartbeat_response.action,
+            "respond",
+        )
+        self.assertEqual(
+            heartbeat_response.envelope[
+                "message"
+            ]["type"],
+            "connection.heartbeat_ack",
+        )
+
+        task_events = (
+            service.list_audit_events(
+                message_id="msg-1",
+            )
+        )
+
+        self.assertEqual(
+            len(task_events),
+            2,
+        )
+        self.assertEqual(
+            task_events[0].processor_name,
+            "RuntimeRoleAdmissionProcessor",
+        )
+
+    def _build_frame(
+            self,
+            message_type: str,
+            *,
+            category: str,
+            target: (
+                    dict[str, Any] | None
+            ) = None,
+            message_id: str = "msg-1",
+    ) -> str:
         raw: dict[str, Any] = {
             "protocol": {
                 "version": "1.0.0",
             },
             "message": {
-                "message_id": "msg-1",
+                "message_id": message_id,
                 "type": message_type,
                 "category": category,
                 "priority": 100,
@@ -553,7 +685,10 @@ class RuntimeProcessorTestCase(unittest.TestCase):
         if target is not None:
             raw["target"] = target
 
-        return json.dumps(raw, ensure_ascii=False)
+        return json.dumps(
+            raw,
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _build_nack_frame(*, delivery_id: str, reason: str) -> str:

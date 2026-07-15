@@ -12,17 +12,31 @@ from typing import (
 
 from ns_common.exceptions import (
     NsEvermoreError,
-    NsRuntimeEnvelopeSchemaError
+    NsRuntimeEnvelopeSchemaError,
+    NsRuntimeRoleAdmissionError
 )
 from ns_runtime.auth import (
     RuntimeAuthenticator
 )
+from ns_runtime.role_admission import (
+    RuntimeRoleAdmissionDecision,
+    RuntimeRoleAdmissionPolicy,
+)
+from ns_runtime.cluster import (
+    RuntimeClusterSnapshot,
+)
+
 from ns_runtime.models import (
     RuntimeComponentType,
     RuntimeRole,
     RuntimeSessionContext,
     utc_now_iso,
 )
+
+from ns_runtime.role_admission import (
+    RuntimeRoleAdmissionPolicy,
+)
+
 from ns_runtime.protocol import EnvelopeCodec
 from ns_runtime.session import (
     RuntimeConnectionRecord,
@@ -73,6 +87,19 @@ class RuntimeHandshakeService:
             runtime_role_provider: (
                     Callable[[], RuntimeRole] | None
             ) = None,
+            role_admission_policy: (
+                    RuntimeRoleAdmissionPolicy | None
+            ) = None,
+            cluster_snapshot_provider: (
+                    Callable[
+                        [],
+                        RuntimeClusterSnapshot,
+                    ]
+                    | None
+            ) = None,
+            active_sub_node_count_provider: (
+                    Callable[[], int] | None
+            ) = None,
     ) -> None:
         self._runtime_id = runtime_id
         self._codec = codec
@@ -80,6 +107,40 @@ class RuntimeHandshakeService:
         self._session_registry = session_registry
         self._runtime_role_provider = (
             runtime_role_provider
+        )
+        role_admission_dependencies = (
+            role_admission_policy,
+            cluster_snapshot_provider,
+            active_sub_node_count_provider,
+        )
+
+        if (
+                any(
+                    dependency is not None
+                    for dependency
+                    in role_admission_dependencies
+                )
+                and not all(
+            dependency is not None
+            for dependency
+            in role_admission_dependencies
+        )
+        ):
+            raise ValueError(
+                "Role admission policy, cluster "
+                "snapshot provider and active "
+                "sub-node count provider must be "
+                "configured together."
+            )
+
+        self._role_admission_policy = (
+            role_admission_policy
+        )
+        self._cluster_snapshot_provider = (
+            cluster_snapshot_provider
+        )
+        self._active_sub_node_count_provider = (
+            active_sub_node_count_provider
         )
 
     async def accept(self, *, frame_text: str, record: RuntimeConnectionRecord, remote_address: str) -> RuntimeHandshakeOutcome:
@@ -92,7 +153,11 @@ class RuntimeHandshakeService:
             )
 
             if not auth_result.accepted:
-                self._session_registry.reject(record, state="auth_failed", reason=auth_result.reject_reason)
+                self._session_registry.reject(
+                    record,
+                    state="auth_failed",
+                    reason=auth_result.reject_reason,
+                )
                 return RuntimeHandshakeOutcome(
                     accepted=False,
                     envelope=self.build_rejected_envelope(
@@ -101,10 +166,54 @@ class RuntimeHandshakeService:
                         reason=auth_result.reject_reason,
                     ),
                     close_code=1008,
-                    close_reason=auth_result.reject_reason,
+                    close_reason=(
+                        auth_result.reject_reason
+                    ),
                 )
 
-            session = self._session_registry.activate(record, auth_result)
+            admission_decision = (
+                self._evaluate_connection_admission(
+                    component_type=(
+                        auth_result.component_type
+                    ),
+                )
+            )
+
+            if not admission_decision.accepted:
+                self._session_registry.reject(
+                    record,
+                    state="rejected",
+                    reason=(
+                        admission_decision.reason
+                    ),
+                )
+
+                return RuntimeHandshakeOutcome(
+                    accepted=False,
+                    envelope=self.build_rejected_envelope(
+                        record,
+                        code=(
+                            admission_decision
+                            .reason_code
+                        ),
+                        reason=(
+                            admission_decision
+                            .reason
+                        ),
+                    ),
+                    close_code=1008,
+                    close_reason=(
+                        NsRuntimeRoleAdmissionError
+                        .default_message
+                    ),
+                )
+
+            session = (
+                self._session_registry.activate(
+                    record,
+                    auth_result,
+                )
+            )
             return RuntimeHandshakeOutcome(
                 accepted=True,
                 envelope=self.build_accepted_envelope(record, session),
@@ -121,6 +230,44 @@ class RuntimeHandshakeService:
                 close_code=1002,
                 close_reason=reason,
             )
+
+    def _evaluate_connection_admission(
+            self,
+            *,
+            component_type: RuntimeComponentType,
+    ) -> RuntimeRoleAdmissionDecision:
+        if self._role_admission_policy is None:
+            return (
+                RuntimeRoleAdmissionDecision
+                .accept()
+            )
+
+        if (
+                self._cluster_snapshot_provider
+                is None
+                or self
+                ._active_sub_node_count_provider
+                is None
+        ):
+            raise RuntimeError(
+                "Runtime role admission providers "
+                "are not configured."
+            )
+
+        return (
+            self._role_admission_policy
+            .evaluate_connection(
+                snapshot=(
+                    self
+                    ._cluster_snapshot_provider()
+                ),
+                component_type=component_type,
+                active_sub_node_count=(
+                    self
+                    ._active_sub_node_count_provider()
+                ),
+            )
+        )
 
     def parse_connection_hello(self, frame_text: str) -> ConnectionHello:
         raw = self._codec.parse_connection_hello(frame_text)

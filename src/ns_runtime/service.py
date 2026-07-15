@@ -26,6 +26,7 @@ from ns_runtime.auth import (
 from ns_runtime.cluster import (
     LocalRuntimeClusterCoordinator,
     RuntimeClusterCoordinator,
+    RuntimeClusterSnapshot,
 )
 from ns_runtime.cluster_store import (
     RuntimeLeaderLeaseStore,
@@ -61,6 +62,10 @@ from ns_runtime.processors import (
     build_default_processor_registry,
 )
 from ns_runtime.protocol import EnvelopeCodec
+from ns_runtime.role_admission import (
+    LocalRuntimeRoleAdmissionPolicy,
+    RuntimeRoleAdmissionPolicy,
+)
 from ns_runtime.routing import RuntimeTargetResolver
 from ns_runtime.session import (
     RuntimeConnectionRecord,
@@ -89,6 +94,9 @@ class RuntimeService:
             admission_controller: RuntimeAdmissionController,
             cluster_coordinator: RuntimeClusterCoordinator,
             local_forwarder: RuntimeLocalEnvelopeForwarder,
+            role_admission_policy: (
+                    RuntimeRoleAdmissionPolicy
+            ),
             handshake_service: RuntimeHandshakeService,
             target_resolver: RuntimeTargetResolver,
             config_version: str = "local:1",
@@ -104,6 +112,9 @@ class RuntimeService:
         self._admission_controller = admission_controller
         self._cluster_coordinator = cluster_coordinator
         self._local_forwarder = local_forwarder
+        self._role_admission_policy = (
+            role_admission_policy
+        )
         self._handshake_service = handshake_service
         self._target_resolver = target_resolver
         self._config_version = config_version
@@ -135,6 +146,9 @@ class RuntimeService:
             audit_sink: (
                     RuntimeAuditSink | None
             ) = None,
+            role_admission_policy: (
+                    RuntimeRoleAdmissionPolicy | None
+            ) = None,
     ) -> "RuntimeService":
         codec = EnvelopeCodec(
             runtime_id=runtime_id
@@ -147,8 +161,13 @@ class RuntimeService:
         )
         delivery_registry = RuntimeDeliveryRegistry()
         resolved_audit_sink = (
-            audit_sink
-            or InMemoryRuntimeAuditSink()
+                audit_sink
+                or InMemoryRuntimeAuditSink()
+        )
+
+        resolved_role_admission_policy = (
+                role_admission_policy
+                or LocalRuntimeRoleAdmissionPolicy()
         )
 
         if (
@@ -221,11 +240,25 @@ class RuntimeService:
                 or UnavailablePayloadReferenceValidator()
         )
 
+        def build_cluster_snapshot(
+        ) -> RuntimeClusterSnapshot:
+            return (
+                resolved_cluster_coordinator
+                .build_snapshot()
+            )
+
+        def get_active_sub_node_count() -> int:
+            return len(
+                session_registry
+                .list_by_component_type(
+                    "sub_node"
+                )
+            )
+
         def build_health_snapshot() -> dict[str, object]:
             return {
                 "cluster": (
-                    resolved_cluster_coordinator
-                    .build_snapshot()
+                    build_cluster_snapshot()
                     .to_dict()
                 ),
                 "connections": (
@@ -251,6 +284,12 @@ class RuntimeService:
             registry,
             target_resolver=target_resolver,
             audit_sink=resolved_audit_sink,
+            role_admission_policy=(
+                resolved_role_admission_policy
+            ),
+            cluster_snapshot_provider=(
+                build_cluster_snapshot
+            ),
         )
 
         resolved_authenticator = (
@@ -266,6 +305,15 @@ class RuntimeService:
             session_registry=session_registry,
             runtime_role_provider=lambda: (
                 resolved_cluster_coordinator.role
+            ),
+            role_admission_policy=(
+                resolved_role_admission_policy
+            ),
+            cluster_snapshot_provider=(
+                build_cluster_snapshot
+            ),
+            active_sub_node_count_provider=(
+                get_active_sub_node_count
             ),
         )
 
@@ -285,6 +333,9 @@ class RuntimeService:
             ),
             cluster_coordinator=(
                 resolved_cluster_coordinator
+            ),
+            role_admission_policy=(
+                resolved_role_admission_policy
             ),
         )
 
@@ -311,6 +362,12 @@ class RuntimeService:
     @property
     def admission_controller(self) -> RuntimeAdmissionController:
         return self._admission_controller
+
+    @property
+    def role_admission_policy(
+            self,
+    ) -> RuntimeRoleAdmissionPolicy:
+        return self._role_admission_policy
 
     @property
     def cluster_coordinator(
