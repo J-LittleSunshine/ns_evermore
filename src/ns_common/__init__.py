@@ -13,6 +13,7 @@ from ns_common.cache import (
 from ns_common.config import (
     NS_CONFIG_FILE_PATH,
     NS_ENV,
+    RUNTIME_CLUSTER_ROLES,
     RUNTIME_CONFIG_APPLY_MODES,
     RUNTIME_CONFIG_GROUP_NAMES,
     NsBackendConfig,
@@ -102,25 +103,39 @@ from ns_common.paths import (
     SQL_DIR,
     TMP_DIR
 )
+from ns_common.time import (
+    Clock,
+    ControlledClock,
+    NsClock,
+    NsControlledClock,
+    NsSystemClock,
+    SystemClock,
+    UTC_EPOCH,
+)
 
 if TYPE_CHECKING:
     pass
 
 __all__ = [
     "__version__",
+    "Clock",
+    "ControlledClock",
     "DATA_DIR",
     "ETC_DIR",
     "LOG_DIR",
     "NS_CONFIG_FILE_PATH",
     "NS_ENV",
+    "RUNTIME_CLUSTER_ROLES",
     "RUNTIME_CONFIG_APPLY_MODES",
     "RUNTIME_CONFIG_GROUP_NAMES",
     "NsBackendConfig",
     "NsCacheConfig",
+    "NsClock",
     "NsConfig",
     "NsConfigGroupMetadata",
     "NsConfigResolver",
     "NsConfigSource",
+    "NsControlledClock",
     "NsLogConfig",
     "NsEventLoopFallbackWarning",
     "NsEventLoopImplementation",
@@ -164,7 +179,10 @@ __all__ = [
     "NsDependencyError",
     "NsEvermoreError",
     "NsStateError",
+    "NsSystemClock",
     "NsValidationError",
+    "SystemClock",
+    "UTC_EPOCH",
     "NsAsyncHttpClient",
     "NsHttpResponse",
     "get_async_http_client",

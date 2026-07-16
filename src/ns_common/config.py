@@ -615,9 +615,22 @@ class NsRuntimeTenantQuotaConfig:
     )
 
 
+RUNTIME_CLUSTER_ROLES: tuple[str, ...] = (
+    "active_master",
+    "singleton",
+    "standby_master",
+    "sub_node",
+)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NsRuntimeClusterConfig:
-    role: Literal["standalone", "master", "sub_node"] = "standalone"
+    role: Literal[
+        "active_master",
+        "singleton",
+        "standby_master",
+        "sub_node",
+    ] = "singleton"
     node_id: str = "local-runtime"
     active_master_url: str = ""
     heartbeat_interval_seconds: int = 5
@@ -625,6 +638,17 @@ class NsRuntimeClusterConfig:
     metadata: NsConfigGroupMetadata = field(
         default_factory=lambda: NsConfigGroupMetadata(apply_mode="restart_required")
     )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.role, str) or self.role not in RUNTIME_CLUSTER_ROLES:
+            raise NsConfigError(
+                "runtime.cluster.role is invalid.",
+                details={
+                    "field": "runtime.cluster.role",
+                    "value": self.role,
+                    "allowed_values": list(RUNTIME_CLUSTER_ROLES),
+                },
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

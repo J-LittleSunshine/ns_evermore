@@ -343,7 +343,7 @@
       }
     },
     "cluster": {
-      "role": "standalone",
+      "role": "singleton",
       "node_id": "local-runtime",
       "active_master_url": "",
       "heartbeat_interval_seconds": 5,

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ns_common.config import (
     FrozenDict,
+    RUNTIME_CLUSTER_ROLES,
     RUNTIME_CONFIG_APPLY_MODES,
     RUNTIME_CONFIG_GROUP_NAMES,
     NS_CONFIG_SOURCE_PRIORITY,
@@ -306,6 +307,7 @@ class NsRuntimeConfigGroupsTestCase(unittest.TestCase):
             effective_at=FIXED_EFFECTIVE_AT,
         )
         self.assertEqual(("websocket_tcp",), loaded.runtime.transport.enabled_adapters)
+        self.assertEqual("singleton", loaded.runtime.cluster.role)
 
     def test_runtime_has_all_typed_groups_and_fixed_apply_modes(self) -> None:
         runtime = NsConfig.from_dict({}).runtime
@@ -561,6 +563,162 @@ class NsRuntimeConfigGroupsTestCase(unittest.TestCase):
             with self.subTest(group=group_name):
                 self.assertIs(NsConfigSource.VALIDATED_SNAPSHOT, group.metadata.source)
                 self.assertEqual("2026-07-16T06:30:00Z", group.metadata.effective_at)
+
+
+class NsRuntimeClusterRoleConfigTestCase(unittest.TestCase):
+
+    ALLOWED_ROLES = [
+        "active_master",
+        "singleton",
+        "standby_master",
+        "sub_node",
+    ]
+
+    @staticmethod
+    def cluster_config(role: object) -> dict[str, object]:
+        cluster: dict[str, object] = {"role": role}
+        if role == "sub_node":
+            cluster["active_master_url"] = "https://master.example.test"
+        return {"runtime": {"cluster": cluster}}
+
+    def test_default_and_all_explicit_startup_roles_are_preserved(self) -> None:
+        self.assertEqual(tuple(self.ALLOWED_ROLES), RUNTIME_CLUSTER_ROLES)
+        self.assertEqual("singleton", NsConfig.from_dict({}).runtime.cluster.role)
+
+        for role in self.ALLOWED_ROLES:
+            with self.subTest(role=role):
+                config = NsConfig.from_dict(self.cluster_config(role))
+                self.assertEqual(role, config.runtime.cluster.role)
+                self.assertEqual(
+                    role,
+                    config.to_dict()["runtime"]["cluster"]["role"],
+                )
+                self.assertEqual(
+                    role,
+                    NsConfig.from_dict(config.to_dict()).runtime.cluster.role,
+                )
+
+    def test_role_survives_save_load_and_cluster_snapshot_is_immutable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for role in self.ALLOWED_ROLES:
+                with self.subTest(role=role):
+                    config = NsConfig.from_dict(self.cluster_config(role))
+                    config_path = Path(temp_dir) / f"{role}.json"
+                    config.save(config_path, environment="test")
+                    restored = NsConfig.load(config_path, environment="test")
+                    self.assertEqual(role, restored.runtime.cluster.role)
+
+        frozen = NsConfig.from_dict(
+            self.cluster_config("standby_master")
+        ).runtime.cluster
+        with self.assertRaises(FrozenInstanceError):
+            frozen.role = "active_master"  # type: ignore[misc]
+
+    def test_sub_node_keeps_active_master_url_validation(self) -> None:
+        valid = NsConfig.from_dict(self.cluster_config("sub_node"))
+        self.assertEqual("sub_node", valid.runtime.cluster.role)
+
+        with self.assertRaises(NsConfigError) as context:
+            NsConfig.from_dict({
+                "runtime": {
+                    "cluster": {
+                        "role": "sub_node",
+                    },
+                },
+            })
+
+        self.assertEqual(
+            "runtime.cluster.active_master_url",
+            context.exception.details["field"],
+        )
+
+    def test_backend_override_and_validated_snapshot_keep_role_priority(self) -> None:
+        backend_override = {
+            "runtime": {
+                "cluster": {
+                    "role": "standby_master",
+                    "metadata": build_metadata(
+                        source="backend_override",
+                        config_version="config-1",
+                        policy_version="policy-1",
+                        group_version="cluster-1",
+                        apply_mode="restart_required",
+                    ),
+                },
+                "metadata": build_metadata(
+                    source="backend_override",
+                    config_version="config-1",
+                    policy_version="policy-1",
+                    group_version="runtime-1",
+                    apply_mode="restart_required",
+                ),
+            },
+        }
+        effective = NsConfig.resolve(
+            self.cluster_config("singleton"),
+            environment="test",
+            effective_at=FIXED_EFFECTIVE_AT,
+            backend_override=backend_override,
+        )
+        self.assertEqual("standby_master", effective.runtime.cluster.role)
+        self.assertIs(
+            NsConfigSource.BACKEND_OVERRIDE,
+            effective.runtime.cluster.metadata.source,
+        )
+
+        snapshot = NsConfig.resolve(
+            self.cluster_config("active_master"),
+            environment="test",
+            effective_at=FIXED_EFFECTIVE_AT,
+        ).as_validated_snapshot(
+            effective_at="2026-07-16T06:30:00Z",
+            environment="test",
+        )
+        resolved = NsConfig.resolve(
+            self.cluster_config("singleton"),
+            environment="test",
+            effective_at=FIXED_EFFECTIVE_AT,
+            backend_override=backend_override,
+            validated_snapshot=snapshot,
+        )
+        self.assertIs(snapshot, resolved)
+        self.assertEqual("active_master", resolved.runtime.cluster.role)
+        self.assertIs(
+            NsConfigSource.VALIDATED_SNAPSHOT,
+            resolved.runtime.cluster.metadata.source,
+        )
+
+    def test_old_runtime_and_health_states_are_rejected_with_stable_details(self) -> None:
+        invalid_roles: list[object] = [
+            "standalone",
+            "master",
+            "transitioning",
+            "draining",
+            "degraded",
+            "isolated",
+            "unavailable",
+            "",
+            "unknown",
+            None,
+            1,
+            True,
+            ["singleton"],
+        ]
+
+        for role in invalid_roles:
+            with self.subTest(role=role):
+                with self.assertRaises(NsConfigError) as context:
+                    NsConfig.from_dict(self.cluster_config(role))
+
+                self.assertEqual(
+                    "runtime.cluster.role",
+                    context.exception.details["field"],
+                )
+                self.assertEqual(role, context.exception.details["value"])
+                self.assertEqual(
+                    self.ALLOWED_ROLES,
+                    context.exception.details["allowed_values"],
+                )
 
 
 class NsConfigResolutionTestCase(unittest.TestCase):
