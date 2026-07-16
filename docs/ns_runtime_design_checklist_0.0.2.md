@@ -1,5 +1,8 @@
 # ns_runtime 设计边界与功能清单
 
+> 文档版本：`0.0.2`
+> 本版本正式纳入 `uvloop` 事件循环策略，并为 WebSocket over HTTP/3、WebTransport 和原生 QUIC 的后续接入预留传输抽象、能力协商、路径迁移、安全策略、配置和可观测边界。
+
 > 本文档用于在后续会话、方案讨论和实现过程中保持 `ns_runtime` 的设计边界与功能定义不漂移。
 > 每条清单都应表达完整条件、默认行为、例外边界或策略化决策，而不是只写名词摘要。
 > 本文档不是实现方案，不展开代码结构、类设计、目录规划或具体编码细节。
@@ -30,11 +33,13 @@
 - 定义变量、函数入参、方法入参和构造器入参时必须写类型提示；只有极少数类型无法稳定表达、第三方动态对象边界或测试 mock 场景可以例外，并应尽量在最近边界处收敛为明确类型。
 - 注释应解释状态机、可靠性、一致性、安全边界和策略取舍，不应为显而易见的赋值或调用写噪音注释；复杂状态迁移、fencing、ACK/NACK/Defer 原子操作和恢复逻辑应保留简短解释。
 - 测试代码可以使用必要的函数式辅助和 fixture，但生产代码的主要执行路径仍应遵守类分组、显式依赖和无全局可变状态的约束。
+- `ns_runtime` 的异步生产代码必须基于标准 `asyncio` 接口编写；除进程启动边界和受控适配层外，processor、transport、session、router、delivery worker 和 store 不得直接依赖 `uvloop` 私有类型或专有 API。
+- 传输协议差异必须收敛在 transport adapter 和 transport capability 模型中；核心业务代码不得通过散落的 `if transport_type == ...` 分支分别实现 WebSocket、QUIC 或 WebTransport 语义。
 
 ## 2. 核心定位与职责边界
 
 - `ns_runtime` 的最终定位是 `ns_evermore` 中超高性能、高可用的实时通信和调度组件，因此设计时必须同时关注低延迟、高吞吐、可靠投递、集群容错和可审计运行控制。
-- `ns_runtime` 不是单纯 WebSocket 网关；当消息进入 runtime 后，它既要负责实时通信与消息路由，也要负责短生命周期任务投递、投递状态维护、ACK/NACK/Defer 处理、重试、死信、恢复和运行时控制。
+- `ns_runtime` 不是单纯 WebSocket 网关，也不是绑定某一种底层传输的网关；当消息经受支持的 transport adapter 进入 runtime 后，它既要负责实时通信与消息路由，也要负责短生命周期任务投递、投递状态维护、ACK/NACK/Defer 处理、重试、死信、恢复和运行时控制。
 - `ns_runtime` 管理的任务语义更接近短生命周期 RPC 投递；runtime 负责把任务 envelope 安全投递给目标连接并等待“已收到 ACK”，但不把业务执行完成作为 delivery 成功条件。
 - ACK 的唯一核心语义是“目标连接已经收到 envelope”；目标收到但尚未开始执行任务时也可以 ACK，因此后续任何状态机、审计、重试和统计都不能把 ACK 解释为任务完成。
 - 业务任务状态、任务完成状态、业务失败原因和最终业务结果以 `ns_backend` 为准；`ns_runtime` 只维护连接状态、路由状态、投递状态、ACK/NACK/Defer 状态和运行控制状态。
@@ -44,19 +49,24 @@
 - task 类型消息的创建权不能默认开放给所有连接；只有 `ns_backend`、具备管理/调度 capability 的连接，以及经过 IAM 明确授权的 `ns_frontend`、`ns_node`、`ns_client` 才能创建并请求 runtime 调度任务。
 - 所有连接方应抽象成统一的 `client identity + tenant + capabilities + component_type + connection_id` 模型；但路由规则中仍必须保留 `frontend`、`client`、`node`、`backend`、`runtime/sub_node` 等明确组件类型差异。
 - 多租户隔离不是只在鉴权时校验 tenant 边界；连接池、调度策略、限流、背压、恢复扫描、指标统计和观测推送都必须具备 tenant 维度。
+- runtime 的逻辑连接、会话、Envelope、processor、路由和可靠投递语义必须独立于底层 transport；未来增加 WebSocket over HTTP/3、WebTransport 或原生 QUIC 时，不得重新定义 ACK、DeliveryRecord、tenant、IAM、source/auth_context 或 processor 边界。
 
-## 3. 接入方式与进程边界
+## 3. 接入、传输与进程边界
 
-- `ns_runtime` 对其他组件的入站接入只接受 WebSocket 长连接；`ns_frontend`、`ns_client`、`ns_node`、`ns_backend` 管理端以及 runtime 节点之间的连接都必须通过 WebSocket 进入 runtime。
-- `ns_runtime` 可以主动调用 `ns_backend` 的 HTTP/RPC API 做 IAM 鉴权、权限刷新、节点凭证获取和 payload object reference 校验；该主动调用能力不改变“runtime 入站只接受 WebSocket”的边界。
-- 健康检查、运行状态查询、配置热更新、节点隔离、消息重投、消息清理、master 切换和限流调整都应通过 WebSocket 管理 envelope 进入 runtime，而不是另开默认 HTTP 管理端口。
-- 如果容器、systemd 或运维系统需要进程级 healthcheck，应通过本地命令建立 WebSocket 连接并发送 health envelope，而不是依赖 `/health` HTTP 探针。
-- `ns_runtime` 是 `src/ns_runtime` 下的独立组件边界；后续实现可以复用 `ns_common`，但不应把 runtime 的核心进程入口、协议层或可靠投递状态散落到其他组件目录中。
+- `ns_runtime` 当前正式启用的外部入站 transport 是 WebSocket 长连接，默认生产形态为 WebSocket over TLS/TCP；`ns_frontend`、`ns_client`、`ns_node`、`ns_backend` 管理端以及 runtime 节点均通过已启用的 runtime transport 建立长连接或长期 transport session。
+- 设计必须预留 `websocket_http3`、`webtransport_http3` 和 `quic_native` transport adapter；这些 adapter 在未完成协议适配、安全评审、客户端兼容、故障注入和性能验收前默认禁用，不能因存在抽象或配置项就宣称已经支持。
+- 所有 transport adapter 必须把入站应用数据归一化为明确消息边界，并交给同一连接与会话层、Envelope 协议层和 processor 流水线；禁止 transport adapter 提供 processor 私有数据通道、私有 ACK 通道或绕过 IAM/tenant 校验的快速路径。
+- transport adapter 必须通过统一 capability 模型声明能力，至少能表达 `reliable_ordered_messages`、`reliable_bidirectional_streams`、`reliable_unidirectional_streams`、`unreliable_datagrams`、`stream_multiplexing`、`connection_path_migration`、`transport_flow_control`、`per_stream_flow_control`、`native_keepalive`、`zero_rtt` 和 `transport_resume`。
+- 上层模块只能基于已协商且由 runtime 验证的 transport capabilities 做策略判断，不得把客户端自报能力直接视为可信，也不得在 processor、router 或 reliable delivery 中绑定具体 QUIC/WebTransport 库。
+- `ns_runtime` 可以主动调用 `ns_backend` 的 HTTP/RPC API 做 IAM 鉴权、权限刷新、节点凭证获取和 payload object reference 校验；该主动调用能力不构成普通客户端入站 transport，也不能作为旁路消息或管理控制通道。
+- 健康检查、运行状态查询、配置热更新、节点隔离、消息重投、消息清理、master 切换和限流调整都应通过已启用的 runtime transport 发送管理 envelope 进入 runtime，而不是另开默认 HTTP 管理端口。
+- 如果容器、systemd 或运维系统需要进程级 healthcheck，应通过本地命令使用当前启用的本地 transport adapter 建立连接并发送 health envelope，而不是依赖 `/health` HTTP 探针。
+- `ns_runtime` 是 `src/ns_runtime` 下的独立组件边界；后续实现可以复用 `ns_common`，但不应把 runtime 的核心进程入口、transport adapter、协议层或可靠投递状态散落到其他组件目录中。
 - `ns_runtime` 必须作为独立进程运行，入口文件必须是 `main.py`；后续实现中模块名、类名、函数名都应避免 `cli` 和 `app` 语义，启动相关命名优先使用 `service`。
 - 设计和实现时应优先复用 `ns_common` 已有基础设施；如果 runtime 需要通用能力而公共层不存在，可以扩展 `ns_common`，但不应把 runtime 私有协议硬塞进公共层。
 - 消息处理语义必须使用 `processor` 而不是 `handler`；后续讨论中“处理某类消息”和“流水线阶段处理”都可以称为 processor，但需要通过上下文区分。
 - `ns_runtime` 不强制定义统一客户端 SDK，也不要求 `ns_frontend`、`ns_client`、`ns_node`、`ns_backend` 必须通过同一个 SDK 接入。
-- 设计文档只约束连接方必须遵守的协议行为，包括 WebSocket 握手、`connection.hello`、协议版本协商、heartbeat、ACK/NACK/Defer 语义、message_id/delivery_id 幂等、connection_epoch 校验、错误 envelope 处理、source/auth_context 禁止伪造和安全日志脱敏。
+- 设计文档只约束连接方必须遵守的应用协议行为，包括 transport/session 建立、`connection.hello`、协议与 capability 协商、heartbeat、ACK/NACK/Defer 语义、message_id/delivery_id 幂等、connection_epoch 校验、错误 envelope 处理、source/auth_context 禁止伪造和安全日志脱敏；具体 transport 握手细节由对应 adapter 负责。
 
 ## 4. 运行模式、角色与切换
 
@@ -67,7 +77,7 @@
 - 当 runtime 处于 `sub_node` 模式时，它必须主动接入 active master，并能接收来自 master 的消息在本地处理；同时 sub_node 可以接受任意类型普通客户端连接。
 - 当 runtime 处于 `singleton` 模式时，它可以接受任意类型客户端连接，并在本地完成连接管理、路由、投递和处理，不依赖 master/sub_node 拓扑。
 - 当 active master 和 standby master 并存时，二者允许使用不同接入策略；standby master 默认只接受 runtime 节点和管理端连接，用于健康、切换和控制，不接受普通客户端连接。
-- 当某个 master 已有普通客户端连接而后续出现 sub_node 或角色策略变化时，现有连接是平滑收尾后通知重连、保留到自然断开，还是由策略强制关闭，必须作为配置策略处理；当前 `ns_runtime` 设计边界不包含透明 WebSocket 连接迁移，如未来需要引入该能力，必须重新确认协议、会话和连接所有权边界。
+- 当某个 master 已有普通客户端连接而后续出现 sub_node 或角色策略变化时，现有连接是平滑收尾后通知重连、保留到自然断开，还是由策略强制关闭，必须作为配置策略处理；当前 `ns_runtime` 设计边界不包含跨 runtime 节点的透明逻辑连接迁移。QUIC/WebTransport 在同一 runtime、同一逻辑 session 内发生的网络 path migration 不属于跨节点连接迁移，不改变 connection owner。
 - Runtime Service 层必须维护角色状态机，至少表达 `singleton`、`sub_node`、`standby_master`、`active_master`、`transitioning`、`draining` 等角色/过渡状态。
 - `degraded`、`isolated`、`unavailable` 这类状态应作为角色之外的健康/能力附加状态，因此一个节点可以表达为 `active_master + degraded`、`sub_node + isolated` 或 `singleton + degraded`。
 - 当 runtime 进入 `transitioning` 或 `draining` 时，普通业务消息和新任务调度默认返回标准错误 envelope；ACK、NACK、Defer、管理控制、健康检查和集群事件仍允许继续处理。
@@ -79,7 +89,9 @@
 
 - `ns_runtime` 的逻辑分层按职责依赖关系组织，而不是简单按数据流顺序排布；后续方案应保持基础支撑层、运行核心层、消息处理核心层和集群协作层的边界。
 - 基础支撑层必须包含配置管理层、状态存储层、事件与观测层、策略引擎层、安全与 IAM 层；这些层为其他模块提供能力，不应被业务 processor 绕过。
-- 运行核心层必须包含 Runtime Service 层、连接与会话层、Envelope 协议层；这三层分别负责进程/角色、WebSocket/session、协议外壳。
+- 运行核心层必须包含 Runtime Service 层、传输层、连接与会话层、Envelope 协议层；这四层分别负责进程/角色、transport adapter 与传输能力、逻辑连接/session、协议外壳。
+- 传输层负责底层连接或 transport session 的建立与关闭、应用消息边界、收发、传输层流控、stream/datagram/path 状态、transport keepalive、TLS/ALPN 和 transport capability 暴露；它不得负责 IAM 业务权限、tenant 路由、Envelope schema、task 调度、DeliveryRecord、runtime ACK/NACK/Defer、业务 retry 或 dead letter。
+- 连接与会话层只面向统一 transport adapter 接口，不得直接依赖 WebSocket、QUIC 或 WebTransport 的具体库对象；上层 processor、路由和可靠投递只能操作 runtime logical connection/session 和标准化 send/receive 结果。
 - 消息处理核心层必须包含 Processor 流水线层、路由与调度层、可靠投递层；其中 processor 执行行为，路由决定目标，可靠投递维护 delivery 生命周期。
 - 集群协作层必须包含集群协调层；集群协调层依赖状态存储、连接、Envelope、processor 和事件，但不能替代这些层的职责。
 - 配置管理层和策略引擎层必须拆开；配置管理层只负责配置来源、版本、热更新、回滚和生效方式，策略引擎层负责基于配置和运行时上下文做决策。
@@ -91,14 +103,14 @@
 
 ## 6. 统一 Envelope 协议模型
 
-- 所有业务消息、任务消息、ACK、NACK、Defer、流式分片、管理控制、健康检查和集群事件都必须使用统一 JSON envelope；WebSocket 编码固定为 JSON 文本帧，不支持二进制协议作为 runtime 协议编码。
-- 除 WebSocket 原生 ping/pong/close 控制帧外，所有已认证连接上的入站数据帧要么被成功解析为合法 envelope 并进入后续层，要么返回标准错误 envelope 或按严重错误策略关闭连接；不能允许“裸 JSON 命令”“半协议控制消息”或 processor 私有帧绕过 Envelope 层。
+- 所有业务消息、任务消息、ACK、NACK、Defer、流式分片、管理控制、健康检查和集群事件都必须使用统一 JSON envelope；当前唯一启用的 wire codec 为 UTF-8 `json.v1`。WebSocket adapter 必须使用 JSON 文本帧；未来 QUIC/WebTransport adapter 默认必须在可靠、有序且具有明确消息边界的 stream/message 上承载完整 `json.v1` 文档，只有策略明确允许的 best-effort 类型可按本文档约束使用 datagram。
+- 除 transport 原生控制事件外，例如 WebSocket ping/pong/close、QUIC packet ACK、path validation、stream flow-control 或连接关闭事件，所有已认证 runtime session 上的入站应用数据都必须被解析为合法 envelope 并进入后续层，或返回标准错误 envelope/按严重错误策略关闭；不能允许“裸 JSON 命令”“半协议控制消息”、processor 私有帧、私有 QUIC stream 或私有 datagram 绕过 Envelope 层。
 - Envelope 采用分组结构，顶层允许的核心分组包括 `protocol`、`message`、`source`、`target`、`route`、`delivery`、`stream`、`auth_context`、`payload`、`callback`、`trace`、`extensions`；不适用的分组直接省略。
 - `tenant_id` 是 runtime 归一化 envelope 的一等安全上下文，必须来自连接 IAM 结果或 runtime 节点凭证上下文；发送方不能通过 envelope 自行声明或覆盖当前 tenant，跨 tenant target 只能作为请求意图并由 IAM/策略显式授权。
 - envelope 中用于路由和鉴权的 capabilities 必须以 IAM 返回的连接 capabilities、runtime 注入的 source/auth_context 摘要和 target 请求条件为准；发送方在普通消息中声明 capabilities 只能作为目标筛选条件或请求意图，不能提升自己的权限。
 - 不适用的 envelope 分组必须省略，不应使用 `null` 或空对象表达“无语义”；只有某个字段协议明确允许为空时，才能使用空值。
 - Envelope 顶层未知字段必须拒绝，核心分组内部未知字段也必须拒绝；扩展字段只能放在 `extensions` 中，并由对应插件 namespace 的 schema 校验。
-- `protocol` 分组只表达版本和兼容性信息；因为协议编码固定为 JSON 文本帧，所以 `protocol` 中不需要 encoding 字段，也不把 capabilities 放在 protocol 中。
+- `protocol` 分组只表达应用协议版本和兼容性信息；transport 类型、ALPN、网络路径、拥塞状态和 transport capabilities 不放在每条 envelope 的 `protocol` 中，而是在连接建立和 `connection.hello` 阶段协商并写入 session context。当前 wire codec 固定为 `json.v1`，因此 envelope 内不需要逐消息 encoding 字段。
 - 协议版本协商必须支持严格拒绝和兼容降级两类策略；当无法满足客户端 version/min_version 与 runtime 支持范围时，必须在 handshake 阶段拒绝并关闭连接。
 - `message` 分组必须承载 `message_id`、`type`、`category`、`priority`、`created_at`、`expires_at`、`reliability` 等核心元数据；其中 `priority`、`expires_at`、`reliability` 可以由发送方建议，但最终由 runtime 策略裁决。
 - `message.type` 使用点分命名风格，例如 `task.dispatch`、`delivery.ack`、`delivery.nack`、`delivery.defer`、`stream.start`、`stream.chunk`、`stream.end`、`runtime.control.kick_connection`、`cluster.event.node_joined`。
@@ -113,7 +125,7 @@
 - 当 target 指向多个连接可能性时，消息必须显式指定多连接策略，或由系统默认策略裁决；后续实现不能在 identity 多连接场景下隐式广播或隐式任选而不留策略痕迹。
 - `delivery` 分组只在可靠投递相关消息中出现，包含 `delivery_id`、`summary_id`、`root_delivery_id`、`parent_delivery_id`、`attempt`、`ack_timeout_ms`、`replay_epoch` 等投递维度字段；`message_id` 只从 `message.message_id` 读取，不在 delivery 中重复。
 - `payload` 必须支持 inline 小 payload 和 `payload_ref` 对象存储引用两种模式；inline 大小上限完全由 runtime 策略决定，payload_ref 必须实时调用 `ns_backend` 校验。
-- 当 inline payload 超过 runtime 策略允许大小、JSON 深度或帧大小限制时，应返回错误 envelope 或按严重错误策略断开连接，并且不能为了兼容发送方自动转为 payload_ref。
+- 当 inline payload 超过 runtime 策略允许大小、JSON 深度、应用消息大小或当前 transport adapter 的受控承载限制时，应返回错误 envelope 或按严重错误策略断开连接，并且不能为了兼容发送方自动转为 payload_ref。
 - 当 payload 使用对象引用时，runtime 只负责路由带对象引用的 envelope，不负责对象上传、对象下载或签名 URL 生成；对象存储层由后续 `ns_backend` 能力提供。
 - DeliveryRecord、DeliveryAttempt、MessageDeliverySummary、审计记录和状态变更日志默认只保存 envelope 元数据、payload_ref、payload 摘要、大小、类型、checksum/version 等可追踪信息；除非后续重新确认，不应把完整业务 payload 写入 runtime 强一致状态或审计明文。
 - `callback` 分组只描述业务结果或状态回传方式，不参与 delivery ACK 语义；如果 callback 经 runtime 发送，它必须成为新的 envelope 并拥有新的 message/delivery 生命周期。
@@ -132,6 +144,9 @@
 - 所有内置类型必须提供 schema、权限声明、processor 入口、审计入口和标准错误响应，并遵守各自已定义的功能语义。
 - 连接、集群、路由、任务投递、ACK/NACK/Defer 必须端到端可用。
 - stream、replay、cancel、hold、dead letter、状态查询、配置热更新等类型必须具备本文档已经明确规定的语义、processor 入口和标准响应；未在本文档中明确规定的扩展语义不属于默认功能边界。可靠 stream 按本清单中明确规定的完整可靠性要求执行。
+- QUIC packet ACK、stream-level delivery confirmation、拥塞控制反馈或 WebTransport session 状态都不能直接映射为 `delivery.ack`；runtime ACK 仍必须由目标逻辑连接发送合法 Envelope，并经过 processor 与强一致状态更新。
+- WebTransport/QUIC datagram 默认不得承载 task、ACK/NACK/Defer、管理控制、集群协调、配置热更新、replay/cancel/hold、可靠 stream 控制、IAM/reauth 或任何要求 DeliveryRecord 的消息；只有被策略明确标记为 best-effort、loss-tolerant、unordered、非控制且非安全敏感的 message.type 才可在未来启用 datagram，并且仍必须使用统一 Envelope。
+- wire codec 必须保留受控扩展接口，但 `0.0.2` 设计边界只允许 `json.v1`；任何二进制 codec、混合编码或按消息类型切换编码都必须重新确认协议版本、兼容矩阵、安全校验和审计边界。
 - 协议兼容采用“主版本严格、次版本兼容”策略。
 - `protocol.major` 不一致时，runtime 必须在握手阶段拒绝连接，并返回标准 `connection.rejected` 或 `runtime.error` envelope。
 - `protocol.minor` / `patch` 可以通过 `min_version`、`supported_versions`、兼容矩阵和能力协商进行降级或兼容处理。
@@ -139,9 +154,9 @@
 - processor 不得各自临时判断协议版本差异；协议版本兼容、字段兼容、schema 选择和降级能力必须集中在 Envelope 协议层和协议兼容策略中处理。
 - 协议兼容不能放宽核心安全字段约束。即使次版本兼容，也不得允许发送方携带 source、auth_context、伪造 tenant、未知顶层字段或未授权 extension namespace。
 
-## 7. 连接与会话模型
+## 7. 传输、连接与会话模型
 
-- WebSocket upgrade 成功后，连接必须先进入握手阶段；正式接收任何业务、任务、ACK、NACK、Defer、管理控制、集群事件或 stream envelope 前，第一条有效消息必须是 `connection.hello`。
+- transport session 建立成功后，runtime logical connection 必须先进入握手阶段；正式接收任何业务、任务、ACK、NACK、Defer、管理控制、集群事件或 stream envelope 前，第一条有效应用消息必须是 `connection.hello`。
 - 连接生命周期至少应能表达 `accepted -> handshaking -> authenticated -> active -> draining -> closing -> closed`，并能记录 `rejected`、`auth_failed`、`protocol_failed`、`timeout_closed`、`kicked`、`isolated_closed` 等失败或关闭原因。
 - 握手阶段必须有超时保护；如果连接在握手超时前没有发送合法 `connection.hello` 或无法完成 IAM/协议协商，runtime 应返回可行的错误 envelope 后关闭，或在无法发送错误时直接关闭并审计。
 - `connection.hello` 直接携带 token、声明 component_type、请求的协议版本和请求启用的 capabilities；token 只允许出现在握手入站 payload 中，不能写入普通审计明文，也不能放入后续 auth_context。
@@ -151,28 +166,34 @@
 - session 必须支持续期；续期可以由 runtime 使用握手 token 或缓存凭证主动刷新，也可以要求客户端发送 `connection.reauth`，还可以配置为到期关闭连接。
 - session 续期或权限快照刷新失败时，runtime 不能默认继续无限信任旧权限；应按策略进入降级、限权、要求 reauth 或关闭连接，并记录安全审计摘要。
 - 如果使用客户端重新认证，消息类型为 `connection.reauth`，成功响应为 `connection.reauth_accepted`，失败响应为 `connection.reauth_rejected`；重新认证仍禁止客户端携带 source/auth_context。
-- 心跳必须支持双层机制：WebSocket 原生 ping/pong 用于底层连接存活检测；envelope heartbeat 用于 session、协议和 runtime 健康检查。
+- 心跳必须支持双层机制：transport adapter 使用其原生存活与路径检测能力，例如 WebSocket ping/pong 或 QUIC idle timeout/path validation；envelope heartbeat 用于 logical session、应用协议和 runtime 健康检查。
 - envelope heartbeat 必须走 Envelope 协议层、安全硬校验和轻量 processor，但默认不进入可靠投递，不创建 DeliveryRecord，也不要求 delivery ACK。
-- 连接层必须维护本地实时索引，包括 `connection_id -> session`、`identity -> connections`、`tenant -> connections`，并可扩展 component_type、capability、session_id 等索引。
+- QUIC/WebTransport 的 0-RTT 默认关闭；即使 transport 库完成 0-RTT 握手恢复，也不得在握手确认、`connection.hello`、IAM 和协议/capability 协商完成前提交任何具有 runtime 应用语义的 Envelope。未来如需开放，只能对经过单独重放风险评估且具备明确幂等保护的只读类型按 allowlist 启用。
+- transport 原生 ACK、stream write completion 或 packet delivery 回调只能作为 transport health/diagnostic 信号，不能创建 AckRecord、取消 runtime retry 或把 DeliveryRecord 更新为 `acked`。
+- 连接层必须维护本地实时索引，包括 `connection_id -> session`、`identity -> connections`、`tenant -> connections`，并可扩展 component_type、capability、session_id 和 transport capability 等索引。
+- 内部模型必须明确区分 runtime logical connection、transport session 和 network path：logical connection 至少包含 `connection_id/connection_epoch/session_id`；transport session 至少包含 `transport_type/transport_connection_id/transport_session_id/transport_stream_id`；network path 至少包含 `path_id/path_epoch/local_address/peer_address/validated_at/migration_count`。这些字段属于内部 session context、观测或审计摘要，不进入普通业务 Envelope。
+- `connection_id` 表示 runtime 逻辑连接，不等同于 QUIC connection ID、HTTP/3 stream ID 或 WebTransport session ID；一个 runtime 逻辑连接在任一时刻只能绑定一个当前有效的已认证 transport session，但一个底层 transport connection 是否可复用多个 stream/session 由 adapter 明确管理并保留可追踪映射。
 - 普通连接索引以内存实时状态为主，会话快照异步持久化和推送；集群拓扑、leader、隔离、暂停等控制状态必须强一致。
 - 连接断开后允许短暂 reconnect grace period；在 grace period 内，客户端可以重新握手并复用原 `connection_id`，但每次重连必须增加 `connection_epoch` 来防止旧连接残留。
 - 快速重连复用原 `connection_id` 必须满足 grace period 未过期、identity/tenant/component_type 与原 session 匹配、token 或 resume 凭证通过 IAM 校验、旧物理连接已关闭或被 fencing 排除等条件。
-- 当前有效物理连接必须由 `connection_id + connection_epoch` 标识；旧 epoch 收到消息、ACK、NACK 或 Defer 时必须拒绝或审计，不能更新当前 delivery 或 session 状态。
+- 当前有效 runtime logical connection 必须由 `connection_id + connection_epoch` 标识；旧 epoch 收到消息、ACK、NACK 或 Defer 时必须拒绝或审计，不能更新当前 delivery 或 session 状态。
+- 在同一 runtime、同一 transport session 和同一 logical session 内发生的 QUIC/WebTransport network path migration，只更新 `path_id/path_epoch` 和 transport 健康信息，不递增 `connection_epoch`，也不触发 DeliveryRecord owner transfer；只有 transport session 失效并通过 runtime resume/reconnect 建立新的逻辑连接实例时才递增 `connection_epoch`。
+- network path migration 不得绕过 IAM、tenant、session TTL、component_type、capability 或安全策略；新路径必须由 transport adapter 完成验证，验证失败时按 transport failure 和 reconnect 策略处理。
 - grace period 内该 connection_id 不视为 active target；发往该连接的新 delivery 应返回目标暂时不可用或进入 `retry_scheduled`，重连成功后再通过事件唤醒相关 retry。
 - 如果 grace period 到期仍未重连，session 应彻底关闭并清理 connection_id、identity、tenant、capability 等索引；后续 fixed_connection delivery 按策略重试、等待或进入死信。
 - 管理端 kick、安全违规断开和协议严重错误断开默认不允许 resume；普通网络断开和异常关闭是否允许进入 grace period 可以按策略配置。
 - 管理端 kick 后应将 session 置为不可恢复关闭状态，清理 active 索引并通知相关 delivery 目标不可用；绑定 fixed_connection 的未完成 delivery 后续按策略 retry、dead_letter、cancel 或等待人工处理。
-- 连接层是第一道流控门槛，必须负责最大帧大小、单连接读队列、单连接写队列、心跳超时、慢连接检测、tenant 队列和 runtime 全局水位。
-- 当连接读队列满时，具体行为由策略配置；如果发生在原始帧阶段，runtime 只能按连接级策略处理，只有解析 envelope 后才能按 message type 或 priority 细分。
+- 传输与连接层是第一道流控门槛，必须负责最大应用消息大小、单连接读队列、单连接写队列、transport/stream flow control、心跳或 idle timeout、慢连接检测、tenant 队列和 runtime 全局水位。
+- 当连接读队列满时，具体行为由策略配置；如果发生在原始 transport message/stream 数据尚未形成合法 envelope 的阶段，runtime 只能按连接级策略处理，只有解析 envelope 后才能按 message type 或 priority 细分。
 - 当连接写队列满时，连接层不能无限等待；可靠投递层应把对应 delivery 按写失败或背压策略处理，常见结果是进入 `retry_scheduled` 并降低目标健康评分。
 - 任意已认证连接可以对自己发送 `connection.drain`，请求 runtime 停止向它分配新 delivery；普通连接不能 drain 其他连接，除非具备管理 capability。
 - `connection.drain` 是单向状态变化；连接进入 draining 后不允许取消 drain 恢复 active，若要恢复接收新投递，应关闭后重新连接或重新握手。
-- 当前 `ns_runtime` 设计边界不包含透明 WebSocket 连接迁移，也不通过 redirect envelope 实现客户端无缝迁移；拓扑调整通过 drain、close、grace resume、重新握手和外部发现/配置完成。如未来需要引入透明迁移，必须作为新的协议和会话能力重新确认。
+- 当前 `ns_runtime` 设计边界不包含跨 runtime 节点的透明 logical session migration，也不通过 redirect envelope 实现无重新认证的跨节点无缝接管；拓扑调整仍通过 drain、close、grace resume、重新握手和外部发现/配置完成。同一 runtime 内由 QUIC/WebTransport 提供的 network path migration 已被允许，但不能被扩展解释为跨 runtime owner migration。
 - 连接进入 draining 后，已在 `ack_waiting` 的 delivery 继续等待 ACK 或按策略超时，尚未发送的 queued delivery 应按策略重路由、重试或取消，drain 本身应有超时和最终关闭路径。
 - 连接与会话状态应采用当前内存快照加状态变更事件日志模型；普通 open/close/heartbeat/reconnect 可以异步记录，session resume、kick、安全关闭、管理控制关闭等关键事件必须强审计。
 - 普通网络断开允许进入 reconnect grace period，默认 `30s`。
 - 在 grace period 内，客户端可以重新握手并申请复用原 `connection_id`，但必须重新通过 IAM 校验，并且 `identity`、`tenant`、`component_type` 与原 session 匹配。
-- 每次 resume 成功后必须递增 `connection_epoch`，当前有效物理连接由 `connection_id + connection_epoch` 唯一标识。
+- 每次 resume 成功后必须递增 `connection_epoch`，当前有效 runtime logical connection 由 `connection_id + connection_epoch` 唯一标识。
 - 管理端 kick、安全违规关闭、协议严重错误、source/auth_context 伪造、tenant 越界、恶意重复 ACK/NACK/Defer 等场景默认禁止 resume。
 - grace period 内的 connection_id 不应视为 active target。
 
@@ -180,10 +201,10 @@
 
 - 连接鉴权和消息鉴权都必须使用 `ns_backend` IAM；连接建立时的 IAM 鉴权结果由 runtime 保存为 session 权限上下文，并由 runtime 注入 source/auth_context。
 - 消息级鉴权支持严格模式和缓存模式；严格模式下每条消息实时调用 `ns_backend` IAM 判定，缓存模式下使用连接权限快照并按 TTL、权限版本或失效事件刷新。
-- `ns_runtime` 与 `ns_backend` IAM 的通信可以走 HTTP/RPC 主动调用；这条调用链是 runtime 作为服务端的外部依赖，不是普通客户端接入 runtime 的 WebSocket 通道。
+- `ns_runtime` 与 `ns_backend` IAM 的通信可以走 HTTP/RPC 主动调用；这条调用链是 runtime 作为服务端的外部依赖，不是普通客户端接入 runtime 的入站 transport 通道。
 - runtime 节点之间的连接使用 `ns_backend` 签发的节点凭证；如果启动时暂时无法获取或刷新节点凭证，可以按配置使用本地缓存凭证进入降级模式。
 - 节点凭证、IAM 权限快照和其他安全敏感缓存落盘是否加密由配置控制；默认设计必须保留加密存储选项。
-- runtime 节点之间的内部集群事件使用统一 envelope 和同一 WebSocket 通道，但在节点互信建立后只做节点级权限校验，不做普通用户 IAM 消息鉴权。
+- runtime 节点之间的内部集群事件使用统一 envelope 和同一已认证 runtime transport 通道，但在节点互信建立后只做节点级权限校验，不做普通用户 IAM 消息鉴权。
 - 入站消息进入 processor 流水线前必须先做硬校验，包括 JSON 可解析、基础 schema 合法、协议版本兼容、tenant 与 session 匹配、禁止伪造 source/auth_context、明显跨 tenant 越界等。
 - 具体操作权限在 processor 流水线中通过通用鉴权 processor 判定，例如能否发送该 message.type、能否路由到 target、能否创建 task、能否控制节点、能否跨 tenant 操作。
 - 鉴权失败、伪造身份、伪造 tenant、协议版本不兼容、重复恶意 ACK、超限流、非法 schema 都属于严重错误基础集合；最终是否断开、限流、审计或隔离可叠加配置条件。
@@ -196,6 +217,8 @@
 - 一旦 `ns_backend` 恢复可用，runtime 必须重新校验节点凭证、角色授权、配置版本、leader lease、fencing_token 和当前 role。
 - 本地缓存凭证只能用于短时控制面不可用时的受限启动或受限维持服务，不能作为绕过 `ns_backend` 控制面的长期运行凭证。
 - 缓存凭证必须有 TTL、签名校验、权限范围、节点 identity、runtime_id、role scope 和脱敏审计记录。
+- TLS/QUIC 握手成功、QUIC connection ID 延续、WebTransport session 恢复或 network path validation 成功都不能替代 `ns_backend` IAM 和 runtime session 鉴权，也不能自动继承已过期或已撤销的权限快照。
+- transport adapter 暴露的 peer address、QUIC connection ID、path 信息、ALPN、拥塞状态和证书摘要属于安全敏感或高基数诊断数据；日志和审计必须按统一脱敏、采样和访问控制策略处理。
 
 ## 9. Processor 与插件模型
 
@@ -212,11 +235,16 @@
 ## 10. 事件与观测模型
 
 - `ns_runtime` 必须定义内部事件总线，用于连接事件、鉴权事件、路由事件、投递事件、ACK/NACK/Defer 事件、控制事件、集群事件、限流背压事件和指标事件。
-- 内部事件总线在单个 runtime 进程内提供订阅能力；需要传播到集群时，事件应包装成统一 envelope，通过 master/sub_node/多 master 机制和同一 WebSocket 通道传播。
+- 内部事件总线在单个 runtime 进程内提供订阅能力；需要传播到集群时，事件应包装成统一 envelope，通过 master/sub_node/多 master 机制和同一已认证 runtime transport 通道传播。
 - processor 和插件可以订阅内部事件，但事件订阅只能作为扩展和观测机制；订阅者不得通过旁路修改核心状态，除非通过状态存储层授权 namespace 和明确 processor 能力完成。
 - 事件总线是旁路通知和扩展机制；核心链路仍采用显式调用和明确状态迁移，避免核心行为变成隐式事件驱动。
 - 观测数据可以近实时推送给当前 `ns_backend` 和未来指标系统；指标、健康画像和水位数据可以允许丢失或异步补偿，不进入强一致投递主链路。
-- target 投递健康画像以内存实时计算为主，异步持久化和推送；健康画像包括 ACK 延迟、NACK 率、Defer 率、timeout 率、写失败率、重试成功率、stream 窗口表现和最近趋势。
+- target 投递健康画像以内存实时计算为主，异步持久化和推送；健康画像包括 ACK 延迟、NACK 率、Defer 率、timeout 率、transport send failure、连接/stream 写队列压力、重试成功率、stream 窗口表现和最近趋势。
+- event loop 观测至少必须覆盖当前实现类型、loop lag、P95/P99 lag、slow callback 数量、pending task 数量、cancelled task 数量和 executor queue depth，以验证 `uvloop` 与标准 `asyncio` 在真实 workload 下的收益和风险；标准指标名至少预留 `runtime_event_loop_implementation`、`runtime_event_loop_lag_ms`、`runtime_event_loop_lag_p95_ms`、`runtime_event_loop_lag_p99_ms`、`runtime_slow_callback_total`、`runtime_pending_task_count`、`runtime_cancelled_task_total` 和 `runtime_executor_queue_depth`。
+- transport 通用观测至少必须覆盖 transport/session 连接数、握手耗时、收发字节、收发失败、关闭原因、backpressure duration、读写队列深度、应用消息大小和 transport capability 分布；标准指标名至少预留 `runtime_transport_connections`、`runtime_transport_handshake_duration_ms`、`runtime_transport_bytes_received_total`、`runtime_transport_bytes_sent_total`、`runtime_transport_receive_errors_total`、`runtime_transport_send_errors_total`、`runtime_transport_close_total`、`runtime_transport_backpressure_duration_ms`、`runtime_transport_read_queue_depth` 和 `runtime_transport_write_queue_depth`。
+- QUIC/WebTransport 预留观测至少必须覆盖 RTT/smoothed RTT、packet loss、bytes in flight、congestion window、flow-control blocked duration、active/blocked stream、path migration 尝试/成功/失败、path validation duration、datagram 收发/丢弃和 0-RTT 尝试/拒绝；标准指标名至少预留 `runtime_transport_rtt_ms`、`runtime_transport_smoothed_rtt_ms`、`runtime_transport_packet_loss_ratio`、`runtime_transport_bytes_in_flight`、`runtime_transport_congestion_window_bytes`、`runtime_transport_flow_control_blocked_duration_ms`、`runtime_transport_streams_active`、`runtime_transport_streams_blocked`、`runtime_transport_path_migration_total`、`runtime_transport_path_migration_success_total`、`runtime_transport_path_migration_failed_total`、`runtime_transport_path_validation_duration_ms`、`runtime_transport_datagrams_sent_total`、`runtime_transport_datagrams_received_total`、`runtime_transport_datagrams_dropped_total`、`runtime_transport_zero_rtt_attempt_total` 和 `runtime_transport_zero_rtt_rejected_total`。未启用对应 adapter 时这些指标可以为空或不注册，但指标名称、事件模型和采集接口必须预留。
+- 时序指标标签必须限制基数，可以使用 runtime_id、role、transport_type、component_type、受控 tenant scope、close_reason 和 error_code；禁止把 connection_id、session_id、transport_connection_id、path_id、message_id 或 delivery_id 直接作为常规时序指标标签，这些标识只进入 trace、脱敏日志或按需诊断快照。
+- event loop 与 transport 指标、路径迁移事件和拥塞画像属于异步可观测数据，不得进入 DeliveryRecord、AckRecord 或控制审计的强一致事务。
 
 ## 11. 配置与策略模型
 
@@ -235,14 +263,19 @@
 - 当 `ns_backend` 暂时不可用时，runtime 可以按本地配置和本地缓存凭证进入受限降级模式；但降级模式不得执行需要全局权威确认的高风险操作。
 - 配置热更新必须按配置项声明生效方式，每个配置项至少声明为 `immediate`、`rolling` 或 `restart_required`。
 - 配置热更新回滚采用“按配置组回滚”模型。
-- runtime 配置必须按职责分组，例如 protocol、security、state_store、routing、delivery、worker、pool、tenant_quota、observability、logging、debug 等。
+- runtime 配置必须按职责分组，例如 event_loop、transport、wire_codec、protocol、security、state_store、routing、delivery、worker、pool、tenant_quota、observability、logging、debug 等。
+- `event_loop` 配置至少支持 `auto`、`asyncio`、`uvloop`：Linux/Ubuntu 生产环境在 `auto` 下优先使用 `uvloop`，不支持或未安装时允许回退标准 `asyncio` 并告警；显式 `uvloop` 模式初始化失败必须启动失败，不能静默回退；Windows 开发环境默认使用标准 `asyncio`。
+- event loop implementation 只能在进程启动阶段选择，属于 `restart_required`；debug、slow callback threshold 等相关配置是否立即生效由具体配置项声明，但不得在运行中替换当前 event loop。
+- `transport` 配置必须至少表达 enabled adapters、default/preferred adapter、fallback order、capability negotiation、监听地址、队列与水位、path migration、datagram、0-RTT 和 transport-specific 安全限制。`websocket_tcp` 当前默认启用；`websocket_http3`、`webtransport_http3`、`quic_native` 默认禁用。
+- 新增或移除监听 transport 通常属于 `rolling` 或 `restart_required`；transport 优先级和 fallback 顺序通常属于 `rolling`；队列水位和受控 message-type allowlist 可以声明为 `immediate`；0-RTT 默认关闭，启用必须至少按 `restart_required` 和安全高风险配置管理。
+- `wire_codec` 当前只能启用 `json.v1`；配置中可以保留 supported/preferred codec 结构，但不得通过配置绕过协议确认直接启用二进制或混合编码。
 - 每个配置组必须维护独立的 `group_version`、`effective_at`、`rollback_from_version`、`source`、`policy_version` 和审计记录。
 - 配置组之间如果存在强依赖关系，不能独立回滚。
 - 多节点配置一致性采用混合模式。
 - `ns_backend` 是配置版本、配置来源和策略覆盖的最终权威；active master 负责 runtime 集群内配置生效协调、版本兼容检查、sub_node 状态确认和配置漂移检测。
 - sub_node 可以直接从 `ns_backend` 拉取配置，也可以接收 active master 的配置协调消息；但无论配置来源如何，sub_node 都必须向 active master 汇报实际生效的 `config_version`、`policy_version`、各 `config_group_version`、生效时间、失败配置组和回滚状态。
 - 多节点配置漂移必须按配置组分级处理，不能简单地把所有配置版本不一致都视为致命错误。
-- 对于 protocol、security、state_store、fencing、delivery_state_machine、routing_critical、payload_ref_validation、cluster_coordination 等关键配置组，如果 sub_node 与 active master 的生效版本不兼容，应立即禁止该节点作为新路由目标，并按策略进入 degraded、isolated 或 draining。
+- 对于 event_loop、transport、wire_codec、protocol、security、state_store、fencing、delivery_state_machine、routing_critical、payload_ref_validation、cluster_coordination 等关键配置组，如果 sub_node 与 active master 的生效版本不兼容，应立即禁止该节点作为新路由目标，并按策略进入 degraded、isolated 或 draining。
 - 对于 logging、observability、debug、低风险采样比例、非关键指标推送等配置组，如果发生版本漂移，可以先记录告警、指标和审计，不必立即隔离节点。
 - 配置漂移恢复采用“自动修复 + 管理确认恢复”模型。
 - runtime 节点检测到配置漂移后，应自动尝试从 `ns_backend` 拉取权威配置并重新应用。
@@ -250,7 +283,7 @@
 
 ## 12. 路由与调度模型
 
-- 路由与调度层只负责回答“发给谁”和“如何选择目标”，不负责实际写 WebSocket、不等待 ACK、不做死信状态机。
+- 路由与调度层只负责回答“发给谁”和“如何选择目标”，不负责实际写底层 transport、不等待 ACK、不做死信状态机。
 - 路由与调度层输出 RoutingPlan；可靠投递层消费 RoutingPlan 并生成 DeliveryRecord，因此 RoutingPlan 与 DeliveryRecord 必须保持职责分离。
 - 消息 target 可以明确指定路由/调度策略，例如指定节点、负载均衡、粘滞、broadcast、quorum、all_required、weighted subset 或 no_rebind；如果 target 未指定策略，则使用系统默认策略，但 runtime 策略仍保留最终裁决权。
 - RoutingPlan 必须记录完整决策痕迹，包括原始 target、候选目标集合、capability 匹配、tenant/component/identity 过滤、每个候选评分、拒绝原因、最终目标、策略版本、本地命中情况和是否需要 master 查询/转发。
@@ -271,7 +304,7 @@
 - 会话粘滞策略应能表达 prefer previous target、require same target、avoid previous failed target、sticky TTL、以及在 NACK/timeout/defer 达到阈值后解除或反向避让粘滞目标。
 - 当目标过载时，路由层负责判断是否换目标、排队、拒绝、死信或降级；可靠投递层在实际发送前仍要做最终水位保护。
 - target health score 必须采用分层健康画像模型，至少维护 `connection health`、`identity health`、`component_type health`、`runtime node health`、`tenant health` 五类画像。
-- 每层画像都应基于滑动窗口与指数衰减计算，包括 ACK P95/P99、NACK 率、Defer 率、ACK timeout 率、WebSocket 写失败率、连接写队列压力、retry 成功率、queue backlog、慢连接表现和最近异常趋势等指标。
+- 每层画像都应基于滑动窗口与指数衰减计算，包括 ACK P95/P99、NACK 率、Defer 率、ACK timeout 率、transport send failure、连接/stream 写队列压力、flow-control blocked、path migration 失败、retry 成功率、queue backlog、慢连接表现和最近异常趋势等指标。
 - 健康画像只能影响评分、限流、避让、重试节奏和背压策略，不能绕过 IAM、tenant 隔离、payload_ref 校验、owner/fencing 校验或 DeliveryRecord 状态机。
 
 ## 13. 可靠投递模型
@@ -286,10 +319,10 @@
 - `prepared` 表示 delivery 已强一致创建但所属 summary 仍在 initializing 或尚未允许发送；`prepared` 不占 active/inflight 配额，不参与优先级、aging 或抢占，但受 expires_at 和管理取消影响。
 - 如果消息在受理阶段已经超过 runtime 裁决后的有效期，或剩余有效期低于策略允许的最小投递窗口，应在受理阶段 rejected 或创建 failed summary，而不是创建必然过期的有效 DeliveryRecord；具体是否保留 rejected summary 由受理策略决定。
 - `queued` 表示 delivery 已可发送并等待可靠投递调度器选择发送时机；`queued` 不等于已经进入某个 connection 写队列。
-- `sending` 表示正在写入 WebSocket；进入 `sending` 时开始计算 ACK deadline，并且 `sending` 必须有可配置写超时，避免慢连接或卡住的写操作拖垮调度器。
+- `sending` 表示正在通过当前 transport adapter 写入完整 runtime envelope；进入 `sending` 时开始计算 ACK deadline，并且 `sending` 必须有可配置写超时，避免慢连接、stream flow control 或卡住的写操作拖垮调度器。
 - 写入成功后直接进入 `ack_waiting`，不单独保留 `sent` 状态；如果写入完成时 ack_deadline 已过，是立即超时、给最小宽限还是按写延迟补偿，由策略配置。
 - ACK deadline 超时不同于 message/delivery expires_at 过期；默认在消息仍有效且重试预算允许时进入 `retry_scheduled`，预算耗尽时进入 `dead_lettered`，业务有效期已过时进入 `expired`，其他异常结果必须由策略显式裁决并审计。
-- WebSocket 写入失败必须交给策略裁决，策略结果可以是 retry_scheduled、reroute、queue、dead_lettered、expired、cancelled、transfer 或 reject；可靠投递层只执行策略结果并记录 attempt/事件。
+- transport 写入失败、stream reset、session closed 或 flow-control 超时必须交给策略裁决，策略结果可以是 retry_scheduled、reroute、queue、dead_lettered、expired、cancelled、transfer 或 reject；可靠投递层只执行策略结果并记录 attempt/事件。
 - `retry_scheduled` 表示等待下一次重试；它不占 active/inflight 配额，到点后重新调用路由与调度层计算目标并重新进入 queued。
 - 重试前重新路由不触发 transferred 语义；普通 retry target refresh 只记录 target_history，只有 ownership 变更、责任转移、目标绑定变更或节点级责任迁移等才使用 transferred。
 - `transferred` 是旧 owner 视角下的终态记录；新 owner 复用同一个 delivery_id 继续生命周期，但必须更新 owner_runtime_id、owner_epoch 和 fencing_token。
@@ -384,7 +417,7 @@
 - 超过最大 replay_count 后，该 dead_lettered delivery 必须完全禁止重投，即使操作者具备更高管理 capability 也不能强制复活。
 - 普通未完成 delivery 不允许管理端手动重投；`ack_waiting`、`queued`、`sending`、`retry_scheduled` 只能等待正常 ACK、timeout、自动 retry、取消或策略处理。
 - 管理端可以取消 `prepared`、`queued`、`sending`、`ack_waiting`、`retry_scheduled`、`replay_requested` 的 delivery；不能取消 `acked`、`dead_lettered`、`expired`、`cancelled` 或旧 owner 的 `transferred`。
-- 当 `sending` 状态被取消时，只标记 cancel_requested，不强行打断 WebSocket 写操作；写操作返回后再根据 cancel_requested 进入 `cancelled` 或按策略处理。
+- 当 `sending` 状态被取消时，只标记 cancel_requested，不强行打断底层 transport 写操作；写操作返回后再根据 cancel_requested 进入 `cancelled` 或按策略处理。
 - 取消会释放 active、inflight、queued、recovery pool、stream window 等资源占用，但不会回退 attempt_count、retry_used、total_attempt_count、audit records 等历史消耗。
 - `acked`、`expired`、`dead_lettered`、`cancelled` 都必须释放 active、inflight、queued、stream window 等运行时资源占用；`retry_scheduled` 释放 active/inflight 但保留 retry backlog 和 pending 统计。
 - `cancelled` 不计入失败类计数；如果一个 message 部分 acked、部分 cancelled 且没有失败类，summary 为 `partial_acked`；如果全部 cancelled，summary 为 `cancelled`。
@@ -395,7 +428,7 @@
 - 投递暂停/恢复必须支持；暂停期间新普通消息默认返回错误 envelope，已有 queued delivery 保留但不发送，ACK/NACK/Defer 和管理控制继续处理，计时行为由 pause 策略决定。
 - `prepared`、`queued`、`retry_scheduled` 和 `ack_waiting` 在暂停、hold、draining、transitioning、isolation 等运行状态下的计时、激活和重试行为必须由策略或硬规则明确，不能靠实现时的默认队列行为隐式决定。
 - retry budget 默认采用平衡预算，每个 message 默认最多自动 retry `5` 次。
-- `retryable NACK`、`ACK timeout`、WebSocket 写失败、目标连接写队列满、目标 runtime 暂时不可达等明确投递失败或接收失败场景，默认消耗自动 retry budget。
+- `retryable NACK`、`ACK timeout`、transport 写失败或 stream reset、目标连接写队列满、目标 runtime 暂时不可达等明确投递失败或接收失败场景，默认消耗自动 retry budget。
 - 对于 target 暂时离线、master 暂不可用、payload_ref 校验服务暂不可用、tenant 暂停、node transitioning、runtime draining 等基础设施或运行状态类问题，可以按策略进入 wait、retry_scheduled、deferred retry 或 dead letter，不一定立即消耗 retry budget。
 - 自动 retry budget 与人工 replay budget 必须拆开。
 - retry backoff 默认采用“指数退避 + jitter + 目标健康感知”的混合策略。
@@ -499,7 +532,7 @@
 - 集群采用单 active master、多 standby master；任意时刻只有一个 active master 持有有效 leader lease 并负责全局协调。
 - master 选主由 `ns_runtime` 自己完成；sub_node 成员管理由 `ns_backend` 或配置作为控制面决定接入哪个 master。
 - 生产选主和集群协调依赖 Redis/Valkey；开发模式必须支持 SQLite WAL，并允许本机多进程模拟集群，但 SQLite WAL 不作为生产分布式协调权威。
-- leader 权威来自状态存储层的 lease/lock、epoch/term 和 fencing_token；WebSocket 心跳只作为健康和拓扑辅助信号，不能单独决定谁是 active master。
+- leader 权威来自状态存储层的 lease/lock、epoch/term 和 fencing_token；transport liveness 与 envelope heartbeat 只作为健康和拓扑辅助信号，不能单独决定谁是 active master。
 - leader lease 语义至少需要包含 leader_lease key、epoch/term、fencing_token、lease TTL、renewal deadline 和 takeover grace period；所有全局协调写入都必须携带或校验当前有效 fencing_token。
 - active master 必须定期续约 leader lease；续约失败后必须立即停止全局协调写入，进入 transitioning、standby 或 degraded 状态，并依赖 fencing 防止 split-brain。
 - standby master 不主动抢占正常 active；只有检测到 active lease 过期、管理端发起切换或紧急隔离时，才允许竞争 leader lease。
@@ -508,7 +541,7 @@
 - runtime 节点间连接也必须使用 `connection.hello`，component_type 为 `runtime`，token 使用 `ns_backend` 签发的节点凭证。
 - 集群事件不要求全局有序，只要求同一事件主题、同一 node、同一 delivery tree、同一 stream 或其他策略范围内有序。
 - 会改变 leader、节点隔离、成员关系、配置版本、owner/fencing 或 delivery tree 的集群控制消息必须按关键控制消息处理，具备可靠投递、强审计和必要的强一致状态更新；普通健康、观测或拓扑提示类集群事件是否可靠由策略配置。
-- 节点健康状态由 WebSocket 心跳、envelope heartbeat、leader/node lease、NACK/defer/timeout/write failure、管理隔离、存储状态、IAM 凭证状态和版本兼容状态共同计算，由策略引擎输出 healthy、degraded、isolated 或 unavailable。
+- 节点健康状态由 transport liveness/path 状态、envelope heartbeat、leader/node lease、NACK/defer/timeout/write failure、管理隔离、存储状态、IAM 凭证状态和版本兼容状态共同计算，由策略引擎输出 healthy、degraded、isolated 或 unavailable。
 - 网络分区时，如果父 delivery 已经 ACK 下一跳，父状态不回滚；delivery tree 查询下游 child 状态不可达时显示 unknown/unreachable，并把断点定位在下游 runtime。
 - master 选举采用混合模型：`ns_backend` 提供候选 master、节点凭证、节点优先级、切换授权和控制面策略；Redis/Valkey 负责 `leader lease`、`epoch/term`、`fencing_token` 和原子抢占。
 - 只有同时满足 `ns_backend` 控制面授权、节点凭证有效、角色状态允许、Redis/Valkey leader lease 抢占成功、持有当前有效 fencing_token 的 runtime 节点，才能进入 `active_master` 状态并执行全局协调写入。
@@ -517,7 +550,7 @@
 - `graceful handoff` 用于正常维护、滚动发布和计划内主节点切换，可由具备普通集群管理 capability 的管理连接发起。
 - `force takeover` 用于 active master 不响应、leader lease 过期、节点健康失败或集群协调中断等场景，必须要求高级管理 capability，并重新校验 active master 状态、leader lease、epoch/term、fencing_token、Redis/Valkey 连通性和 `ns_backend` 授权。
 - `emergency isolate` 用于 suspected split-brain、旧 owner 持续写入、关键配置漂移、fencing 异常、跨 tenant 风险或安全事故，只允许最高级安全/运维 capability 发起，并必须强审计。
-- master 切换不能只依赖 WebSocket 断开、心跳失败或管理端命令；任何 active master 变更都必须通过 Redis/Valkey 的 leader lease、epoch/term 和 fencing_token 原子确认。
+- master 切换不能只依赖 transport 断开、心跳/path validation 失败或管理端命令；任何 active master 变更都必须通过 Redis/Valkey 的 leader lease、epoch/term 和 fencing_token 原子确认。
 
 ## 20. 状态存储与一致性模型
 
@@ -555,7 +588,7 @@
 
 ## 21. 管理、审计与查询边界
 
-- `ns_backend` 内的 runtime 管理端应作为 `ns_backend` 内独立应用边界存在，并以具备 management capability 的 WebSocket 客户端接入 runtime；它不是旁路数据库管理器，也不是独立控制协议客户端。
+- `ns_backend` 内的 runtime 管理端应作为 `ns_backend` 内独立应用边界存在，并以具备 management capability 的 runtime transport 客户端接入 runtime；当前默认使用 WebSocket，它不是旁路数据库管理器，也不是独立控制协议客户端。
 - 管理控制消息必须使用统一 envelope，走统一协议校验、source/auth_context 注入、IAM/管理 capability 鉴权、processor 流水线、审计、trace 和必要的可靠投递。
 - 管理端可以执行踢连接、重投/清理消息、隔离/恢复节点、master 切换、限流策略调整、配置热更新、恢复扫描、状态快照查询和健康查询。
 - 管理端执行批量 replay、批量 cancel、批量 hold、批量 release 或批量 cleanup 时，应支持 partial success，并返回 accepted/rejected 计数、可处理对象 ID 列表以及不可处理原因摘要。
@@ -610,27 +643,30 @@
 - debug 模式允许打印经过脱敏处理的完整 envelope 结构，但必须经过统一 redaction/sanitizer 处理，并且默认关闭。
 - runtime 中任何日志、异常、审计、事件或错误 envelope 都不得直接序列化原始 envelope 对象；必须先经过统一脱敏器处理。
 
-## 24. TLS、部署、质量与性能基线
+## 24. TLS、事件循环、传输、部署、质量与性能基线
 
-- WebSocket 连接支持 TLS/WSS；内网或开发环境允许明文 WS，但是否允许明文必须由配置控制，不能在生产安全假设中默认明文可用。
+- 所有生产入站 transport 必须使用加密和服务端身份认证；WebSocket 使用 TLS/WSS，未来 HTTP/3/QUIC/WebTransport adapter 必须使用其安全传输模式。内网或开发环境是否允许明文 WebSocket 必须由配置控制，不能把明文能力扩展到生产安全假设或未来 QUIC/WebTransport adapter。
 - 生产多节点协调必须使用 Redis/Valkey；SQLite WAL 只用于开发、本地单机或本机多进程模拟集群，并且需要防止误用为生产分布式协调权威。
 - 必须定义单实例连接数、消息 QPS、P99 延迟、ACK timeout 等生产性能基线；这些指标不是固定生产 SLA，但必须作为压测、容量规划、瓶颈记录、风险评审和优化计划的依据。
-- 单个 runtime 进程内部并发模型优先基于 asyncio；水平扩展优先通过多进程部署多个 runtime 实例。当前设计不采用多个进程级 worker 共享同一 runtime 运行状态的模型；如后续引入该模型，必须重新确认状态所有权、连接归属和进程间协调边界。
+- 单个 runtime 进程内部并发模型基于标准 `asyncio` API；生产 Linux/Ubuntu 环境默认通过 `event_loop=auto` 优先选择 `uvloop`，标准 `asyncio` 始终作为兼容实现、Windows 开发实现和基准对照保留。水平扩展优先通过多进程部署多个 runtime 实例。当前设计不采用多个进程级 worker 共享同一 runtime 运行状态的模型；如后续引入该模型，必须重新确认状态所有权、连接归属和进程间协调边界。
 - `ns_runtime` 的功能完整性不能以通信链路能够跑通作为判断标准；生产可用性必须同时满足功能、可靠性、一致性、安全性、可恢复性和性能要求。
-- 生产质量验证范围必须覆盖 `master/sub_node` 集群拓扑、Redis/Valkey 高可用适配、leader lease、fencing、可靠投递、ACK/NACK/Defer、完整 stream、replay、hold、cancel、状态查询、配置热更新、多节点配置一致性、故障注入、压测、审计脱敏、状态清理和恢复扫描。
+- 生产质量验证范围必须覆盖 `master/sub_node` 集群拓扑、Redis/Valkey 高可用适配、leader lease、fencing、可靠投递、ACK/NACK/Defer、完整 stream、replay、hold、cancel、状态查询、配置热更新、多节点配置一致性、标准 `asyncio`/`uvloop` 双实现、transport adapter conformance、故障注入、压测、审计脱敏、状态清理和恢复扫描。
 - 生产性能基线必须明确且不能作为可选参考；未达到基线时必须记录瓶颈、风险、优化计划和是否允许进入生产部署或扩大使用范围的评审结论。
 - 故障注入和恢复测试属于生产质量边界，不能只验证正常通信链路。
-- 故障注入至少覆盖 Redis/Valkey 短暂不可用、IAM 超时、active master 断开、sub_node 断开、ACK 迟到、ACK 到旧 owner、connection_epoch 不匹配、payload_ref 校验失败、processor 超时、慢连接写队列满。
+- 故障注入至少覆盖 Redis/Valkey 短暂不可用、IAM 超时、active master 断开、sub_node 断开、ACK 迟到、ACK 到旧 owner、connection_epoch 不匹配、payload_ref 校验失败、processor 超时、慢连接写队列满、transport handshake 失败、stream reset、flow-control blocked、network path migration 失败和 transport fallback 失败。
 - 每个故障注入用例都必须验证四类结果：状态机迁移是否正确、是否产生标准错误或控制响应、是否写入脱敏审计、是否暴露可观测指标。
 - 测试必须采用生产级分层，不得只依赖单元测试、简单集成测试或手工联调判断功能完整性。
-- 测试范围至少必须覆盖单元测试、状态机测试、Redis/Valkey Lua 原子脚本测试、processor 流水线测试、Envelope 协议兼容测试、集群切换测试、故障注入测试、stream 可靠性测试、管理控制测试、压测和回归测试。
+- 测试范围至少必须覆盖单元测试、状态机测试、Redis/Valkey Lua 原子脚本测试、processor 流水线测试、Envelope 协议兼容测试、event loop compatibility/benchmark、transport adapter conformance、集群切换测试、故障注入测试、stream 可靠性测试、管理控制测试、压测和回归测试。
 - 状态机测试必须覆盖 DeliveryRecord、MessageDeliverySummary、StreamDeliveryState、ACK/NACK/Defer、retry、dead letter、replay、cancel、hold、lease/fencing、owner transfer 等核心迁移。
 - Redis/Valkey Lua 脚本测试必须覆盖原子提交、索引同步、fencing 拒绝、重复 ACK、迟到 ACK、旧 owner 写入、lease 过期、状态日志追加和异常回滚。
 - 集群切换测试必须覆盖 graceful handoff、force takeover、emergency isolate、配置漂移、sub_node 断开、active master 失联、leader lease 过期和 fencing_token 轮换。
 - stream 可靠性测试必须覆盖 stream_start、stream_chunk、stream_end、滑动窗口、cumulative ACK、selective ACK、missing ranges、乱序恢复、窗口动态调整、stream replay、stream cancel 和 stream hold。
-- 生产性能参考基线建议如下：单 runtime 普通 WebSocket 连接数不少于 `5,000`；master 管理/节点连接数不少于 `100`；本地 task dispatch 受理吞吐不少于 `2,000 msg/s`；master/sub_node 转发吞吐不少于 `1,000 msg/s`；本地 ACK P99 不高于 `100ms`；跨节点 ACK P99 不高于 `300ms`；Redis/Valkey 关键状态写入 P99 不高于 `50ms`；delivery recovery scan 速率不少于
+- `uvloop` 验收必须与标准 `asyncio` 使用相同 workload、连接规模、消息分布、Redis/Valkey 拓扑和策略配置进行对比，至少记录吞吐、P95/P99、event loop lag、CPU、内存、任务堆积、取消行为和异常兼容性；不能仅依据 echo benchmark 决定默认策略。
+- transport adapter conformance 必须验证应用消息边界、`connection.hello`、IAM、capability 协商、Envelope schema、ACK/NACK/Defer、backpressure、close/drain、resume、错误映射和脱敏观测在不同 transport 下保持同一语义。
+- 当 WebSocket over HTTP/3、WebTransport 或原生 QUIC adapter 启用时，必须新增移动网络切换/NAT rebinding/path validation、stream multiplexing、flow control、UDP 不可用回退、0-RTT 拒绝/重放保护、datagram allowlist 和 QUIC transport ACK 不影响 DeliveryRecord 的专项测试。
+- 生产性能参考基线建议如下：当前默认 WebSocket transport 下单 runtime 普通连接数不少于 `5,000`；master 管理/节点连接数不少于 `100`；本地 task dispatch 受理吞吐不少于 `2,000 msg/s`；master/sub_node 转发吞吐不少于 `1,000 msg/s`；本地 ACK P99 不高于 `100ms`；跨节点 ACK P99 不高于 `300ms`；Redis/Valkey 关键状态写入 P99 不高于 `50ms`；delivery recovery scan 速率不少于
   `1,000 records/s`；replayable dead letter 重投成功率不低于 `99%`；安全/管理/状态变更审计覆盖率为 `100%`；token/payload/auth_context/fencing 原值泄露为 `0`；TTL 清理后孤儿索引为 `0`；必选故障场景通过率为 `100%`。
-- 性能基线必须与压测报告绑定。压测报告至少应包含测试环境、runtime 节点数量、Redis/Valkey 拓扑、连接规模、消息类型分布、payload 模式、ACK timeout 配置、worker 配置、pool 配置、P95/P99、错误码分布、Redis/Valkey 延迟、CPU/内存占用和瓶颈分析。
+- 性能基线必须与压测报告绑定。压测报告至少应包含测试环境、event loop implementation、transport type/capabilities、runtime 节点数量、Redis/Valkey 拓扑、连接规模、消息类型分布、payload 模式、ACK timeout 配置、worker 配置、pool 配置、P95/P99、event loop lag、transport backpressure/RTT/path migration（适用时）、错误码分布、Redis/Valkey 延迟、CPU/内存占用和瓶颈分析。
 
 ## 25. 明确禁止漂移的硬边界
 
@@ -640,7 +676,12 @@
 - DeliveryRecord 强一致持久化是可靠投递底线；不能把 delivery 状态退化为纯内存状态。
 - 控制操作审计、投递状态、配置/策略变更必须强一致且不可丢；不能为了性能把这些核心记录改成异步 best-effort。
 - Redis/Valkey 生产不可用时关键强一致链路必须停止或降级拒绝；不能在生产多节点场景用 SQLite WAL 替代 Redis/Valkey 做分布式选主权威。
-- 管理端是具备 management capability 的 WebSocket 客户端；管理控制不走旁路协议。
-- Envelope 固定 JSON 文本帧；不能在不重新确认的情况下改成二进制协议或混合编码。
+- 管理端是具备 management capability 的 runtime transport 客户端；当前默认使用 WebSocket，管理控制始终使用统一 Envelope 和 processor，不走旁路协议。
+- 当前唯一允许的 wire codec 是 UTF-8 `json.v1`；WebSocket 使用 JSON 文本帧，未来 transport adapter 也必须承载完整 JSON Envelope。不能仅通过配置改成二进制协议、混合编码或 processor 私有 framing。
 - Runtime 不能负责对象存储上传、下载或签名 URL；payload_ref 只做引用路由和实时校验。
 - 多 master 当前采用单 active master、多 standby master 模型；不能默认设计成多 active 分片 master，除非后续重新讨论并确认分片 leader 模型。
+- 所有 transport adapter 都必须进入相同的 connection/session、Envelope、IAM、tenant、processor、路由、可靠投递和审计链路；QUIC/WebTransport 不能成为绕过核心状态机的第二套协议。
+- QUIC packet ACK、transport write completion、stream ACK 或 path validation 不能替代 runtime `delivery.ack`，也不能直接更新 DeliveryRecord。
+- 同一 runtime 内的 QUIC/WebTransport network path migration 可以保持 connection_id、connection_epoch 和 session_id 不变；跨 runtime 节点的透明 logical session migration 仍不属于当前边界。
+- `uvloop` 是可配置的事件循环实现，不是业务层依赖；标准 `asyncio` 兼容路径不得删除，event loop 不能在进程运行期间热切换。
+- `websocket_http3`、`webtransport_http3` 和 `quic_native` 的配置与观测扩展点必须保留，但在对应 adapter 未完成生产验收前默认禁用且不得宣称可用。

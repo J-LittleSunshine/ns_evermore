@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from backend.app_loader import build_installed_apps
 from ns_common import ns_config
@@ -62,7 +62,7 @@ def _normalize_sqlite_name(*, alias: str, name: Any) -> Path:
     return DATA_DIR / raw_name
 
 
-def _build_django_databases(raw_databases: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _build_django_databases(raw_databases: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
     if not raw_databases:
         return {
             "default": {
@@ -82,7 +82,7 @@ def _build_django_databases(raw_databases: dict[str, dict[str, Any]]) -> dict[st
             }
             raise NsConfigError("Database alias must not be empty.", details=details)
 
-        if not isinstance(raw_database_config, dict):
+        if not isinstance(raw_database_config, Mapping):
             details = {
                 "field": f"backend.databases.{alias_text}",
                 "actual_type": type(raw_database_config).__name__,

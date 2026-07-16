@@ -52,7 +52,16 @@
     "iam_cache_enabled": true,
     "iam_cache_ttl_seconds": 300,
     "iam_user_cache_ttl_seconds": 120,
-    "iam_authz_cache_ttl_seconds": 300
+    "iam_authz_cache_ttl_seconds": 300,
+    "metadata": {
+      "source": "local_file",
+      "config_version": "0",
+      "policy_version": "0",
+      "group_version": "0",
+      "effective_at": null,
+      "rollback_from_version": null,
+      "apply_mode": "restart_required"
+    }
   },
   "cache": {
     "backend": "sqlite",
@@ -67,7 +76,16 @@
     "sqlite_write_retry_base_delay_ms": 50,
     "sqlite_write_retry_max_delay_ms": 500,
     "cleanup_interval_seconds": 300,
-    "cleanup_batch_size": 500
+    "cleanup_batch_size": 500,
+    "metadata": {
+      "source": "local_file",
+      "config_version": "0",
+      "policy_version": "0",
+      "group_version": "0",
+      "effective_at": null,
+      "rollback_from_version": null,
+      "apply_mode": "restart_required"
+    }
   },
   "log": {
     "level": "INFO",
@@ -95,6 +113,26 @@
       "WARNING",
       "ERROR",
       "CRITICAL"
-    ]
+    ],
+    "metadata": {
+      "source": "local_file",
+      "config_version": "0",
+      "policy_version": "0",
+      "group_version": "0",
+      "effective_at": null,
+      "rollback_from_version": null,
+      "apply_mode": "restart_required"
+    }
+  },
+  "runtime": {
+    "metadata": {
+      "source": "local_file",
+      "config_version": "0",
+      "policy_version": "0",
+      "group_version": "0",
+      "effective_at": null,
+      "rollback_from_version": null,
+      "apply_mode": "restart_required"
+    }
   }
 }

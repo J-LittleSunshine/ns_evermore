@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, TYPE_CHECKING
 
 from django.conf import settings
@@ -16,7 +17,7 @@ class AppDatabaseRouter:
     def get_target_db(cls, app_label: str) -> str | None:
         database_router_map = getattr(settings, "DATABASE_ROUTER_MAP", {})
 
-        if not isinstance(database_router_map, dict):
+        if not isinstance(database_router_map, Mapping):
             return None
 
         return database_router_map.get(app_label)
