@@ -31,7 +31,17 @@ def _finite_number(
                 "actual_type": type(value).__name__,
             },
         )
-    normalized = float(value)
+    try:
+        normalized = float(value)
+    except (OverflowError, ValueError, TypeError) as error:
+        raise NsValidationError(
+            f"{field_name} cannot be represented as a finite number.",
+            details={
+                "field": field_name,
+                "value": value,
+                "actual_type": type(value).__name__,
+            },
+        ) from error
     if (
         not math.isfinite(normalized)
         or (minimum is not None and normalized < minimum)
@@ -179,13 +189,23 @@ class JitterBackoff:
         base_delay = _strategy_delay(self.strategy, retry)
         if base_delay == 0.0 or self.ratio == 0.0:
             return base_delay
-        sample = self.random_source()
-        if (
-            isinstance(sample, bool)
-            or not isinstance(sample, (int, float))
-            or not math.isfinite(float(sample))
-            or not 0.0 <= float(sample) <= 1.0
-        ):
+        try:
+            sample = self.random_source()
+        except Exception as error:
+            raise NsStateError(
+                "random_source failed to produce a jitter sample.",
+                details={
+                    "field": "random_source",
+                },
+            ) from error
+        try:
+            normalized_sample = _finite_number(
+                sample,
+                field_name="random_source",
+                minimum=0.0,
+                maximum=1.0,
+            )
+        except NsValidationError as error:
             raise NsStateError(
                 "random_source must return a finite number between 0 and 1.",
                 details={
@@ -193,8 +213,8 @@ class JitterBackoff:
                     "value": sample,
                     "actual_type": type(sample).__name__,
                 },
-            )
-        factor = 1.0 + self.ratio * ((2.0 * float(sample)) - 1.0)
+            ) from error
+        factor = 1.0 + self.ratio * ((2.0 * normalized_sample) - 1.0)
         jittered = base_delay * factor
         if not math.isfinite(jittered):
             raise NsStateError(
@@ -287,6 +307,97 @@ class RetrySchedule:
     monotonic_deadline: float
     budget: RetryBudget
 
+    def __post_init__(self) -> None:
+        retry_number = _positive_integer(
+            self.retry_number,
+            field_name="retry_number",
+        )
+        delay_seconds = _finite_number(
+            self.delay_seconds,
+            field_name="delay_seconds",
+            minimum=0.0,
+        )
+        scheduled_at = _utc_datetime(
+            self.scheduled_at,
+            field_name="scheduled_at",
+        )
+        next_retry_at = _utc_datetime(
+            self.next_retry_at,
+            field_name="next_retry_at",
+        )
+        scheduled_monotonic = _finite_number(
+            self.scheduled_monotonic,
+            field_name="scheduled_monotonic",
+            minimum=0.0,
+        )
+        monotonic_deadline = _finite_number(
+            self.monotonic_deadline,
+            field_name="monotonic_deadline",
+            minimum=0.0,
+        )
+        if not isinstance(self.budget, RetryBudget):
+            raise NsValidationError(
+                "budget must be a RetryBudget.",
+                details={
+                    "field": "budget",
+                    "actual_type": type(self.budget).__name__,
+                },
+            )
+        if next_retry_at < scheduled_at:
+            raise NsValidationError(
+                "next_retry_at cannot be earlier than scheduled_at.",
+                details={
+                    "field": "next_retry_at",
+                    "scheduled_at": scheduled_at.isoformat(),
+                    "next_retry_at": next_retry_at.isoformat(),
+                },
+            )
+        if monotonic_deadline < scheduled_monotonic:
+            raise NsValidationError(
+                "monotonic_deadline cannot be earlier than scheduled_monotonic.",
+                details={
+                    "field": "monotonic_deadline",
+                    "scheduled_monotonic": scheduled_monotonic,
+                    "monotonic_deadline": monotonic_deadline,
+                },
+            )
+
+        utc_delay = (next_retry_at - scheduled_at).total_seconds()
+        monotonic_delay = monotonic_deadline - scheduled_monotonic
+        for field_name, actual_delay in (
+            ("next_retry_at", utc_delay),
+            ("monotonic_deadline", monotonic_delay),
+        ):
+            if not math.isclose(
+                actual_delay,
+                delay_seconds,
+                rel_tol=1e-12,
+                abs_tol=1e-6,
+            ):
+                raise NsValidationError(
+                    f"{field_name} does not match delay_seconds.",
+                    details={
+                        "field": field_name,
+                        "delay_seconds": delay_seconds,
+                        "actual_delay_seconds": actual_delay,
+                    },
+                )
+
+        object.__setattr__(self, "retry_number", retry_number)
+        object.__setattr__(self, "delay_seconds", delay_seconds)
+        object.__setattr__(self, "scheduled_at", scheduled_at)
+        object.__setattr__(self, "next_retry_at", next_retry_at)
+        object.__setattr__(
+            self,
+            "scheduled_monotonic",
+            scheduled_monotonic,
+        )
+        object.__setattr__(
+            self,
+            "monotonic_deadline",
+            monotonic_deadline,
+        )
+
 
 def schedule_next_retry(
     strategy: BackoffStrategy,
@@ -337,10 +448,7 @@ def schedule_next_retry(
         return None
     delay = _strategy_delay(strategy, normalized_retry_number)
     scheduled_at = _utc_now(clock)
-    scheduled_monotonic = _finite_number(
-        clock.monotonic(),
-        field_name="clock.monotonic",
-    )
+    scheduled_monotonic = _monotonic_now(clock)
     monotonic_deadline = scheduled_monotonic + delay
     if not math.isfinite(monotonic_deadline):
         raise NsStateError(
@@ -362,15 +470,24 @@ def schedule_next_retry(
                 "delay_seconds": delay,
             },
         ) from error
-    return RetrySchedule(
-        retry_number=normalized_retry_number,
-        delay_seconds=delay,
-        scheduled_at=scheduled_at,
-        next_retry_at=next_retry_at,
-        scheduled_monotonic=scheduled_monotonic,
-        monotonic_deadline=monotonic_deadline,
-        budget=consumed_budget,
-    )
+    try:
+        return RetrySchedule(
+            retry_number=normalized_retry_number,
+            delay_seconds=delay,
+            scheduled_at=scheduled_at,
+            next_retry_at=next_retry_at,
+            scheduled_monotonic=scheduled_monotonic,
+            monotonic_deadline=monotonic_deadline,
+            budget=consumed_budget,
+        )
+    except NsValidationError as error:
+        raise NsStateError(
+            "calculated retry schedule violates its invariants.",
+            details={
+                "retry_number": normalized_retry_number,
+                "strategy_type": type(strategy).__name__,
+            },
+        ) from error
 
 
 def _strategy_delay(strategy: BackoffStrategy, retry_number: int) -> float:
@@ -404,28 +521,88 @@ def _strategy_delay(strategy: BackoffStrategy, retry_number: int) -> float:
 
 
 def _utc_now(clock: Clock) -> datetime:
-    value = clock.utc_now()
-    if not isinstance(value, datetime):
+    try:
+        value = clock.utc_now()
+    except Exception as error:
         raise NsStateError(
-            "clock.utc_now() must return a datetime.",
+            "clock.utc_now() failed.",
+            details={"field": "clock.utc_now"},
+        ) from error
+    try:
+        return _utc_datetime(value, field_name="clock.utc_now")
+    except NsValidationError as error:
+        raise NsStateError(
+            "clock.utc_now() must return a timezone-aware UTC datetime.",
             details={
                 "field": "clock.utc_now",
+                "actual_type": type(value).__name__,
+            },
+        ) from error
+
+
+def _monotonic_now(clock: Clock) -> float:
+    try:
+        value = clock.monotonic()
+    except Exception as error:
+        raise NsStateError(
+            "clock.monotonic() failed.",
+            details={"field": "clock.monotonic"},
+        ) from error
+    try:
+        return _finite_number(
+            value,
+            field_name="clock.monotonic",
+            minimum=0.0,
+        )
+    except NsValidationError as error:
+        raise NsStateError(
+            "clock.monotonic() must return a finite non-negative number.",
+            details={
+                "field": "clock.monotonic",
+                "value": value,
+                "actual_type": type(value).__name__,
+            },
+        ) from error
+
+
+def _utc_datetime(value: Any, *, field_name: str) -> datetime:
+    if not isinstance(value, datetime):
+        raise NsValidationError(
+            f"{field_name} must be a datetime.",
+            details={
+                "field": field_name,
+                "value": value,
                 "actual_type": type(value).__name__,
             },
         )
     try:
         offset = value.utcoffset()
     except Exception as error:
-        raise NsStateError(
-            "clock.utc_now() returned an invalid timezone.",
-            details={"field": "clock.utc_now"},
+        raise NsValidationError(
+            f"{field_name} must have a valid timezone.",
+            details={"field": field_name, "value": value},
         ) from error
     if value.tzinfo is None or offset is None:
-        raise NsStateError(
-            "clock.utc_now() must return a timezone-aware datetime.",
-            details={"field": "clock.utc_now"},
+        raise NsValidationError(
+            f"{field_name} must be timezone-aware UTC.",
+            details={"field": field_name, "value": value},
         )
-    return value.astimezone(timezone.utc)
+    if offset != timedelta(0):
+        raise NsValidationError(
+            f"{field_name} must use UTC.",
+            details={
+                "field": field_name,
+                "value": value,
+                "utc_offset_seconds": offset.total_seconds(),
+            },
+        )
+    try:
+        return value.astimezone(timezone.utc)
+    except (OverflowError, ValueError, TypeError) as error:
+        raise NsValidationError(
+            f"{field_name} cannot be normalized to UTC.",
+            details={"field": field_name, "value": value},
+        ) from error
 
 
 NsBackoffStrategy = BackoffStrategy

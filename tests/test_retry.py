@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import unittest
 from dataclasses import FrozenInstanceError
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ns_common.exceptions import NsStateError, NsValidationError
 from ns_common.retry import (
@@ -14,6 +14,7 @@ from ns_common.retry import (
     FixedBackoff,
     JitterBackoff,
     RetryBudget,
+    RetrySchedule,
     schedule_next_retry,
 )
 from ns_common.time import ControlledClock
@@ -101,6 +102,31 @@ class BackoffStrategyTestCase(unittest.TestCase):
             with self.subTest(retry_number=retry_number):
                 with self.assertRaises(NsValidationError):
                     FixedBackoff(1).delay_for(retry_number)  # type: ignore[arg-type]
+
+    def test_oversized_configuration_numbers_are_validation_errors(self) -> None:
+        oversized = 10 ** 10000
+        invalid_factories = (
+            lambda: FixedBackoff(oversized),
+            lambda: ExponentialBackoff(oversized, oversized),
+            lambda: ExponentialBackoff(1, oversized),
+            lambda: ExponentialBackoff(1, 2, multiplier=oversized),
+            lambda: JitterBackoff(FixedBackoff(1), ratio=oversized),
+        )
+
+        for factory in invalid_factories:
+            with self.subTest(factory=factory):
+                with self.assertRaises(NsValidationError):
+                    factory()
+
+    def test_float_conversion_errors_are_validation_errors(self) -> None:
+        for error_type in (ValueError, TypeError):
+            with self.subTest(error_type=error_type.__name__):
+                class BrokenNumber(int):
+                    def __float__(self) -> float:
+                        raise error_type("broken float conversion")
+
+                with self.assertRaises(NsValidationError):
+                    FixedBackoff(BrokenNumber(1))
 
     def test_invalid_random_source_output_is_a_state_error(self) -> None:
         for sample in (-0.1, 1.1, math.nan, math.inf, True, "0.5"):
@@ -235,7 +261,7 @@ class RetrySchedulingTestCase(unittest.TestCase):
             def delay_for(self, retry_number: int) -> float:
                 return self.value  # type: ignore[return-value]
 
-        for value in (-1, math.nan, math.inf, True, "1"):
+        for value in (-1, math.nan, math.inf, True, "1", 10 ** 10000):
             with self.subTest(value=value):
                 with self.assertRaises(NsStateError):
                     schedule_next_retry(
@@ -244,6 +270,81 @@ class RetrySchedulingTestCase(unittest.TestCase):
                         retry_number=1,
                         clock=ControlledClock(),
                     )
+
+    def test_oversized_clock_monotonic_is_a_state_error(self) -> None:
+        class OversizedMonotonicClock(ControlledClock):
+            def monotonic(self) -> float:
+                return 10 ** 10000  # type: ignore[return-value]
+
+        with self.assertRaises(NsStateError):
+            schedule_next_retry(
+                FixedBackoff(1),
+                RetryBudget(max_retries=1),
+                retry_number=1,
+                clock=OversizedMonotonicClock(),
+            )
+
+
+class RetryScheduleTestCase(unittest.TestCase):
+
+    @staticmethod
+    def make_schedule(**overrides: object) -> RetrySchedule:
+        scheduled_at = datetime(2026, 7, 16, 9, 0, tzinfo=timezone.utc)
+        values: dict[str, object] = {
+            "retry_number": 1,
+            "delay_seconds": 2,
+            "scheduled_at": scheduled_at,
+            "next_retry_at": scheduled_at + timedelta(seconds=2),
+            "scheduled_monotonic": 10,
+            "monotonic_deadline": 12,
+            "budget": RetryBudget(max_retries=5, used_retries=1),
+        }
+        values.update(overrides)
+        return RetrySchedule(**values)  # type: ignore[arg-type]
+
+    def test_valid_schedule_is_normalized_and_immutable(self) -> None:
+        schedule = self.make_schedule()
+
+        self.assertEqual(1, schedule.retry_number)
+        self.assertEqual(2.0, schedule.delay_seconds)
+        self.assertIs(timezone.utc, schedule.scheduled_at.tzinfo)
+        self.assertIs(timezone.utc, schedule.next_retry_at.tzinfo)
+        self.assertEqual(10.0, schedule.scheduled_monotonic)
+        self.assertEqual(12.0, schedule.monotonic_deadline)
+        with self.assertRaises(FrozenInstanceError):
+            schedule.delay_seconds = 3.0  # type: ignore[misc]
+
+    def test_direct_construction_rejects_invalid_fields(self) -> None:
+        scheduled_at = datetime(2026, 7, 16, 9, 0, tzinfo=timezone.utc)
+        non_utc = timezone(timedelta(hours=8))
+        oversized = 10 ** 10000
+        invalid_overrides = (
+            {"retry_number": 0},
+            {"retry_number": True},
+            {"delay_seconds": -1},
+            {"delay_seconds": math.inf},
+            {"delay_seconds": oversized},
+            {"scheduled_at": scheduled_at.replace(tzinfo=None)},
+            {"scheduled_at": scheduled_at.astimezone(non_utc)},
+            {"next_retry_at": scheduled_at.replace(tzinfo=None)},
+            {"next_retry_at": scheduled_at.astimezone(non_utc)},
+            {"scheduled_monotonic": -1},
+            {"scheduled_monotonic": math.inf},
+            {"scheduled_monotonic": oversized},
+            {"monotonic_deadline": -1},
+            {"monotonic_deadline": math.inf},
+            {"monotonic_deadline": oversized},
+            {"next_retry_at": scheduled_at - timedelta(seconds=1)},
+            {"monotonic_deadline": 9},
+            {"next_retry_at": scheduled_at + timedelta(seconds=3)},
+            {"monotonic_deadline": 13},
+            {"budget": object()},
+        )
+
+        for overrides in invalid_overrides:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(NsValidationError):
+                    self.make_schedule(**overrides)
 
 
 if __name__ == "__main__":
