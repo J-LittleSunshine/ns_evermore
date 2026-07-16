@@ -187,6 +187,30 @@
 - 已知限制：sanitizer 仍需调用方显式使用；W10 的 logger extra/exception 接入和完整日志链路泄露扫描尚未开始。
 - 下一工作包：`P01-W10 把 sanitizer 接入 NsLogger`，状态保持 `NOT_STARTED`。
 
+## P01-W10
+
+- 工作包：`P01-W10 把 sanitizer 接入 NsLogger`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-16T21:50:06+08:00`。
+- 修改文件：`src/ns_common/logger.py`、新增 `tests/test_logger.py`、实施计划、acceptance log 和 architecture decisions；`src/ns_common/security.py` 未修改。
+- 公共契约变化：`NsLogger` 和 `get_ns_logger()` 新增可选显式 `Sanitizer` 注入，同名 logger 默认保留其拥有的 sanitizer，显式替换时重新配置全部 handler；`NsLogger.sanitizer` 提供只读访问。JSON/text/color formatter 在输出前把字符串消息、安全处理后的格式参数、extra/类 Envelope、异常对象和不含源码行的 traceback 元数据交给现有 sanitizer；JSON 输出改为严格 `allow_nan=False`，不再使用 `default=str` 直接字符串化任意对象。
+- 测试结果：runtime 环境 `tests.test_logger` 9/9、logger+sanitizer 专项 39/39、runtime 联合 140/140、backend 根目录全量 151/151；真实 `NsLogger` handler 到临时日志文件的端到端输出通过严格 JSON 与零泄露检查；`compileall`、runtime/backend 两套环境 `pip check` 和 `git diff --check` 通过。
+- 安全/隔离检查：消息对象和 `%` 格式参数在调用原始 `__str__()` 前先交给 sanitizer；extra、类 Envelope 和异常不直接序列化；异常 traceback 只保留 filename、lineno、function 元数据；普通对象失败保持 fail-closed，`KeyboardInterrupt`、`SystemExit` 保持穿透。Logger 未新增、复制或放宽任何 sanitizer 字段、路径、对象、摘要或资源限制规则。
+- 已知限制：任意无字段名、无路径且无敏感标记的自由文本仍无法可靠推断为秘密；P01-W11 的完整错误注册表尚未开始。
+- 下一工作包：`P01-W11 扩展 ns_common.exceptions 为错误注册表`，状态为 `NOT_STARTED`。
+
+## P01-REF-01
+
+- 工作包：`P01-REF-01 将 ns_common.config 从单模块拆分为包`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-16T22:15:11+08:00`。
+- 修改文件：删除原 `src/ns_common/config.py`；新增 `src/ns_common/config/__init__.py`、`defaults.py`、`primitives.py`、`metadata.py`、`model.py`、`codec.py`、`validation.py`、`resolver.py` 以及 `groups/__init__.py`、`backend.py`、`cache.py`、`logging.py`、`runtime.py`；新增 `tests/test_config_package.py`；更新实施计划、acceptance log 和 ADR-001。已验证的 W10 logger 文件未在本工作包中继续修改，设计边界文档未修改。
+- 公共契约变化：无。`ns_common.config` 由 module 改为 package，但 facade 保留原 69 个显式公共导出、既有导入路径、顶层 `ns_common` 对象身份、`ns_config` 初始化与访问行为；`NsConfig` 的 JSON、默认值、兼容别名、未知字段拒绝、原子保存、校验错误类型/details、来源优先级、backend override 和 validated snapshot 语义保持不变。内部路径不作为公共契约。
+- 测试结果：runtime 环境原 `tests.test_config` 40/40、结构专项 `tests.test_config_package` 8/8、`tests.test_logger` 9/9、P01/runtime 联合 148/148；backend 环境根目录全量 159/159。全树 `compileall`、runtime/backend 两套环境 `pip check`、69 项公共导出完整性、冷启动全部配置子模块导入、backend settings 实际导入、生产源码内部 config 路径扫描和 `git diff --check` 均通过。
+- 安全/隔离检查：primitives 不依赖配置组，groups 不依赖根模型，validation 不依赖 resolver 或文件 I/O，codec 不读取全局 `ns_config`，resolver 无注册副作用、全局可变对象、动态模块注入或 import hook；生产调用方继续只依赖 facade。未修改配置默认值、校验分支、错误 message/details、logger/sanitizer 行为、设计边界或后续 runtime 功能。
+- 已知限制：pickle 仍不作为兼容承诺；为兼容直接构造 `NsConfigResolver()`，resolver 在未显式提供 `config_type` 时通过带说明的局部导入取得唯一根模型，常规 `NsConfig.resolve()` 始终显式注入类型，且冷启动循环导入检查通过。
+- 下一工作包：`P01-W11 扩展 ns_common.exceptions 为错误注册表`，状态为 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

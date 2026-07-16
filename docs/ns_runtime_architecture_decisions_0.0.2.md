@@ -19,10 +19,10 @@
 
 - ADR 编号：`ADR-001`
 - 状态：`ACCEPTED`
-- 背景：runtime 配置会来自本地文件、backend 覆盖和运行期已验证快照；隐式可变配置会导致来源、回滚和热更新语义不可追溯。
-- 决策：配置加载完成后形成深度不可变快照；来源优先级固定为 `local_file < backend_override < validated_snapshot`；配置组持续携带版本、来源、生效时间、回滚来源和生效模式。runtime 深层模块只能接收显式配置依赖，不得直接读取全局配置单例。
-- 后果：配置变化必须生成新快照并通过完整校验；非法覆盖不得部分生效；运行中不可变更的配置返回 `restart_required`。
-- 关联阶段/工作包：`P01-W01`、`P01-W02`、`P01-W03`、`P16`。
+- 背景：runtime 配置会来自本地文件、backend 覆盖和运行期已验证快照；隐式可变配置会导致来源、回滚和热更新语义不可追溯。配置模型、编解码、校验和来源解析若长期集中在单一模块，也会放大循环依赖和无关上下文读取。
+- 决策：配置加载完成后形成深度不可变快照；来源优先级固定为 `local_file < backend_override < validated_snapshot`；配置组持续携带版本、来源、生效时间、回滚来源和生效模式。`ns_common.config` 以 facade 保持公共导入稳定，内部依赖方向固定为 defaults/primitives/metadata → groups → validation → codec → resolver → model → facade；primitives 和 groups 不依赖根模型，validation 不依赖 resolver 或文件 I/O，codec 不读取全局 `ns_config`。runtime 深层模块只能接收显式配置依赖，不得直接读取全局配置单例或依赖 config 内部子模块。
+- 后果：配置变化必须生成新快照并通过完整校验；非法覆盖不得部分生效；运行中不可变更的配置返回 `restart_required`。配置内部文件路径不属于公共契约，生产调用方继续只从 `ns_common.config` 或 `ns_common` facade 导入。
+- 关联阶段/工作包：`P01-W01`、`P01-W02`、`P01-W03`、`P01-REF-01`、`P16`。
 
 ## ADR-002
 
@@ -92,8 +92,8 @@
 - ADR 编号：`ADR-009`
 - 状态：`ACCEPTED`
 - 背景：日志、错误和审计会接收任意嵌套对象、异常和自由文本；字段遗漏、对象异常行为、非标准 JSON 数值或无界摘要序列化都可能导致秘密泄露、覆盖原业务异常或造成 CPU/内存资源消耗。
-- 决策：sanitizer 同时使用明确字段、后缀、路径和对象类型规则；对 token、password、secret、private key、authorization、cookie、credential、signature、业务 payload、原始 certificate、签名 URL 和 peer/client/remote IP/address 完全替换。Mapping key 也必须脱敏并保留冲突项。普通对象访问、异常字符串化和摘要规范化失败时 fail-closed，输出必须通过严格 JSON 编码。digest 必须遵守当前深度，并通过有界、确定性的规范化限制遍历节点、单容器项目、字符串、bytes 和规范化结果字节；超限直接返回 `[REDACTED]`，循环引用安全结束，mapping 与 set/frozenset 顺序不影响摘要。限制内 bytes 直接以原始 bytes 计算 SHA-256，不生成 hex 副本。peer/client/remote address 不使用无密钥摘要，直接替换为 `[REDACTED]`。
-- 后果：不得对任意对象直接执行无界摘要序列化，不得泄露异常对象的原始失败内容；不得吞掉 `KeyboardInterrupt`、`SystemExit` 等进程级异常；digest 不引入全局状态或硬编码密钥。如未来需要地址跨日志关联，只能设计显式注入密钥的 HMAC，不得使用全局硬编码密钥。任意无标签自由文本仍要求调用方提供结构化字段或路径语义。
+- 决策：sanitizer 同时使用明确字段、后缀、路径和对象类型规则；对 token、password、secret、private key、authorization、cookie、credential、signature、业务 payload、原始 certificate、签名 URL 和 peer/client/remote IP/address 完全替换。Mapping key 也必须脱敏并保留冲突项。普通对象访问、异常字符串化和摘要规范化失败时 fail-closed，输出必须通过严格 JSON 编码。digest 必须遵守当前深度，并通过有界、确定性的规范化限制遍历节点、单容器项目、字符串、bytes 和规范化结果字节；超限直接返回 `[REDACTED]`，循环引用安全结束，mapping 与 set/frozenset 顺序不影响摘要。限制内 bytes 直接以原始 bytes 计算 SHA-256，不生成 hex 副本。peer/client/remote address 不使用无密钥摘要，直接替换为 `[REDACTED]`。Logger 只拥有或接收显式 `Sanitizer`，在 JSON/text/color 输出前把消息、格式参数、extra、异常对象和不含源码行的 traceback 元数据交给 sanitizer；Logger 不得定义、复制或放宽任何敏感字段、路径、对象、摘要或资源限制规则。
+- 后果：依赖方向固定为 Logger 调用 sanitizer，sanitizer 不引用日志类型或 formatter 语义；formatter 不直接字符串化或序列化原始 Envelope/extra/异常对象。不得对任意对象直接执行无界摘要序列化，不得泄露异常对象的原始失败内容；不得吞掉 `KeyboardInterrupt`、`SystemExit` 等进程级异常；digest 不引入全局状态或硬编码密钥。如未来需要地址跨日志关联，只能设计显式注入密钥的 HMAC，不得使用全局硬编码密钥。任意无标签自由文本仍要求调用方提供结构化字段或路径语义。
 - 关联阶段/工作包：`P01-W09`、`P01-FIX-03`、`P01-FIX-04`、`P01-W10`、`P03`、`P06`、`P20`。
 
 ## ADR-010

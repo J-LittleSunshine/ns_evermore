@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
 import sys
-import traceback
 from dataclasses import asdict
 from datetime import (
     datetime,
@@ -23,6 +23,10 @@ from typing import (
 
 from ns_common.config import ns_config
 from ns_common.paths import LOG_DIR
+from ns_common.security import (
+    REDACTED,
+    Sanitizer,
+)
 
 try:
     from concurrent_log_handler import ConcurrentTimedRotatingFileHandler as _ConcurrentTimedRotatingFileHandler
@@ -54,6 +58,80 @@ class _ExactLevelFilter(logging.Filter):
         return _record.levelno == self._levelno
 
 
+def _safe_record_message(
+    record: logging.LogRecord,
+    sanitizer: Sanitizer,
+) -> str:
+    if not isinstance(record.msg, str):
+        sanitized_message = sanitizer.sanitize(
+            record.msg,
+            path=("log", "message"),
+        )
+        if record.args:
+            sanitized_message = {
+                "message": sanitized_message,
+                "args": _sanitize_message_args(record.args, sanitizer),
+            }
+        if isinstance(sanitized_message, str):
+            return sanitized_message
+        try:
+            return json.dumps(
+                sanitized_message,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        except Exception:
+            return REDACTED
+
+    safe_record = copy.copy(record)
+    safe_record.args = _sanitize_message_args(record.args, sanitizer)
+    try:
+        message = safe_record.getMessage()
+    except Exception:
+        return REDACTED
+    return sanitizer.sanitize_text(message)
+
+
+def _sanitize_message_args(args: Any, sanitizer: Sanitizer) -> Any:
+    if isinstance(args, tuple):
+        return tuple(
+            sanitizer.sanitize(
+                item,
+                path=("log", "message_args", str(index)),
+            )
+            for index, item in enumerate(args)
+        )
+    if isinstance(args, Mapping):
+        sanitized_args = sanitizer.sanitize(
+            args,
+            path=("log", "message_args"),
+        )
+        return sanitized_args if isinstance(sanitized_args, dict) else {}
+    return ()
+
+
+def _traceback_metadata(exc_info: Any) -> list[dict[str, object]]:
+    try:
+        traceback_object = exc_info[2]
+    except Exception:
+        return []
+
+    result: list[dict[str, object]] = []
+    while traceback_object is not None:
+        try:
+            code = traceback_object.tb_frame.f_code
+            result.append({
+                "filename": code.co_filename,
+                "lineno": traceback_object.tb_lineno,
+                "function": code.co_name,
+            })
+            traceback_object = traceback_object.tb_next
+        except Exception:
+            return []
+    return result
+
+
 class _JsonLogFormatter(logging.Formatter):
     """Format log records as one-line JSON."""
 
@@ -82,8 +160,15 @@ class _JsonLogFormatter(logging.Formatter):
         "asctime",
     }
 
-    def __init__(self, datefmt: str | None = None, utc_enabled: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        sanitizer: Sanitizer,
+        datefmt: str | None = None,
+        utc_enabled: bool = False,
+    ) -> None:
         super().__init__(datefmt=datefmt)
+        self._sanitizer = sanitizer
         self._utc_enabled: bool = utc_enabled
 
     def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
@@ -97,13 +182,11 @@ class _JsonLogFormatter(logging.Formatter):
         return dt.isoformat(timespec="milliseconds")
 
     def format(self, record: logging.LogRecord) -> str:
-        record.message = record.getMessage()
-
-        payload: dict[str, object] = {
+        payload: dict[object, object] = {
             "timestamp": self.formatTime(record, self.datefmt),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.message,
+            "message": _safe_record_message(record, self._sanitizer),
             "module": record.module,
             "filename": record.filename,
             "lineno": record.lineno,
@@ -115,30 +198,93 @@ class _JsonLogFormatter(logging.Formatter):
         }
 
         for key, value in record.__dict__.items():
-            if key in self._RESERVED_KEYS or key.startswith("_"):
+            if key in self._RESERVED_KEYS or (
+                isinstance(key, str) and key.startswith("_")
+            ):
                 continue
-            payload[key] = self._normalize_value(value)
+            payload[key] = value
 
         if record.exc_info:
-            payload["exception"] = "".join(traceback.format_exception(*record.exc_info)).rstrip()
+            payload["exception"] = {
+                "error": record.exc_info[1],
+                "traceback": _traceback_metadata(record.exc_info),
+            }
 
         if record.stack_info:
             payload["stack"] = record.stack_info
 
-        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+        sanitized_payload = self._sanitizer.sanitize(payload)
+        if not isinstance(sanitized_payload, dict):
+            sanitized_payload = {"message": REDACTED}
+        return json.dumps(
+            sanitized_payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
-    @staticmethod
-    def _normalize_value(value: object) -> object:
-        """Normalize extra value for JSON serialization."""
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, (list, tuple, set)):
-            return list(value)
-        if isinstance(value, dict):
-            return value
-        return str(value)
 
-class _ConsoleTextLogFormatter(logging.Formatter):
+class _SanitizingTextLogFormatter(logging.Formatter):
+    """Delegate all value safety decisions to an injected Sanitizer."""
+
+    _RESERVED_KEYS = _JsonLogFormatter._RESERVED_KEYS
+
+    def __init__(
+        self,
+        *,
+        sanitizer: Sanitizer,
+        fmt: str,
+        datefmt: str | None = None,
+    ) -> None:
+        super().__init__(fmt=fmt, datefmt=datefmt)
+        self._sanitizer = sanitizer
+
+    def format(self, record: logging.LogRecord) -> str:
+        safe_record = copy.copy(record)
+        safe_record.msg = _safe_record_message(record, self._sanitizer)
+        safe_record.args = ()
+        if record.exc_info:
+            safe_record.exc_text = self.formatException(record.exc_info)
+            safe_record.exc_info = None
+        else:
+            safe_record.exc_text = None
+
+        raw_extra: dict[object, object] = {}
+        for key, value in record.__dict__.items():
+            if key in self._RESERVED_KEYS or (
+                isinstance(key, str) and key.startswith("_")
+            ):
+                continue
+            raw_extra[key] = value
+            safe_record.__dict__[key] = REDACTED
+
+        sanitized_extra = self._sanitizer.sanitize(raw_extra)
+        if isinstance(sanitized_extra, dict):
+            safe_record.__dict__.update(sanitized_extra)
+        elif raw_extra:
+            safe_record.__dict__["extra"] = REDACTED
+
+        if isinstance(record.stack_info, str):
+            safe_record.stack_info = self._sanitizer.sanitize_text(
+                record.stack_info
+            )
+
+        return super().format(safe_record)
+
+    def formatException(self, exc_info: Any) -> str:
+        sanitized_exception = self._sanitizer.sanitize({
+            "error": exc_info[1],
+            "traceback": _traceback_metadata(exc_info),
+        })
+        return json.dumps(
+            sanitized_exception,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+
+class _ConsoleTextLogFormatter(_SanitizingTextLogFormatter):
     RESET = "\033[0m"
 
     LEVEL_COLORS: dict[int, str] = {
@@ -156,8 +302,15 @@ class _ConsoleTextLogFormatter(logging.Formatter):
         (500, 599, "\033[31m"),
     )
 
-    def __init__(self, *, fmt: str, datefmt: str | None = None, color_enabled: bool = True) -> None:
-        super().__init__(fmt=fmt, datefmt=datefmt)
+    def __init__(
+        self,
+        *,
+        sanitizer: Sanitizer,
+        fmt: str,
+        datefmt: str | None = None,
+        color_enabled: bool = True,
+    ) -> None:
+        super().__init__(sanitizer=sanitizer, fmt=fmt, datefmt=datefmt)
         self.color_enabled = color_enabled
 
     def format(self, record: logging.LogRecord) -> str:
@@ -237,7 +390,14 @@ else:
 
 
 class NsLogger(logging.Logger):
-    def __new__(cls, name: str, multiprocessing_mode: bool = False) -> "NsLogger":
+    def __new__(
+        cls,
+        name: str,
+        multiprocessing_mode: bool = False,
+        sanitizer: Sanitizer | None = None,
+    ) -> "NsLogger":
+        if sanitizer is not None and not isinstance(sanitizer, Sanitizer):
+            raise TypeError("sanitizer must be a Sanitizer instance")
         with _LOGGER_LOCK:
             logger: NsLogger | None = _LOGGER_MAP.get(name)
             if logger is None:
@@ -245,7 +405,12 @@ class NsLogger(logging.Logger):
                 _LOGGER_MAP[name] = logger
             return logger
 
-    def __init__(self, name: str, multiprocessing_mode: bool = False) -> None:
+    def __init__(
+        self,
+        name: str,
+        multiprocessing_mode: bool = False,
+        sanitizer: Sanitizer | None = None,
+    ) -> None:
         with _LOGGER_LOCK:
             if not getattr(self, "_base_initialized", False):
                 super().__init__(name=name, level=logging.DEBUG)
@@ -253,14 +418,26 @@ class NsLogger(logging.Logger):
                 self._initialized: bool = False
                 self._owner_pid: int = -1
                 self._multiprocessing_mode: bool = multiprocessing_mode
+                self._sanitizer: Sanitizer = sanitizer or Sanitizer()
 
-            should_reconfigure: bool = not self._initialized or self._owner_pid != os.getpid() or self._multiprocessing_mode != multiprocessing_mode
+            next_sanitizer = sanitizer or self._sanitizer
+            should_reconfigure: bool = (
+                not self._initialized
+                or self._owner_pid != os.getpid()
+                or self._multiprocessing_mode != multiprocessing_mode
+                or next_sanitizer is not self._sanitizer
+            )
 
             if not should_reconfigure:
                 return
 
             self._multiprocessing_mode = multiprocessing_mode
+            self._sanitizer = next_sanitizer
             self._configure()
+
+    @property
+    def sanitizer(self) -> Sanitizer:
+        return self._sanitizer
 
     def _log(self, level: int, msg: object, args: Any, exc_info: Any = None, extra: Mapping[str, object] | None = None, stack_info: bool = False, stacklevel: int = 1) -> None:
         self._ensure_current_process()
@@ -296,13 +473,22 @@ class NsLogger(logging.Logger):
 
         def _build_formatter(_format_type: str) -> logging.Formatter:
             if _format_type == "json":
-                return _JsonLogFormatter(datefmt=datefmt, utc_enabled=utc_enabled)
+                return _JsonLogFormatter(
+                    sanitizer=self._sanitizer,
+                    datefmt=datefmt,
+                    utc_enabled=utc_enabled,
+                )
 
             if _format_type == "text":
-                return logging.Formatter(fmt=text_format, datefmt=datefmt)
+                return _SanitizingTextLogFormatter(
+                    sanitizer=self._sanitizer,
+                    fmt=text_format,
+                    datefmt=datefmt,
+                )
 
             if _format_type == "color_text":
                 return _ConsoleTextLogFormatter(
+                    sanitizer=self._sanitizer,
                     fmt=text_format,
                     datefmt=datefmt,
                     color_enabled=True,
@@ -453,8 +639,16 @@ class NsLogger(logging.Logger):
         return datetime.now().strftime("%Y-%m-%d")
 
 
-def get_ns_logger(name: str, multiprocessing_mode: bool = False) -> NsLogger:
-    return NsLogger(name=name, multiprocessing_mode=multiprocessing_mode)
+def get_ns_logger(
+    name: str,
+    multiprocessing_mode: bool = False,
+    sanitizer: Sanitizer | None = None,
+) -> NsLogger:
+    return NsLogger(
+        name=name,
+        multiprocessing_mode=multiprocessing_mode,
+        sanitizer=sanitizer,
+    )
 
 
 def close_ns_loggers() -> None:
