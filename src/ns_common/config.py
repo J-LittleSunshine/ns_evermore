@@ -9,6 +9,7 @@ import tempfile
 import types
 from collections.abc import Mapping as MappingABC
 from dataclasses import (
+    MISSING,
     dataclass,
     field,
     fields,
@@ -414,8 +415,322 @@ class NsLogConfig:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeEventLoopConfig:
+    implementation: Literal["auto", "asyncio", "uvloop"] = "auto"
+    debug: bool = False
+    slow_callback_threshold_ms: int = 100
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="restart_required")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeTransportAdapterConfig:
+    enabled: bool = False
+    tls_enabled: bool = True
+    allowed_origins: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "allowed_origins", _freeze_config_value(self.allowed_origins))
+
+
+def _default_websocket_tcp_adapter() -> NsRuntimeTransportAdapterConfig:
+    return NsRuntimeTransportAdapterConfig(enabled=True, tls_enabled=False)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeTransportConfig:
+    websocket_tcp: NsRuntimeTransportAdapterConfig = field(default_factory=_default_websocket_tcp_adapter)
+    websocket_http3: NsRuntimeTransportAdapterConfig = field(default_factory=NsRuntimeTransportAdapterConfig)
+    webtransport_http3: NsRuntimeTransportAdapterConfig = field(default_factory=NsRuntimeTransportAdapterConfig)
+    quic_native: NsRuntimeTransportAdapterConfig = field(default_factory=NsRuntimeTransportAdapterConfig)
+    default_adapter: Literal[
+        "websocket_tcp",
+        "websocket_http3",
+        "webtransport_http3",
+        "quic_native",
+    ] = "websocket_tcp"
+    preferred_adapter: Literal[
+        "websocket_tcp",
+        "websocket_http3",
+        "webtransport_http3",
+        "quic_native",
+    ] = "websocket_tcp"
+    fallback_order: tuple[
+        Literal[
+            "websocket_tcp",
+            "websocket_http3",
+            "webtransport_http3",
+            "quic_native",
+        ],
+        ...,
+    ] = ("websocket_tcp",)
+    capability_negotiation_enabled: bool = True
+    listen_host: str = "127.0.0.1"
+    listen_port: int = 8765
+    write_queue_capacity: int = 1024
+    write_queue_low_watermark: int = 256
+    write_queue_high_watermark: int = 768
+    path_migration_enabled: bool = False
+    datagram_enabled: bool = False
+    zero_rtt_enabled: bool = False
+    message_type_allowlist: tuple[str, ...] = ()
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="restart_required")
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "fallback_order", _freeze_config_value(self.fallback_order))
+        object.__setattr__(self, "message_type_allowlist", _freeze_config_value(self.message_type_allowlist))
+
+    def adapters(self) -> tuple[tuple[str, NsRuntimeTransportAdapterConfig], ...]:
+        return (
+            ("websocket_tcp", self.websocket_tcp),
+            ("websocket_http3", self.websocket_http3),
+            ("webtransport_http3", self.webtransport_http3),
+            ("quic_native", self.quic_native),
+        )
+
+    @property
+    def enabled_adapters(self) -> tuple[str, ...]:
+        return tuple(name for name, adapter in self.adapters() if adapter.enabled)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeWireCodecConfig:
+    supported: tuple[Literal["json.v1"], ...] = ("json.v1",)
+    preferred: Literal["json.v1"] = "json.v1"
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="restart_required")
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "supported", _freeze_config_value(self.supported))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeProtocolConfig:
+    supported_versions: tuple[str, ...] = ("1.0",)
+    preferred_version: str = "1.0"
+    handshake_timeout_seconds: int = 10
+    max_envelope_bytes: int = 1_048_576
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="rolling")
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "supported_versions", _freeze_config_value(self.supported_versions))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeSecurityConfig:
+    require_tls_in_prod: bool = True
+    allow_plaintext_non_prod: bool = True
+    allow_zero_rtt: bool = False
+    reject_inbound_source: bool = True
+    reject_inbound_auth_context: bool = True
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="restart_required")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeIamConfig:
+    base_url: str = "http://127.0.0.1:8000/api/iam/"
+    request_timeout_seconds: int = 5
+    credential_refresh_interval_seconds: int = 300
+    permission_snapshot_ttl_seconds: int = 60
+    fail_closed: bool = True
+    allow_degraded_startup: bool = False
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="rolling")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeStateStoreConfig:
+    backend: Literal["sqlite", "redis", "valkey"] = "sqlite"
+    url: str = ""
+    namespace: str = "ns_runtime"
+    sqlite_path: str = "data/ns_runtime_state.sqlite3"
+    operation_timeout_seconds: int = 5
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="restart_required")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeRoutingConfig:
+    no_target_action: Literal["reroute", "queue", "reject", "dead_letter", "degrade", "hybrid"] = "queue"
+    max_hops: int = 8
+    route_cache_ttl_seconds: int = 30
+    allow_cross_node: bool = False
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="immediate")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeDeliveryConfig:
+    ack_timeout_seconds: int = 30
+    max_retry_attempts: int = 5
+    retry_base_delay_ms: int = 100
+    retry_max_delay_ms: int = 30_000
+    persist_delivery_records: bool = True
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="rolling")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeWorkerConfig:
+    concurrency: int = 32
+    shutdown_timeout_seconds: int = 30
+    processor_timeout_seconds: int = 30
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="rolling")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimePoolConfig:
+    control_capacity: int = 8
+    delivery_capacity: int = 64
+    stream_capacity: int = 32
+    observability_capacity: int = 4
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="rolling")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeTenantQuotaConfig:
+    enabled: bool = True
+    max_connections: int = 1000
+    max_queued_deliveries: int = 10_000
+    max_inflight_deliveries: int = 1000
+    messages_per_second: int = 1000
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="immediate")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeClusterConfig:
+    role: Literal["standalone", "master", "sub_node"] = "standalone"
+    node_id: str = "local-runtime"
+    active_master_url: str = ""
+    heartbeat_interval_seconds: int = 5
+    leader_lease_seconds: int = 15
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="restart_required")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeRecoveryConfig:
+    enabled: bool = True
+    scan_interval_seconds: int = 30
+    scan_batch_size: int = 1000
+    stale_after_seconds: int = 60
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="rolling")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeObservabilityConfig:
+    metrics_enabled: bool = True
+    tracing_enabled: bool = False
+    diagnostic_snapshots_enabled: bool = True
+    trace_sample_ratio: float = 0.0
+    export_interval_seconds: int = 15
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="immediate")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeLoggingConfig:
+    level: str = "INFO"
+    structured: bool = True
+    include_sanitized_envelope: bool = False
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="immediate")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsRuntimeDebugConfig:
+    enabled: bool = False
+    emit_sanitized_envelope: bool = False
+    fault_injection_enabled: bool = False
+    metadata: NsConfigGroupMetadata = field(
+        default_factory=lambda: NsConfigGroupMetadata(apply_mode="immediate")
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class NsRuntimeConfig:
+    event_loop: NsRuntimeEventLoopConfig = field(default_factory=NsRuntimeEventLoopConfig)
+    transport: NsRuntimeTransportConfig = field(default_factory=NsRuntimeTransportConfig)
+    wire_codec: NsRuntimeWireCodecConfig = field(default_factory=NsRuntimeWireCodecConfig)
+    protocol: NsRuntimeProtocolConfig = field(default_factory=NsRuntimeProtocolConfig)
+    security: NsRuntimeSecurityConfig = field(default_factory=NsRuntimeSecurityConfig)
+    iam: NsRuntimeIamConfig = field(default_factory=NsRuntimeIamConfig)
+    state_store: NsRuntimeStateStoreConfig = field(default_factory=NsRuntimeStateStoreConfig)
+    routing: NsRuntimeRoutingConfig = field(default_factory=NsRuntimeRoutingConfig)
+    delivery: NsRuntimeDeliveryConfig = field(default_factory=NsRuntimeDeliveryConfig)
+    worker: NsRuntimeWorkerConfig = field(default_factory=NsRuntimeWorkerConfig)
+    pool: NsRuntimePoolConfig = field(default_factory=NsRuntimePoolConfig)
+    tenant_quota: NsRuntimeTenantQuotaConfig = field(default_factory=NsRuntimeTenantQuotaConfig)
+    cluster: NsRuntimeClusterConfig = field(default_factory=NsRuntimeClusterConfig)
+    recovery: NsRuntimeRecoveryConfig = field(default_factory=NsRuntimeRecoveryConfig)
+    observability: NsRuntimeObservabilityConfig = field(default_factory=NsRuntimeObservabilityConfig)
+    logging: NsRuntimeLoggingConfig = field(default_factory=NsRuntimeLoggingConfig)
+    debug: NsRuntimeDebugConfig = field(default_factory=NsRuntimeDebugConfig)
     metadata: NsConfigGroupMetadata = field(default_factory=NsConfigGroupMetadata)
+
+
+RUNTIME_CONFIG_GROUP_NAMES: tuple[str, ...] = (
+    "event_loop",
+    "transport",
+    "wire_codec",
+    "protocol",
+    "security",
+    "iam",
+    "state_store",
+    "routing",
+    "delivery",
+    "worker",
+    "pool",
+    "tenant_quota",
+    "cluster",
+    "recovery",
+    "observability",
+    "logging",
+    "debug",
+)
+
+RUNTIME_CONFIG_APPLY_MODES: Mapping[str, str] = types.MappingProxyType({
+    "event_loop": "restart_required",
+    "transport": "restart_required",
+    "wire_codec": "restart_required",
+    "protocol": "rolling",
+    "security": "restart_required",
+    "iam": "rolling",
+    "state_store": "restart_required",
+    "routing": "immediate",
+    "delivery": "rolling",
+    "worker": "rolling",
+    "pool": "rolling",
+    "tenant_quota": "immediate",
+    "cluster": "restart_required",
+    "recovery": "rolling",
+    "observability": "immediate",
+    "logging": "immediate",
+    "debug": "immediate",
+})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -547,6 +862,26 @@ class NsConfig:
             field_name="effective_at",
             allow_none=False,
         )
+        runtime_group_updates = {
+            group_name: replace(
+                group_config,
+                metadata=replace(
+                    group_config.metadata,
+                    source=NsConfigSource.VALIDATED_SNAPSHOT,
+                    effective_at=timestamp,
+                ),
+            )
+            for group_name, group_config in self._runtime_config_groups(self.runtime)
+        }
+        runtime_snapshot = replace(
+            self.runtime,
+            **runtime_group_updates,
+            metadata=replace(
+                self.runtime.metadata,
+                source=NsConfigSource.VALIDATED_SNAPSHOT,
+                effective_at=timestamp,
+            ),
+        )
         snapshot = replace(
             self,
             backend=replace(
@@ -573,14 +908,7 @@ class NsConfig:
                     effective_at=timestamp,
                 ),
             ),
-            runtime=replace(
-                self.runtime,
-                metadata=replace(
-                    self.runtime.metadata,
-                    source=NsConfigSource.VALIDATED_SNAPSHOT,
-                    effective_at=timestamp,
-                ),
-            ),
+            runtime=runtime_snapshot,
         )
         snapshot.validate(environment=environment)
         self._get_consistent_metadata_value(snapshot, "config_version")
@@ -746,7 +1074,11 @@ class NsConfig:
         for group_name, group_config in self._config_groups(self):
             self._validate_group_metadata(group_name, group_config.metadata)
 
+        for group_name, group_config in self._runtime_config_groups(self.runtime):
+            self._validate_group_metadata(f"runtime.{group_name}", group_config.metadata)
+
         self._validate_cache_config()
+        self._validate_runtime_config(resolved_environment)
 
     @staticmethod
     def _config_groups(config: "NsConfig") -> tuple[tuple[str, Any], ...]:
@@ -755,6 +1087,13 @@ class NsConfig:
             ("cache", config.cache),
             ("log", config.log),
             ("runtime", config.runtime),
+        )
+
+    @staticmethod
+    def _runtime_config_groups(runtime: NsRuntimeConfig) -> tuple[tuple[str, Any], ...]:
+        return tuple(
+            (group_name, getattr(runtime, group_name))
+            for group_name in RUNTIME_CONFIG_GROUP_NAMES
         )
 
     @classmethod
@@ -935,6 +1274,443 @@ class NsConfig:
                 package_name="valkey",
             )
 
+    def _validate_runtime_config(self, environment: str) -> None:
+        runtime = self.runtime
+
+        for group_name, group_config in self._runtime_config_groups(runtime):
+            expected_apply_mode = RUNTIME_CONFIG_APPLY_MODES[group_name]
+            if group_config.metadata.apply_mode != expected_apply_mode:
+                raise NsConfigError(
+                    f"runtime.{group_name}.metadata.apply_mode is invalid for this group.",
+                    details={
+                        "field": f"runtime.{group_name}.metadata.apply_mode",
+                        "value": group_config.metadata.apply_mode,
+                        "expected": expected_apply_mode,
+                    },
+                )
+
+            for version_field in ("config_version", "policy_version"):
+                value = getattr(group_config.metadata, version_field)
+                expected = getattr(runtime.metadata, version_field)
+                if value != expected:
+                    raise NsConfigError(
+                        f"runtime.{group_name}.metadata.{version_field} is inconsistent with runtime metadata.",
+                        details={
+                            "field": f"runtime.{group_name}.metadata.{version_field}",
+                            "value": value,
+                            "expected": expected,
+                        },
+                    )
+
+        event_loop = runtime.event_loop
+        if event_loop.implementation not in {"auto", "asyncio", "uvloop"}:
+            self._raise_invalid_choice(
+                "runtime.event_loop.implementation",
+                event_loop.implementation,
+                {"auto", "asyncio", "uvloop"},
+            )
+        self._validate_positive_int(
+            "runtime.event_loop.slow_callback_threshold_ms",
+            event_loop.slow_callback_threshold_ms,
+        )
+
+        transport = runtime.transport
+        adapter_names = {name for name, _ in transport.adapters()}
+        enabled_adapters = set(transport.enabled_adapters)
+        if not enabled_adapters:
+            raise NsConfigError(
+                "runtime.transport must enable at least one adapter.",
+                details={"field": "runtime.transport"},
+            )
+
+        for adapter_name, adapter in transport.adapters():
+            for origin in adapter.allowed_origins:
+                self._validate_non_empty_string(
+                    f"runtime.transport.{adapter_name}.allowed_origins",
+                    origin,
+                )
+
+            if environment == "prod" and adapter.enabled and not adapter.tls_enabled:
+                raise NsConfigError(
+                    "enabled production transports must use encrypted transport.",
+                    details={
+                        "field": f"runtime.transport.{adapter_name}.tls_enabled",
+                        "env": environment,
+                    },
+                )
+
+        for field_name, adapter_name in (
+            ("default_adapter", transport.default_adapter),
+            ("preferred_adapter", transport.preferred_adapter),
+        ):
+            if adapter_name not in enabled_adapters:
+                raise NsConfigError(
+                    f"runtime.transport.{field_name} must reference an enabled adapter.",
+                    details={
+                        "field": f"runtime.transport.{field_name}",
+                        "value": adapter_name,
+                        "enabled_adapters": sorted(enabled_adapters),
+                    },
+                )
+
+        self._validate_unique_choices(
+            "runtime.transport.fallback_order",
+            transport.fallback_order,
+            adapter_names,
+        )
+        disabled_fallbacks = sorted(set(transport.fallback_order).difference(enabled_adapters))
+        if disabled_fallbacks:
+            raise NsConfigError(
+                "runtime.transport.fallback_order contains disabled adapters.",
+                details={
+                    "field": "runtime.transport.fallback_order",
+                    "disabled_adapters": disabled_fallbacks,
+                },
+            )
+
+        self._validate_non_empty_string("runtime.transport.listen_host", transport.listen_host)
+        self._validate_port("runtime.transport.listen_port", transport.listen_port)
+        self._validate_positive_int("runtime.transport.write_queue_capacity", transport.write_queue_capacity)
+        self._validate_non_negative_int(
+            "runtime.transport.write_queue_low_watermark",
+            transport.write_queue_low_watermark,
+        )
+        self._validate_positive_int(
+            "runtime.transport.write_queue_high_watermark",
+            transport.write_queue_high_watermark,
+        )
+        if not (
+            transport.write_queue_low_watermark
+            < transport.write_queue_high_watermark
+            <= transport.write_queue_capacity
+        ):
+            raise NsConfigError(
+                "runtime.transport queue watermarks are invalid.",
+                details={
+                    "field": "runtime.transport.write_queue_low_watermark",
+                    "low": transport.write_queue_low_watermark,
+                    "high": transport.write_queue_high_watermark,
+                    "capacity": transport.write_queue_capacity,
+                },
+            )
+
+        self._validate_unique_non_empty_strings(
+            "runtime.transport.message_type_allowlist",
+            transport.message_type_allowlist,
+            allow_empty=True,
+        )
+        migration_capable = {"websocket_http3", "webtransport_http3", "quic_native"}
+        datagram_capable = {"webtransport_http3", "quic_native"}
+        if transport.path_migration_enabled and not enabled_adapters.intersection(migration_capable):
+            raise NsConfigError(
+                "path migration requires an enabled HTTP/3, WebTransport, or QUIC adapter.",
+                details={"field": "runtime.transport.path_migration_enabled"},
+            )
+        if transport.datagram_enabled and not enabled_adapters.intersection(datagram_capable):
+            raise NsConfigError(
+                "datagrams require an enabled WebTransport or native QUIC adapter.",
+                details={"field": "runtime.transport.datagram_enabled"},
+            )
+        if transport.zero_rtt_enabled:
+            if not enabled_adapters.intersection(migration_capable):
+                raise NsConfigError(
+                    "0-RTT requires an enabled HTTP/3, WebTransport, or QUIC adapter.",
+                    details={"field": "runtime.transport.zero_rtt_enabled"},
+                )
+            if not runtime.security.allow_zero_rtt:
+                raise NsConfigError(
+                    "0-RTT must also be allowed by runtime.security.",
+                    details={
+                        "field": "runtime.security.allow_zero_rtt",
+                        "required_by": "runtime.transport.zero_rtt_enabled",
+                    },
+                )
+
+        wire_codec = runtime.wire_codec
+        if wire_codec.supported != ("json.v1",) or wire_codec.preferred != "json.v1":
+            raise NsConfigError(
+                "runtime.wire_codec currently supports only json.v1.",
+                details={
+                    "field": "runtime.wire_codec",
+                    "supported": list(wire_codec.supported),
+                    "preferred": wire_codec.preferred,
+                },
+            )
+
+        protocol = runtime.protocol
+        self._validate_unique_non_empty_strings(
+            "runtime.protocol.supported_versions",
+            protocol.supported_versions,
+        )
+        if protocol.preferred_version not in protocol.supported_versions:
+            raise NsConfigError(
+                "runtime.protocol.preferred_version must be supported.",
+                details={
+                    "field": "runtime.protocol.preferred_version",
+                    "value": protocol.preferred_version,
+                    "supported_versions": list(protocol.supported_versions),
+                },
+            )
+        self._validate_positive_int("runtime.protocol.handshake_timeout_seconds", protocol.handshake_timeout_seconds)
+        self._validate_positive_int("runtime.protocol.max_envelope_bytes", protocol.max_envelope_bytes)
+
+        security = runtime.security
+        if not security.require_tls_in_prod:
+            raise NsConfigError(
+                "runtime.security.require_tls_in_prod cannot be disabled.",
+                details={"field": "runtime.security.require_tls_in_prod"},
+            )
+        if not security.reject_inbound_source or not security.reject_inbound_auth_context:
+            raise NsConfigError(
+                "runtime must reject inbound source and auth_context.",
+                details={"field": "runtime.security"},
+            )
+        if environment != "prod" and not security.allow_plaintext_non_prod:
+            plaintext_adapters = [
+                name
+                for name, adapter in transport.adapters()
+                if adapter.enabled and not adapter.tls_enabled
+            ]
+            if plaintext_adapters:
+                raise NsConfigError(
+                    "plaintext transport is disabled by runtime.security.",
+                    details={
+                        "field": "runtime.security.allow_plaintext_non_prod",
+                        "plaintext_adapters": plaintext_adapters,
+                    },
+                )
+
+        iam = runtime.iam
+        self._validate_http_url("runtime.iam.base_url", iam.base_url)
+        self._validate_positive_int("runtime.iam.request_timeout_seconds", iam.request_timeout_seconds)
+        self._validate_positive_int(
+            "runtime.iam.credential_refresh_interval_seconds",
+            iam.credential_refresh_interval_seconds,
+        )
+        self._validate_positive_int(
+            "runtime.iam.permission_snapshot_ttl_seconds",
+            iam.permission_snapshot_ttl_seconds,
+        )
+
+        state_store = runtime.state_store
+        if environment == "prod" and state_store.backend not in {"redis", "valkey"}:
+            raise NsConfigError(
+                "runtime.state_store.backend must be redis or valkey in prod.",
+                details={
+                    "field": "runtime.state_store.backend",
+                    "value": state_store.backend,
+                    "env": environment,
+                },
+            )
+        self._validate_cache_key_part("runtime.state_store.namespace", state_store.namespace)
+        self._validate_positive_int(
+            "runtime.state_store.operation_timeout_seconds",
+            state_store.operation_timeout_seconds,
+        )
+        if state_store.backend == "sqlite":
+            self._validate_non_empty_string("runtime.state_store.sqlite_path", state_store.sqlite_path)
+        elif state_store.backend == "redis":
+            self._validate_cache_url("runtime.state_store.url", state_store.url, {"redis", "rediss"})
+        elif state_store.backend == "valkey":
+            self._validate_cache_url(
+                "runtime.state_store.url",
+                state_store.url,
+                {"redis", "rediss", "valkey", "valkeys"},
+            )
+
+        routing = runtime.routing
+        self._validate_positive_int("runtime.routing.max_hops", routing.max_hops)
+        self._validate_non_negative_int("runtime.routing.route_cache_ttl_seconds", routing.route_cache_ttl_seconds)
+
+        delivery = runtime.delivery
+        self._validate_positive_int("runtime.delivery.ack_timeout_seconds", delivery.ack_timeout_seconds)
+        self._validate_non_negative_int("runtime.delivery.max_retry_attempts", delivery.max_retry_attempts)
+        self._validate_non_negative_int("runtime.delivery.retry_base_delay_ms", delivery.retry_base_delay_ms)
+        self._validate_non_negative_int("runtime.delivery.retry_max_delay_ms", delivery.retry_max_delay_ms)
+        if delivery.retry_max_delay_ms < delivery.retry_base_delay_ms:
+            raise NsConfigError(
+                "runtime.delivery.retry_max_delay_ms must not be lower than retry_base_delay_ms.",
+                details={"field": "runtime.delivery.retry_max_delay_ms"},
+            )
+        if not delivery.persist_delivery_records:
+            raise NsConfigError(
+                "runtime.delivery.persist_delivery_records cannot be disabled.",
+                details={"field": "runtime.delivery.persist_delivery_records"},
+            )
+
+        worker = runtime.worker
+        self._validate_positive_int("runtime.worker.concurrency", worker.concurrency)
+        self._validate_positive_int("runtime.worker.shutdown_timeout_seconds", worker.shutdown_timeout_seconds)
+        self._validate_positive_int("runtime.worker.processor_timeout_seconds", worker.processor_timeout_seconds)
+
+        pool = runtime.pool
+        for field_name in (
+            "control_capacity",
+            "delivery_capacity",
+            "stream_capacity",
+            "observability_capacity",
+        ):
+            self._validate_positive_int(f"runtime.pool.{field_name}", getattr(pool, field_name))
+
+        tenant_quota = runtime.tenant_quota
+        for field_name in (
+            "max_connections",
+            "max_queued_deliveries",
+            "max_inflight_deliveries",
+            "messages_per_second",
+        ):
+            self._validate_positive_int(
+                f"runtime.tenant_quota.{field_name}",
+                getattr(tenant_quota, field_name),
+            )
+
+        cluster = runtime.cluster
+        self._validate_cache_key_part("runtime.cluster.node_id", cluster.node_id)
+        self._validate_positive_int("runtime.cluster.heartbeat_interval_seconds", cluster.heartbeat_interval_seconds)
+        self._validate_positive_int("runtime.cluster.leader_lease_seconds", cluster.leader_lease_seconds)
+        if cluster.leader_lease_seconds <= cluster.heartbeat_interval_seconds:
+            raise NsConfigError(
+                "runtime.cluster.leader_lease_seconds must exceed heartbeat_interval_seconds.",
+                details={"field": "runtime.cluster.leader_lease_seconds"},
+            )
+        if cluster.role == "sub_node":
+            self._validate_http_url("runtime.cluster.active_master_url", cluster.active_master_url)
+
+        recovery = runtime.recovery
+        self._validate_positive_int("runtime.recovery.scan_interval_seconds", recovery.scan_interval_seconds)
+        self._validate_positive_int("runtime.recovery.scan_batch_size", recovery.scan_batch_size)
+        self._validate_positive_int("runtime.recovery.stale_after_seconds", recovery.stale_after_seconds)
+
+        observability = runtime.observability
+        self._validate_float_range(
+            "runtime.observability.trace_sample_ratio",
+            observability.trace_sample_ratio,
+            min_value=0.0,
+            max_value=1.0,
+        )
+        self._validate_positive_int(
+            "runtime.observability.export_interval_seconds",
+            observability.export_interval_seconds,
+        )
+
+        logging_config = runtime.logging
+        normalized_level = logging_config.level.strip().upper()
+        if normalized_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            self._raise_invalid_choice(
+                "runtime.logging.level",
+                logging_config.level,
+                {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"},
+            )
+
+        debug = runtime.debug
+        if debug.emit_sanitized_envelope and not debug.enabled:
+            raise NsConfigError(
+                "runtime.debug.emit_sanitized_envelope requires debug mode.",
+                details={"field": "runtime.debug.emit_sanitized_envelope"},
+            )
+        if debug.fault_injection_enabled and not debug.enabled:
+            raise NsConfigError(
+                "runtime.debug.fault_injection_enabled requires debug mode.",
+                details={"field": "runtime.debug.fault_injection_enabled"},
+            )
+        if environment == "prod" and debug.enabled:
+            raise NsConfigError(
+                "runtime.debug.enabled must be false in prod.",
+                details={"field": "runtime.debug.enabled", "env": environment},
+            )
+
+    @staticmethod
+    def _raise_invalid_choice(field_name: str, value: Any, allowed_values: set[str]) -> None:
+        raise NsConfigError(
+            f"{field_name} is invalid.",
+            details={
+                "field": field_name,
+                "value": value,
+                "allowed_values": sorted(allowed_values),
+            },
+        )
+
+    @staticmethod
+    def _validate_non_empty_string(field_name: str, value: Any) -> None:
+        if not isinstance(value, str) or not value.strip():
+            raise NsConfigError(
+                f"{field_name} must be a non-empty string.",
+                details={
+                    "field": field_name,
+                    "value": value,
+                    "actual_type": type(value).__name__,
+                },
+            )
+
+    @classmethod
+    def _validate_unique_non_empty_strings(
+        cls,
+        field_name: str,
+        values: tuple[str, ...],
+        *,
+        allow_empty: bool = False,
+    ) -> None:
+        if not values and not allow_empty:
+            raise NsConfigError(
+                f"{field_name} must not be empty.",
+                details={"field": field_name},
+            )
+
+        seen: set[str] = set()
+        for value in values:
+            cls._validate_non_empty_string(field_name, value)
+            if value in seen:
+                raise NsConfigError(
+                    f"{field_name} contains duplicate values.",
+                    details={"field": field_name, "value": value},
+                )
+            seen.add(value)
+
+    @classmethod
+    def _validate_unique_choices(
+        cls,
+        field_name: str,
+        values: tuple[str, ...],
+        allowed_values: set[str],
+    ) -> None:
+        cls._validate_unique_non_empty_strings(field_name, values)
+        invalid_values = sorted(set(values).difference(allowed_values))
+        if invalid_values:
+            raise NsConfigError(
+                f"{field_name} contains invalid values.",
+                details={
+                    "field": field_name,
+                    "invalid_values": invalid_values,
+                    "allowed_values": sorted(allowed_values),
+                },
+            )
+
+    @staticmethod
+    def _validate_port(field_name: str, value: Any) -> None:
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
+            raise NsConfigError(
+                f"{field_name} must be between 1 and 65535.",
+                details={
+                    "field": field_name,
+                    "value": value,
+                    "actual_type": type(value).__name__,
+                },
+            )
+
+    @staticmethod
+    def _validate_http_url(field_name: str, value: Any) -> None:
+        if not isinstance(value, str) or not value.strip():
+            raise NsConfigError(
+                f"{field_name} must be configured.",
+                details={"field": field_name, "value": value},
+            )
+        parsed = urlparse(value.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise NsConfigError(
+                f"{field_name} must be an HTTP(S) URL with a host.",
+                details={"field": field_name, "value": value},
+            )
+
     @staticmethod
     def _validate_cache_key_part(field_name: str, value: Any) -> None:
         if not isinstance(value, str) or not value.strip():
@@ -1103,19 +1879,58 @@ class NsConfig:
     @classmethod
     def _build_config_group(cls, group_type: type[Any], raw_group: Mapping[str, Any], *, path: str) -> Any:
         group_values = dict(raw_group)
-        allowed_fields = {item.name for item in fields(group_type)}
+        group_fields = {item.name: item for item in fields(group_type)}
+        allowed_fields = set(group_fields)
         cls._reject_unknown_fields(
             group_values,
             allowed_fields=allowed_fields,
             path=path,
         )
 
-        group_values["metadata"] = cls._build_group_metadata(
-            group_values.get("metadata", {}),
-            path=f"{path}.metadata",
-        )
+        type_hints = get_type_hints(group_type)
+        for field_name, raw_value in tuple(group_values.items()):
+            if field_name == "metadata":
+                continue
+
+            expected_type = type_hints.get(field_name)
+            if not isinstance(expected_type, type) or not is_dataclass(expected_type):
+                continue
+
+            if isinstance(raw_value, expected_type):
+                continue
+
+            if not isinstance(raw_value, MappingABC):
+                raise NsConfigError(
+                    f"{path}.{field_name} must be a JSON object.",
+                    details={
+                        "field": f"{path}.{field_name}",
+                        "actual_type": type(raw_value).__name__,
+                    },
+                )
+
+            nested_values: Mapping[str, Any] = raw_value
+            group_field = group_fields[field_name]
+            if group_field.default_factory is not MISSING:
+                default_value = group_field.default_factory()
+                if is_dataclass(default_value) and not isinstance(default_value, type):
+                    nested_values = NsConfigResolver._deep_merge(
+                        _to_json_value(default_value),
+                        raw_value,
+                    )
+
+            group_values[field_name] = cls._build_config_group(
+                expected_type,
+                nested_values,
+                path=f"{path}.{field_name}",
+            )
+
+        if "metadata" in group_values:
+            group_values["metadata"] = cls._build_group_metadata(
+                group_values["metadata"],
+                path=f"{path}.metadata",
+            )
         try:
-            return group_type(**group_values)
+            group = group_type(**group_values)
         except TypeError as error:
             raise NsConfigError(
                 f"{path} is invalid.",
@@ -1124,6 +1939,33 @@ class NsConfig:
                     "reason": str(error),
                 },
             ) from error
+
+        if isinstance(group, NsRuntimeConfig):
+            runtime_updates: dict[str, Any] = {}
+            for runtime_group_name, runtime_group in cls._runtime_config_groups(group):
+                raw_runtime_group = raw_group.get(runtime_group_name)
+                has_explicit_metadata = (
+                    isinstance(raw_runtime_group, MappingABC)
+                    and "metadata" in raw_runtime_group
+                )
+                if has_explicit_metadata:
+                    continue
+
+                runtime_updates[runtime_group_name] = replace(
+                    runtime_group,
+                    metadata=replace(
+                        runtime_group.metadata,
+                        source=group.metadata.source,
+                        config_version=group.metadata.config_version,
+                        policy_version=group.metadata.policy_version,
+                        effective_at=group.metadata.effective_at,
+                    ),
+                )
+
+            if runtime_updates:
+                group = replace(group, **runtime_updates)
+
+        return group
 
     @classmethod
     def _build_group_metadata(cls, raw_metadata: Any, *, path: str) -> NsConfigGroupMetadata:
@@ -1325,10 +2167,33 @@ class NsConfigResolver:
                 field_name=f"{group_name}.metadata.effective_at",
                 allow_none=False,
             )
-            group_updates[group_name] = replace(
+            resolved_group = replace(
                 group_config,
                 metadata=replace(metadata, effective_at=timestamp),
             )
+            if group_name == "runtime":
+                runtime_updates: dict[str, Any] = {}
+                for runtime_group_name, runtime_group in self._config_type._runtime_config_groups(group_config):
+                    runtime_metadata = runtime_group.metadata
+                    if runtime_metadata.source is not NsConfigSource.LOCAL_FILE:
+                        self._raise_source_mismatch(
+                            layer="local config",
+                            group_name=f"runtime.{runtime_group_name}",
+                            expected=NsConfigSource.LOCAL_FILE,
+                            actual=runtime_metadata.source,
+                        )
+                    runtime_timestamp = self._config_type._normalize_effective_at(
+                        runtime_metadata.effective_at or self._effective_at,
+                        field_name=f"runtime.{runtime_group_name}.metadata.effective_at",
+                        allow_none=False,
+                    )
+                    runtime_updates[runtime_group_name] = replace(
+                        runtime_group,
+                        metadata=replace(runtime_metadata, effective_at=runtime_timestamp),
+                    )
+                resolved_group = replace(resolved_group, **runtime_updates)
+
+            group_updates[group_name] = resolved_group
 
         resolved = replace(config, **group_updates)
         self._validate_effective_config(resolved, layer="local config")
@@ -1355,6 +2220,7 @@ class NsConfigResolver:
         base_dict = base_config.to_dict()
         effective_dict = base_config.to_dict()
         override_metadata: dict[str, NsConfigGroupMetadata] = {}
+        runtime_override_metadata: dict[str, NsConfigGroupMetadata] = {}
         payload_changed = False
 
         for group_name, raw_group in raw_override.items():
@@ -1420,6 +2286,124 @@ class NsConfigResolver:
                     },
                 )
 
+            if group_name == "runtime":
+                for runtime_group_name in RUNTIME_CONFIG_GROUP_NAMES:
+                    if runtime_group_name not in raw_group:
+                        continue
+
+                    raw_runtime_group = raw_group[runtime_group_name]
+                    if not isinstance(raw_runtime_group, MappingABC):
+                        raise NsConfigError(
+                            f"backend_override.runtime.{runtime_group_name} must be a JSON object.",
+                            details={
+                                "field": f"backend_override.runtime.{runtime_group_name}",
+                                "actual_type": type(raw_runtime_group).__name__,
+                            },
+                        )
+
+                    base_runtime_group = getattr(base_config.runtime, runtime_group_name)
+                    base_runtime_dict = _to_json_value(base_runtime_group)
+                    base_runtime_payload = {
+                        key: value
+                        for key, value in base_runtime_dict.items()
+                        if key != "metadata"
+                    }
+                    runtime_override_payload = {
+                        key: value
+                        for key, value in raw_runtime_group.items()
+                        if key != "metadata"
+                    }
+                    merged_runtime_payload = self._deep_merge(
+                        base_runtime_payload,
+                        runtime_override_payload,
+                    )
+                    runtime_group_changed = merged_runtime_payload != base_runtime_payload
+                    raw_runtime_metadata = raw_runtime_group.get("metadata")
+                    if runtime_group_changed and not isinstance(raw_runtime_metadata, MappingABC):
+                        raise NsConfigError(
+                            f"backend_override.runtime.{runtime_group_name}.metadata is required when values change.",
+                            details={
+                                "field": f"backend_override.runtime.{runtime_group_name}.metadata",
+                            },
+                        )
+                    if raw_runtime_metadata is None:
+                        continue
+                    if not isinstance(raw_runtime_metadata, MappingABC):
+                        raise NsConfigError(
+                            f"backend_override.runtime.{runtime_group_name}.metadata must be a JSON object.",
+                            details={
+                                "field": f"backend_override.runtime.{runtime_group_name}.metadata",
+                                "actual_type": type(raw_runtime_metadata).__name__,
+                            },
+                        )
+
+                    missing_runtime_metadata = sorted(
+                        self.REQUIRED_OVERRIDE_METADATA_FIELDS.difference(raw_runtime_metadata)
+                    )
+                    if missing_runtime_metadata:
+                        raise NsConfigError(
+                            f"backend_override.runtime.{runtime_group_name}.metadata is incomplete.",
+                            details={
+                                "field": f"backend_override.runtime.{runtime_group_name}.metadata",
+                                "missing_fields": missing_runtime_metadata,
+                            },
+                        )
+
+                    runtime_metadata = self._config_type._build_group_metadata(
+                        raw_runtime_metadata,
+                        path=f"backend_override.runtime.{runtime_group_name}.metadata",
+                    )
+                    self._config_type._validate_group_metadata(
+                        f"runtime.{runtime_group_name}",
+                        runtime_metadata,
+                    )
+                    runtime_timestamp = self._config_type._normalize_effective_at(
+                        runtime_metadata.effective_at,
+                        field_name=f"backend_override.runtime.{runtime_group_name}.metadata.effective_at",
+                        allow_none=False,
+                    )
+                    runtime_metadata = replace(
+                        runtime_metadata,
+                        effective_at=runtime_timestamp,
+                    )
+                    if runtime_metadata.source is not NsConfigSource.BACKEND_OVERRIDE:
+                        self._raise_source_mismatch(
+                            layer="backend override",
+                            group_name=f"runtime.{runtime_group_name}",
+                            expected=NsConfigSource.BACKEND_OVERRIDE,
+                            actual=runtime_metadata.source,
+                        )
+                    if runtime_metadata.config_version != metadata.config_version or runtime_metadata.policy_version != metadata.policy_version:
+                        raise NsConfigError(
+                            f"backend_override.runtime.{runtime_group_name} versions must match runtime metadata.",
+                            details={
+                                "field": f"backend_override.runtime.{runtime_group_name}.metadata",
+                                "config_version": runtime_metadata.config_version,
+                                "policy_version": runtime_metadata.policy_version,
+                                "expected_config_version": metadata.config_version,
+                                "expected_policy_version": metadata.policy_version,
+                            },
+                        )
+                    base_runtime_metadata = base_runtime_group.metadata
+                    if runtime_metadata.rollback_from_version is not None and runtime_metadata.rollback_from_version != base_runtime_metadata.group_version:
+                        raise NsConfigError(
+                            f"backend_override.runtime.{runtime_group_name} rollback source does not match the effective group version.",
+                            details={
+                                "field": f"backend_override.runtime.{runtime_group_name}.metadata.rollback_from_version",
+                                "value": runtime_metadata.rollback_from_version,
+                                "effective_group_version": base_runtime_metadata.group_version,
+                            },
+                        )
+                    if runtime_group_changed and runtime_metadata.group_version == base_runtime_metadata.group_version:
+                        raise NsConfigError(
+                            f"backend_override.runtime.{runtime_group_name} changed values without a new group_version.",
+                            details={
+                                "field": f"backend_override.runtime.{runtime_group_name}.metadata.group_version",
+                                "value": runtime_metadata.group_version,
+                            },
+                        )
+                    runtime_override_metadata[runtime_group_name] = runtime_metadata
+
             base_payload = {
                 key: value
                 for key, value in base_dict[group_name].items()
@@ -1431,6 +2415,9 @@ class NsConfigResolver:
                 if key != "metadata"
             }
             merged_payload = self._deep_merge(base_payload, override_payload)
+            if group_name == "runtime":
+                for runtime_group_name, runtime_metadata in runtime_override_metadata.items():
+                    merged_payload[runtime_group_name]["metadata"] = _to_json_value(runtime_metadata)
             group_changed = merged_payload != base_payload
             if group_changed and metadata.group_version == base_metadata.group_version:
                 raise NsConfigError(
@@ -1477,6 +2464,11 @@ class NsConfigResolver:
             metadata_dict["config_version"] = target_config_version
             metadata_dict["policy_version"] = target_policy_version
 
+        for runtime_group_name in RUNTIME_CONFIG_GROUP_NAMES:
+            runtime_metadata_dict = effective_dict["runtime"][runtime_group_name]["metadata"]
+            runtime_metadata_dict["config_version"] = target_config_version
+            runtime_metadata_dict["policy_version"] = target_policy_version
+
         resolved = self._config_type.from_dict(
             effective_dict,
             environment=self._environment,
@@ -1508,6 +2500,21 @@ class NsConfigResolver:
             self._config_type._normalize_effective_at(
                 metadata.effective_at,
                 field_name=f"validated_snapshot.{group_name}.metadata.effective_at",
+                allow_none=False,
+            )
+
+        for runtime_group_name, runtime_group in self._config_type._runtime_config_groups(snapshot.runtime):
+            metadata = runtime_group.metadata
+            if metadata.source is not NsConfigSource.VALIDATED_SNAPSHOT:
+                self._raise_source_mismatch(
+                    layer="validated snapshot",
+                    group_name=f"runtime.{runtime_group_name}",
+                    expected=NsConfigSource.VALIDATED_SNAPSHOT,
+                    actual=metadata.source,
+                )
+            self._config_type._normalize_effective_at(
+                metadata.effective_at,
+                field_name=f"validated_snapshot.runtime.{runtime_group_name}.metadata.effective_at",
                 allow_none=False,
             )
 

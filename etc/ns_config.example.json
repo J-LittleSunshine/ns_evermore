@@ -125,6 +125,298 @@
     }
   },
   "runtime": {
+    "event_loop": {
+      "implementation": "auto",
+      "debug": false,
+      "slow_callback_threshold_ms": 100,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "restart_required"
+      }
+    },
+    "transport": {
+      "websocket_tcp": {
+        "enabled": true,
+        "tls_enabled": false,
+        "allowed_origins": []
+      },
+      "websocket_http3": {
+        "enabled": false,
+        "tls_enabled": true,
+        "allowed_origins": []
+      },
+      "webtransport_http3": {
+        "enabled": false,
+        "tls_enabled": true,
+        "allowed_origins": []
+      },
+      "quic_native": {
+        "enabled": false,
+        "tls_enabled": true,
+        "allowed_origins": []
+      },
+      "default_adapter": "websocket_tcp",
+      "preferred_adapter": "websocket_tcp",
+      "fallback_order": [
+        "websocket_tcp"
+      ],
+      "capability_negotiation_enabled": true,
+      "listen_host": "127.0.0.1",
+      "listen_port": 8765,
+      "write_queue_capacity": 1024,
+      "write_queue_low_watermark": 256,
+      "write_queue_high_watermark": 768,
+      "path_migration_enabled": false,
+      "datagram_enabled": false,
+      "zero_rtt_enabled": false,
+      "message_type_allowlist": [],
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "restart_required"
+      }
+    },
+    "wire_codec": {
+      "supported": [
+        "json.v1"
+      ],
+      "preferred": "json.v1",
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "restart_required"
+      }
+    },
+    "protocol": {
+      "supported_versions": [
+        "1.0"
+      ],
+      "preferred_version": "1.0",
+      "handshake_timeout_seconds": 10,
+      "max_envelope_bytes": 1048576,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "rolling"
+      }
+    },
+    "security": {
+      "require_tls_in_prod": true,
+      "allow_plaintext_non_prod": true,
+      "allow_zero_rtt": false,
+      "reject_inbound_source": true,
+      "reject_inbound_auth_context": true,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "restart_required"
+      }
+    },
+    "iam": {
+      "base_url": "http://127.0.0.1:8000/api/iam/",
+      "request_timeout_seconds": 5,
+      "credential_refresh_interval_seconds": 300,
+      "permission_snapshot_ttl_seconds": 60,
+      "fail_closed": true,
+      "allow_degraded_startup": false,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "rolling"
+      }
+    },
+    "state_store": {
+      "backend": "sqlite",
+      "url": "",
+      "namespace": "ns_runtime",
+      "sqlite_path": "data/ns_runtime_state.sqlite3",
+      "operation_timeout_seconds": 5,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "restart_required"
+      }
+    },
+    "routing": {
+      "no_target_action": "queue",
+      "max_hops": 8,
+      "route_cache_ttl_seconds": 30,
+      "allow_cross_node": false,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "immediate"
+      }
+    },
+    "delivery": {
+      "ack_timeout_seconds": 30,
+      "max_retry_attempts": 5,
+      "retry_base_delay_ms": 100,
+      "retry_max_delay_ms": 30000,
+      "persist_delivery_records": true,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "rolling"
+      }
+    },
+    "worker": {
+      "concurrency": 32,
+      "shutdown_timeout_seconds": 30,
+      "processor_timeout_seconds": 30,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "rolling"
+      }
+    },
+    "pool": {
+      "control_capacity": 8,
+      "delivery_capacity": 64,
+      "stream_capacity": 32,
+      "observability_capacity": 4,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "rolling"
+      }
+    },
+    "tenant_quota": {
+      "enabled": true,
+      "max_connections": 1000,
+      "max_queued_deliveries": 10000,
+      "max_inflight_deliveries": 1000,
+      "messages_per_second": 1000,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "immediate"
+      }
+    },
+    "cluster": {
+      "role": "standalone",
+      "node_id": "local-runtime",
+      "active_master_url": "",
+      "heartbeat_interval_seconds": 5,
+      "leader_lease_seconds": 15,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "restart_required"
+      }
+    },
+    "recovery": {
+      "enabled": true,
+      "scan_interval_seconds": 30,
+      "scan_batch_size": 1000,
+      "stale_after_seconds": 60,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "rolling"
+      }
+    },
+    "observability": {
+      "metrics_enabled": true,
+      "tracing_enabled": false,
+      "diagnostic_snapshots_enabled": true,
+      "trace_sample_ratio": 0.0,
+      "export_interval_seconds": 15,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "immediate"
+      }
+    },
+    "logging": {
+      "level": "INFO",
+      "structured": true,
+      "include_sanitized_envelope": false,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "immediate"
+      }
+    },
+    "debug": {
+      "enabled": false,
+      "emit_sanitized_envelope": false,
+      "fault_injection_enabled": false,
+      "metadata": {
+        "source": "local_file",
+        "config_version": "0",
+        "policy_version": "0",
+        "group_version": "0",
+        "effective_at": null,
+        "rollback_from_version": null,
+        "apply_mode": "immediate"
+      }
+    },
     "metadata": {
       "source": "local_file",
       "config_version": "0",

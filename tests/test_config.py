@@ -9,6 +9,8 @@ from pathlib import Path
 
 from ns_common.config import (
     FrozenDict,
+    RUNTIME_CONFIG_APPLY_MODES,
+    RUNTIME_CONFIG_GROUP_NAMES,
     NS_CONFIG_SOURCE_PRIORITY,
     NsConfig,
     NsConfigSource,
@@ -227,6 +229,17 @@ class NsConfigSnapshotTestCase(unittest.TestCase):
                     "debug": False,
                     "secret_key": "s" * 32,
                 },
+                "runtime": {
+                    "transport": {
+                        "websocket_tcp": {
+                            "tls_enabled": True,
+                        },
+                    },
+                    "state_store": {
+                        "backend": "redis",
+                        "url": "rediss://127.0.0.1:6379/0",
+                    },
+                },
             },
             environment="prod",
         )
@@ -275,6 +288,279 @@ class NsConfigSnapshotTestCase(unittest.TestCase):
 
             with self.assertRaises(NsConfigError):
                 NsConfig.load(config_path, environment="test")
+
+
+class NsRuntimeConfigGroupsTestCase(unittest.TestCase):
+
+    def test_example_config_contains_and_loads_all_runtime_groups(self) -> None:
+        config_path = Path(__file__).resolve().parents[1] / "etc" / "ns_config.example.json"
+        raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            set(RUNTIME_CONFIG_GROUP_NAMES),
+            set(raw_config["runtime"]).difference({"metadata"}),
+        )
+        loaded = NsConfig.load(
+            config_path,
+            environment="local",
+            effective_at=FIXED_EFFECTIVE_AT,
+        )
+        self.assertEqual(("websocket_tcp",), loaded.runtime.transport.enabled_adapters)
+
+    def test_runtime_has_all_typed_groups_and_fixed_apply_modes(self) -> None:
+        runtime = NsConfig.from_dict({}).runtime
+
+        self.assertEqual(
+            RUNTIME_CONFIG_GROUP_NAMES,
+            tuple(name for name, _ in NsConfig._runtime_config_groups(runtime)),
+        )
+        for group_name in RUNTIME_CONFIG_GROUP_NAMES:
+            with self.subTest(group=group_name):
+                group = getattr(runtime, group_name)
+                self.assertEqual(
+                    RUNTIME_CONFIG_APPLY_MODES[group_name],
+                    group.metadata.apply_mode,
+                )
+
+        self.assertEqual(("websocket_tcp",), runtime.transport.enabled_adapters)
+        self.assertFalse(runtime.transport.websocket_http3.enabled)
+        self.assertFalse(runtime.transport.webtransport_http3.enabled)
+        self.assertFalse(runtime.transport.quic_native.enabled)
+        self.assertFalse(runtime.transport.zero_rtt_enabled)
+        self.assertEqual(("json.v1",), runtime.wire_codec.supported)
+        self.assertEqual("json.v1", runtime.wire_codec.preferred)
+
+    def test_runtime_nested_groups_round_trip_and_are_immutable(self) -> None:
+        config = NsConfig.from_dict({
+            "runtime": {
+                "event_loop": {
+                    "implementation": "asyncio",
+                },
+                "transport": {
+                    "message_type_allowlist": ["task.dispatch", "delivery.ack"],
+                    "websocket_tcp": {
+                        "allowed_origins": ["https://runtime.example.test"],
+                    },
+                },
+                "tenant_quota": {
+                    "max_connections": 250,
+                },
+            },
+        })
+
+        restored = NsConfig.from_dict(config.to_dict())
+        self.assertEqual(config, restored)
+        self.assertEqual(
+            ("task.dispatch", "delivery.ack"),
+            config.runtime.transport.message_type_allowlist,
+        )
+        self.assertEqual(
+            ("https://runtime.example.test",),
+            config.runtime.transport.websocket_tcp.allowed_origins,
+        )
+        with self.assertRaises(FrozenInstanceError):
+            config.runtime.worker.concurrency = 1  # type: ignore[misc]
+
+    def test_unknown_runtime_group_and_nested_adapter_fields_are_rejected(self) -> None:
+        with self.assertRaises(NsConfigError) as group_context:
+            NsConfig.from_dict({
+                "runtime": {
+                    "delivery_typo": {},
+                },
+            })
+        self.assertEqual(["delivery_typo"], group_context.exception.details["unknown_fields"])
+
+        with self.assertRaises(NsConfigError) as adapter_context:
+            NsConfig.from_dict({
+                "runtime": {
+                    "transport": {
+                        "websocket_tcp": {
+                            "enable": True,
+                        },
+                    },
+                },
+            })
+        self.assertEqual(["enable"], adapter_context.exception.details["unknown_fields"])
+
+    def test_each_runtime_group_has_independent_validation(self) -> None:
+        invalid_groups = {
+            "event_loop": ({"slow_callback_threshold_ms": 0}, "runtime.event_loop.slow_callback_threshold_ms"),
+            "transport": ({"listen_port": 0}, "runtime.transport.listen_port"),
+            "wire_codec": ({"supported": []}, "runtime.wire_codec"),
+            "protocol": ({"handshake_timeout_seconds": 0}, "runtime.protocol.handshake_timeout_seconds"),
+            "security": ({"require_tls_in_prod": False}, "runtime.security.require_tls_in_prod"),
+            "iam": ({"base_url": "not-a-url"}, "runtime.iam.base_url"),
+            "state_store": ({"operation_timeout_seconds": 0}, "runtime.state_store.operation_timeout_seconds"),
+            "routing": ({"max_hops": 0}, "runtime.routing.max_hops"),
+            "delivery": ({"ack_timeout_seconds": 0}, "runtime.delivery.ack_timeout_seconds"),
+            "worker": ({"concurrency": 0}, "runtime.worker.concurrency"),
+            "pool": ({"control_capacity": 0}, "runtime.pool.control_capacity"),
+            "tenant_quota": ({"max_connections": 0}, "runtime.tenant_quota.max_connections"),
+            "cluster": ({"heartbeat_interval_seconds": 5, "leader_lease_seconds": 5}, "runtime.cluster.leader_lease_seconds"),
+            "recovery": ({"scan_interval_seconds": 0}, "runtime.recovery.scan_interval_seconds"),
+            "observability": ({"trace_sample_ratio": 1.1}, "runtime.observability.trace_sample_ratio"),
+            "logging": ({"level": "TRACE"}, "runtime.logging.level"),
+            "debug": ({"emit_sanitized_envelope": True}, "runtime.debug.emit_sanitized_envelope"),
+        }
+
+        for group_name, (group_config, expected_field) in invalid_groups.items():
+            with self.subTest(group=group_name):
+                with self.assertRaises(NsConfigError) as context:
+                    NsConfig.from_dict({
+                        "runtime": {
+                            group_name: group_config,
+                        },
+                    })
+                self.assertEqual(expected_field, context.exception.details["field"])
+
+    def test_group_apply_mode_is_not_silently_changed(self) -> None:
+        with self.assertRaises(NsConfigError) as context:
+            NsConfig.from_dict({
+                "runtime": {
+                    "event_loop": {
+                        "metadata": {
+                            "apply_mode": "immediate",
+                        },
+                    },
+                },
+            })
+
+        self.assertEqual(
+            "runtime.event_loop.metadata.apply_mode",
+            context.exception.details["field"],
+        )
+
+    def test_prod_rejects_sqlite_state_store_and_plaintext_transport(self) -> None:
+        prod_backend = {
+            "debug": False,
+            "secret_key": "s" * 32,
+        }
+        with self.assertRaises(NsConfigError) as plaintext_context:
+            NsConfig.from_dict({
+                "backend": prod_backend,
+                "runtime": {
+                    "state_store": {
+                        "backend": "redis",
+                        "url": "rediss://127.0.0.1:6379/0",
+                    },
+                },
+            }, environment="prod")
+        self.assertEqual(
+            "runtime.transport.websocket_tcp.tls_enabled",
+            plaintext_context.exception.details["field"],
+        )
+
+        with self.assertRaises(NsConfigError) as state_context:
+            NsConfig.from_dict({
+                "backend": prod_backend,
+                "runtime": {
+                    "transport": {
+                        "websocket_tcp": {
+                            "tls_enabled": True,
+                        },
+                    },
+                },
+            }, environment="prod")
+        self.assertEqual(
+            "runtime.state_store.backend",
+            state_context.exception.details["field"],
+        )
+
+    def test_wire_codec_cannot_enable_non_json_codec(self) -> None:
+        with self.assertRaises(NsConfigError) as context:
+            NsConfig.from_dict({
+                "runtime": {
+                    "wire_codec": {
+                        "supported": ["json.v1", "binary.v1"],
+                    },
+                },
+            })
+
+        self.assertEqual("runtime.wire_codec.supported", context.exception.details["field"])
+
+    def test_backend_override_requires_runtime_subgroup_metadata(self) -> None:
+        with self.assertRaises(NsConfigError) as context:
+            NsConfig.resolve(
+                {},
+                environment="test",
+                effective_at=FIXED_EFFECTIVE_AT,
+                backend_override={
+                    "runtime": {
+                        "event_loop": {
+                            "implementation": "asyncio",
+                        },
+                        "metadata": build_metadata(
+                            source="backend_override",
+                            config_version="config-1",
+                            policy_version="policy-1",
+                            group_version="runtime-1",
+                            apply_mode="restart_required",
+                        ),
+                    },
+                },
+            )
+
+        self.assertEqual(
+            "backend_override.runtime.event_loop.metadata",
+            context.exception.details["field"],
+        )
+
+    def test_backend_override_tracks_runtime_subgroup_provenance(self) -> None:
+        config = NsConfig.resolve(
+            {},
+            environment="test",
+            effective_at=FIXED_EFFECTIVE_AT,
+            backend_override={
+                "runtime": {
+                    "event_loop": {
+                        "implementation": "asyncio",
+                        "metadata": build_metadata(
+                            source="backend_override",
+                            config_version="config-1",
+                            policy_version="policy-1",
+                            group_version="event-loop-1",
+                            effective_at="2026-07-16T14:00:00+08:00",
+                            apply_mode="restart_required",
+                        ),
+                    },
+                    "metadata": build_metadata(
+                        source="backend_override",
+                        config_version="config-1",
+                        policy_version="policy-1",
+                        group_version="runtime-1",
+                        apply_mode="restart_required",
+                    ),
+                },
+            },
+        )
+
+        self.assertEqual("asyncio", config.runtime.event_loop.implementation)
+        self.assertIs(
+            NsConfigSource.BACKEND_OVERRIDE,
+            config.runtime.event_loop.metadata.source,
+        )
+        self.assertEqual("event-loop-1", config.runtime.event_loop.metadata.group_version)
+        self.assertEqual(FIXED_EFFECTIVE_AT, config.runtime.event_loop.metadata.effective_at)
+        self.assertEqual("config-1", config.runtime.observability.metadata.config_version)
+        self.assertIs(
+            NsConfigSource.LOCAL_FILE,
+            config.runtime.observability.metadata.source,
+        )
+
+    def test_validated_snapshot_marks_all_runtime_groups(self) -> None:
+        snapshot = NsConfig.resolve(
+            {},
+            environment="test",
+            effective_at=FIXED_EFFECTIVE_AT,
+        ).as_validated_snapshot(
+            effective_at="2026-07-16T06:30:00Z",
+            environment="test",
+        )
+
+        for group_name, group in NsConfig._runtime_config_groups(snapshot.runtime):
+            with self.subTest(group=group_name):
+                self.assertIs(NsConfigSource.VALIDATED_SNAPSHOT, group.metadata.source)
+                self.assertEqual("2026-07-16T06:30:00Z", group.metadata.effective_at)
 
 
 class NsConfigResolutionTestCase(unittest.TestCase):
