@@ -17,6 +17,7 @@ from ns_common.exceptions import NsValidationError
 from ns_common.logger import (
     NsLogger,
     _ConsoleTextLogFormatter,
+    _JSON_OUTPUT_RESERVED_KEYS,
     _JsonLogFormatter,
     _SanitizingTextLogFormatter,
     get_ns_logger,
@@ -208,6 +209,145 @@ class LoggerSanitizerTestCase(unittest.TestCase):
             payload,
             "exception-message-secret",
             "exception-detail-secret",
+        )
+
+    def test_json_formatter_isolates_all_authoritative_field_conflicts(self) -> None:
+        formatter = _JsonLogFormatter(sanitizer=Sanitizer(), utc_enabled=True)
+        try:
+            raise NsValidationError("real exception")
+        except NsValidationError:
+            exc_info = sys.exc_info()
+
+        conflicting_extra = {
+            "timestamp": {"token": "timestamp-token-secret"},
+            "level": "Authorization: Bearer level-auth-secret",
+            "logger": "https://example.test/log?signature=logger-signature-secret",
+            "message": {"task_payload": "message-payload-secret"},
+            "func_name": "caller-function",
+            "process_name": "caller-process",
+            "thread_name": "caller-thread",
+            "exception": {"password": "exception-password-secret"},
+            "stack": "Proxy-Authorization: Basic stack-auth-secret",
+            "extra_fields": {
+                "token=first-key-secret": "first-value",
+                "token=second-key-secret": "second-value",
+            },
+            "request_id": "safe-request-id",
+        }
+        record = self.make_record(
+            message="real message",
+            extra=conflicting_extra,
+            exc_info=exc_info,
+            stack_info="real stack",
+        )
+
+        payload = json.loads(formatter.format(record))
+
+        self.assertEqual(_JSON_OUTPUT_RESERVED_KEYS, frozenset({
+            "timestamp",
+            "level",
+            "logger",
+            "message",
+            "module",
+            "filename",
+            "lineno",
+            "func_name",
+            "process",
+            "process_name",
+            "thread",
+            "thread_name",
+            "exception",
+            "stack",
+            "extra_fields",
+        }))
+        self.assertNotEqual(conflicting_extra["timestamp"], payload["timestamp"])
+        self.assertEqual("INFO", payload["level"])
+        self.assertEqual("tests.logger", payload["logger"])
+        self.assertEqual("real message", payload["message"])
+        self.assertEqual(Path(__file__).name, payload["filename"])
+        self.assertEqual(100, payload["lineno"])
+        self.assertNotEqual("caller-process", payload["process_name"])
+        self.assertNotEqual("caller-thread", payload["thread_name"])
+        self.assertEqual("NsValidationError", payload["exception"]["error"]["type"])
+        self.assertEqual("real stack", payload["stack"])
+        self.assertEqual("safe-request-id", payload["request_id"])
+
+        isolated = payload["extra_fields"]
+        self.assertEqual(
+            set(conflicting_extra).difference({"request_id"}),
+            set(isolated),
+        )
+        self.assertEqual(REDACTED, isolated["timestamp"]["token"])
+        self.assertIn(REDACTED, isolated["level"])
+        self.assertIn("signature=%5BREDACTED%5D", isolated["logger"])
+        self.assertEqual(REDACTED, isolated["message"]["task_payload"])
+        self.assertEqual(REDACTED, isolated["exception"]["password"])
+        self.assertIn(REDACTED, isolated["stack"])
+        nested_container = isolated["extra_fields"]
+        self.assertEqual("first-value", nested_container["token=[REDACTED]"])
+        self.assertEqual("second-value", nested_container["token=[REDACTED]#2"])
+        self.assert_json_safe_and_no_leak(
+            payload,
+            "timestamp-token-secret",
+            "level-auth-secret",
+            "logger-signature-secret",
+            "message-payload-secret",
+            "exception-password-secret",
+            "stack-auth-secret",
+            "first-key-secret",
+            "second-key-secret",
+        )
+
+    def test_text_and_color_formatters_keep_authoritative_aliases(self) -> None:
+        format_string = (
+            "%(levelname)s|%(name)s|%(level)s|%(logger)s|%(message)s|"
+            "%(func_name)s|%(process_name)s|%(thread_name)s|"
+            "%(request_id)s|%(extra_fields)s"
+        )
+        text_formatter = _SanitizingTextLogFormatter(
+            sanitizer=Sanitizer(),
+            fmt=format_string,
+        )
+        color_formatter = _ConsoleTextLogFormatter(
+            sanitizer=Sanitizer(),
+            fmt=format_string,
+        )
+        conflicting_extra = {
+            "level": "caller-level",
+            "logger": "caller-logger",
+            "message": {"payload": "text-conflict-payload-secret"},
+            "func_name": "caller-function",
+            "process_name": "caller-process",
+            "thread_name": "caller-thread",
+            "extra_fields": {"Authorization": "Basic text-auth-secret"},
+            "request_id": "safe-text-request",
+        }
+
+        text_record = self.make_record(
+            message="real text message",
+            extra=conflicting_extra,
+        )
+        color_record = self.make_record(
+            message="real color message",
+            extra=conflicting_extra,
+            level=logging.ERROR,
+        )
+        text_output = text_formatter.format(text_record)
+        color_output = color_formatter.format(color_record)
+
+        self.assertTrue(text_output.startswith(
+            "INFO|tests.logger|INFO|tests.logger|real text message|"
+        ))
+        self.assertIn("|safe-text-request|", text_output)
+        self.assertIn("'level': 'caller-level'", text_output)
+        self.assertIn("'logger': 'caller-logger'", text_output)
+        self.assertIn(REDACTED, text_output)
+        self.assertTrue(color_output.startswith("\033[31mERROR|tests.logger|ERROR|tests.logger|"))
+        self.assertTrue(color_output.endswith("\033[0m"))
+        self.assert_json_safe_and_no_leak(
+            {"text": text_output, "color": color_output},
+            "text-conflict-payload-secret",
+            "text-auth-secret",
         )
 
     def test_formatter_sanitizes_object_messages_and_format_arguments_first(self) -> None:
@@ -433,6 +573,18 @@ class LoggerSanitizerTestCase(unittest.TestCase):
                         extra={
                             "payload": {"body": "e2e-payload-secret"},
                             "request_id": "safe-request-id",
+                            "timestamp": "caller-timestamp",
+                            "level": "Authorization: Bearer e2e-level-secret",
+                            "logger": "caller-logger",
+                            "func_name": "caller-function",
+                            "process_name": "caller-process",
+                            "thread_name": "caller-thread",
+                            "exception": {"token": "e2e-fake-exception-secret"},
+                            "stack": "Set-Cookie: session=e2e-stack-secret",
+                            "extra_fields": {
+                                "signature=first-e2e-key-secret": "first",
+                                "signature=second-e2e-key-secret": "second",
+                            },
                         },
                         exc_info=True,
                     )
@@ -457,12 +609,48 @@ class LoggerSanitizerTestCase(unittest.TestCase):
                     payload["payload"] == REDACTED
                     for payload in payloads
                 ))
+                self.assertTrue(all(payload["level"] == "ERROR" for payload in payloads))
+                self.assertTrue(all(payload["logger"] == logger_name for payload in payloads))
+                self.assertTrue(all(
+                    payload["timestamp"] != "caller-timestamp"
+                    for payload in payloads
+                ))
+                self.assertTrue(all(
+                    payload["exception"]["error"]["type"] == "NsValidationError"
+                    for payload in payloads
+                ))
+                self.assertTrue(all(
+                    set(payload["extra_fields"]) == {
+                        "timestamp",
+                        "level",
+                        "logger",
+                        "func_name",
+                        "process_name",
+                        "thread_name",
+                        "exception",
+                        "stack",
+                        "extra_fields",
+                    }
+                    for payload in payloads
+                ))
+                self.assertTrue(all(
+                    payload["extra_fields"]["extra_fields"]
+                    ["signature=[REDACTED]"] == "first"
+                    and payload["extra_fields"]["extra_fields"]
+                    ["signature=[REDACTED]#2"] == "second"
+                    for payload in payloads
+                ))
                 self.assert_json_safe_and_no_leak(
                     payloads,
                     "e2e-exception-secret",
                     "e2e-detail-secret",
                     "e2e-message-secret",
                     "e2e-payload-secret",
+                    "e2e-level-secret",
+                    "e2e-fake-exception-secret",
+                    "e2e-stack-secret",
+                    "first-e2e-key-secret",
+                    "second-e2e-key-secret",
                 )
             finally:
                 logger._reset_handlers()

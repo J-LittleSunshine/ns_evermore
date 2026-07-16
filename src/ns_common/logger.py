@@ -47,6 +47,68 @@ _DEFAULT_LEVEL_FILES: tuple[str, ...] = (
     "CRITICAL"
 )
 
+_LOG_RECORD_RESERVED_KEYS = frozenset({
+    "name",
+    "msg",
+    "args",
+    "levelname",
+    "levelno",
+    "pathname",
+    "filename",
+    "module",
+    "exc_info",
+    "exc_text",
+    "stack_info",
+    "lineno",
+    "funcName",
+    "created",
+    "msecs",
+    "relativeCreated",
+    "thread",
+    "threadName",
+    "processName",
+    "process",
+    "message",
+    "asctime",
+})
+
+_JSON_OUTPUT_RESERVED_KEYS = frozenset({
+    "timestamp",
+    "level",
+    "logger",
+    "message",
+    "module",
+    "filename",
+    "lineno",
+    "func_name",
+    "process",
+    "process_name",
+    "thread",
+    "thread_name",
+    "exception",
+    "stack",
+    "extra_fields",
+})
+
+_TEXT_OUTPUT_RESERVED_KEYS = frozenset({
+    "levelname",
+    "name",
+    "processName",
+    "threadName",
+    "filename",
+    "funcName",
+    "lineno",
+    "exc_info",
+    "exc_text",
+    "stack_info",
+    "message",
+    "asctime",
+})
+
+_CALLER_EXTRA_CONFLICT_KEYS = (
+    _JSON_OUTPUT_RESERVED_KEYS | _TEXT_OUTPUT_RESERVED_KEYS
+)
+
 
 class _ExactLevelFilter(logging.Filter):
 
@@ -132,33 +194,28 @@ def _traceback_metadata(exc_info: Any) -> list[dict[str, object]]:
     return result
 
 
+def _partition_record_extra(
+    record: logging.LogRecord,
+) -> tuple[dict[object, object], dict[object, object]]:
+    ordinary: dict[object, object] = {}
+    conflicting: dict[object, object] = {}
+    for key, value in record.__dict__.items():
+        if key in {"message", "asctime"}:
+            conflicting[key] = value
+            continue
+        if key in _LOG_RECORD_RESERVED_KEYS:
+            continue
+        if isinstance(key, str) and key.startswith("_"):
+            continue
+        target = conflicting if key in _CALLER_EXTRA_CONFLICT_KEYS else ordinary
+        target[key] = value
+    return ordinary, conflicting
+
+
 class _JsonLogFormatter(logging.Formatter):
     """Format log records as one-line JSON."""
 
-    _RESERVED_KEYS: set[str] = {
-        "name",
-        "msg",
-        "args",
-        "levelname",
-        "levelno",
-        "pathname",
-        "filename",
-        "module",
-        "exc_info",
-        "exc_text",
-        "stack_info",
-        "lineno",
-        "funcName",
-        "created",
-        "msecs",
-        "relativeCreated",
-        "thread",
-        "threadName",
-        "processName",
-        "process",
-        "message",
-        "asctime",
-    }
+    _RESERVED_KEYS = _LOG_RECORD_RESERVED_KEYS
 
     def __init__(
         self,
@@ -197,13 +254,6 @@ class _JsonLogFormatter(logging.Formatter):
             "thread_name": record.threadName,
         }
 
-        for key, value in record.__dict__.items():
-            if key in self._RESERVED_KEYS or (
-                isinstance(key, str) and key.startswith("_")
-            ):
-                continue
-            payload[key] = value
-
         if record.exc_info:
             payload["exception"] = {
                 "error": record.exc_info[1],
@@ -212,6 +262,11 @@ class _JsonLogFormatter(logging.Formatter):
 
         if record.stack_info:
             payload["stack"] = record.stack_info
+
+        ordinary_extra, conflicting_extra = _partition_record_extra(record)
+        payload.update(ordinary_extra)
+        if conflicting_extra:
+            payload["extra_fields"] = conflicting_extra
 
         sanitized_payload = self._sanitizer.sanitize(payload)
         if not isinstance(sanitized_payload, dict):
@@ -241,7 +296,8 @@ class _SanitizingTextLogFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         safe_record = copy.copy(record)
-        safe_record.msg = _safe_record_message(record, self._sanitizer)
+        safe_message = _safe_record_message(record, self._sanitizer)
+        safe_record.msg = safe_message
         safe_record.args = ()
         if record.exc_info:
             safe_record.exc_text = self.formatException(record.exc_info)
@@ -249,25 +305,50 @@ class _SanitizingTextLogFormatter(logging.Formatter):
         else:
             safe_record.exc_text = None
 
-        raw_extra: dict[object, object] = {}
-        for key, value in record.__dict__.items():
-            if key in self._RESERVED_KEYS or (
-                isinstance(key, str) and key.startswith("_")
-            ):
-                continue
-            raw_extra[key] = value
-            safe_record.__dict__[key] = REDACTED
-
+        ordinary_extra, conflicting_extra = _partition_record_extra(record)
+        raw_extra: dict[object, object] = dict(ordinary_extra)
+        if conflicting_extra:
+            raw_extra["extra_fields"] = conflicting_extra
         sanitized_extra = self._sanitizer.sanitize(raw_extra)
         if isinstance(sanitized_extra, dict):
             safe_record.__dict__.update(sanitized_extra)
         elif raw_extra:
             safe_record.__dict__["extra"] = REDACTED
 
+        safe_stack: str | None = None
         if isinstance(record.stack_info, str):
-            safe_record.stack_info = self._sanitizer.sanitize_text(
+            safe_stack = self._sanitizer.sanitize_text(
                 record.stack_info
             )
+        safe_record.stack_info = safe_stack
+
+        # Restore every formatter-owned field after caller extras are applied.
+        # JSON-style aliases are also authoritative in text format strings; a
+        # caller can inspect its conflicting values only through extra_fields.
+        safe_record.__dict__.update({
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": safe_message,
+            "module": record.module,
+            "filename": record.filename,
+            "lineno": record.lineno,
+            "func_name": record.funcName,
+            "process": record.process,
+            "process_name": record.processName,
+            "thread": record.thread,
+            "thread_name": record.threadName,
+            "exception": safe_record.exc_text,
+            "stack": safe_stack,
+            "levelname": record.levelname,
+            "name": record.name,
+            "processName": record.processName,
+            "threadName": record.threadName,
+            "funcName": record.funcName,
+            "exc_info": None if record.exc_info else record.exc_info,
+            "exc_text": safe_record.exc_text,
+            "stack_info": safe_stack,
+        })
 
         return super().format(safe_record)
 

@@ -92,9 +92,9 @@
 - ADR 编号：`ADR-009`
 - 状态：`ACCEPTED`
 - 背景：日志、错误和审计会接收任意嵌套对象、异常和自由文本；字段遗漏、对象异常行为、非标准 JSON 数值或无界摘要序列化都可能导致秘密泄露、覆盖原业务异常或造成 CPU/内存资源消耗。
-- 决策：sanitizer 同时使用明确字段、后缀、路径和对象类型规则；对 token、password、secret、private key、authorization、cookie、credential、signature、业务 payload、原始 certificate、签名 URL 和 peer/client/remote IP/address 完全替换。Mapping key 也必须脱敏并保留冲突项。普通对象访问、异常字符串化和摘要规范化失败时 fail-closed，输出必须通过严格 JSON 编码。digest 必须遵守当前深度，并通过有界、确定性的规范化限制遍历节点、单容器项目、字符串、bytes 和规范化结果字节；超限直接返回 `[REDACTED]`，循环引用安全结束，mapping 与 set/frozenset 顺序不影响摘要。限制内 bytes 直接以原始 bytes 计算 SHA-256，不生成 hex 副本。peer/client/remote address 不使用无密钥摘要，直接替换为 `[REDACTED]`。Logger 只拥有或接收显式 `Sanitizer`，在 JSON/text/color 输出前把消息、格式参数、extra、异常对象和不含源码行的 traceback 元数据交给 sanitizer；Logger 不得定义、复制或放宽任何敏感字段、路径、对象、摘要或资源限制规则。
-- 后果：依赖方向固定为 Logger 调用 sanitizer，sanitizer 不引用日志类型或 formatter 语义；formatter 不直接字符串化或序列化原始 Envelope/extra/异常对象。不得对任意对象直接执行无界摘要序列化，不得泄露异常对象的原始失败内容；不得吞掉 `KeyboardInterrupt`、`SystemExit` 等进程级异常；digest 不引入全局状态或硬编码密钥。如未来需要地址跨日志关联，只能设计显式注入密钥的 HMAC，不得使用全局硬编码密钥。任意无标签自由文本仍要求调用方提供结构化字段或路径语义。
-- 关联阶段/工作包：`P01-W09`、`P01-FIX-03`、`P01-FIX-04`、`P01-W10`、`P03`、`P06`、`P20`。
+- 决策：sanitizer 同时使用明确字段、后缀、路径和对象类型规则；对 token、password、secret、private key、authorization、cookie、credential、signature、业务 payload、原始 certificate、签名 URL 和 peer/client/remote IP/address 完全替换。Mapping key 也必须脱敏并保留冲突项。普通对象访问、异常字符串化和摘要规范化失败时 fail-closed，输出必须通过严格 JSON 编码。digest 必须遵守当前深度，并通过有界、确定性的规范化限制遍历节点、单容器项目、字符串、bytes 和规范化结果字节；超限直接返回 `[REDACTED]`，循环引用安全结束，mapping 与 set/frozenset 顺序不影响摘要。限制内 bytes 直接以原始 bytes 计算 SHA-256，不生成 hex 副本。peer/client/remote address 不使用无密钥摘要，直接替换为 `[REDACTED]`。Logger 只拥有或接收显式 `Sanitizer`，在 JSON/text/color 输出前把消息、格式参数、extra、异常对象和不含源码行的 traceback 元数据交给 sanitizer；Logger 不得定义、复制或放宽任何敏感字段、路径、对象、摘要或资源限制规则。Python LogRecord 内建字段与 JSON/text/color 权威输出字段使用独立保留集合；调用方冲突 extra 不得覆盖权威元数据，只能在 sanitizer 处理后进入 `extra_fields`，普通无冲突 extra 继续平铺。
+- 后果：依赖方向固定为 Logger 调用 sanitizer，sanitizer 不引用日志类型或 formatter 语义；formatter 不直接字符串化或序列化原始 Envelope/extra/异常对象。`extra_fields` 本身也是权威保留字段，调用方同名值嵌套保留；冲突 key 脱敏碰撞沿用 sanitizer 的稳定后缀且不得丢项；text/color 的核心占位符和 ANSI 颜色继续使用真实 LogRecord level/status。不得对任意对象直接执行无界摘要序列化，不得泄露异常对象的原始失败内容；不得吞掉 `KeyboardInterrupt`、`SystemExit` 等进程级异常；digest 不引入全局状态或硬编码密钥。如未来需要地址跨日志关联，只能设计显式注入密钥的 HMAC，不得使用全局硬编码密钥。任意无标签自由文本仍要求调用方提供结构化字段或路径语义。
+- 关联阶段/工作包：`P01-W09`、`P01-FIX-03`、`P01-FIX-04`、`P01-W10`、`P01-FIX-05`、`P03`、`P06`、`P20`。
 
 ## ADR-010
 
@@ -140,3 +140,12 @@
 - 决策：入站 Envelope 必须先完成 codec 与 schema 校验，拒绝客户端自报的权威 source/auth_context，再经过 IAM、tenant、capability 和 processor 流水线。所有应用行为，包括 ACK/NACK/Defer、健康和管理控制，都必须进入 processor；未启用能力返回稳定错误并审计。
 - 后果：transport、router、worker 和插件不得私建控制旁路；扩展 transport 或 message type 不能放宽核心 schema、权限或审计边界。
 - 关联阶段/工作包：`P03` 至 `P07`、`P12`、`P16`、`P20`、`P21`。
+
+## ADR-015
+
+- ADR 编号：`ADR-015`
+- 状态：`ACCEPTED`
+- 背景：公共异常需要稳定的机器可读策略元数据和唯一索引，但自动扫描、装饰器注册或实例构造期间访问全局注册表会产生导入副作用、循环依赖和相互矛盾的错误码来源；把策略元数据直接附加到原错误序列化又会破坏既有响应格式。
+- 决策：异常类自身的 `code`、`numeric_code` 和 `default_message` 保持唯一权威来源。各领域模块通过显式、冻结 definition 元组登记 severity、category、retryable、disconnect_required、audit_required、safe_detail 和稳定 action，再由 registry 显式聚合并构建不可变的类/code/numeric_code 索引；三类键必须全局唯一且 definition 必须与类属性一致。禁止 decorator 自动注册、import 副作用、动态模块扫描和 `__subclasses__()` 权威发现。exceptions 基础层不依赖 registry，整个 exceptions 包不依赖 sanitizer、logger 或 config；NACK reason 只可引用已登记 code 并保持稳定顺序。
+- 后果：异常实例构造、捕获关系、details 和原四字段 `to_dict()` 不依赖注册表且保持兼容；metadata 序列化不得读取异常 details 或触发异常字符串化。`safe_detail` 只表示后续调用方的策略提示，不授权直接输出任意 details；实际错误日志、审计和未来错误 Envelope 仍必须经过 sanitizer 和各自输出边界。后续新增错误必须显式加入对应 definition 元组并通过类、code、numeric_code 和 NACK 完整性验证。
+- 关联阶段/工作包：`P01-W11`、`P01-W12`、`P03`、`P06`、`P07`、`P20`。

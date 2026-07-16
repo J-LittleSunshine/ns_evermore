@@ -211,6 +211,30 @@
 - 已知限制：pickle 仍不作为兼容承诺；为兼容直接构造 `NsConfigResolver()`，resolver 在未显式提供 `config_type` 时通过带说明的局部导入取得唯一根模型，常规 `NsConfig.resolve()` 始终显式注入类型，且冷启动循环导入检查通过。
 - 下一工作包：`P01-W11 扩展 ns_common.exceptions 为错误注册表`，状态为 `NOT_STARTED`。
 
+## P01-FIX-05
+
+- 工作包：`P01-FIX-05 修复 NsLogger extra 覆盖核心日志字段的问题`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-16T23:32:40+08:00`。
+- 修改文件：`src/ns_common/logger.py`、`tests/test_logger.py`、实施计划、acceptance log 和 ADR-009；`src/ns_common/security.py`、exceptions 和设计边界文档未修改。
+- 公共契约变化：新增稳定 JSON 权威字段集合，包含 timestamp、level、logger、message、module、filename、lineno、func_name、process、process_name、thread、thread_name、exception、stack 和 `extra_fields`；与 Python LogRecord 内建保留字段分离。普通无冲突 extra 继续平铺；冲突 extra 统一进入 `extra_fields`，调用方同名 `extra_fields` 作为嵌套项保留。text/color 中 JSON 别名和 logging 核心占位符均使用 formatter 权威值。
+- 测试结果：runtime 环境 `tests.test_logger` 11/11、logger+sanitizer 41/41、P01/runtime 联合 150/150；backend 根目录全量 161/161；`compileall`、runtime/backend 两套环境 `pip check` 和 `git diff --check` 通过。
+- 安全/隔离检查：冲突字段中的 token、payload、Authorization、签名 URL、Cookie 等继续只交给现有 sanitizer；Mapping key 脱敏碰撞保留稳定后缀；JSON 继续严格 `allow_nan=False`；`KeyboardInterrupt`、`SystemExit` 保持穿透。Logger 未增加、复制或放宽 sanitizer 规则，ANSI 颜色仍读取原始 LogRecord level/status。
+- 已知限制：Python logging 在 formatter 之前已拒绝直接覆盖 levelname、name、filename 等内建字段；FIX-05 额外隔离可进入 formatter 的 JSON 权威别名和 message/asctime 特例，不改变 logging 自身拒绝语义。
+- 下一工作包：`P01-W11 将 ns_common.exceptions 包化并建立结构化错误注册表`，状态为 `NOT_STARTED`。
+
+## P01-W11
+
+- 工作包：`P01-W11 将 ns_common.exceptions 包化并建立结构化错误注册表`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-16T23:46:23+08:00`。
+- 修改文件：删除原 `src/ns_common/exceptions.py`；新增 `src/ns_common/exceptions/__init__.py`、`base.py`、`metadata.py`、`registry.py`、`common.py`、`protocol.py`、`payload_ref.py`、`delivery.py`、`cluster.py`、`nack.py` 和 `tests/test_exceptions.py`；更新实施计划、acceptance log 和 architecture decisions。设计边界文档未修改。
+- 公共契约变化：`ns_common.exceptions` 由单模块改为 package，facade 保持全部原异常与 `RUNTIME_NACK_REASON_ERROR_CODES` 的导入路径，既有 `ns_common` 顶层对象身份不变。33 个现有异常的构造参数、code、numeric_code、default_message、details 浅拷贝、继承关系、`to_dict()` 和 `__str__()` 保持原语义；新增冻结 `NsErrorDefinition`、稳定 `NsErrorSeverity`/`NsErrorCategory`、五组显式 definition 聚合、不可变 `NsErrorRegistry`、按类/code/numeric_code 查询、完整性验证、元数据 JSON 序列化和 NACK 映射验证。
+- 测试结果：runtime 环境 `tests.test_exceptions` 18/18；W11 指定 exceptions/config/config package/logger/security/retry/async runtime 联合 149/149；P01/runtime 联合 168/168；backend 根目录全量 179/179。`compileall`、runtime/backend 两套环境 `pip check`、51 项 exceptions facade 公共导出、33 类对象身份、10 个 exceptions 模块冷启动导入、导入图无环、生产源码无内部 exceptions 路径依赖和 `git diff --check` 均通过。
+- 安全/隔离检查：注册表使用显式 definition 元组聚合，不使用 decorator、import 副作用、动态模块扫描或 `__subclasses__()`；definitions、索引和注册表冻结，类/code/numeric_code 均为 33 个且全局唯一。metadata/registry 序列化不读取异常 details，不触发异常实例 `__str__()`；exceptions 不依赖 sanitizer/logger/config，原异常四字段序列化未附加 metadata。未读取远程、提交记录、PR 或 Issue，未开始 W12。
+- 已知限制：W11 只登记当前已有 33 个异常；设计文档中的完整 `RUNTIME_*` 覆盖矩阵、错误 Envelope 和 retry/disconnect/audit 执行逻辑分别留给 W12、P03 和后续阶段。`safe_detail` 不代表任意 details 可直接输出。
+- 下一工作包：`P01-W12 补齐设计文档已明确的 RUNTIME_* 错误覆盖矩阵`，状态保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：
