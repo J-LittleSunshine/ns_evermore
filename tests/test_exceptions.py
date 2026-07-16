@@ -7,12 +7,15 @@ import json
 import os
 import subprocess
 import sys
+import types
 import unittest
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import ns_common
 import ns_common.exceptions as exceptions_facade
+from ns_common.async_runtime import NsEventLoopSelector
+from ns_common.config import NsConfigGroupMetadata, NsRuntimeEventLoopConfig
 from ns_common.exceptions import (
     ALL_ERROR_DEFINITIONS,
     ERROR_REGISTRY,
@@ -23,6 +26,8 @@ from ns_common.exceptions import (
     NsErrorRegistry,
     NsErrorSeverity,
     NsEvermoreError,
+    NsDependencyError,
+    NsHttpClientError,
     NsRuntimeError,
     NsRuntimePayloadRefValidationTimeoutError,
     NsRuntimePayloadRefValidationUnavailableError,
@@ -35,6 +40,7 @@ from ns_common.exceptions import (
     validate_error_registry,
     validate_runtime_nack_reason_error_codes,
 )
+from ns_common.http_client import NsHttpResponse
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -280,6 +286,218 @@ TOP_LEVEL_EXCEPTION_EXPORTS = (
 )
 
 
+def expected_policy(
+    severity: NsErrorSeverity,
+    category: NsErrorCategory,
+    action: str,
+    *,
+    retryable: bool = False,
+    disconnect_required: bool = False,
+    audit_required: bool = False,
+    safe_detail: bool = False,
+) -> dict[str, object]:
+    return {
+        "severity": severity,
+        "category": category,
+        "retryable": retryable,
+        "disconnect_required": disconnect_required,
+        "audit_required": audit_required,
+        "safe_detail": safe_detail,
+        "action": action,
+    }
+
+
+EXPECTED_ERROR_POLICIES: dict[
+    type[NsEvermoreError], dict[str, object]
+] = {
+    exceptions_facade.NsEvermoreError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.COMMON,
+        "report_error",
+    ),
+    exceptions_facade.NsRuntimeError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.RUNTIME,
+        "report_runtime_error",
+    ),
+    exceptions_facade.NsConfigError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.CONFIGURATION,
+        "fix_configuration",
+    ),
+    exceptions_facade.NsValidationError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.VALIDATION,
+        "reject_invalid_input",
+    ),
+    exceptions_facade.NsDependencyError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.DEPENDENCY,
+        "inspect_dependency",
+    ),
+    exceptions_facade.NsStateError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.STATE,
+        "investigate_state",
+    ),
+    exceptions_facade.NsHttpClientError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.HTTP,
+        "handle_http_failure",
+    ),
+    exceptions_facade.NsRuntimeProtocolError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.PROTOCOL,
+        "reject_protocol_message",
+    ),
+    exceptions_facade.NsRuntimeEnvelopeSchemaError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.PROTOCOL,
+        "reject_invalid_envelope",
+        disconnect_required=True,
+    ),
+    exceptions_facade.NsRuntimeProtocolVersionError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.PROTOCOL,
+        "reject_protocol_version",
+        disconnect_required=True,
+    ),
+    exceptions_facade.NsRuntimeSourceForgedError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.SECURITY,
+        "reject_forged_source",
+        disconnect_required=True,
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeAuthContextForgedError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.SECURITY,
+        "reject_forged_auth_context",
+        disconnect_required=True,
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeUnsupportedMessageTypeError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.PROTOCOL,
+        "reject_unsupported_message",
+    ),
+    exceptions_facade.NsRuntimeUnauthorizedMessageTypeError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.SECURITY,
+        "reject_unauthorized_message",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeTenantMismatchError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.SECURITY,
+        "reject_tenant_mismatch",
+        disconnect_required=True,
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimePayloadRefDeniedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.PAYLOAD_REF,
+        "reject_payload_ref",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimePayloadRefInvalidError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.PAYLOAD_REF,
+        "reject_invalid_payload_ref",
+    ),
+    exceptions_facade.NsRuntimePayloadRefExpiredError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.PAYLOAD_REF,
+        "refresh_payload_ref",
+    ),
+    exceptions_facade.NsRuntimePayloadRefChecksumMismatchError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.PAYLOAD_REF,
+        "reject_payload_checksum",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimePayloadRefVersionMismatchError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.PAYLOAD_REF,
+        "reject_payload_version",
+    ),
+    exceptions_facade.NsRuntimePayloadRefValidationUnavailableError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.PAYLOAD_REF,
+        "retry_payload_validation",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimePayloadRefValidationTimeoutError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.PAYLOAD_REF,
+        "retry_payload_validation",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeTargetUnavailableError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.DELIVERY,
+        "retry_target_delivery",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeDeliveryStateError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.DELIVERY,
+        "reject_delivery_transition",
+    ),
+    exceptions_facade.NsRuntimeAckRejectedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.DELIVERY,
+        "reject_ack",
+    ),
+    exceptions_facade.NsRuntimeNackRejectedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.DELIVERY,
+        "reject_nack",
+    ),
+    exceptions_facade.NsRuntimeDeferRejectedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.DELIVERY,
+        "reject_defer",
+    ),
+    exceptions_facade.NsRuntimeBackpressureError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.BACKPRESSURE,
+        "retry_after_backpressure",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeClusterCoordinationError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.CLUSTER,
+        "investigate_cluster_coordination",
+    ),
+    exceptions_facade.NsRuntimeClusterStateError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.CLUSTER,
+        "reject_cluster_transition",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeClusterFencingError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.CLUSTER,
+        "reject_stale_fencing",
+        disconnect_required=True,
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeRoleAdmissionError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.CLUSTER,
+        "reject_role_admission",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeStartupSecurityError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.SECURITY,
+        "stop_insecure_startup",
+        audit_required=True,
+    ),
+}
+
+
 def make_definition(
     error_type: type[NsEvermoreError],
     **overrides: object,
@@ -518,6 +736,164 @@ class NsExceptionCompatibilityTestCase(unittest.TestCase):
 
 
 class NsErrorMetadataRegistryTestCase(unittest.TestCase):
+
+    def test_all_current_error_policies_match_explicit_matrix(self) -> None:
+        self.assertEqual(33, len(EXPECTED_ERROR_POLICIES))
+        self.assertEqual(
+            set(EXPECTED_ERROR_POLICIES),
+            {definition.error_type for definition in ALL_ERROR_DEFINITIONS},
+        )
+        for error_type, expected in EXPECTED_ERROR_POLICIES.items():
+            with self.subTest(error_type=error_type.__name__):
+                definition = get_error_definition(error_type)
+                self.assertIsNotNone(definition)
+                assert definition is not None
+                actual = {
+                    "severity": definition.severity,
+                    "category": definition.category,
+                    "retryable": definition.retryable,
+                    "disconnect_required": definition.disconnect_required,
+                    "audit_required": definition.audit_required,
+                    "safe_detail": definition.safe_detail,
+                    "action": definition.action,
+                }
+                self.assertEqual(expected, actual)
+
+    def test_general_error_types_have_conservative_side_effect_policy(self) -> None:
+        general_error_types = (
+            exceptions_facade.NsEvermoreError,
+            exceptions_facade.NsRuntimeError,
+            exceptions_facade.NsDependencyError,
+            exceptions_facade.NsStateError,
+            exceptions_facade.NsHttpClientError,
+            exceptions_facade.NsRuntimeProtocolError,
+            exceptions_facade.NsRuntimeClusterCoordinationError,
+        )
+        for error_type in general_error_types:
+            with self.subTest(error_type=error_type.__name__):
+                definition = get_error_definition(error_type)
+                self.assertIsNotNone(definition)
+                assert definition is not None
+                self.assertFalse(definition.retryable)
+                self.assertFalse(definition.disconnect_required)
+                self.assertFalse(definition.audit_required)
+                self.assertFalse(definition.safe_detail)
+
+    def test_explicit_leaf_error_policies_remain_strong(self) -> None:
+        retryable_types = (
+            exceptions_facade.NsRuntimePayloadRefValidationUnavailableError,
+            exceptions_facade.NsRuntimePayloadRefValidationTimeoutError,
+            exceptions_facade.NsRuntimeTargetUnavailableError,
+            exceptions_facade.NsRuntimeBackpressureError,
+        )
+        for error_type in retryable_types:
+            with self.subTest(error_type=error_type.__name__):
+                definition = get_error_definition(error_type)
+                self.assertIsNotNone(definition)
+                assert definition is not None
+                self.assertTrue(definition.retryable)
+
+        security_flags = {
+            exceptions_facade.NsRuntimeSourceForgedError: (True, True),
+            exceptions_facade.NsRuntimeAuthContextForgedError: (True, True),
+            exceptions_facade.NsRuntimeTenantMismatchError: (True, True),
+            exceptions_facade.NsRuntimeClusterFencingError: (True, True),
+            exceptions_facade.NsRuntimeStartupSecurityError: (False, True),
+        }
+        for error_type, expected_flags in security_flags.items():
+            with self.subTest(error_type=error_type.__name__):
+                definition = get_error_definition(error_type)
+                self.assertIsNotNone(definition)
+                assert definition is not None
+                self.assertEqual(
+                    expected_flags,
+                    (
+                        definition.disconnect_required,
+                        definition.audit_required,
+                    ),
+                )
+
+    def test_current_dependency_scenarios_use_conservative_definition(self) -> None:
+        config = NsRuntimeEventLoopConfig(
+            implementation="uvloop",
+            metadata=NsConfigGroupMetadata(apply_mode="restart_required"),
+        )
+
+        with self.assertRaises(NsDependencyError) as windows_context:
+            NsEventLoopSelector(
+                platform_system=lambda: "Windows",
+            ).select(config)
+
+        def broken_policy_factory() -> object:
+            raise RuntimeError("broken uvloop policy")
+
+        fake_uvloop = types.SimpleNamespace(
+            EventLoopPolicy=broken_policy_factory,
+        )
+        with self.assertRaises(NsDependencyError) as init_context:
+            NsEventLoopSelector(
+                platform_system=lambda: "Linux",
+                module_loader=lambda _: fake_uvloop,
+            ).install(config)
+
+        response = NsHttpResponse(
+            status_code=200,
+            headers={},
+            text="{invalid-json",
+            url="https://example.invalid/data",
+            method="GET",
+        )
+        with self.assertRaises(NsDependencyError) as json_context:
+            response.json()
+
+        for error in (
+            windows_context.exception,
+            init_context.exception,
+            json_context.exception,
+        ):
+            with self.subTest(message=error.message):
+                definition = get_error_definition(type(error))
+                self.assertIsNotNone(definition)
+                assert definition is not None
+                self.assertFalse(definition.retryable)
+                self.assertEqual("inspect_dependency", definition.action)
+
+        broad_expectations = {
+            NsHttpClientError: "handle_http_failure",
+            exceptions_facade.NsRuntimeProtocolError: "reject_protocol_message",
+            exceptions_facade.NsRuntimeClusterCoordinationError: (
+                "investigate_cluster_coordination"
+            ),
+        }
+        for error_type, action in broad_expectations.items():
+            with self.subTest(error_type=error_type.__name__):
+                definition = get_error_definition(type(error_type()))
+                self.assertIsNotNone(definition)
+                assert definition is not None
+                self.assertFalse(definition.retryable)
+                self.assertFalse(definition.disconnect_required)
+                self.assertEqual(action, definition.action)
+
+        for error_type in (
+            exceptions_facade.NsRuntimeSourceForgedError,
+            exceptions_facade.NsRuntimeAuthContextForgedError,
+            exceptions_facade.NsRuntimeClusterFencingError,
+        ):
+            with self.subTest(error_type=error_type.__name__):
+                definition = get_error_definition(type(error_type()))
+                self.assertIsNotNone(definition)
+                assert definition is not None
+                self.assertTrue(definition.disconnect_required)
+                self.assertTrue(definition.audit_required)
+
+    def test_error_type_lookup_does_not_fall_back_through_mro(self) -> None:
+        class UnregisteredDependencyError(NsDependencyError):
+            pass
+
+        error = UnregisteredDependencyError()
+        self.assertIsNone(get_error_definition(type(error)))
+        self.assertIsNone(ERROR_REGISTRY.get_by_error_type(type(error)))
+        self.assertIsNotNone(get_error_definition(NsDependencyError))
 
     def test_definition_validation_is_strict(self) -> None:
         valid = make_definition(NsValidationError)

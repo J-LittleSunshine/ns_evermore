@@ -93,6 +93,7 @@ class NsErrorRegistry:
     def get_by_error_type(
         self, error_type: type[NsEvermoreError]
     ) -> NsErrorDefinition | None:
+        """Return only the definition registered for this exact type."""
         return self._by_error_type.get(error_type)
 
     def get_by_code(self, code: str) -> NsErrorDefinition | None:

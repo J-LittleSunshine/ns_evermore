@@ -64,7 +64,10 @@ PROTOCOL_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
         NsRuntimeProtocolError,
         severity=NsErrorSeverity.ERROR,
         category=NsErrorCategory.PROTOCOL,
-        disconnect_required=True,
+        retryable=False,
+        disconnect_required=False,
+        audit_required=False,
+        safe_detail=False,
         action="reject_protocol_message",
     ),
     NsErrorDefinition.for_error_type(

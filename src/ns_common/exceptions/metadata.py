@@ -35,6 +35,15 @@ class NsErrorCategory(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class NsErrorDefinition:
+    """Default policy hints for one exact exception type.
+
+    Policy flags and ``action`` are not inherited through the Python class
+    hierarchy and are not unconditional execution instructions. Callers must
+    query with the concrete ``type(error)`` and combine any returned hints
+    with the current context, configured policy, and runtime phase. A missing
+    exact definition must be handled conservatively.
+    """
+
     error_type: type[NsEvermoreError]
     code: str
     numeric_code: int

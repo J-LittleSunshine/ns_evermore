@@ -235,6 +235,19 @@
 - 已知限制：W11 只登记当前已有 33 个异常；设计文档中的完整 `RUNTIME_*` 覆盖矩阵、错误 Envelope 和 retry/disconnect/audit 执行逻辑分别留给 W12、P03 和后续阶段。`safe_detail` 不代表任意 details 可直接输出。
 - 下一工作包：`P01-W12 补齐设计文档已明确的 RUNTIME_* 错误覆盖矩阵`，状态保持 `NOT_STARTED`。
 
+## P01-FIX-06
+
+- 工作包：`P01-FIX-06 校准错误注册表中的通用异常策略语义`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T00:29:45+08:00`。
+- 修改文件：`src/ns_common/exceptions/common.py`、`protocol.py`、`cluster.py`、`metadata.py`、`registry.py`、`tests/test_exceptions.py`、实施计划、acceptance log 和 ADR-015；设计边界文档、异常类实现、NACK 映射和 W12 错误矩阵未修改。本地校准会话开始时 `git status --short --branch` 仅显示干净的 `main...origin/main`。
+- 公共契约变化：校准五个宽泛 definition 的默认策略提示。`NsDependencyError` 从 `retryable=True/action=retry_dependency` 改为 `retryable=False/action=inspect_dependency`，依据是其实际同时覆盖不受支持或缺失的 uvloop、初始化失败、HTTP 非法 JSON、timeout、请求/状态和客户端状态等不同场景；`NsStateError` 的布尔策略保持全 false，action 从 `stop_and_investigate` 改为 `investigate_state`，依据是其实际覆盖 event-loop 运行态、注入返回值、cache/client 状态等不同上下文，通用类型不能无条件提示停止；`NsHttpClientError` 从 `retryable=True/action=retry_http_request` 改为 `retryable=False/action=handle_http_failure`，依据是通用 HTTP 错误无法区分认证、参数、schema、TLS、DNS、连接和 timeout；`NsRuntimeProtocolError` 从 `disconnect_required=True` 改为 false，action 保持 `reject_protocol_message`，依据是通用协议错误无法区分单消息拒绝和连接级安全攻击；`NsRuntimeClusterCoordinationError` 从 `retryable=True/audit_required=True/action=retry_cluster_coordination` 改为 `retryable=False/audit_required=False/action=investigate_cluster_coordination`，依据是通用协调错误同时可能代表临时不可用、配置、状态、lease、fencing 或不可自动恢复问题。五项的 severity/category 均不变。
+- 公共契约变化：其余 28 个 definition 经静态复核未改变。payload_ref validation unavailable/timeout、target unavailable、backpressure 继续可重试；source/auth_context forged、tenant mismatch 和 fencing 继续断连并审计；cluster state、role admission、startup security 保留各自审计/严重级别；协议版本不兼容和 Envelope schema 使用各自精确叶子 definition，不从通用 protocol definition 继承策略。metadata 明确策略只属于精确异常类型、不是无条件执行命令；查询继续使用 `type(error)` 且不做 MRO fallback。
+- 测试结果：runtime 环境 `tests.test_exceptions` 23/23；W11 指定 exceptions/async runtime/logger/security/config/config package/retry 联合 154/154；P01/runtime 联合 173/173；backend 根目录全量 184/184。`compileall`、runtime/backend 两套环境 `pip check`、51 项 facade 公共导出、33 类/definition/code/numeric_code 唯一、严格 JSON、精确类型无 MRO fallback、10 个子模块冷启动、导入图无环、生产源码无内部 exceptions 路径依赖和 `git diff --check` 均通过。
+- 安全/隔离检查：33 项显式 expected policy 矩阵覆盖 severity、category、retryable、disconnect_required、audit_required、safe_detail 和 action；实际调用场景通过注入模拟，不访问真实网络、uvloop、Redis、Valkey 或 backend。注册表仍显式聚合、冻结且无 decorator、import 副作用、动态扫描或 `__subclasses__()`；exceptions 仍不依赖 sanitizer/logger/config。未读取远程仓库、提交记录、PR 或 Issue，未开始 W12。
+- 已知限制：通用 definition 只能提供保守提示；W12 才通过新增细粒度叶子错误表达 dependency/HTTP/protocol/cluster 的可重试、不可重试和安全处置差异。策略执行仍属于后续上下文和状态机，不由 registry 自动完成。
+- 下一工作包：`P01-W12 补齐设计文档已明确的 RUNTIME_* 错误覆盖矩阵`，状态保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：
