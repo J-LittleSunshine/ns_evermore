@@ -10,6 +10,8 @@ from dataclasses import FrozenInstanceError
 from ns_common.async_runtime import (
     NsEventLoopImplementation,
     NsEventLoopSelector,
+    NsTaskSupervisorState,
+    TaskSupervisor,
     install_event_loop_policy,
     select_event_loop,
 )
@@ -244,6 +246,218 @@ class NsEventLoopSelectorTestCase(unittest.TestCase):
 
         self.assertIs(NsEventLoopImplementation.ASYNCIO, selection.selected)
         self.assertEqual("windows", selection.platform)
+
+
+class TaskSupervisorTestCase(unittest.IsolatedAsyncioTestCase):
+
+    async def test_named_task_completion_is_reported(self) -> None:
+        supervisor = TaskSupervisor()
+
+        async def return_value() -> int:
+            return 42
+
+        task = supervisor.create_task(return_value(), name="answer")
+        self.assertEqual("answer", task.get_name())
+        self.assertEqual(42, await task)
+        await asyncio.sleep(0)
+
+        report = await supervisor.shutdown()
+        self.assertEqual(("answer",), report.completed_tasks)
+        self.assertEqual((), report.cancelled_tasks)
+        self.assertEqual((), report.unfinished_tasks)
+        self.assertEqual((), supervisor.pending_task_names)
+        self.assertTrue(report.clean)
+        self.assertIs(NsTaskSupervisorState.CLOSED, supervisor.state)
+
+    async def test_task_failure_is_collected_and_forwarded_once(self) -> None:
+        handled = []
+        supervisor = TaskSupervisor(failure_handler=handled.append)
+
+        async def fail() -> None:
+            raise ValueError("boom")
+
+        task = supervisor.create_task(fail(), name="failing-task")
+        with self.assertRaisesRegex(ValueError, "boom"):
+            await task
+        await asyncio.sleep(0)
+
+        self.assertEqual(1, len(supervisor.failures))
+        self.assertEqual("failing-task", supervisor.failures[0].name)
+        self.assertEqual("ValueError", supervisor.failures[0].exception_type)
+        self.assertEqual("boom", supervisor.failures[0].message)
+        self.assertEqual(list(supervisor.failures), handled)
+
+        report = await supervisor.shutdown()
+        self.assertEqual(("failing-task",), report.failed_tasks)
+        self.assertEqual(1, len(report.failures))
+        self.assertFalse(report.clean)
+
+    async def test_shutdown_cancels_by_order_then_creation_without_hanging(self) -> None:
+        cancellation_events: list[str] = []
+        blocker = asyncio.Event()
+        supervisor = TaskSupervisor()
+
+        async def worker(name: str) -> None:
+            try:
+                await blocker.wait()
+            except asyncio.CancelledError:
+                cancellation_events.append(name)
+                raise
+
+        supervisor.create_task(worker("late"), name="late", cancel_order=20)
+        supervisor.create_task(worker("first"), name="first", cancel_order=10)
+        supervisor.create_task(worker("second"), name="second", cancel_order=10)
+        await asyncio.sleep(0)
+
+        report = await supervisor.shutdown(timeout_seconds=1.0)
+
+        self.assertEqual(("first", "second", "late"), report.cancellation_order)
+        self.assertEqual(["first", "second", "late"], cancellation_events)
+        self.assertEqual(("late", "first", "second"), report.cancelled_tasks)
+        self.assertEqual((), report.unfinished_tasks)
+        self.assertEqual((), supervisor.pending_task_names)
+        self.assertTrue(report.clean)
+
+    async def test_exception_during_cancellation_is_a_failure(self) -> None:
+        supervisor = TaskSupervisor()
+        started = asyncio.Event()
+
+        async def fail_during_cleanup() -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise RuntimeError("cleanup failed")
+
+        supervisor.create_task(
+            fail_during_cleanup(),
+            name="cleanup-failure",
+        )
+        await started.wait()
+
+        report = await supervisor.shutdown(timeout_seconds=1.0)
+        self.assertEqual(("cleanup-failure",), report.failed_tasks)
+        self.assertEqual((), report.cancelled_tasks)
+        self.assertEqual("cleanup failed", report.failures[0].message)
+
+    async def test_shutdown_timeout_returns_unfinished_task_report(self) -> None:
+        supervisor = TaskSupervisor(shutdown_timeout_seconds=0.01)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def ignore_first_cancel() -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await release.wait()
+
+        task = supervisor.create_task(
+            ignore_first_cancel(),
+            name="stubborn",
+            cancel_order=5,
+        )
+        await started.wait()
+
+        report = await supervisor.shutdown()
+        self.assertTrue(report.timed_out)
+        self.assertFalse(report.clean)
+        self.assertEqual(("stubborn",), report.cancellation_order)
+        self.assertEqual("stubborn", report.unfinished_tasks[0].name)
+        self.assertEqual(5, report.unfinished_tasks[0].cancel_order)
+        self.assertGreaterEqual(report.unfinished_tasks[0].cancelling_count, 1)
+        self.assertEqual(("stubborn",), supervisor.pending_task_names)
+
+        release.set()
+        await asyncio.wait_for(task, timeout=1.0)
+        await asyncio.sleep(0)
+        self.assertEqual((), supervisor.pending_task_names)
+
+    async def test_duplicate_and_closed_registration_close_rejected_coroutines(self) -> None:
+        supervisor = TaskSupervisor()
+
+        async def no_op() -> None:
+            return None
+
+        first = supervisor.create_task(no_op(), name="unique")
+        await first
+        duplicate = no_op()
+        with self.assertRaises(NsConfigError):
+            supervisor.create_task(duplicate, name="unique")
+        self.assertIsNone(duplicate.cr_frame)
+
+        report = await supervisor.shutdown()
+        closed = no_op()
+        with self.assertRaises(NsStateError):
+            supervisor.create_task(closed, name="after-close")
+        self.assertIsNone(closed.cr_frame)
+        self.assertIs(report, await supervisor.shutdown())
+
+    async def test_registration_and_timeout_validation_are_strict(self) -> None:
+        with self.assertRaises(NsConfigError):
+            TaskSupervisor(shutdown_timeout_seconds=0)
+        with self.assertRaises(NsConfigError):
+            TaskSupervisor(shutdown_timeout_seconds=float("inf"))
+
+        supervisor = TaskSupervisor()
+
+        async def no_op() -> None:
+            return None
+
+        invalid_name = no_op()
+        with self.assertRaises(NsConfigError):
+            supervisor.create_task(invalid_name, name=" ")
+        self.assertIsNone(invalid_name.cr_frame)
+
+        invalid_order = no_op()
+        with self.assertRaises(NsConfigError):
+            supervisor.create_task(
+                invalid_order,
+                name="invalid-order",
+                cancel_order=True,
+            )
+        self.assertIsNone(invalid_order.cr_frame)
+
+        with self.assertRaises(NsStateError):
+            supervisor.get_task("missing")
+
+        with self.assertRaises(NsConfigError):
+            await supervisor.shutdown(timeout_seconds="invalid")  # type: ignore[arg-type]
+
+        clean_report = await supervisor.shutdown()
+        self.assertEqual(0, clean_report.total_tasks)
+
+    async def test_supervised_task_cannot_shutdown_its_own_supervisor(self) -> None:
+        supervisor = TaskSupervisor()
+
+        async def self_shutdown() -> None:
+            await supervisor.shutdown()
+
+        task = supervisor.create_task(self_shutdown(), name="self-shutdown")
+        with self.assertRaises(NsStateError):
+            await task
+        await asyncio.sleep(0)
+
+        report = await supervisor.shutdown()
+        self.assertEqual(("self-shutdown",), report.failed_tasks)
+
+
+class TaskSupervisorLoopBindingTestCase(unittest.TestCase):
+
+    def test_supervisor_cannot_cross_event_loops(self) -> None:
+        supervisor = TaskSupervisor()
+
+        async def create_on_first_loop() -> None:
+            task = supervisor.create_task(asyncio.sleep(0), name="first-loop")
+            await task
+
+        asyncio.run(create_on_first_loop())
+
+        async def shutdown_on_second_loop() -> None:
+            with self.assertRaises(NsStateError):
+                await supervisor.shutdown()
+
+        asyncio.run(shutdown_on_second_loop())
 
 
 if __name__ == "__main__":
