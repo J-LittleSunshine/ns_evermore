@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
 from collections.abc import Mapping
@@ -14,6 +15,11 @@ from urllib.parse import (
 from ns_common.exceptions import NsValidationError
 from ns_common.security import (
     CIRCULAR_REFERENCE,
+    DEFAULT_SANITIZER_DIGEST_MAX_BYTES_LENGTH,
+    DEFAULT_SANITIZER_DIGEST_MAX_CONTAINER_ITEMS,
+    DEFAULT_SANITIZER_DIGEST_MAX_NODES,
+    DEFAULT_SANITIZER_DIGEST_MAX_NORMALIZED_BYTES,
+    DEFAULT_SANITIZER_DIGEST_MAX_STRING_LENGTH,
     MAX_DEPTH_REACHED,
     REDACTED,
     NsSanitizer,
@@ -90,6 +96,15 @@ class SecretObjectKey:
 
 class DigestObject:
     pass
+
+
+@dataclass
+class WideDigestRecord:
+    field_a: str
+    field_b: str
+    field_c: str
+    field_d: str
+    field_e: str
 
 
 class SanitizerTestCase(unittest.TestCase):
@@ -521,7 +536,7 @@ class SanitizerTestCase(unittest.TestCase):
     def test_digest_callback_failure_is_fail_closed(self) -> None:
         with mock.patch.object(
             Sanitizer,
-            "_digest_default",
+            "_normalize_digest_value",
             side_effect=RuntimeError("digest-callback-secret"),
         ):
             result = Sanitizer().sanitize(
@@ -531,6 +546,320 @@ class SanitizerTestCase(unittest.TestCase):
 
         self.assertEqual(REDACTED, result)
         self.assert_json_safe_and_no_leak(result, "digest-callback-secret")
+
+    def test_digest_rejects_bytes_over_limit_without_leaking(self) -> None:
+        sanitizer = Sanitizer(max_digest_bytes_length=8)
+        boundary_secret = b"byte-sec"
+        oversized_secret = b"byte-limit-secret"
+
+        boundary_result = sanitizer.sanitize(
+            boundary_secret,
+            field_name="capabilities",
+        )
+        oversized_result = sanitizer.sanitize(
+            oversized_secret,
+            field_name="capabilities",
+        )
+
+        self.assertEqual(
+            "[REDACTED sha256:"
+            f"{hashlib.sha256(boundary_secret).hexdigest()[:16]}]",
+            boundary_result,
+        )
+        self.assertEqual(REDACTED, oversized_result)
+        self.assert_json_safe_and_no_leak(
+            {"boundary": boundary_result, "oversized": oversized_result},
+            boundary_secret.decode("ascii"),
+            oversized_secret.decode("ascii"),
+            oversized_secret.hex(),
+        )
+
+    def test_digest_string_and_normalized_byte_limits_have_boundaries(self) -> None:
+        string_limited = Sanitizer(max_digest_string_length=8)
+        string_boundary = string_limited.sanitize(
+            "strsec01",
+            field_name="capabilities",
+        )
+        string_oversized = string_limited.sanitize(
+            "strsec012",
+            field_name="capabilities",
+        )
+        normalized_boundary = Sanitizer(
+            max_digest_normalized_bytes=11,
+        ).sanitize("normsec1", field_name="capabilities")
+        normalized_oversized = Sanitizer(
+            max_digest_normalized_bytes=10,
+        ).sanitize("normsec1", field_name="capabilities")
+
+        self.assertRegex(
+            string_boundary,
+            r"^\[REDACTED sha256:[0-9a-f]{16}\]$",
+        )
+        self.assertEqual(REDACTED, string_oversized)
+        self.assertRegex(
+            normalized_boundary,
+            r"^\[REDACTED sha256:[0-9a-f]{16}\]$",
+        )
+        self.assertEqual(REDACTED, normalized_oversized)
+        self.assert_json_safe_and_no_leak(
+            {
+                "string_boundary": string_boundary,
+                "string_oversized": string_oversized,
+                "normalized_boundary": normalized_boundary,
+                "normalized_oversized": normalized_oversized,
+            },
+            "strsec01",
+            "strsec012",
+            "normsec1",
+        )
+
+    def test_digest_rejects_wide_capabilities_and_mapping(self) -> None:
+        sanitizer = Sanitizer(max_digest_container_items=3)
+        capabilities = [
+            "wide-capability-secret-a",
+            "wide-capability-secret-b",
+            "wide-capability-secret-c",
+            "wide-capability-secret-d",
+        ]
+        wide_mapping = {
+            f"safe-key-{index}": f"wide-mapping-secret-{index}"
+            for index in range(4)
+        }
+
+        capabilities_result = sanitizer.sanitize(
+            capabilities,
+            field_name="capabilities",
+        )
+        mapping_result = sanitizer.sanitize(
+            wide_mapping,
+            field_name="allowed_capabilities",
+        )
+
+        self.assertEqual(REDACTED, capabilities_result)
+        self.assertEqual(REDACTED, mapping_result)
+        self.assert_json_safe_and_no_leak(
+            {"capabilities": capabilities_result, "mapping": mapping_result},
+            *capabilities,
+            *wide_mapping.values(),
+        )
+
+    def test_digest_depth_and_circular_references_are_bounded(self) -> None:
+        deep_secret = "deep-digest-secret"
+        deep_value = [[[deep_secret]]]
+        circular: dict[str, object] = {
+            "value": "circular-digest-secret",
+        }
+        circular["self"] = circular
+
+        deep_result = Sanitizer(max_depth=2).sanitize(
+            deep_value,
+            field_name="capabilities",
+        )
+        nested_path_result = Sanitizer(max_depth=1).sanitize({
+            "outer": {"capabilities": ["path-depth-secret"]},
+        })
+        circular_first = Sanitizer().sanitize(
+            circular,
+            field_name="capabilities",
+        )
+        circular_second = Sanitizer().sanitize(
+            circular,
+            field_name="capabilities",
+        )
+
+        self.assertEqual(REDACTED, deep_result)
+        self.assertEqual(REDACTED, nested_path_result["outer"]["capabilities"])
+        self.assertEqual(circular_first, circular_second)
+        self.assertRegex(
+            circular_first,
+            r"^\[REDACTED sha256:[0-9a-f]{16}\]$",
+        )
+        self.assert_json_safe_and_no_leak(
+            {
+                "deep": deep_result,
+                "nested_path": nested_path_result,
+                "circular": circular_first,
+            },
+            deep_secret,
+            "path-depth-secret",
+            "circular-digest-secret",
+        )
+
+    def test_digest_rejects_wide_dataclass_and_regular_object(self) -> None:
+        record = WideDigestRecord(
+            "dataclass-digest-secret-a",
+            "dataclass-digest-secret-b",
+            "dataclass-digest-secret-c",
+            "dataclass-digest-secret-d",
+            "dataclass-digest-secret-e",
+        )
+
+        class WideObject:
+            def __init__(self) -> None:
+                for index in range(5):
+                    setattr(self, f"field_{index}", f"object-digest-secret-{index}")
+
+        sanitizer = Sanitizer(max_digest_container_items=4)
+        dataclass_result = sanitizer.sanitize(
+            record,
+            field_name="capabilities",
+        )
+        object_result = sanitizer.sanitize(
+            WideObject(),
+            field_name="capabilities",
+        )
+
+        self.assertEqual(REDACTED, dataclass_result)
+        self.assertEqual(REDACTED, object_result)
+        self.assert_json_safe_and_no_leak(
+            {"dataclass": dataclass_result, "object": object_result},
+            "dataclass-digest-secret-a",
+            "dataclass-digest-secret-b",
+            "dataclass-digest-secret-c",
+            "dataclass-digest-secret-d",
+            "dataclass-digest-secret-e",
+            "object-digest-secret-0",
+            "object-digest-secret-1",
+            "object-digest-secret-2",
+            "object-digest-secret-3",
+            "object-digest-secret-4",
+        )
+
+    def test_digest_container_and_node_limits_have_boundaries(self) -> None:
+        container_limited = Sanitizer(max_digest_container_items=3)
+        container_boundary_values = [
+            "container-secret-a",
+            "container-secret-b",
+            "container-secret-c",
+        ]
+        container_boundary = container_limited.sanitize(
+            container_boundary_values,
+            field_name="capabilities",
+        )
+        container_oversized = container_limited.sanitize(
+            container_boundary_values + ["container-secret-d"],
+            field_name="capabilities",
+        )
+        node_boundary = Sanitizer(max_digest_nodes=3).sanitize(
+            ["node-secret-a", "node-secret-b"],
+            field_name="capabilities",
+        )
+        node_oversized = Sanitizer(max_digest_nodes=2).sanitize(
+            ["node-secret-a", "node-secret-b"],
+            field_name="capabilities",
+        )
+
+        self.assertRegex(
+            container_boundary,
+            r"^\[REDACTED sha256:[0-9a-f]{16}\]$",
+        )
+        self.assertEqual(REDACTED, container_oversized)
+        self.assertRegex(
+            node_boundary,
+            r"^\[REDACTED sha256:[0-9a-f]{16}\]$",
+        )
+        self.assertEqual(REDACTED, node_oversized)
+        self.assert_json_safe_and_no_leak(
+            {
+                "container_boundary": container_boundary,
+                "container_oversized": container_oversized,
+                "node_boundary": node_boundary,
+                "node_oversized": node_oversized,
+            },
+            *container_boundary_values,
+            "container-secret-d",
+            "node-secret-a",
+            "node-secret-b",
+        )
+
+    def test_digest_mapping_and_sets_are_order_stable(self) -> None:
+        sanitizer = Sanitizer()
+        first_mapping = {
+            "alpha": "mapping-order-secret-a",
+            "beta": "mapping-order-secret-b",
+        }
+        second_mapping = {
+            "beta": "mapping-order-secret-b",
+            "alpha": "mapping-order-secret-a",
+        }
+        mapping_first = sanitizer.sanitize(
+            first_mapping,
+            field_name="capabilities",
+        )
+        mapping_second = sanitizer.sanitize(
+            second_mapping,
+            field_name="capabilities",
+        )
+        set_first = sanitizer.sanitize(
+            {"set-order-secret-a", "set-order-secret-b"},
+            field_name="capabilities",
+        )
+        set_second = sanitizer.sanitize(
+            {"set-order-secret-b", "set-order-secret-a"},
+            field_name="capabilities",
+        )
+        frozen_first = sanitizer.sanitize(
+            frozenset({"frozen-order-secret-a", "frozen-order-secret-b"}),
+            field_name="capabilities",
+        )
+        frozen_second = sanitizer.sanitize(
+            frozenset({"frozen-order-secret-b", "frozen-order-secret-a"}),
+            field_name="capabilities",
+        )
+        different = sanitizer.sanitize(
+            {"alpha": "mapping-order-secret-c"},
+            field_name="capabilities",
+        )
+
+        self.assertEqual(mapping_first, mapping_second)
+        self.assertEqual(set_first, set_second)
+        self.assertEqual(frozen_first, frozen_second)
+        self.assertNotEqual(mapping_first, different)
+        self.assert_json_safe_and_no_leak(
+            {
+                "mapping_first": mapping_first,
+                "mapping_second": mapping_second,
+                "set_first": set_first,
+                "set_second": set_second,
+                "frozen_first": frozen_first,
+                "frozen_second": frozen_second,
+                "different": different,
+            },
+            "mapping-order-secret-a",
+            "mapping-order-secret-b",
+            "mapping-order-secret-c",
+            "set-order-secret-a",
+            "set-order-secret-b",
+            "frozen-order-secret-a",
+            "frozen-order-secret-b",
+        )
+
+    def test_digest_process_level_exceptions_are_not_swallowed(self) -> None:
+        class InterruptingDigestMapping(ExplodingItemsMapping):
+            def items(self):  # type: ignore[no-untyped-def]
+                raise KeyboardInterrupt("digest-interrupt-secret")
+
+        class ExitingDigestObject:
+            def __getattribute__(self, name: str) -> object:
+                if name == "__dict__":
+                    raise SystemExit("digest-exit-secret")
+                return object.__getattribute__(self, name)
+
+        with self.assertRaises(KeyboardInterrupt):
+            Sanitizer().sanitize(
+                InterruptingDigestMapping(),
+                field_name="capabilities",
+            )
+        with self.assertRaises(SystemExit):
+            Sanitizer().sanitize(
+                ExitingDigestObject(),
+                field_name="capabilities",
+            )
+        self.assert_json_safe_and_no_leak(
+            {"status": "digest-process-exceptions-propagated"},
+            "digest-interrupt-secret",
+            "digest-exit-secret",
+        )
 
     def test_process_level_exceptions_are_not_swallowed(self) -> None:
         class InterruptingMapping(ExplodingItemsMapping):
@@ -595,7 +924,28 @@ class SanitizerTestCase(unittest.TestCase):
         )
 
     def test_public_helpers_and_validation_are_stable(self) -> None:
+        sanitizer = Sanitizer()
         self.assertIs(NsSanitizer, Sanitizer)
+        self.assertEqual(
+            DEFAULT_SANITIZER_DIGEST_MAX_NODES,
+            sanitizer.max_digest_nodes,
+        )
+        self.assertEqual(
+            DEFAULT_SANITIZER_DIGEST_MAX_CONTAINER_ITEMS,
+            sanitizer.max_digest_container_items,
+        )
+        self.assertEqual(
+            DEFAULT_SANITIZER_DIGEST_MAX_STRING_LENGTH,
+            sanitizer.max_digest_string_length,
+        )
+        self.assertEqual(
+            DEFAULT_SANITIZER_DIGEST_MAX_BYTES_LENGTH,
+            sanitizer.max_digest_bytes_length,
+        )
+        self.assertEqual(
+            DEFAULT_SANITIZER_DIGEST_MAX_NORMALIZED_BYTES,
+            sanitizer.max_digest_normalized_bytes,
+        )
         sanitized_value = sanitize("helper-token-secret", field_name="token")
         sanitized_url = sanitize_url(
             "https://example.test/?token=helper-url-secret"
@@ -606,6 +956,11 @@ class SanitizerTestCase(unittest.TestCase):
         invalid_calls = (
             lambda: Sanitizer(max_depth=0),
             lambda: Sanitizer(max_depth=True),
+            lambda: Sanitizer(max_digest_nodes=0),
+            lambda: Sanitizer(max_digest_container_items=True),
+            lambda: Sanitizer(max_digest_string_length=0),
+            lambda: Sanitizer(max_digest_bytes_length=0),
+            lambda: Sanitizer(max_digest_normalized_bytes=0),
             lambda: Sanitizer().sanitize({}, field_name=""),
             lambda: Sanitizer().sanitize({}, path="not-a-path"),
             lambda: Sanitizer().sanitize_url(1),

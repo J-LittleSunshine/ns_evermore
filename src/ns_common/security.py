@@ -26,6 +26,11 @@ REDACTED = "[REDACTED]"
 CIRCULAR_REFERENCE = "[CIRCULAR]"
 MAX_DEPTH_REACHED = "[MAX_DEPTH]"
 DEFAULT_SANITIZER_MAX_DEPTH = 32
+DEFAULT_SANITIZER_DIGEST_MAX_NODES = 4096
+DEFAULT_SANITIZER_DIGEST_MAX_CONTAINER_ITEMS = 256
+DEFAULT_SANITIZER_DIGEST_MAX_STRING_LENGTH = 4096
+DEFAULT_SANITIZER_DIGEST_MAX_BYTES_LENGTH = 65536
+DEFAULT_SANITIZER_DIGEST_MAX_NORMALIZED_BYTES = 262144
 
 _SANITIZATION_FAILED = "[SANITIZATION_FAILED]"
 _NON_FINITE_NUMBER = "[NON_FINITE_NUMBER]"
@@ -217,6 +222,281 @@ def _field_action(path: tuple[str, ...]) -> str | None:
     return None
 
 
+class _DigestLimitExceeded(Exception):
+    """Internal signal that digest normalization exceeded a public limit."""
+
+
+class _DigestCanonicalizer:
+    """Build a deterministic canonical byte string under strict resource limits."""
+
+    def __init__(
+        self,
+        *,
+        max_depth: int,
+        max_nodes: int,
+        max_container_items: int,
+        max_string_length: int,
+        max_bytes_length: int,
+        max_normalized_bytes: int,
+    ) -> None:
+        self._max_depth = max_depth
+        self._max_nodes = max_nodes
+        self._max_container_items = max_container_items
+        self._max_string_length = max_string_length
+        self._max_bytes_length = max_bytes_length
+        self._max_normalized_bytes = max_normalized_bytes
+        self._node_count = 0
+        self._normalized_bytes = 0
+
+    def canonicalize(self, value: object, *, depth: int) -> bytes:
+        return self._encode(value, depth=depth, active_ids=set())
+
+    def _encode(
+        self,
+        value: object,
+        *,
+        depth: int,
+        active_ids: set[int],
+    ) -> bytes:
+        if depth > self._max_depth:
+            raise _DigestLimitExceeded
+        self._claim_node()
+
+        if value is None:
+            return self._emit(b"n")
+        if isinstance(value, bool):
+            return self._emit(b"b1" if value else b"b0")
+        if isinstance(value, int):
+            if int.bit_length(value) > _MAX_JSON_INTEGER_BITS:
+                raise _DigestLimitExceeded
+            return self._encode_ascii_scalar(b"i", str(int(value)))
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise _DigestLimitExceeded
+            return self._encode_ascii_scalar(b"f", float.hex(value))
+        if isinstance(value, str):
+            return self._encode_text(b"s", value)
+        if isinstance(value, bytes):
+            return self._encode_nested_bytes(value)
+        if isinstance(value, (datetime, date, time)):
+            return self._encode_text(b"d", value.isoformat())
+        if isinstance(value, Path):
+            return self._encode_text(b"p", str(value))
+
+        value_id = id(value)
+        if value_id in active_ids:
+            return self._emit(b"c")
+        active_ids.add(value_id)
+        try:
+            if isinstance(value, Enum):
+                type_name = self._encode_type_name(value)
+                enum_value = self._encode(
+                    value.value,
+                    depth=depth + 1,
+                    active_ids=active_ids,
+                )
+                return self._wrap(b"e[", [type_name, enum_value], b"]")
+            if is_dataclass(value) and not isinstance(value, type):
+                return self._encode_dataclass(
+                    value,
+                    depth=depth,
+                    active_ids=active_ids,
+                )
+            if isinstance(value, Mapping):
+                return self._encode_mapping(
+                    value,
+                    depth=depth,
+                    active_ids=active_ids,
+                )
+            if isinstance(value, (list, tuple)):
+                return self._encode_sequence(
+                    value,
+                    tag=b"l[" if isinstance(value, list) else b"t[",
+                    depth=depth,
+                    active_ids=active_ids,
+                )
+            if isinstance(value, (set, frozenset)):
+                return self._encode_set(
+                    value,
+                    tag=b"u[" if isinstance(value, set) else b"r[",
+                    depth=depth,
+                    active_ids=active_ids,
+                )
+            return self._encode_object(
+                value,
+                depth=depth,
+                active_ids=active_ids,
+            )
+        finally:
+            active_ids.discard(value_id)
+
+    def _encode_mapping(
+        self,
+        value: Mapping[Any, Any],
+        *,
+        depth: int,
+        active_ids: set[int],
+    ) -> bytes:
+        entries: list[bytes] = []
+        items = value.items()
+        for index, (key, item) in enumerate(items):
+            if index >= self._max_container_items:
+                raise _DigestLimitExceeded
+            encoded_key = self._encode(
+                key,
+                depth=depth + 1,
+                active_ids=active_ids,
+            )
+            encoded_value = self._encode(
+                item,
+                depth=depth + 1,
+                active_ids=active_ids,
+            )
+            entries.append(self._wrap(b"(", [encoded_key, encoded_value], b")"))
+        entries.sort()
+        return self._wrap(b"m[", entries, b"]")
+
+    def _encode_sequence(
+        self,
+        value: list[object] | tuple[object, ...],
+        *,
+        tag: bytes,
+        depth: int,
+        active_ids: set[int],
+    ) -> bytes:
+        items: list[bytes] = []
+        for index, item in enumerate(value):
+            if index >= self._max_container_items:
+                raise _DigestLimitExceeded
+            items.append(self._encode(
+                item,
+                depth=depth + 1,
+                active_ids=active_ids,
+            ))
+        return self._wrap(tag, items, b"]")
+
+    def _encode_set(
+        self,
+        value: set[object] | frozenset[object],
+        *,
+        tag: bytes,
+        depth: int,
+        active_ids: set[int],
+    ) -> bytes:
+        items: list[bytes] = []
+        for index, item in enumerate(value):
+            if index >= self._max_container_items:
+                raise _DigestLimitExceeded
+            items.append(self._encode(
+                item,
+                depth=depth + 1,
+                active_ids=active_ids,
+            ))
+        items.sort()
+        return self._wrap(tag, items, b"]")
+
+    def _encode_dataclass(
+        self,
+        value: object,
+        *,
+        depth: int,
+        active_ids: set[int],
+    ) -> bytes:
+        raw_fields = getattr(type(value), "__dataclass_fields__", None)
+        if not isinstance(raw_fields, dict):
+            raise TypeError("dataclass fields must be a dictionary")
+        if len(raw_fields) > self._max_container_items:
+            raise _DigestLimitExceeded
+        encoded_fields: list[bytes] = []
+        for field in fields(value):
+            field_name = field.name
+            encoded_name = self._encode_text(b"k", field_name)
+            field_value = getattr(value, field_name)
+            encoded_value = self._encode(
+                field_value,
+                depth=depth + 1,
+                active_ids=active_ids,
+            )
+            encoded_fields.append(
+                self._wrap(b"(", [encoded_name, encoded_value], b")")
+            )
+        encoded_fields.sort()
+        type_name = self._encode_type_name(value)
+        body = self._wrap(b"v[", encoded_fields, b"]")
+        return self._wrap(b"a[", [type_name, body], b"]")
+
+    def _encode_object(
+        self,
+        value: object,
+        *,
+        depth: int,
+        active_ids: set[int],
+    ) -> bytes:
+        attributes = vars(value)
+        if not isinstance(attributes, Mapping):
+            raise TypeError("vars(value) must return a mapping")
+        type_name = self._encode_type_name(value)
+        encoded_attributes = self._encode(
+            attributes,
+            depth=depth + 1,
+            active_ids=active_ids,
+        )
+        return self._wrap(b"o[", [type_name, encoded_attributes], b"]")
+
+    def _encode_nested_bytes(self, value: bytes) -> bytes:
+        if len(value) > self._max_bytes_length:
+            raise _DigestLimitExceeded
+        byte_digest = hashlib.sha256(value).hexdigest()
+        return self._encode_ascii_scalar(
+            b"y",
+            f"{len(value)}:{byte_digest}",
+        )
+
+    def _encode_type_name(self, value: object) -> bytes:
+        name = type(value).__name__
+        if not isinstance(name, str) or not name:
+            raise TypeError("type name must be a non-empty string")
+        return self._encode_text(b"q", name)
+
+    def _encode_text(self, tag: bytes, value: str) -> bytes:
+        if len(value) > self._max_string_length:
+            raise _DigestLimitExceeded
+        encoded = value.encode("utf-8", errors="strict")
+        prefix = tag + str(len(encoded)).encode("ascii") + b":"
+        self._reserve(len(prefix) + len(encoded))
+        return prefix + encoded
+
+    def _encode_ascii_scalar(self, tag: bytes, value: str) -> bytes:
+        encoded = value.encode("ascii", errors="strict")
+        prefix = tag + str(len(encoded)).encode("ascii") + b":"
+        self._reserve(len(prefix) + len(encoded))
+        return prefix + encoded
+
+    def _wrap(
+        self,
+        prefix: bytes,
+        parts: list[bytes],
+        suffix: bytes,
+    ) -> bytes:
+        separator_bytes = max(0, len(parts) - 1)
+        self._reserve(len(prefix) + separator_bytes + len(suffix))
+        return prefix + b",".join(parts) + suffix
+
+    def _claim_node(self) -> None:
+        self._node_count += 1
+        if self._node_count > self._max_nodes:
+            raise _DigestLimitExceeded
+
+    def _emit(self, value: bytes) -> bytes:
+        self._reserve(len(value))
+        return value
+
+    def _reserve(self, size: int) -> None:
+        if size > self._max_normalized_bytes - self._normalized_bytes:
+            raise _DigestLimitExceeded
+        self._normalized_bytes += size
+
+
 class Sanitizer:
     """Convert arbitrary values to detached, strict JSON-safe sanitized data.
 
@@ -227,25 +507,76 @@ class Sanitizer:
     exceptions remain visible to the caller.
     """
 
-    def __init__(self, *, max_depth: int = DEFAULT_SANITIZER_MAX_DEPTH) -> None:
-        if (
-            isinstance(max_depth, bool)
-            or not isinstance(max_depth, int)
-            or max_depth < 1
-        ):
-            raise NsValidationError(
-                "max_depth must be a positive integer.",
-                details={
-                    "field": "max_depth",
-                    "value": max_depth,
-                    "actual_type": type(max_depth).__name__,
-                },
-            )
+    def __init__(
+        self,
+        *,
+        max_depth: int = DEFAULT_SANITIZER_MAX_DEPTH,
+        max_digest_nodes: int = DEFAULT_SANITIZER_DIGEST_MAX_NODES,
+        max_digest_container_items: int = (
+            DEFAULT_SANITIZER_DIGEST_MAX_CONTAINER_ITEMS
+        ),
+        max_digest_string_length: int = (
+            DEFAULT_SANITIZER_DIGEST_MAX_STRING_LENGTH
+        ),
+        max_digest_bytes_length: int = (
+            DEFAULT_SANITIZER_DIGEST_MAX_BYTES_LENGTH
+        ),
+        max_digest_normalized_bytes: int = (
+            DEFAULT_SANITIZER_DIGEST_MAX_NORMALIZED_BYTES
+        ),
+    ) -> None:
+        limits = {
+            "max_depth": max_depth,
+            "max_digest_nodes": max_digest_nodes,
+            "max_digest_container_items": max_digest_container_items,
+            "max_digest_string_length": max_digest_string_length,
+            "max_digest_bytes_length": max_digest_bytes_length,
+            "max_digest_normalized_bytes": max_digest_normalized_bytes,
+        }
+        for field_name, field_value in limits.items():
+            if (
+                isinstance(field_value, bool)
+                or not isinstance(field_value, int)
+                or field_value < 1
+            ):
+                raise NsValidationError(
+                    f"{field_name} must be a positive integer.",
+                    details={
+                        "field": field_name,
+                        "value": field_value,
+                        "actual_type": type(field_value).__name__,
+                    },
+                )
         self._max_depth = max_depth
+        self._max_digest_nodes = max_digest_nodes
+        self._max_digest_container_items = max_digest_container_items
+        self._max_digest_string_length = max_digest_string_length
+        self._max_digest_bytes_length = max_digest_bytes_length
+        self._max_digest_normalized_bytes = max_digest_normalized_bytes
 
     @property
     def max_depth(self) -> int:
         return self._max_depth
+
+    @property
+    def max_digest_nodes(self) -> int:
+        return self._max_digest_nodes
+
+    @property
+    def max_digest_container_items(self) -> int:
+        return self._max_digest_container_items
+
+    @property
+    def max_digest_string_length(self) -> int:
+        return self._max_digest_string_length
+
+    @property
+    def max_digest_bytes_length(self) -> int:
+        return self._max_digest_bytes_length
+
+    @property
+    def max_digest_normalized_bytes(self) -> int:
+        return self._max_digest_normalized_bytes
 
     def sanitize(
         self,
@@ -333,7 +664,7 @@ class Sanitizer:
         if action == "redact":
             return REDACTED
         if action == "digest":
-            return self._digest_summary(value)
+            return self._digest_summary(value, depth=depth)
         if depth > self._max_depth:
             return MAX_DEPTH_REACHED
         if value is None or isinstance(value, bool):
@@ -352,7 +683,7 @@ class Sanitizer:
         if isinstance(value, str):
             return self._sanitize_text(value)
         if isinstance(value, bytes):
-            return self._digest_summary(value)
+            return self._digest_summary(value, depth=depth)
         if isinstance(value, Enum):
             try:
                 enum_value = value.value
@@ -778,40 +1109,30 @@ class Sanitizer:
             )
         return normalized_path
 
-    @staticmethod
-    def _digest_summary(value: object) -> str:
+    def _digest_summary(self, value: object, *, depth: int) -> str:
         try:
-            canonical = json.dumps(
-                value,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-                separators=(",", ":"),
-                default=Sanitizer._digest_default,
-            ).encode("utf-8", errors="strict")
-            digest = hashlib.sha256(canonical).hexdigest()[:16]
+            if depth > self._max_depth:
+                return REDACTED
+            if isinstance(value, bytes):
+                if len(value) > self._max_digest_bytes_length:
+                    return REDACTED
+                digest = hashlib.sha256(value).hexdigest()[:16]
+            else:
+                canonical = self._normalize_digest_value(value, depth=depth)
+                digest = hashlib.sha256(canonical).hexdigest()[:16]
             return f"[REDACTED sha256:{digest}]"
         except Exception:
             return REDACTED
 
-    @staticmethod
-    def _digest_default(value: object) -> object:
-        if isinstance(value, bytes):
-            return {"type": "bytes", "hex": bytes.hex(value)}
-        if isinstance(value, Enum):
-            return value.value
-        if isinstance(value, (datetime, date, time)):
-            return value.isoformat()
-        if isinstance(value, Path):
-            return str(value)
-        if isinstance(value, (set, frozenset)):
-            return sorted(value, key=Sanitizer._stable_sort_key)
-        if is_dataclass(value) and not isinstance(value, type):
-            return {
-                field.name: getattr(value, field.name)
-                for field in fields(value)
-            }
-        return vars(value)
+    def _normalize_digest_value(self, value: object, *, depth: int) -> bytes:
+        return _DigestCanonicalizer(
+            max_depth=self._max_depth,
+            max_nodes=self._max_digest_nodes,
+            max_container_items=self._max_digest_container_items,
+            max_string_length=self._max_digest_string_length,
+            max_bytes_length=self._max_digest_bytes_length,
+            max_normalized_bytes=self._max_digest_normalized_bytes,
+        ).canonicalize(value, depth=depth)
 
 
 NsSanitizer = Sanitizer
@@ -836,6 +1157,11 @@ def sanitize_text(value: object) -> str:
 
 __all__ = [
     "CIRCULAR_REFERENCE",
+    "DEFAULT_SANITIZER_DIGEST_MAX_BYTES_LENGTH",
+    "DEFAULT_SANITIZER_DIGEST_MAX_CONTAINER_ITEMS",
+    "DEFAULT_SANITIZER_DIGEST_MAX_NODES",
+    "DEFAULT_SANITIZER_DIGEST_MAX_NORMALIZED_BYTES",
+    "DEFAULT_SANITIZER_DIGEST_MAX_STRING_LENGTH",
     "DEFAULT_SANITIZER_MAX_DEPTH",
     "MAX_DEPTH_REACHED",
     "NsSanitizer",

@@ -91,10 +91,10 @@
 
 - ADR 编号：`ADR-009`
 - 状态：`ACCEPTED`
-- 背景：日志、错误和审计会接收任意嵌套对象、异常和自由文本；字段遗漏、对象异常行为或非标准 JSON 数值都可能导致秘密泄露或覆盖原业务异常。
-- 决策：sanitizer 同时使用明确字段、后缀、路径和对象类型规则；对 token、password、secret、private key、authorization、cookie、credential、signature、业务 payload、原始 certificate、签名 URL 和 peer/client/remote IP/address 完全替换。Mapping key 也必须脱敏并保留冲突项。普通对象访问、异常字符串化和摘要序列化失败时 fail-closed，输出必须通过严格 JSON 编码。peer/client/remote address 不使用无密钥摘要，直接替换为 `[REDACTED]`。
-- 后果：不得泄露异常对象的原始失败内容；不得吞掉 `KeyboardInterrupt`、`SystemExit` 等进程级异常；如未来需要地址跨日志关联，只能设计显式注入密钥的 HMAC，不得使用全局硬编码密钥。任意无标签自由文本仍要求调用方提供结构化字段或路径语义。
-- 关联阶段/工作包：`P01-W09`、`P01-FIX-03`、`P01-W10`、`P03`、`P06`、`P20`。
+- 背景：日志、错误和审计会接收任意嵌套对象、异常和自由文本；字段遗漏、对象异常行为、非标准 JSON 数值或无界摘要序列化都可能导致秘密泄露、覆盖原业务异常或造成 CPU/内存资源消耗。
+- 决策：sanitizer 同时使用明确字段、后缀、路径和对象类型规则；对 token、password、secret、private key、authorization、cookie、credential、signature、业务 payload、原始 certificate、签名 URL 和 peer/client/remote IP/address 完全替换。Mapping key 也必须脱敏并保留冲突项。普通对象访问、异常字符串化和摘要规范化失败时 fail-closed，输出必须通过严格 JSON 编码。digest 必须遵守当前深度，并通过有界、确定性的规范化限制遍历节点、单容器项目、字符串、bytes 和规范化结果字节；超限直接返回 `[REDACTED]`，循环引用安全结束，mapping 与 set/frozenset 顺序不影响摘要。限制内 bytes 直接以原始 bytes 计算 SHA-256，不生成 hex 副本。peer/client/remote address 不使用无密钥摘要，直接替换为 `[REDACTED]`。
+- 后果：不得对任意对象直接执行无界摘要序列化，不得泄露异常对象的原始失败内容；不得吞掉 `KeyboardInterrupt`、`SystemExit` 等进程级异常；digest 不引入全局状态或硬编码密钥。如未来需要地址跨日志关联，只能设计显式注入密钥的 HMAC，不得使用全局硬编码密钥。任意无标签自由文本仍要求调用方提供结构化字段或路径语义。
+- 关联阶段/工作包：`P01-W09`、`P01-FIX-03`、`P01-FIX-04`、`P01-W10`、`P03`、`P06`、`P20`。
 
 ## ADR-010
 
