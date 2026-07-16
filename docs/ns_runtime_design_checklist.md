@@ -51,14 +51,12 @@
 - `ns_runtime` 可以主动调用 `ns_backend` 的 HTTP/RPC API 做 IAM 鉴权、权限刷新、节点凭证获取和 payload object reference 校验；该主动调用能力不改变“runtime 入站只接受 WebSocket”的边界。
 - 健康检查、运行状态查询、配置热更新、节点隔离、消息重投、消息清理、master 切换和限流调整都应通过 WebSocket 管理 envelope 进入 runtime，而不是另开默认 HTTP 管理端口。
 - 如果容器、systemd 或运维系统需要进程级 healthcheck，应通过本地命令建立 WebSocket 连接并发送 health envelope，而不是依赖 `/health` HTTP 探针。
-    - [x] 【实现进度 1.3】已提供 `python -m ns_runtime.healthcheck` 本地命令式 healthcheck，通过 WebSocket 先发送 `connection.hello` 建立 session，再发送 `runtime.control.health` envelope 获取 `runtime.control.health_result`；当前仍不新增 HTTP `/health` 管理端口。
 - `ns_runtime` 是 `src/ns_runtime` 下的独立组件边界；后续实现可以复用 `ns_common`，但不应把 runtime 的核心进程入口、协议层或可靠投递状态散落到其他组件目录中。
 - `ns_runtime` 必须作为独立进程运行，入口文件必须是 `main.py`；后续实现中模块名、类名、函数名都应避免 `cli` 和 `app` 语义，启动相关命名优先使用 `service`。
 - 设计和实现时应优先复用 `ns_common` 已有基础设施；如果 runtime 需要通用能力而公共层不存在，可以扩展 `ns_common`，但不应把 runtime 私有协议硬塞进公共层。
 - 消息处理语义必须使用 `processor` 而不是 `handler`；后续讨论中“处理某类消息”和“流水线阶段处理”都可以称为 processor，但需要通过上下文区分。
 - 第一阶段不强制定义统一客户端 SDK，也不要求 `ns_frontend`、`ns_client`、`ns_node`、`ns_backend` 必须通过同一个 SDK 接入。
 - 设计文档只约束连接方必须遵守的协议行为，包括 WebSocket 握手、`connection.hello`、协议版本协商、heartbeat、ACK/NACK/Defer 语义、message_id/delivery_id 幂等、connection_epoch 校验、错误 envelope 处理、source/auth_context 禁止伪造和安全日志脱敏。
-    - [x] 【实现进度 1.2】已新增独立 WebSocket transport，runtime 进程可以通过 `main.py` 启动 WebSocket 服务；当前阶段只接受 JSON 文本帧，第一帧必须是 `connection.hello`，并通过握手服务建立 session 后才进入普通 envelope processor。该进度不表示可靠投递、跨节点转发、ACK/NACK/Defer 状态机或生产 IAM 已完成。
 
 ## 4. 运行模式、角色与切换
 
@@ -73,9 +71,6 @@
 - Runtime Service 层必须维护角色状态机，至少表达 `singleton`、`sub_node`、`standby_master`、`active_master`、`transitioning`、`draining` 等角色/过渡状态。
 - `degraded`、`isolated`、`unavailable` 这类状态应作为角色之外的健康/能力附加状态，因此一个节点可以表达为 `active_master + degraded`、`sub_node + isolated` 或 `singleton + degraded`。
 - 当 runtime 进入 `transitioning` 或 `draining` 时，普通业务消息和新任务调度默认返回标准错误 envelope；ACK、NACK、Defer、管理控制、健康检查和集群事件仍允许继续处理。
-    - [x] 【边界修复 1.20.4】已新增本地 runtime role admission policy，并同时接入 connection handshake 和 processor pipeline。`singleton`、`sub_node` 在 ready 状态下允许普通连接；`standby_master`、`transitioning`、`draining` 默认只接受 `runtime`、`sub_node`、`management` 连接；`active_master` 在当前没有 active sub_node 时允许普通客户端降级接入，在存在 active
-      sub_node 后只限制后续新的普通连接。受限角色会拒绝新的普通业务消息和 `task.dispatch`，但继续允许 `connection.heartbeat`、`connection.drain`、`delivery.ack`、`delivery.nack`、`delivery.defer`、`runtime.control.*` 和 `cluster.event.*`。role admission rejection 使用标准 `RUNTIME_ROLE_ADMISSION_REJECTED` 错误并进入 processor audit sink。当前本地 fallback
-      不主动关闭或迁移角色变化前已建立的普通连接，也不表示 master/sub_node 跨节点拓扑、可配置 connection drain/close 策略、isolated 分级策略、生产 IAM 或动态策略热更新已经完成。
 - 当节点进入 `isolated` 时，隔离程度必须由策略配置；策略可以表达只禁止新普通连接、禁止作为路由目标、禁止参与集群转发、只保留管理健康通道等不同等级。
 - `draining` 状态应表达“不再接收新普通连接或新普通业务流量，但尽量完成已有投递、通知客户端重连或由外部发现机制重新接入，并在超时后按策略强制关闭或转移未完成 delivery”的收尾语义。
 - standby master 即使维持健康、状态观察和切换准备连接，也不能在未持有有效 leader lease/fencing_token 时执行全局协调写入。
@@ -92,9 +87,6 @@
 - Envelope 协议层必须严格独立，只做 JSON envelope 解析、schema 校验、版本校验、基础字段规范化、错误 envelope 构造和序列化；它不处理业务、不调度任务、不决定路由。
 - Processor 流水线层负责所有可执行行为，ACK、NACK、Defer、管理控制、健康检查、集群事件、任务调度和业务扩展都必须进入 processor，不允许另开绕过 processor 的控制通道。
 - 事件与观测层是旁路通知和扩展机制；核心链路采用显式调用和明确流水线，不能把所有模块之间的主通信都变成事件总线，以免调试和可靠性变得不可控。
-    - [x] 【边界修复 1.20.3】已新增 processor pipeline 本地审计出口。`RuntimeAuditEvent` 当前记录 message、session、tenant、auth snapshot、capability summary、trace、config/policy version、最终 processor、response action、response message type、错误码和异常摘要；`RuntimeAuditSink` 定义异步 append 与基础查询边界，默认 `InMemoryRuntimeAuditSink` 以 append-only
-      方式保存单进程审计事件。`AuditMarkProcessor` 已移动至 message type auth、schema 和 target lookup 之前，pipeline 会保留其 audit action，并在 respond、reject、continue 和未捕获 processor exception 路径中写入且只写入一个最终审计事件；正常 processor response 只有在 audit append 成功后才允许返回。当前进度仅覆盖已经通过 `EnvelopeCodec.parse_inbound` 的
-      processor pipeline 消息，异常路径默认只记录异常类型、错误码和受控异常摘要，不直接记录任意 `str(exc)`；当前进度不表示 handshake/protocol parse failure 审计、持久化 audit store、Redis/Valkey append-only log、审计与 delivery/control 状态原子提交、可配置字段级脱敏策略、retention、管理查询、导出或生产级强审计已经完成。
 - 管理控制不作为独立顶级链路层，而是作为 Processor 流水线层中的特殊 processor 组；健康检查也归入管理控制 processor 组。
 
 ## 6. 统一 Envelope 协议模型
@@ -119,12 +111,6 @@
 - `target` 分组必须包含 `kind` 来避免寻址歧义；`kind` 可以是 `connection`、`identity`、`tenant`、`capability`、`component_type`、`runtime`、`broadcast` 或未来受控扩展类型。
 - `target.kind=connection` 时必须提供 connection_id；`target.kind=identity` 时必须提供 identity；`target.kind=capability` 时必须提供 capabilities；`target.kind=component_type` 时必须提供 component_type；`target.kind=runtime` 时必须提供 runtime_id；`target.kind=tenant/broadcast` 时必须声明 tenant 或广播范围与过滤条件。
 - 当 target 指向多个连接可能性时，消息必须显式指定多连接策略，或由系统默认策略裁决；后续实现不能在 identity 多连接场景下隐式广播或隐式任选而不留策略痕迹。
-    - [x] 【实现进度 1.4】已提供本地 `RuntimeTargetResolver` 和 target lookup processor，基于当前单进程 session index 支持 `connection`、`identity`、`tenant`、`broadcast`、`component_type`、`capability`、`runtime` 的基础解析；target 不存在时返回 `RUNTIME_TARGET_UNAVAILABLE`，跨 tenant 本地寻址默认拒绝。该进度只表示本地 routing decision 与 target 校验完成，不表示
-      WebSocket 写出、DeliveryRecord、ACK/NACK/Defer、跨节点路由或负载均衡策略已完成。
-    - [x] 【实现进度 1.5】已提供本地 active WebSocket writer registry 和 `task.dispatch` 本地直连转发基础能力：runtime 可将已通过 Envelope 校验、权限校验和 target lookup 的 normalized envelope 写出到本机 active target connection，并向发送方返回 `runtime.control.forward_result`。该进度只表示 WebSocket send 层面的本地写出完成，不表示
-      DeliveryRecord、ACK/NACK/Defer 状态机、可靠重试、死信、跨节点转发或 delivery 成功语义已完成；WebSocket send 成功不得解释为 delivery ACK。
-    - [x] 【边界修复 1.20.2】本地 `RuntimeTargetResolver` 已开始实际执行 target routing strategy，而不是只把 strategy 写入 `RuntimeRouteDecision` 后仍对全部候选连接 fan-out。`identity`、`capability` 和 `component_type` 当前默认使用 `policy.default_single`，通过 `runtime_id + connection_id + connection_epoch` 确定性选择一个本地目标；`tenant` 默认使用
-      `policy.default_all`，`broadcast` 默认保留全部匹配连接；显式 `all` 或 `broadcast` 才会执行多目标转发，broadcast target 不允许使用 single-target strategy。当前确定性首目标选择仅是未接入策略引擎和健康评分前的本地 fallback，不表示 target health score、weighted selection、sticky routing、quorum、all_required、跨节点 RoutingPlan 或生产级调度已经完成。
 - `delivery` 分组只在可靠投递相关消息中出现，包含 `delivery_id`、`summary_id`、`root_delivery_id`、`parent_delivery_id`、`attempt`、`ack_timeout_ms`、`replay_epoch` 等投递维度字段；`message_id` 只从 `message.message_id` 读取，不在 delivery 中重复。
 - `payload` 必须支持 inline 小 payload 和 `payload_ref` 对象存储引用两种模式；inline 大小上限完全由 runtime 策略决定，payload_ref 必须实时调用 `ns_backend` 校验。
 - 当 inline payload 超过 runtime 策略允许大小、JSON 深度或帧大小限制时，应返回错误 envelope 或按严重错误策略断开连接，并且不能为了兼容发送方自动转为 payload_ref。
@@ -144,7 +130,6 @@
 - 内置类型族至少包括连接握手、连接心跳、任务调度、可靠投递、ACK/NACK/Defer、stream、管理控制、集群事件、配置热更新、dead letter、replay、cancel、hold、状态查询和标准错误类型。
 - 所有内置 `message.type` 都必须进入统一 Envelope schema 校验、权限声明、processor 注册、审计和错误处理链路。
 - 第一阶段采用“全量注册 + 分层实现”：所有内置类型必须提供 schema、权限声明、processor 入口、审计入口和标准错误响应。
-    - [x] 【实现进度 1.1】已在 `src/ns_runtime` 建立统一 Envelope 协议外壳、入站 `source/auth_context` 伪造拒绝、未知顶层/核心字段拒绝、标准错误 envelope 构造、协议主版本严格校验、内置 `message.type` 全量注册表和基础 processor 入口；本勾选只表示协议与 processor 地基完成，不表示 WebSocket 连接、可靠投递状态机、集群协调和 stream 完整可靠语义已完成。
 - 连接、集群、路由、任务投递、ACK/NACK/Defer 必须端到端可用。
 - stream、replay、cancel、hold、dead letter、状态查询、配置热更新等高级类型必须具备基础语义和标准响应，并按本清单中额外确认的完整 stream 与生产级验收要求实现。
 - 第一阶段协议兼容采用“主版本严格、次版本兼容”策略。
@@ -163,14 +148,12 @@
 - 客户端可以声明 component_type 和 requested capabilities，但 runtime 必须把 token、component_type、requested capabilities、协议版本和连接来源信息交给 `ns_backend` IAM 校验；最终 identity、tenant、component_type、capabilities、权限快照、权限版本和 TTL 以 IAM 返回为准。
 - 如果客户端协议 version/min_version 与 runtime 不能兼容，应在握手阶段返回 `connection.rejected` 并关闭连接；版本兼容是进入 active session 的前置条件。
 - 握手成功后 runtime 返回 `connection.accepted`，其中只包含 `connection_id`、`session_id`、协商协议版本、heartbeat 配置、session_expires_at、server_time、runtime_id 和 role 等必要信息，不返回 tenant_id、identity 或完整 capabilities。
-    - [x] 【实现进度 1.2】已提供 `RuntimeSessionRegistry`、`RuntimeHandshakeService`、`RuntimeAuthenticator` 抽象和本地 token authenticator；握手成功后生成 `RuntimeSessionContext` 并返回 `connection.accepted`，握手失败返回 `connection.rejected` 后关闭连接。当前本地 authenticator 仅用于开发闭环，生产阶段仍需替换为调用 `ns_backend` IAM 的严格实现。
 - session 必须支持续期；续期可以由 runtime 使用握手 token 或缓存凭证主动刷新，也可以要求客户端发送 `connection.reauth`，还可以配置为到期关闭连接。
 - session 续期或权限快照刷新失败时，runtime 不能默认继续无限信任旧权限；应按策略进入降级、限权、要求 reauth 或关闭连接，并记录安全审计摘要。
 - 如果使用客户端重新认证，消息类型为 `connection.reauth`，成功响应为 `connection.reauth_accepted`，失败响应为 `connection.reauth_rejected`；重新认证仍禁止客户端携带 source/auth_context。
 - 心跳必须支持双层机制：WebSocket 原生 ping/pong 用于底层连接存活检测；envelope heartbeat 用于 session、协议和 runtime 健康检查。
 - envelope heartbeat 必须走 Envelope 协议层、安全硬校验和轻量 processor，但默认不进入可靠投递，不创建 DeliveryRecord，也不要求 delivery ACK。
 - 连接层必须维护本地实时索引，包括 `connection_id -> session`、`identity -> connections`、`tenant -> connections`，并可扩展 component_type、capability、session_id 等索引。
-    - [x] 【实现进度 1.3】已在 `RuntimeSessionRegistry` 中维护 active connection、session_id、identity、tenant、component_type 和 capability 的内存索引，并将索引快照接入 `runtime.control.health_result`；该进度只表示单进程实时索引完成，不表示 reconnect grace、resume、跨节点路由索引或强一致连接状态持久化已完成。
 - 普通连接索引以内存实时状态为主，会话快照异步持久化和推送；集群拓扑、leader、隔离、暂停等控制状态必须强一致。
 - 连接断开后允许短暂 reconnect grace period；在 grace period 内，客户端可以重新握手并复用原 `connection_id`，但每次重连必须增加 `connection_epoch` 来防止旧连接残留。
 - 快速重连复用原 `connection_id` 必须满足 grace period 未过期、identity/tenant/component_type 与原 session 匹配、token 或 resume 凭证通过 IAM 校验、旧物理连接已关闭或被 fencing 排除等条件。
@@ -196,8 +179,6 @@
 ## 8. 身份、权限与安全模型
 
 - 连接鉴权和消息鉴权都必须使用 `ns_backend` IAM；连接建立时的 IAM 鉴权结果由 runtime 保存为 session 权限上下文，并由 runtime 注入 source/auth_context。
-    - [x] 【边界修复 1.20.5】已新增 runtime startup security guard。`RuntimeService.build_default()` 现在显式接受 `runtime_environment`，并在对象构建早期验证 authenticator；`production` 环境禁止使用任何 `LocalTokenRuntimeAuthenticator`，无论 token 是否为默认值，也不会在启动错误中记录或比较 token 明文。命令行启动入口 `NS_RUNTIME_ENVIRONMENT` 未设置时默认按
-      `production` 处理，因此当前尚未配置生产 IAM authenticator 的 CLI 会 fail closed；本地启动必须显式设置 `development` 或 `test`。当前进度仅建立生产启动安全底线，不表示 `ns_backend` IAM authenticator、节点凭证获取、缓存凭证、凭证续期、撤销检查、密钥管理或生产配置加载已经完成。
 - 消息级鉴权支持严格模式和缓存模式；严格模式下每条消息实时调用 `ns_backend` IAM 判定，缓存模式下使用连接权限快照并按 TTL、权限版本或失效事件刷新。
 - `ns_runtime` 与 `ns_backend` IAM 的通信可以走 HTTP/RPC 主动调用；这条调用链是 runtime 作为服务端的外部依赖，不是普通客户端接入 runtime 的 WebSocket 通道。
 - runtime 节点之间的连接使用 `ns_backend` 签发的节点凭证；如果启动时暂时无法获取或刷新节点凭证，可以按配置使用本地缓存凭证进入降级模式。
@@ -223,7 +204,6 @@
 - 管理控制、健康检查、ACK、NACK、Defer、任务调度、流式消息、集群事件和业务扩展都应以 processor 形式存在，不能绕开流水线。
 - processor 扩展机制必须支持 `ns_runtime` 内部轻量插件发现，也支持二开通过继承或注册方式直接定义 processor。
 - processor 执行必须支持超时、异常隔离、运行时限制和事件发布；某个 processor 或插件异常不能绕过审计，也不能把核心 delivery 状态留在不可解释的中间状态。
-    - [x] 【实现进度 1.1】已提供 `ProcessorRegistry`、`ProcessorPipeline`、通用 message type 鉴权 processor、审计摘要 processor、内置 message type processor 入口和标准错误响应；本阶段仅完成受信任本地 processor 注册骨架，后续仍需接入 IAM 严格鉴权、限流/背压、可靠投递状态机、强一致审计和插件运行时限制。
 - 第一阶段 runtime processor 插件体系不要求与整个项目未来插件体系统一；但插件必须按 namespace、权限声明和 schema 约束接入。
 - 默认只加载本地受信任 processor 插件；未来可以支持外部或租户级不受信任扩展，但第一阶段只要求加载开关、权限声明、可配置 IAM 鉴权和运行时限制，不要求进程/容器/WASM 强隔离。
 - processor/plugin 私有状态默认只能访问自己的状态 namespace；如需跨 namespace 访问核心状态、tenant 状态或其他插件状态，必须声明 capability 并经策略/IAM 允许。
@@ -303,8 +283,6 @@
 - DeliveryRecord 强一致持久化是可靠投递底线；RoutingPlan、DeliveryAttempt、MessageDeliverySummary 的一致性等级可以按消息类型和策略配置，但关键消息的 summary 与初始 delivery 需要原子写入。
 - 普通消息允许异步记录、摘要记录或采样记录时，只能放宽 RoutingPlan、DeliveryAttempt、普通 summary 或观测数据的记录强度；一旦某条消息声明为可靠投递，DeliveryRecord 和合法 ACK/NACK/Defer 相关原子状态仍不能退化为纯内存成功。
 - DeliveryAttempt 对关键消息必须强一致记录，以便审计、重试和排障；普通消息的 DeliveryAttempt 可以异步记录、摘要记录或采样记录，但不能影响 DeliveryRecord 强一致状态。
-    - [x] 【实现进度 1.6】已新增内存版 `RuntimeDeliveryRegistry`、`RuntimeDeliveryRecord` 和 `RuntimeDeliveryAttempt` 骨架；`task.dispatch` 本地直连转发时会为每个本地 target 创建 delivery metadata，将 `delivery` 分组注入写给目标连接的 envelope，并在 WebSocket send 成功后把 DeliveryRecord 置为 `ack_waiting`、DeliveryAttempt 写状态置为 `sent_to_transport`
-      。该进度只表示投递元数据与本地写出链路打通，不表示强一致持久化、ACK/NACK/Defer 状态机、retry、dead letter、lease/fencing、去重或生产级可靠投递已完成。
 - `prepared` 表示 delivery 已强一致创建但所属 summary 仍在 initializing 或尚未允许发送；`prepared` 不占 active/inflight 配额，不参与优先级、aging 或抢占，但受 expires_at 和管理取消影响。
 - 如果消息在受理阶段已经超过 runtime 裁决后的有效期，或剩余有效期低于策略允许的最小投递窗口，应在受理阶段 rejected 或创建 failed summary，而不是创建必然过期的有效 DeliveryRecord；具体是否保留 rejected summary 由受理策略决定。
 - `queued` 表示 delivery 已可发送并等待可靠投递调度器选择发送时机；`queued` 不等于已经进入某个 connection 写队列。
@@ -340,30 +318,18 @@
 - ACK 是一等 envelope 消息，必须完整走 Envelope 协议层、安全硬校验和 processor 流水线；可靠投递层只接受 ACK processor 校验后的 ACK 结果，不允许 ACK 快速通道。
 - ACK、NACK、Defer 的发送者必须匹配该 delivery 当前期望的确认方；叶子 delivery 通常只能由目标 connection/session/identity 确认，父 delivery 只能由对应下游 runtime 节点确认，target rebinding 或 ownership transfer 后必须按新 owner/target/fencing 重新校验。
 - 第一次合法 ACK 必须写 AckRecord，并与 DeliveryRecord 进入 `acked` 在同一事务或原子操作中完成；重复 ACK 不新增 AckRecord，只写审计/安全事件和指标。
-    - [x] 【实现进度 1.7】已新增内存版 `RuntimeAckRecord` 和 `delivery.ack` processor 骨架；当前 ACK 会校验 delivery 是否存在、ACK 来源 tenant、connection_id 和 connection_epoch 是否匹配当前 DeliveryRecord target，并在合法 ACK 后将 DeliveryRecord 从 `ack_waiting` 等可确认状态置为 `acked`。重复 ACK 返回 `duplicate_ack`，不新增第二条 AckRecord。该进度只表示单进程内存
-      ACK 校验和状态迁移打通，不表示强一致事务、lease/fencing、旧 owner 转发、ACK timeout、retry 取消、NACK/Defer 或生产级可靠投递已完成。
 - 如果 delivery 处于 `retry_scheduled` 且收到合法 ACK，可靠投递层必须原子写入 AckRecord、进入 `acked` 并取消对应待重试计划；不能让已 ACK 的 delivery 继续被 retry worker 再次发送。
 - ACK timeout scanner 必须只处理仍处于 `ack_waiting` 且 `ack_deadline_at` 已过期的 delivery；如果 message/delivery 已超过 `expires_at`，应进入 `expired`，否则应进入 `retry_scheduled` 并等待后续 retry worker 或策略引擎处理。
-    - [x] 【实现进度 1.10】已新增单进程内存版 ACK timeout scanner，可显式调用扫描 `ack_waiting` 且 `ack_deadline_at` 已过期的 DeliveryRecord；当前会将未过期 delivery 置为 `retry_scheduled`，将已超过 `expires_at` 的 delivery 置为 `expired`，并记录内存版 `RuntimeAckTimeoutRecord`。该进度只表示 timeout 状态迁移骨架完成，不表示后台 ACK timeout worker、retry
-      worker、dead-letter worker、强一致持久化、lease/fencing、owner 转移或生产级可靠投递已完成。
 - Retry scanner 必须只处理仍处于 `retry_scheduled` 的 delivery；如果 delivery 已超过 `expires_at`，应进入 `expired`，否则应按策略重新创建 DeliveryAttempt 并再次投递给当前 target。retry replay 不能把完整业务 payload 写入强一致 DeliveryRecord，只能使用 payload_ref、可重建 envelope 元数据或单进程 transient cache 作为阶段性实现。
-    - [x] 【实现进度 1.11】已新增单进程内存版 retry scanner，可显式调用扫描 `retry_scheduled` 的 DeliveryRecord；当前使用 `RuntimeLocalEnvelopeForwarder` 内部 transient retry envelope cache 重新注入新的 delivery attempt 并发往原 target connection/epoch，发送成功后进入 `ack_waiting`，写失败则保持 `retry_scheduled`，超过 `expires_at` 则进入 `expired`
-      。该进度只表示本地内存 retry replay 骨架完成，不表示后台 retry worker、跨节点 reroute、强一致 payload 重建、dead-letter worker、lease/fencing、目标健康画像或生产级可靠投递已完成。
 - DeadLetterRecord scanner 必须只登记需要管理端处理或审计的异常终态 delivery；默认只扫描 `dead_lettered`，不扫描 `expired`。`expired` 是自然终态，只表示消息或 delivery 已超过有效期，不再有业务意义，应通过 DeliveryRecord、MessageDeliverySummary 和 snapshot 统计体现，而不是写入 DeadLetterRecord。
-    - [x] 【实现进度 1.12】已新增单进程内存版 `RuntimeDeadLetterRecord` 和显式调用型 `scan_dead_letters()`；当前只扫描 `dead_lettered` delivery，并为尚未登记过的 delivery 创建一条 DeadLetterRecord。DeadLetterRecord 只保存 delivery、message、tenant、message_type、terminal_state、reason、last_error、attempt_count、target connection/epoch、replayability 和
-      recommended_action 等摘要，不保存完整业务 payload。该进度只表示本地内存 dead-letter record skeleton 和 terminal delivery tracking foundation 完成，不表示后台 dead-letter worker、强一致持久化、replay 管理语义、lease/fencing、跨节点恢复、目标健康画像或生产级可靠投递完成。
 - stream cumulative ACK 使用单条范围型 AckRecord 覆盖多个 chunk delivery，并在同一事务中批量更新被覆盖 DeliveryRecord 和 StreamDeliveryState。
 - NACK 是一等 envelope 消息，必须强一致写 NackRecord，并与 DeliveryRecord 状态变更原子完成；NACK 不算 ACK，NACK reason 决定 retry、reroute、dead_letter 或安全审计。
-    - [x] 【实现进度 1.8】已新增内存版 `RuntimeNackRecord` 和 `delivery.nack` processor 骨架；当前 NACK 会校验 delivery 是否存在、NACK 来源 tenant、connection_id 和 connection_epoch 是否匹配当前 DeliveryRecord target，并按 `payload.inline.reason` 将 retryable reason 置为 `retry_scheduled`、non-retryable reason 置为 `dead_lettered`。重复 NACK 返回
-      `duplicate_nack`，不新增第二条 NackRecord。该进度只表示单进程内存 NACK 校验与基础状态迁移打通，不表示强一致事务、策略引擎、retry worker、DeadLetterRecord、lease/fencing、目标健康画像或生产级可靠投递已完成。
 - 重复 NACK 不应污染 NackRecord 主记录；重复、迟到或非法 NACK 应进入审计/安全事件，并按策略决定是否限流、断连或降低目标健康评分。
 - 如果 NACK reason 是 target overloaded、temporarily unavailable、queue full 或 dependency unavailable，应默认倾向 retry/reroute 并降低 target health score；如果 reason 是 permission denied、tenant mismatch、invalid payload reference 等，应默认 dead letter 或安全审计。
 - retryable NACK 默认消耗 message 级重试预算；non-retryable NACK 直接进入 dead_lettered 或安全审计，预算耗尽时未完成 delivery 进入 dead_lettered。
 - 如果 delivery 因 NACK 进入 `retry_scheduled` 后又收到合法 ACK，可以转为 `acked` 并取消后续重试；如果 NACK 已导致 `dead_lettered`，后续 ACK 按终态迟到 ACK 忽略并审计。
 - `delivery.defer` 必须支持，并作为一等 envelope 通过协议层、安全层和 processor；合法 Defer 不新增主状态，而是保持或回到 `ack_waiting` 并延长 ack_deadline。
 - DeferRecord 必须强一致写入，并与 ack_deadline 更新原子完成；Defer 允许从 `sending`、`ack_waiting`、`retry_scheduled` 生效，其中 `retry_scheduled` 收到合法 Defer 后直接回到 `ack_waiting`。
-    - [x] 【实现进度 1.9】已新增内存版 `RuntimeDeferRecord` 和 `delivery.defer` processor 骨架；当前 Defer 会校验 delivery 是否存在、Defer 来源 tenant、connection_id 和 connection_epoch 是否匹配当前 DeliveryRecord target，并从 `payload.inline.defer_ms` 读取延长时间，将 `sending`、`ack_waiting`、`retry_scheduled` 中的 delivery 保持或置回 `ack_waiting`，同时延长
-      `ack_deadline_at`。该进度包含单进程内存 defer 次数、单次延长和总延长 budget 校验；不表示强一致事务、ACK timeout worker、retry worker、lease/fencing、Defer 压力画像或生产级可靠投递已完成。
 - Defer 必须有独立 defer budget，包括最大次数、最大总延长时间和单次最大延长；超过 defer budget 时立即按 ACK timeout 处理，并把频繁 defer 作为目标压力信号反馈给健康画像。
 - Defer 默认不释放 inflight，也不算 ACK；它是否消耗 retry budget 由策略决定，但无论是否消耗 retry budget，都必须受独立 defer budget 约束。
 - 重复、迟到、旧 owner、旧 connection_epoch 或超过预算的 Defer 不得继续延长 ack_deadline；应按重复/迟到控制消息进入审计、安全计数和目标健康画像，并由策略决定是否限流或断开。
@@ -446,16 +412,6 @@
 
 ## 16. MessageDeliverySummary 与受理响应
 
-- [x] 【实现进度 1.13】已新增单进程内存版 `RuntimeMessageDeliverySummary` 骨架；当前在创建 DeliveryRecord 时自动创建或复用同一 `message_id` 下的 summary，并在 ACK、NACK、Defer、ACK timeout、retry expired 等本地状态迁移后刷新 prepared、queued、sending、ack_waiting、retry_scheduled、acked、dead_lettered、expired、cancelled 和 pending 等计数。该进度只表示本地内存
-  summary 聚合 foundation 完成，不表示强一致 summary store、rejected target 完整受理路径、fanout shard summary、delivery.accepted/rejected 响应、管理查询 processor、prepared 激活调度、lease/fencing、跨节点 summary merge 或生产级可靠投递完成。
-- [x] 【实现进度 1.14】已新增本地直连场景的 best-effort `delivery.accepted` 受理响应骨架；当前 `task.dispatch` 经本地 forward 路径完成并且对应 `RuntimeMessageDeliverySummary` 已创建后，向原发送连接返回仅包含 `message_id`、`summary_id`、`accepted_at`、`status_query_hint` 和 trace 的轻量响应，不再返回临时的 `runtime.control.forward_result`、完整 delivery_id
-  列表或 WebSocket write 明细。`delivery.accepted` 只表示 runtime 已完成当前阶段的本地受理，不表示目标连接已发送 ACK，也不作为可靠投递成功依据。该进度不表示 rejected/duplicate 受理响应、受理原子性、rejected summary、去重窗口、跨节点受理、accepted response 重试、管理查询 processor、强一致 summary/delivery store 或生产级可靠投递完成。
-- [x] 【实现进度 1.15】已新增本地 `delivery.rejected` 与 rejected summary 骨架；当前 `task.dispatch` 已通过 message type、capability 和基础 schema 校验，但因本地目标不可用、跨 tenant 目标或本地 route decision 无可写连接而无法受理时，会创建不含 DeliveryRecord、`rejected_count = 1` 且状态为 `failed` 的内存版 `RuntimeMessageDeliverySummary`，并向原发送连接返回包含
-  `message_id`、`summary_id`、`rejected_at`、`reason_code`、`reason_message`、`retryable`、`status_query_hint` 和 trace 的 best-effort `delivery.rejected`。协议 schema 错误仍返回 `runtime.error`。该进度只表示单进程单拒绝目标的本地受理失败骨架完成，不表示 partial acceptance、多目标 rejected 明细、完整 rejection audit record、payload_ref
-  拒绝、去重/duplicate、强一致受理事务、跨节点受理或生产级可靠投递完成。
-- [x] 【实现进度 1.16】已新增单进程单目标场景的内存投递去重与 best-effort `delivery.duplicate` 响应骨架；当前同一 tenant 下相同 `message_id + target_fingerprint` 在默认 300 秒去重窗口内重复进入时，会复用已有 DeliveryRecord，不创建新的 delivery、attempt 或 WebSocket write。已有 delivery 处于
-  prepared、queued、sending、ack_waiting、retry_scheduled、replay_requested 或 transferred 时返回 `delivery_in_progress`，处于 acked 时返回 `already_delivered`，处于 dead_lettered、expired 或 cancelled 时返回对应终态语义。相同幂等键但稳定 envelope 内容不同视为 message_id 内容冲突并返回 `runtime.error`。该进度不表示多目标 partial duplicate、跨 runtime
-  原子去重、Redis/Valkey 去重登记、策略化重复允许/合并、后台 TTL 清理、强一致幂等事务或生产级分布式去重完成。
 - MessageDeliverySummary 由可靠投递层维护，用于聚合同一个 message_id 下所有 delivery、rejected target、cancelled、expired、dead_lettered 和 acked 的整体状态。
 - MessageDeliverySummary 应保留 target_count、accepted_count、rejected_count、delivery_count、acked_count、dead_lettered_count、expired_count、cancelled_count、pending_count、prepared_count、queued_count 等关键计数，以便管理端无需扫描全部 delivery 也能判断整体状态。
 - 受理阶段如果全部目标都 rejected，也必须创建 MessageDeliverySummary，以便管理端能够查询这条 message 为什么没有产生有效 delivery。
@@ -495,10 +451,6 @@
 - 关键消息可以按策略进入 `dead_lettered`、`wait` 或 `retry_scheduled`；普通消息可以按策略选择 `reject`、`wait` 或 `dead_letter`。
 - 只要 payload_ref 需要安全确认，就不能使用过期缓存、诊断缓存或观测缓存作为投递授权依据。
 - payload_ref 校验异常必须进入细粒度 `RUNTIME_*` 错误码体系，例如 `RUNTIME_PAYLOAD_REF_INVALID`、`RUNTIME_PAYLOAD_REF_DENIED`、`RUNTIME_PAYLOAD_REF_EXPIRED`、`RUNTIME_PAYLOAD_REF_CHECKSUM_MISMATCH`、`RUNTIME_PAYLOAD_REF_VALIDATION_UNAVAILABLE`、`RUNTIME_PAYLOAD_REF_VALIDATION_TIMEOUT`。
-- [x] 【实现进度 1.17】已新增单进程、本地受理阶段的 Payload Reference 校验骨架；当前协议层支持 `payload.mode=inline` 与 `payload.mode=reference` 的基础结构校验，reference 使用类型化 `RuntimePayloadReference`、`PayloadReferenceValidationRequest`、`PayloadReferenceValidationResult` 和异步 `PayloadReferenceValidator` 接口。`task.dispatch` 在目标解析完成且创建
-  DeliveryRecord 前执行 reference 校验；明确无效、拒绝、过期、checksum 不匹配或 version 不匹配时返回 `delivery.rejected`，不创建 DeliveryRecord、DeliveryAttempt 或 WebSocket write，并写入 tenant 隔离的 rejected summary。validator 暂时不可用或超时时采用 fail-closed 行为，返回独立 `RUNTIME_PAYLOAD_REF_VALIDATION_UNAVAILABLE` 或
-  `RUNTIME_PAYLOAD_REF_VALIDATION_TIMEOUT` runtime error，不绕过校验继续投递。当前默认 validator 始终返回 unavailable，inline payload 不受影响。该进度不表示真实 `ns_backend` HTTP/RPC 校验、IAM 授权、对象下载、checksum 下载计算、callback reference 校验、校验缓存授权、wait/retry/dead-letter admission policy、重投前重新校验、完整安全审计落库、多目标 partial
-  acceptance、跨 runtime 校验或生产级分布式受理事务已完成。
 
 ## 18. 优先级、公平调度与背压
 
@@ -541,9 +493,6 @@
 - recovery pool 采用“固定保留底线 + 动态上浮”的容量策略，默认保留总调度能力的 `10%` 左右，必要时可上浮到 `20%～30%`。
 - recovery pool 不得挤占最高优先级 system pool，也不得无限挤压普通 tenant pool。
 - recovery pool 内部采用分级优先级模型：最高级处理 lease 失效、owner 风险、旧 owner fencing、current owner 不可用；第二级处理节点恢复后的 delivery recovery scan 和 ack_waiting 风险 delivery；第三级处理人工 replay；第四级处理 dead letter 清理、历史状态归档和低优先级恢复统计。
-- [x] 【实现进度 1.18】已新增单进程本地 `task.dispatch` admission/backpressure 骨架；当前在 target resolve 与 Payload Reference 安全校验完成后、创建 DeliveryRecord 前，通过 `RuntimeAdmissionController` 对 runtime tenant pool active 水位、system reserved capacity、tenant active/inflight/retry backlog 和 target inflight 水位进行同步裁决。默认 runtime active
-  上限为 10,000，并为 system pool 保留 1,500；tenant active、tenant inflight、tenant retry backlog 和单 target inflight 默认上限分别为 1,000、256、256 和 64。超限时返回 retryable 的 `RUNTIME_BACKPRESSURE` `delivery.rejected`，不创建 DeliveryRecord、DeliveryAttempt 或 WebSocket write；水位恢复后，同一 message_id 可以清除原 retryable rejected summary
-  并重新受理。去重窗口内的单目标 duplicate 投影为 0 个新 delivery，不因当前水位已满而被错误拒绝。该进度不表示 priority queue、prepared -> queued 激活、WFQ/DRR、priority aging、activation rate limit、真实 WebSocket write queue pressure、system/recovery worker pool、Redis/Valkey 原子配额、多目标并发容量预留、跨进程 admission 或生产级分布式背压已完成。
 
 ## 19. 集群协调模型
 
@@ -569,12 +518,6 @@
 - `force takeover` 用于 active master 不响应、leader lease 过期、节点健康失败或集群协调中断等场景，必须要求高级管理 capability，并重新校验 active master 状态、leader lease、epoch/term、fencing_token、Redis/Valkey 连通性和 `ns_backend` 授权。
 - `emergency isolate` 用于 suspected split-brain、旧 owner 持续写入、关键配置漂移、fencing 异常、跨 tenant 风险或安全事故，只允许最高级安全/运维 capability 发起，并必须强审计。
 - master 切换不能只依赖 WebSocket 断开、心跳失败或管理端命令；任何 active master 变更都必须通过 Redis/Valkey 的 leader lease、epoch/term 和 fencing_token 原子确认。
-- [x] 【实现进度 1.19】已新增单进程本地 runtime 集群角色与 leader lease/fencing 骨架；当前通过 `RuntimeClusterCoordinator` 抽象和 `LocalRuntimeClusterCoordinator` 维护 `singleton`、`sub_node`、`standby_master`、`active_master`、`transitioning` 等基础角色状态，并支持 standby master 显式获取 leader lease、active master 续约、释放以及 lease 过期后撤销集群写权限。leader
-  lease 包含 `holder_runtime_id`、`epoch`、`fencing_token`、`acquired_at`、`renewed_at` 和 `expires_at`，错误 fencing token 不得修改当前集群状态。`RuntimeService` 已暴露 cluster snapshot，`connection.accepted`、heartbeat 和 health 响应返回当前服务端 runtime role，而不是连接 session role。当前进度不表示 Redis/Valkey leader lease、多进程选举、standby
-  自动接管、runtime 节点间 WebSocket、master/sub_node 跨节点路由、后台 lease renew worker、管理切换 envelope、delivery ownership/fencing、split-brain 防护或生产级集群协调已完成。
-- [x] 【实现进度 1.20】已新增 runtime 状态存储抽象和 leader lease store 边界。`RuntimeStateStore` 当前定义 namespace/key 隔离、原子创建、compare-and-swap、按版本删除、TTL、单调版本以及后端能力声明，首个 `InMemoryRuntimeStateStore` 仅作为单进程开发与测试实现，不具备持久化或分布式权威能力。leader lease 权威状态已从 `LocalRuntimeClusterCoordinator` 内部迁移至
-  `RuntimeLeaderLeaseStore`，当前 `StateStoreRuntimeLeaderLeaseStore` 通过状态存储的 atomic create 和 CAS 原子维护 current lease、last_epoch 和历史 fencing token 集合，并支持 acquire、renew、release、lease expiry、版本冲突及历史 token 防重。多个 coordinator 共享同一 lease store 时只能有一个节点持有有效 lease，store 写入失败时不得提前切换本地 runtime
-  role。当前进度不表示 SQLite WAL、Redis/Valkey、Lua 原子脚本、Sentinel/Cluster、跨进程持久化、后台续约 worker、自动 takeover、delivery 状态迁移或生产级状态存储已完成。
 
 ## 20. 状态存储与一致性模型
 
