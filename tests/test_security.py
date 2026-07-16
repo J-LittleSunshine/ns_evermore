@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import json
 import unittest
+from collections.abc import Mapping
 from dataclasses import dataclass
+from unittest import mock
 from urllib.parse import (
     parse_qsl,
     urlsplit,
 )
 
-from ns_common.exceptions import (
-    NsValidationError,
-)
+from ns_common.exceptions import NsValidationError
 from ns_common.security import (
     CIRCULAR_REFERENCE,
     MAX_DEPTH_REACHED,
@@ -32,7 +32,83 @@ class SecretRecord:
     requested_capabilities: list[str]
 
 
+@dataclass
+class ExplodingFieldRecord:
+    message: str
+
+    def __getattribute__(self, name: str) -> object:
+        if name == "message":
+            raise RuntimeError("attribute-access-secret")
+        return object.__getattribute__(self, name)
+
+
+class ExplodingStringError(Exception):
+
+    def __str__(self) -> str:
+        raise RuntimeError("exception-str-secret")
+
+
+class ExplodingAttributeError(Exception):
+
+    def __getattribute__(self, name: str) -> object:
+        if name in {"message", "code", "numeric_code", "details"}:
+            raise RuntimeError(f"exception-{name}-secret")
+        return BaseException.__getattribute__(self, name)
+
+
+class ExplodingItemsMapping(Mapping[object, object]):
+
+    def __getitem__(self, key: object) -> object:
+        raise KeyError(key)
+
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+    def items(self):  # type: ignore[no-untyped-def]
+        raise RuntimeError("mapping-items-secret")
+
+
+class ExplodingVarsObject:
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "raw_value", "vars-business-secret")
+
+    def __getattribute__(self, name: str) -> object:
+        if name == "__dict__":
+            raise RuntimeError("vars-access-secret")
+        return object.__getattribute__(self, name)
+
+
+class SecretObjectKey:
+
+    def __str__(self) -> str:
+        return "token=object-key-secret"
+
+
+class DigestObject:
+    pass
+
+
 class SanitizerTestCase(unittest.TestCase):
+
+    def assert_json_safe_and_no_leak(
+        self,
+        result: object,
+        *secrets: str,
+    ) -> str:
+        serialized = json.dumps(
+            result,
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        for secret in secrets:
+            with self.subTest(secret=secret):
+                self.assertNotIn(secret, serialized)
+        return serialized
 
     def test_nested_mapping_uses_field_rules_without_mutating_input(self) -> None:
         source = {
@@ -56,50 +132,120 @@ class SanitizerTestCase(unittest.TestCase):
         )
         self.assertEqual("ordinary-value", result["safe"]["message"])
         self.assertEqual("token-secret", source["token"])
-        self.assertEqual(
-            {"body": "payload-secret"},
-            source["payload"],
-        )
-        serialized = json.dumps(result, ensure_ascii=False)
-        for secret in (
+        self.assertEqual({"body": "payload-secret"}, source["payload"])
+        self.assert_json_safe_and_no_leak(
+            result,
             "token-secret",
             "payload-secret",
             "identity-secret",
             "fencing-secret",
             "admin-secret",
             "read-secret",
-        ):
-            self.assertNotIn(secret, serialized)
+        )
 
-    def test_path_rules_cover_signed_url_peer_and_certificate(self) -> None:
+    def test_structured_fields_cover_new_secrets_and_addresses(self) -> None:
+        source = {
+            "api_key": "api-key-secret",
+            "credential": "credential-secret",
+            "signature": "signature-secret",
+            "task_payload": {"raw": "task-payload-secret"},
+            "peer_ip": "192.0.2.11",
+            "client_ip": "198.51.100.12",
+            "remote_ip": "203.0.113.13",
+            "peer_address": "192.0.2.21:443",
+            "client_address": "198.51.100.22:443",
+            "remote_address": "203.0.113.23:443",
+            "certificate": "certificate-raw-secret",
+            "payload_size": 2048,
+            "signature_algorithm": "ed25519",
+            "client_address_label": "edge-a",
+        }
+
+        result = Sanitizer().sanitize(source)
+
+        for field_name in (
+            "api_key",
+            "credential",
+            "signature",
+            "task_payload",
+            "peer_ip",
+            "client_ip",
+            "remote_ip",
+            "peer_address",
+            "client_address",
+            "remote_address",
+            "certificate",
+        ):
+            with self.subTest(field_name=field_name):
+                self.assertEqual(REDACTED, result[field_name])
+        self.assertEqual(2048, result["payload_size"])
+        self.assertEqual("ed25519", result["signature_algorithm"])
+        self.assertEqual("edge-a", result["client_address_label"])
+        self.assert_json_safe_and_no_leak(
+            result,
+            "api-key-secret",
+            "credential-secret",
+            "signature-secret",
+            "task-payload-secret",
+            "192.0.2.11",
+            "198.51.100.12",
+            "203.0.113.13",
+            "192.0.2.21",
+            "198.51.100.22",
+            "203.0.113.23",
+            "certificate-raw-secret",
+        )
+
+    def test_sensitive_field_names_handle_unicode_case_and_separators(self) -> None:
+        source = {
+            "ACCESS-TOKEN": "令牌秘密一",
+            "Client_Secret": "令牌秘密二",
+            "private-key": "令牌秘密三",
+            "AUTHORIZATION": "令牌秘密四",
+            "Set-Cookie": "令牌秘密五",
+            "ＦＥＮＣＩＮＧ＿ＴＯＫＥＮ": "令牌秘密六",
+            "API-KEY": "令牌秘密七",
+        }
+
+        result = Sanitizer().sanitize(source)
+
+        self.assertTrue(all(value == REDACTED for value in result.values()))
+        self.assert_json_safe_and_no_leak(
+            result,
+            "令牌秘密一",
+            "令牌秘密二",
+            "令牌秘密三",
+            "令牌秘密四",
+            "令牌秘密五",
+            "令牌秘密六",
+            "令牌秘密七",
+        )
+
+    def test_path_rules_cover_signed_url_peer_and_certificate_digest(self) -> None:
         source = {
             "payload_ref": {
                 "url": "https://objects.example.test/private?signature=url-secret",
                 "object_id": "safe-object-id",
             },
             "peer": {"address": "192.0.2.10:443"},
-            "certificate": {"fingerprint": "certificate-secret"},
+            "tls": {"certificate_fingerprint": "certificate-secret"},
         }
 
         result = Sanitizer().sanitize(source)
 
         self.assertEqual(REDACTED, result["payload_ref"]["url"])
-        self.assertEqual(
-            "safe-object-id",
-            result["payload_ref"]["object_id"],
-        )
+        self.assertEqual("safe-object-id", result["payload_ref"]["object_id"])
+        self.assertEqual(REDACTED, result["peer"]["address"])
         self.assertRegex(
-            result["peer"]["address"],
+            result["tls"]["certificate_fingerprint"],
             r"^\[REDACTED sha256:[0-9a-f]{16}\]$",
         )
-        self.assertRegex(
-            result["certificate"]["fingerprint"],
-            r"^\[REDACTED sha256:[0-9a-f]{16}\]$",
+        self.assert_json_safe_and_no_leak(
+            result,
+            "url-secret",
+            "192.0.2.10",
+            "certificate-secret",
         )
-        serialized = json.dumps(result)
-        self.assertNotIn("url-secret", serialized)
-        self.assertNotIn("192.0.2.10", serialized)
-        self.assertNotIn("certificate-secret", serialized)
 
     def test_dataclass_and_regular_object_fields_are_sanitized(self) -> None:
         record = SecretRecord(
@@ -130,7 +276,14 @@ class SanitizerTestCase(unittest.TestCase):
             "safe-connection-id",
             object_result["connection_id"],
         )
-        self.assertNotIn("198.51.100.8", object_result["peer_address"])
+        self.assertEqual(REDACTED, object_result["peer_address"])
+        self.assert_json_safe_and_no_leak(
+            {"dataclass": dataclass_result, "object": object_result},
+            "dataclass-token",
+            "dataclass-payload",
+            "dataclass-capability",
+            "198.51.100.8",
+        )
 
     def test_exception_message_and_details_are_sanitized(self) -> None:
         error = NsValidationError(
@@ -151,10 +304,12 @@ class SanitizerTestCase(unittest.TestCase):
         self.assertEqual(REDACTED, result["details"]["access_token"])
         self.assertEqual(REDACTED, result["details"]["payload"])
         self.assertEqual("safe-value", result["details"]["safe_detail"])
-        serialized = json.dumps(result)
-        self.assertNotIn("message-secret", serialized)
-        self.assertNotIn("details-token", serialized)
-        self.assertNotIn("details-payload", serialized)
+        self.assert_json_safe_and_no_leak(
+            result,
+            "message-secret",
+            "details-token",
+            "details-payload",
+        )
 
     def test_url_removes_userinfo_and_sensitive_query_values(self) -> None:
         result = Sanitizer().sanitize_url(
@@ -170,25 +325,232 @@ class SanitizerTestCase(unittest.TestCase):
         self.assertEqual(REDACTED, query["token"])
         self.assertEqual(REDACTED, query["X-Amz-Signature"])
         self.assertEqual(REDACTED, parsed.fragment)
-        for secret in (
+        self.assert_json_safe_and_no_leak(
+            result,
             "user",
             "password",
             "query-secret",
             "signature-secret",
             "fragment-secret",
-        ):
-            self.assertNotIn(secret, result)
+        )
 
-    def test_free_text_redacts_bearer_assignments_and_embedded_urls(self) -> None:
+    def test_authorization_headers_redact_complete_values(self) -> None:
         result = Sanitizer().sanitize_text(
-            "Authorization: Bearer bearer-secret; token=plain-secret; "
+            "Authorization: Basic basic-secret trailing-basic-secret\r\n"
+            "Authorization: Digest username=alice, response=digest-secret\n"
+            "Authorization: ApiKey api-key-header-secret with-spaces\n"
+            "Proxy-Authorization: Basic proxy-secret more-proxy-secret\n"
+            "Safe-Header: visible"
+        )
+
+        self.assertEqual(4, result.count(REDACTED))
+        self.assertIn("Safe-Header: visible", result)
+        self.assert_json_safe_and_no_leak(
+            result,
+            "basic-secret",
+            "trailing-basic-secret",
+            "alice",
+            "digest-secret",
+            "api-key-header-secret",
+            "with-spaces",
+            "proxy-secret",
+            "more-proxy-secret",
+        )
+
+    def test_cookie_headers_redact_all_segments(self) -> None:
+        result = Sanitizer().sanitize_text(
+            "Cookie: a=cookie-a-secret; b=cookie-b-secret; c=cookie-c-secret\n"
+            "Set-Cookie: session=set-cookie-secret; Path=/; HttpOnly; Secure\n"
+            "ordinary=visible"
+        )
+
+        self.assertEqual(2, result.count(REDACTED))
+        self.assertIn("ordinary=visible", result)
+        self.assert_json_safe_and_no_leak(
+            result,
+            "cookie-a-secret",
+            "cookie-b-secret",
+            "cookie-c-secret",
+            "set-cookie-secret",
+            "HttpOnly",
+            "Secure",
+        )
+
+    def test_free_text_keeps_bearer_assignments_and_urls_compatible(self) -> None:
+        result = Sanitizer().sanitize_text(
+            "Bearer bearer-secret; token=plain-secret; signature=sig-secret; "
             "fetch=https://example.test/item?signature=url-secret&part=1"
         )
 
         self.assertIn(REDACTED, result)
         self.assertIn("part=1", result)
-        for secret in ("bearer-secret", "plain-secret", "url-secret"):
-            self.assertNotIn(secret, result)
+        self.assert_json_safe_and_no_leak(
+            result,
+            "bearer-secret",
+            "plain-secret",
+            "sig-secret",
+            "url-secret",
+        )
+
+    def test_mapping_keys_are_sanitized_and_non_strings_are_safe(self) -> None:
+        source = {
+            "token=key-token-secret": "safe-one",
+            "https://example.test/?signature=url-key-secret": "safe-two",
+            "Authorization: Basic key-auth-secret": "safe-three",
+            SecretObjectKey(): "safe-four",
+            42: "safe-five",
+        }
+
+        result = Sanitizer().sanitize(source)
+
+        self.assertTrue(all(isinstance(key, str) for key in result))
+        self.assertIn("<SecretObjectKey>", result)
+        self.assertIn("<int>", result)
+        self.assert_json_safe_and_no_leak(
+            result,
+            "key-token-secret",
+            "url-key-secret",
+            "key-auth-secret",
+            "object-key-secret",
+        )
+
+    def test_mapping_key_redaction_collisions_do_not_overwrite(self) -> None:
+        source = {
+            "token=first-key-secret": "first-value",
+            "token=second-key-secret": "second-value",
+            "signature=third-key-secret": "third-value",
+            "signature=fourth-key-secret": "fourth-value",
+        }
+
+        result = Sanitizer().sanitize(source)
+
+        self.assertEqual(4, len(result))
+        self.assertEqual("first-value", result["token=[REDACTED]"])
+        self.assertEqual("second-value", result["token=[REDACTED]#2"])
+        self.assertEqual("third-value", result["signature=[REDACTED]"])
+        self.assertEqual("fourth-value", result["signature=[REDACTED]#2"])
+        self.assert_json_safe_and_no_leak(
+            result,
+            "first-key-secret",
+            "second-key-secret",
+            "third-key-secret",
+            "fourth-key-secret",
+        )
+
+    def test_non_finite_numbers_are_strict_json_safe(self) -> None:
+        source = {
+            "nan": float("nan"),
+            "positive": float("inf"),
+            "negative": float("-inf"),
+            "nested": [float("nan"), float("inf"), float("-inf")],
+            float("inf"): "non-finite-key-value",
+            "token": "non-finite-token-secret",
+        }
+
+        result = Sanitizer().sanitize(source)
+
+        self.assertEqual("[NON_FINITE_NUMBER]", result["nan"])
+        self.assertEqual("[NON_FINITE_NUMBER]", result["positive"])
+        self.assertEqual("[NON_FINITE_NUMBER]", result["negative"])
+        self.assertEqual(
+            ["[NON_FINITE_NUMBER]"] * 3,
+            result["nested"],
+        )
+        self.assertIn("<float>", result)
+        self.assert_json_safe_and_no_leak(
+            result,
+            "non-finite-token-secret",
+        )
+
+    def test_exception_str_failure_is_fail_closed(self) -> None:
+        error = ExplodingStringError("exception-business-secret")
+
+        result = Sanitizer().sanitize(error)
+
+        self.assertEqual("ExplodingStringError", result["type"])
+        self.assertEqual("[SANITIZATION_FAILED]", result["message"])
+        self.assert_json_safe_and_no_leak(
+            result,
+            "exception-business-secret",
+            "exception-str-secret",
+        )
+
+    def test_exception_attribute_failures_are_fail_closed(self) -> None:
+        error = ExplodingAttributeError("attribute-business-secret")
+
+        result = Sanitizer().sanitize(error)
+
+        self.assertEqual("[SANITIZATION_FAILED]", result["message"])
+        self.assertEqual("[SANITIZATION_FAILED]", result["code"])
+        self.assertEqual("[SANITIZATION_FAILED]", result["numeric_code"])
+        self.assertEqual("[SANITIZATION_FAILED]", result["details"])
+        self.assert_json_safe_and_no_leak(
+            result,
+            "attribute-business-secret",
+            "exception-message-secret",
+            "exception-code-secret",
+            "exception-numeric_code-secret",
+            "exception-details-secret",
+        )
+
+    def test_mapping_items_failure_is_fail_closed(self) -> None:
+        result = Sanitizer().sanitize(ExplodingItemsMapping())
+
+        self.assertEqual("[SANITIZATION_FAILED]", result)
+        self.assert_json_safe_and_no_leak(result, "mapping-items-secret")
+
+    def test_vars_and_dataclass_attribute_failures_are_fail_closed(self) -> None:
+        vars_result = Sanitizer().sanitize(ExplodingVarsObject())
+        dataclass_result = Sanitizer().sanitize(
+            ExplodingFieldRecord("attribute-business-secret")
+        )
+
+        self.assertEqual("[SANITIZATION_FAILED]", vars_result)
+        self.assertEqual(
+            "[SANITIZATION_FAILED]",
+            dataclass_result["message"],
+        )
+        self.assert_json_safe_and_no_leak(
+            {"vars": vars_result, "dataclass": dataclass_result},
+            "vars-business-secret",
+            "vars-access-secret",
+            "attribute-business-secret",
+            "attribute-access-secret",
+        )
+
+    def test_digest_callback_failure_is_fail_closed(self) -> None:
+        with mock.patch.object(
+            Sanitizer,
+            "_digest_default",
+            side_effect=RuntimeError("digest-callback-secret"),
+        ):
+            result = Sanitizer().sanitize(
+                DigestObject(),
+                field_name="capabilities",
+            )
+
+        self.assertEqual(REDACTED, result)
+        self.assert_json_safe_and_no_leak(result, "digest-callback-secret")
+
+    def test_process_level_exceptions_are_not_swallowed(self) -> None:
+        class InterruptingMapping(ExplodingItemsMapping):
+            def items(self):  # type: ignore[no-untyped-def]
+                raise KeyboardInterrupt("interrupt-secret")
+
+        class ExitingError(Exception):
+            def __str__(self) -> str:
+                raise SystemExit("exit-secret")
+
+        with self.assertRaises(KeyboardInterrupt):
+            Sanitizer().sanitize(InterruptingMapping())
+        with self.assertRaises(SystemExit):
+            Sanitizer().sanitize(ExitingError("business-secret"))
+        self.assert_json_safe_and_no_leak(
+            {"status": "process-exceptions-propagated"},
+            "interrupt-secret",
+            "exit-secret",
+            "business-secret",
+        )
 
     def test_digest_is_deterministic_and_does_not_reveal_value(self) -> None:
         sanitizer = Sanitizer()
@@ -207,31 +569,39 @@ class SanitizerTestCase(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertNotEqual(first, different)
-        self.assertNotIn("alpha-secret", first)
-        self.assertNotIn("beta-secret", first)
+        self.assert_json_safe_and_no_leak(
+            {"first": first, "second": second, "different": different},
+            "alpha-secret",
+            "beta-secret",
+            "other-secret",
+        )
 
     def test_cycles_and_depth_are_bounded(self) -> None:
         circular: dict[str, object] = {}
         circular["self"] = circular
+        circular["token"] = "circular-token-secret"
         circular_result = Sanitizer().sanitize(circular)
         depth_result = Sanitizer(max_depth=1).sanitize({
-            "outer": {"inner": {"safe": "too-deep"}},
+            "outer": {"inner": {"safe": "too-deep-secret"}},
         })
 
         self.assertEqual(CIRCULAR_REFERENCE, circular_result["self"])
+        self.assertEqual(REDACTED, circular_result["token"])
         self.assertEqual(MAX_DEPTH_REACHED, depth_result["outer"]["inner"])
+        self.assert_json_safe_and_no_leak(
+            {"circular": circular_result, "depth": depth_result},
+            "circular-token-secret",
+            "too-deep-secret",
+        )
 
     def test_public_helpers_and_validation_are_stable(self) -> None:
         self.assertIs(NsSanitizer, Sanitizer)
-        self.assertEqual(REDACTED, sanitize("secret", field_name="token"))
-        self.assertNotIn(
-            "helper-secret",
-            sanitize_url("https://example.test/?token=helper-secret"),
+        sanitized_value = sanitize("helper-token-secret", field_name="token")
+        sanitized_url = sanitize_url(
+            "https://example.test/?token=helper-url-secret"
         )
-        self.assertNotIn(
-            "helper-secret",
-            sanitize_text("Bearer helper-secret"),
-        )
+        sanitized_text = sanitize_text("Bearer helper-bearer-secret")
+        self.assertEqual(REDACTED, sanitized_value)
 
         invalid_calls = (
             lambda: Sanitizer(max_depth=0),
@@ -245,6 +615,16 @@ class SanitizerTestCase(unittest.TestCase):
             with self.subTest(call=call):
                 with self.assertRaises(NsValidationError):
                     call()
+        self.assert_json_safe_and_no_leak(
+            {
+                "value": sanitized_value,
+                "url": sanitized_url,
+                "text": sanitized_text,
+            },
+            "helper-token-secret",
+            "helper-url-secret",
+            "helper-bearer-secret",
+        )
 
 
 if __name__ == "__main__":
