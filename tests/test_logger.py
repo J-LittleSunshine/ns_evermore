@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -71,6 +72,41 @@ class ExitingError(Exception):
 
 
 class LoggerSanitizerTestCase(unittest.TestCase):
+
+    def test_concurrent_handler_dependency_is_loaded_lazily(self) -> None:
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = os.pathsep.join(
+            part
+            for part in (
+                str(Path(__file__).resolve().parents[1] / "src"),
+                environment.get("PYTHONPATH", ""),
+            )
+            if part
+        )
+        source = (
+            "import pathlib, sys, tempfile; "
+            "import ns_common.logger as module; "
+            "assert 'concurrent_log_handler' not in sys.modules; "
+            "assert 'portalocker' not in sys.modules; "
+            "assert 'redis' not in sys.modules; "
+            "temporary = tempfile.TemporaryDirectory(); "
+            "module.LOG_DIR = pathlib.Path(temporary.name); "
+            "logger = module.NsLogger('lazy-multiprocess', multiprocessing_mode=True); "
+            "assert 'concurrent_log_handler' in sys.modules; "
+            "assert 'portalocker' in sys.modules; "
+            "assert module._BackupConcurrentTimedRotatingFileHandler is not None; "
+            "logger._reset_handlers(); temporary.cleanup()"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", source],
+            cwd=Path(__file__).resolve().parents[1],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
 
     def assert_json_safe_and_no_leak(
         self,

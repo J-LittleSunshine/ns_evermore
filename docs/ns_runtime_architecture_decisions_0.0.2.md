@@ -188,3 +188,14 @@
 - 决策：真实 Redis/Valkey 由调用方创建并持有 client；工厂只创建由安全 key part 和随机 UUID 组成的唯一 `key_prefix:namespace:`。同步/异步托管上下文在进入和退出时使用注入 client 的 `scan_iter(match=prefix*)` 与有界批量 `delete()` 清理，逐 key 复核所有权；scan 返回前缀外 key 时必须停止且不得删除该 key。公共实现禁止调用 `KEYS`、`FLUSHDB` 或 `FLUSHALL`，不隐式选择 Redis database，也不关闭调用方 client。退出清理前，调用方必须先停止仍会向该 namespace 写入的 task/process；namespace 清理不等于强一致 StateStore、Redis Cluster、lease、fencing 或故障恢复验证。
 - 后果：P02 及后续单元、契约和 standalone 集成测试应复用该工厂并显式传递资源，不得自行使用仓库真实目录、固定端口或共享 Redis 前缀。P01-W17 负责提供 Redis/Valkey 等测试驱动和独立测试依赖清单；P08/P17/P20 再分别验证 StateStore、集群协调和故障场景。需要把 reservation 交给不接受现有 socket 的第三方 server 时，调用方只能在启动前最后时刻显式释放并承担交接窗口，不能把“探测到过空闲”当作端口所有权证明。
 - 关联阶段/工作包：`P01-W16`、`P01-W17`、`P02` 至 `P22`。
+
+## ADR-020
+
+- ADR 编号：`ADR-020`
+- 状态：`ACCEPTED`
+- 背景：原仓库只有彼此重复 pin 公共依赖的 backend/runtime 两份生产清单；runtime 清单未登记 Linux 优先使用的 uvloop，也没有 Redis/Valkey 测试驱动或独立压测层。若测试驱动、压测工具、未来 QUIC/WebTransport 实验库直接并入生产清单，backend 与 runtime 会获得无关依赖，无法证明组件可独立安装。安装 Redis 驱动还暴露了既有导入耦合：模块级 cache 多进程 logger 会立即加载 concurrent-log-handler 和 portalocker，而 portalocker 会在 Redis 可用时导入驱动，使仅导入公共测试工厂也产生驱动副作用。基于 gevent 的压测工具还会接管线程/协程行为，污染标准 asyncio 与 uvloop 的对照基线。
+- 决策：依赖采用单向无环五层结构。`requirements-common.txt` 只承载 backend/runtime 共同生产基础；`requirements-backend.txt` 和 `requirements-runtime.txt` 分别只包含各自生产增量并只引用 common；`requirements-runtime-test.txt` 只引用 runtime 生产层并增加 Redis/Valkey 测试驱动；`requirements-runtime-benchmark.txt` 只引用测试层并增加不接管事件循环的 pyperf 与 psutil。每个显式包必须使用精确 `==` pin，include 只能指向仓库根目录已登记清单，禁止循环、VCS、editable 或本地路径依赖。backend 不得引用任何 runtime、测试或压测清单。
+- 决策：uvloop 作为 runtime 生产依赖使用非 Windows environment marker，Windows 继续只使用标准 asyncio；WebSocket 保留在 runtime 生产层。Redis/Valkey Python 驱动在 P08 冻结 StateStore 生产合同前只属于测试层，安装它们不代表生产强一致存储已经实现。aioquic、pylsqpack、qh3 等 QUIC/WebTransport 实验依赖在 P21 前不得进入任何当前清单；P21 必须通过独立 adapter/capability 和依赖隔离验收后再决定清单归属。压测工具不得隐式 monkey-patch 或替换被测 event loop；未来 P22 引入其他负载发生器必须保持显式隔离并重新验收 asyncio/uvloop 可比性。
+- 决策：`NsLogger` 的 concurrent-log-handler 子类和 `ns_common.cache` 多进程 logger 延迟到实际使用时加载。普通导入 `ns_common` 或 `ns_common.testing` 不得因为测试环境已安装 Redis/Valkey 而加载 concurrent-log-handler、portalocker、Redis、Valkey 或创建 cache client；真正使用多进程日志时仍按既有配置创建 concurrent handler，缺失依赖继续稳定失败。该调整只改变可选依赖加载时机，不改变 LOG-1 输出、脱敏、rotation、cache soft-failure 或 TST-1 client 所有权契约。
+- 后果：P02 生产或最小运行环境只安装 runtime 生产清单；普通 runtime 测试显式安装 test 清单；性能进程才安装 benchmark 清单。清单结构和禁止包由自动化门禁持续验证，真实隔离环境还必须执行 pip resolver、`pip check`、导入与冷启动检查。P08、P21、P22 若新增生产 StateStore、QUIC/WebTransport 或负载工具，必须修改对应最窄层并重新验证 backend/runtime 生产环境没有依赖泄漏。
+- 关联阶段/工作包：`P01-W17`、`P02`、`P04`、`P08`、`P20`、`P21`、`P22`。

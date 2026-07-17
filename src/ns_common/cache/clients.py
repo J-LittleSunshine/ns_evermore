@@ -45,9 +45,6 @@ _CLIENT_LOCK = RLock()
 _CLIENTS: dict[str, "CacheClient"] = {}
 _ASYNC_CLIENTS: dict[str, "AsyncCacheClient"] = {}
 
-logger = get_ns_logger("ns_common.cache", True)
-
-
 def resolve_sqlite_cache_path(cache_config: NsCacheConfig) -> Path:
     path = Path(cache_config.sqlite_path)
 
@@ -215,7 +212,7 @@ class CacheClient:
         return int(delta)
 
     def _log_soft_failure(self, operation: str, exc: Exception, *, key: str | None = None) -> None:
-        logger.warning(
+        get_ns_logger("ns_common.cache", True).warning(
             "cache operation failed softly",
             exc_info=True,
             extra={

@@ -1,0 +1,7 @@
+# ns_runtime benchmark and load-test dependencies.
+# This layer is never required by production or ordinary test installations.
+
+-r requirements-runtime-test.txt
+
+pyperf==2.10.0
+psutil==7.2.2

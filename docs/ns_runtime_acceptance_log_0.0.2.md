@@ -358,6 +358,23 @@
 - 已知限制：Redis/Valkey Python 驱动及独立测试依赖清单属于 P01-W17，当前公共模块只接受调用方注入的 sync/async compatible client；client 与 server 生命周期仍由调用方拥有。退出清理前必须停止继续写入该 namespace 的 task/process。真实验收只覆盖 Redis standalone，不覆盖 Sentinel/Cluster、多节点、TLS、StateStore Lua/CAS/lease/fencing 或 P20 故障注入。第三方 server 不接受现有 socket 时，reservation 释放到 server 绑定之间仍存在不可消除的交接窗口，调用方不得把曾经探测为空闲解释为持续所有权。
 - 下一工作包：`P01-W17 建立 runtime 独立生产/测试依赖清单`，状态为 `NOT_STARTED`。
 
+## P01-W17
+
+- 工作包：`P01-W17 建立 runtime 独立生产/测试依赖清单`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T18:58:08+08:00`。
+- 修改文件：新增 `requirements-common.txt`、`requirements-runtime-test.txt`、`requirements-runtime-benchmark.txt` 和 `tests/test_dependency_manifests.py`；重构 `requirements-runtime.txt`、`requirements-backend.txt`；更新 `src/ns_common/logger.py`、`src/ns_common/cache/clients.py`、`tests/test_logger.py`、`tests/test_testing.py`、实施计划、acceptance log，并新增 [ADR-020](ns_runtime_architecture_decisions_0.0.2.md#adr-020)。设计边界文档未修改，`src/ns_runtime` 未创建，P02-W01 未开始。会话开始实时执行 `git status --short --branch`，结果为干净的 `main...origin/main`；未读取远程仓库、提交历史、PR、Issue 或远程分支，未切换、重置或覆盖工作区。
+- 依赖分层契约：建立 common、backend 生产、runtime 生产、runtime 测试、runtime 压测五层单向 DAG。backend/runtime 只引用 common，test 只引用 runtime，benchmark 只引用 test；所有显式包使用精确 `==` pin，include 只允许已登记根文件且无循环。common 统一原两套清单重复的 HTTP/日志基础并把 anyio 固定为 `4.14.2`；backend 只保留 Django/IAM 增量，runtime 只保留 `websockets==16.0` 与带 `platform_system != "Windows"` marker 的 `uvloop==0.22.1`。
+- 测试与压测边界：runtime test 层新增 `redis==8.0.1`、`valkey==6.1.1`，仅作为真实依赖测试 client，不宣称 P08 StateStore 生产驱动；benchmark 层新增 `pyperf==2.10.0`、`psutil==7.2.2`。候选 Locust 在隔离验收中因 gevent 线程补丁产生解释器退出异常并会污染 asyncio/uvloop 对照，未进入最终清单。aioquic、pylsqpack、qh3 等 QUIC/WebTransport 实验包全部继续留给 P21，backend/runtime 生产和普通测试均不隐式安装。
+- 冷导入兼容修复：驱动安装后发现 portalocker 会在 Redis 可用时主动导入其 RedisLock，而既有模块级 cache 多进程 logger 会在 `ns_common` 导入期间提前加载 concurrent-log-handler/portalocker。`NsLogger` 现仅在实际请求 multiprocessing handler 时动态构造并缓存 concurrent handler 类；cache soft-failure logger 也延迟到首次真实失败。已安装 Redis/Valkey 的环境冷导入 `ns_common.testing` 时，`concurrent_log_handler`、`portalocker`、`redis`、`valkey`、`ns_runtime` 均不进入 `sys.modules`；实际多进程 logger 仍能加载 concurrent handler。LOG-1 输出、rotation、sanitizer 与 cache soft-failure 行为未改变。
+- 自动化测试结果：依赖清单结构/精确 pin/include DAG/层级严格超集/uvloop marker/生产隔离/QUIC 延后门禁 `Ran 7, OK`；安装 test 清单的持久 runtime 环境执行 dependency/testing/observability/security/logger/http_client/exceptions/async_runtime/config/config_package/retry/time/identifiers 联合回归 `Ran 241, OK (skipped=1)`；backend 环境根目录全量 `Ran 252, OK (skipped=1)`。两个跳过均为 WSL 下同一 Windows 专用 event-loop 用例，backend 全量包含 cache 11 项回归和新增 lazy logger 门禁。
+- 全新环境安装验收：在 `/home/ns/.virtualenvs` 下使用四类临时隔离目录分别从 runtime 生产、backend 生产、runtime test、runtime benchmark 清单安装；所有 resolver 与 `pip check` 通过，结束后移入系统回收站。runtime 生产环境可导入 `ns_common/httpx/uvloop/websockets` 且不存在 Django、Redis、Valkey、测试、压测或 QUIC 包；backend 生产环境可导入 Django/DRF/ADRF/JoseRFC/ns_common 且不存在 runtime、测试、压测或 QUIC 包；benchmark 环境可导入 pyperf/psutil 且不存在 Locust/gevent/QUIC。最终干净生产环境回归数量与持久环境一致。
+- 真实驱动与 namespace 验收：test 清单的 Redis 与 Valkey 同步、异步 client 共同连接本机临时 Redis standalone；通过 `NsTestResourceFactory` 的唯一 namespace 分别验证 sync `manage()` 和 async `amanage()` 只删除所有者前缀，另一驱动写入的独立 namespace 保持完整。服务关闭前显式关闭四个 client，终止进程并回收临时目录；未调用 `KEYS`、`FLUSHDB` 或 `FLUSHALL`，未触碰共享实例或仓库真实数据目录。
+- 静态与环境检查：全树 `compileall`、runtime/backend `pip check`、依赖清单 dry-run resolver、冷启动导入、禁止生产源码测试文件、仓库虚拟环境、临时 W17 环境、Redis 进程与临时测试目录残留、`git diff --check` 均通过。依赖门禁只解析仓库根清单，不执行任意 requirement option、VCS URL、editable 或本地路径；测试未访问 backend 或外部业务网络，只有 pip 包索引解析和 loopback Redis 验收使用外部/本地依赖。
+- 安全/隔离检查：backend 清单无法通过 include 获得 runtime/uvloop/websockets、Redis/Valkey、pyperf/psutil 或 QUIC 包；runtime 生产无法获得 Redis/Valkey 和压测包；普通 test 无压测包。测试驱动安装不改变 `ns_common.testing` 的 driver-neutral client 注入与调用方生命周期所有权，不把普通 cache、Redis standalone 或 namespace cleanup 解释为强一致状态存储。依赖安装只发生在 `/home/ns/.virtualenvs`，仓库内未创建 venv；临时环境以可恢复回收站方式清理。
+- 已知限制：本次真实安装与回归运行在 WSL2/Python 3.10.12，Windows 只通过精确 marker 门禁确认 uvloop 被排除，未在 Windows 新环境重复安装。依赖文件是当前精确顶层/公共解析基线，不替代未来发布制品的跨平台 lock/hash/SBOM。P08 才能把已选 Redis/Valkey 驱动纳入生产 StateStore 并验证 Sentinel/Cluster/TLS/Lua/CAS/lease/fencing；P21 才能引入 QUIC/WebTransport adapter 依赖；P22 才建立正式负载模型、报告和性能阈值。
+- 下一工作包：`P02-W01 建立 src/ns_runtime 独立组件和唯一进程入口 main.py`，状态为 `NOT_STARTED`；唯一执行游标已推进到 P02-W01，P01 阶段标记为 `VERIFIED`。
+
 ## 新记录模板
 
 - 工作包：

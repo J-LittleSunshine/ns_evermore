@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import importlib
 import json
 import logging
 import os
@@ -27,11 +28,6 @@ from ns_common.security import (
     REDACTED,
     Sanitizer,
 )
-
-try:
-    from concurrent_log_handler import ConcurrentTimedRotatingFileHandler as _ConcurrentTimedRotatingFileHandler
-except ImportError:
-    _ConcurrentTimedRotatingFileHandler = None
 
 if TYPE_CHECKING:
     pass
@@ -441,33 +437,64 @@ class _BackupTimedRotatingFileHandler(TimedRotatingFileHandler):
         return candidates[:delete_count]
 
 
-if _ConcurrentTimedRotatingFileHandler is not None:
-    class _BackupConcurrentTimedRotatingFileHandler(_ConcurrentTimedRotatingFileHandler):  # type: ignore[misc]
-        def __init__(self, filename: Path, backup_dir: Path, **kwargs: Any) -> None:
-            self._backup_dir: Path = backup_dir
-            self._source_filename: str = filename.name
-            self._backup_dir.mkdir(parents=True, exist_ok=True)
-            super().__init__(filename=str(filename), **kwargs)
+_BackupConcurrentTimedRotatingFileHandler: type[logging.Handler] | None = None
+_CONCURRENT_HANDLER_LOAD_ATTEMPTED = False
 
-        def rotation_filename(self, _default_name: str) -> str:
-            return str(self._backup_dir / Path(_default_name).name)
 
-        # noinspection PyPep8Naming
-        def getFilesToDelete(self) -> list[str]:
-            backup_count: int = int(getattr(self, "backupCount", 0))
-            if backup_count <= 0:
-                return []
+def _load_backup_concurrent_handler_class() -> type[logging.Handler] | None:
+    """Load the optional multiprocess handler only when it is requested."""
+    global _BackupConcurrentTimedRotatingFileHandler
+    global _CONCURRENT_HANDLER_LOAD_ATTEMPTED
 
-            candidates: list[str] = sorted(str(_path) for _path in self._backup_dir.glob(f"{self._source_filename}.*") if _path.is_file())
+    with _LOGGER_LOCK:
+        if _CONCURRENT_HANDLER_LOAD_ATTEMPTED:
+            return _BackupConcurrentTimedRotatingFileHandler
 
-            delete_count: int = len(candidates) - backup_count
-            if delete_count <= 0:
-                return []
+        try:
+            module = importlib.import_module("concurrent_log_handler")
+            concurrent_handler = module.ConcurrentTimedRotatingFileHandler
+        except (AttributeError, ImportError):
+            _CONCURRENT_HANDLER_LOAD_ATTEMPTED = True
+            return None
 
-            return candidates[:delete_count]
+        class _LazyBackupConcurrentTimedRotatingFileHandler(concurrent_handler):  # type: ignore[misc, valid-type]
+            def __init__(
+                self,
+                filename: Path,
+                backup_dir: Path,
+                **kwargs: Any,
+            ) -> None:
+                self._backup_dir: Path = backup_dir
+                self._source_filename: str = filename.name
+                self._backup_dir.mkdir(parents=True, exist_ok=True)
+                super().__init__(filename=str(filename), **kwargs)
 
-else:
-    _BackupConcurrentTimedRotatingFileHandler = None
+            def rotation_filename(self, _default_name: str) -> str:
+                return str(self._backup_dir / Path(_default_name).name)
+
+            # noinspection PyPep8Naming
+            def getFilesToDelete(self) -> list[str]:
+                backup_count: int = int(getattr(self, "backupCount", 0))
+                if backup_count <= 0:
+                    return []
+
+                candidates: list[str] = sorted(
+                    str(path)
+                    for path in self._backup_dir.glob(
+                        f"{self._source_filename}.*"
+                    )
+                    if path.is_file()
+                )
+                delete_count = len(candidates) - backup_count
+                if delete_count <= 0:
+                    return []
+                return candidates[:delete_count]
+
+        _BackupConcurrentTimedRotatingFileHandler = (
+            _LazyBackupConcurrentTimedRotatingFileHandler
+        )
+        _CONCURRENT_HANDLER_LOAD_ATTEMPTED = True
+        return _BackupConcurrentTimedRotatingFileHandler
 
 
 class NsLogger(logging.Logger):
@@ -629,7 +656,12 @@ class NsLogger(logging.Logger):
             except Exception:  # noqa
                 pass
 
-    def _build_file_handler(self, filename: Path, backup_dir: Path, config: Mapping[str, Any]) -> _BackupConcurrentTimedRotatingFileHandler | _BackupTimedRotatingFileHandler:
+    def _build_file_handler(
+        self,
+        filename: Path,
+        backup_dir: Path,
+        config: Mapping[str, Any],
+    ) -> logging.Handler:
         at_time: time | None = self._parse_at_time(config.get("at_time"))
 
         kwargs: dict[str, Any] = {
@@ -645,7 +677,8 @@ class NsLogger(logging.Logger):
             kwargs["atTime"] = at_time
 
         if self._multiprocessing_mode:
-            if _BackupConcurrentTimedRotatingFileHandler is None:
+            handler_class = _load_backup_concurrent_handler_class()
+            if handler_class is None:
                 raise RuntimeError("concurrent-log-handler is required when multiprocessing_mode=True.")
 
             kwargs["maxBytes"] = int(config.get("max_bytes", 0))
@@ -655,7 +688,11 @@ class NsLogger(logging.Logger):
             if lock_file_directory:
                 kwargs["lock_file_directory"] = lock_file_directory
 
-            return _BackupConcurrentTimedRotatingFileHandler(filename=filename, backup_dir=backup_dir, **kwargs)
+            return handler_class(
+                filename=filename,
+                backup_dir=backup_dir,
+                **kwargs,
+            )
 
         return _BackupTimedRotatingFileHandler(filename=filename, backup_dir=backup_dir, **kwargs)
 

@@ -749,6 +749,8 @@ class NsTestingFacadeTestCase(unittest.TestCase):
         )
         source = (
             "import sys; import ns_common.testing; "
+            "assert 'concurrent_log_handler' not in sys.modules; "
+            "assert 'portalocker' not in sys.modules; "
             "assert 'redis' not in sys.modules; "
             "assert 'valkey' not in sys.modules; "
             "assert 'ns_runtime' not in sys.modules"
