@@ -19,7 +19,7 @@ from typing import (
     runtime_checkable,
 )
 
-from ns_common.exceptions import NsStateError, NsValidationError
+from ns_common.exceptions import NsValidationError
 from ns_common.security import REDACTED, Sanitizer
 
 
@@ -27,6 +27,8 @@ DEFAULT_IN_MEMORY_SINK_CAPACITY = 1024
 MAX_METRIC_ATTRIBUTES = 32
 MAX_METRIC_ATTRIBUTE_KEY_LENGTH = 128
 MAX_METRIC_ATTRIBUTE_VALUE_LENGTH = 256
+# Maximum UTF-8 bytes of the complete public to_dict() record encoded with
+# allow_nan=False, ensure_ascii=False, compact separators, and sorted keys.
 MAX_OBSERVABILITY_RECORD_BYTES = 262144
 
 RUNTIME_EVENT_LOOP_METRIC_NAMES: tuple[str, ...] = (
@@ -106,6 +108,25 @@ _HIGH_CARDINALITY_COMPACT_KEYS = frozenset(
     re.sub(r"[^a-z0-9]", "", key.casefold())
     for key in HIGH_CARDINALITY_METRIC_ATTRIBUTE_KEYS
 )
+_HIGH_CARDINALITY_COMPACT_SUFFIXES = frozenset({
+    "connectionid",
+    "correlationid",
+    "deliveryid",
+    "messageid",
+    "operationid",
+    "pathid",
+    "planid",
+    "requestid",
+    "sessionid",
+    "spanid",
+    "streamid",
+    "summaryid",
+    "tenantid",
+    "traceid",
+    "transportconnectionid",
+    "transportsessionid",
+    "transportstreamid",
+})
 _METRIC_NAME_PATTERN = re.compile(r"[A-Za-z_:][A-Za-z0-9_:]{0,254}\Z")
 _METRIC_ATTRIBUTE_KEY_PATTERN = re.compile(
     r"[A-Za-z_][A-Za-z0-9_.-]{0,127}\Z"
@@ -124,6 +145,22 @@ class NsMetricKind(str, Enum):
     HISTOGRAM = "histogram"
 
 
+class NsMetricAttributeValueType(str, Enum):
+    STRING = "string"
+    INTEGER = "integer"
+    BOOLEAN = "boolean"
+
+
+class NsMetricTenantScope(str, Enum):
+    """Finite metric classifications; these values are never tenant IDs."""
+
+    SYSTEM = "system"
+    TENANT = "tenant"
+    CROSS_TENANT = "cross_tenant"
+    SHARED = "shared"
+    UNKNOWN = "unknown"
+
+
 class NsTraceStatus(str, Enum):
     UNSET = "unset"
     OK = "ok"
@@ -133,6 +170,60 @@ class NsTraceStatus(str, Enum):
 class NsObservabilitySinkState(str, Enum):
     OPEN = "open"
     CLOSED = "closed"
+
+
+def _compact_metric_attribute_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.casefold())
+
+
+def _is_high_cardinality_metric_attribute_key(value: str) -> bool:
+    compact_key = _compact_metric_attribute_key(value)
+    return (
+        compact_key in _HIGH_CARDINALITY_COMPACT_KEYS
+        or any(
+            compact_key.endswith(identifier)
+            for identifier in _HIGH_CARDINALITY_COMPACT_SUFFIXES
+        )
+    )
+
+
+def _strict_json_record_size(value: Mapping[str, object]) -> int:
+    try:
+        encoded = json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except Exception:
+        raise NsValidationError(
+            "observability record cannot be strictly JSON encoded.",
+            details={
+                "field": "record",
+                "action": "normalize_observability_record",
+            },
+        ) from None
+    return len(encoded)
+
+
+def _validate_complete_record_size(
+    value: Mapping[str, object],
+    *,
+    record_type: str,
+) -> int:
+    actual_bytes = _strict_json_record_size(value)
+    if actual_bytes > MAX_OBSERVABILITY_RECORD_BYTES:
+        raise NsValidationError(
+            "observability record exceeds the complete record size boundary.",
+            details={
+                "field": "record",
+                "maximum_bytes": MAX_OBSERVABILITY_RECORD_BYTES,
+                "actual_bytes": actual_bytes,
+                "record_type": record_type,
+            },
+        ) from None
+    return actual_bytes
 
 
 def _resolve_sanitizer(value: Sanitizer | None) -> Sanitizer:
@@ -310,10 +401,7 @@ def _safe_frozen_mapping(
             separators=(",", ":"),
             sort_keys=True,
         )
-        if len(encoded.encode("utf-8")) > MAX_OBSERVABILITY_RECORD_BYTES:
-            normalized: object = _SIZE_LIMIT_RECORD
-        else:
-            normalized = json.loads(encoded)
+        normalized: object = json.loads(encoded)
     except Exception:
         normalized = _SANITIZATION_FAILED_RECORD
     if not isinstance(normalized, dict):
@@ -324,10 +412,381 @@ def _safe_frozen_mapping(
     return frozen
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsMetricAttributeDefinition:
+    key: str
+    value_type: NsMetricAttributeValueType
+    allowed_values: frozenset[str | int | bool] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str) or (
+            _METRIC_ATTRIBUTE_KEY_PATTERN.fullmatch(self.key) is None
+        ):
+            raise NsValidationError(
+                "metric attribute definition key is invalid.",
+                details={
+                    "field": "key",
+                    "maximum_key_length": MAX_METRIC_ATTRIBUTE_KEY_LENGTH,
+                },
+            )
+        if _is_high_cardinality_metric_attribute_key(self.key):
+            raise NsValidationError(
+                "metric attribute definitions cannot allow high-cardinality identifiers.",
+                details={"field": "key"},
+            )
+        if not isinstance(self.value_type, NsMetricAttributeValueType):
+            raise NsValidationError(
+                "metric attribute definition value_type is invalid.",
+                details={
+                    "field": "value_type",
+                    "actual_type": type(self.value_type).__name__,
+                    "allowed_values": [
+                        item.value for item in NsMetricAttributeValueType
+                    ],
+                },
+            )
+
+        if self.allowed_values is None:
+            if self.value_type is not NsMetricAttributeValueType.BOOLEAN:
+                raise NsValidationError(
+                    "string and integer metric attributes require a finite value set.",
+                    details={"field": "allowed_values"},
+                )
+            allowed_values: frozenset[str | int | bool] = frozenset({
+                False,
+                True,
+            })
+        else:
+            if isinstance(self.allowed_values, (str, bytes)):
+                raise NsValidationError(
+                    "allowed_values must be a finite collection.",
+                    details={"field": "allowed_values"},
+                )
+            try:
+                allowed_values = frozenset(self.allowed_values)
+            except Exception:
+                raise NsValidationError(
+                    "allowed_values must be a finite collection.",
+                    details={"field": "allowed_values"},
+                ) from None
+            if not allowed_values:
+                raise NsValidationError(
+                    "allowed_values must not be empty.",
+                    details={"field": "allowed_values"},
+                )
+
+        for allowed_value in allowed_values:
+            self._validate_value(allowed_value, field_name="allowed_values")
+        object.__setattr__(self, "allowed_values", allowed_values)
+
+    @property
+    def is_finite_enum(self) -> bool:
+        return True
+
+    def accepts(self, value: object) -> bool:
+        try:
+            self._validate_value(value, field_name=self.key)
+        except NsValidationError:
+            return False
+        allowed_values = self.allowed_values
+        assert allowed_values is not None
+        return value in allowed_values
+
+    def _validate_value(self, value: object, *, field_name: str) -> None:
+        if self.value_type is NsMetricAttributeValueType.STRING:
+            if not isinstance(value, str):
+                raise NsValidationError(
+                    "metric attribute value type does not match its definition.",
+                    details={"field": field_name, "expected_type": "string"},
+                )
+            if len(value) > MAX_METRIC_ATTRIBUTE_VALUE_LENGTH or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in value
+            ):
+                raise NsValidationError(
+                    "metric attribute string is outside the allowed text range.",
+                    details={
+                        "field": field_name,
+                        "maximum_length": MAX_METRIC_ATTRIBUTE_VALUE_LENGTH,
+                    },
+                )
+            return
+        if self.value_type is NsMetricAttributeValueType.INTEGER:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise NsValidationError(
+                    "metric attribute value type does not match its definition.",
+                    details={"field": field_name, "expected_type": "integer"},
+                )
+            if value.bit_length() > 63:
+                raise NsValidationError(
+                    "metric attribute integer is outside the allowed range.",
+                    details={"field": field_name, "maximum_bits": 63},
+                )
+            return
+        if not isinstance(value, bool):
+            raise NsValidationError(
+                "metric attribute value type does not match its definition.",
+                details={"field": field_name, "expected_type": "boolean"},
+            )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NsMetricDefinition:
+    name: str
+    allowed_attributes: Mapping[str, NsMetricAttributeDefinition] = field(
+        default_factory=dict
+    )
+    expected_kind: NsMetricKind | None = None
+    expected_unit: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.name, str)
+            or self.name != self.name.strip()
+            or _METRIC_NAME_PATTERN.fullmatch(self.name) is None
+        ):
+            raise NsValidationError(
+                "metric definition name is invalid.",
+                details={"field": "name"},
+            )
+        if not isinstance(self.allowed_attributes, MappingABC):
+            raise NsValidationError(
+                "allowed_attributes must be a mapping.",
+                details={
+                    "field": "allowed_attributes",
+                    "actual_type": type(self.allowed_attributes).__name__,
+                },
+            )
+        try:
+            attribute_items = tuple(self.allowed_attributes.items())
+        except Exception:
+            raise NsValidationError(
+                "allowed_attributes could not be read.",
+                details={"field": "allowed_attributes"},
+            ) from None
+        if len(attribute_items) > MAX_METRIC_ATTRIBUTES:
+            raise NsValidationError(
+                "metric definition allows too many attributes.",
+                details={
+                    "field": "allowed_attributes",
+                    "maximum_items": MAX_METRIC_ATTRIBUTES,
+                    "actual_items": len(attribute_items),
+                },
+            )
+
+        frozen_attributes: dict[str, NsMetricAttributeDefinition] = {}
+        for key, definition in attribute_items:
+            if not isinstance(key, str) or not isinstance(
+                definition,
+                NsMetricAttributeDefinition,
+            ):
+                raise NsValidationError(
+                    "allowed_attributes entries are invalid.",
+                    details={"field": "allowed_attributes"},
+                )
+            if key in frozen_attributes:
+                raise NsValidationError(
+                    "metric attribute definition keys must be unique.",
+                    details={"field": "allowed_attributes"},
+                )
+            if key != definition.key:
+                raise NsValidationError(
+                    "metric attribute registry key must match definition.key.",
+                    details={"field": "allowed_attributes"},
+                )
+            frozen_attributes[key] = definition
+
+        if self.expected_kind is not None and not isinstance(
+            self.expected_kind,
+            NsMetricKind,
+        ):
+            raise NsValidationError(
+                "metric definition expected_kind is invalid.",
+                details={"field": "expected_kind"},
+            )
+        if self.expected_unit is not None and (
+            not isinstance(self.expected_unit, str)
+            or not self.expected_unit
+            or self.expected_unit != self.expected_unit.strip()
+            or len(self.expected_unit) > 64
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in self.expected_unit
+            )
+        ):
+            raise NsValidationError(
+                "metric definition expected_unit is invalid.",
+                details={"field": "expected_unit"},
+            )
+        object.__setattr__(
+            self,
+            "allowed_attributes",
+            MappingProxyType(frozen_attributes),
+        )
+
+
+_RUNTIME_COMPONENT_ATTRIBUTE = NsMetricAttributeDefinition(
+    key="component_type",
+    value_type=NsMetricAttributeValueType.STRING,
+    allowed_values=frozenset({"runtime"}),
+)
+_EVENT_LOOP_IMPLEMENTATION_ATTRIBUTE = NsMetricAttributeDefinition(
+    key="implementation",
+    value_type=NsMetricAttributeValueType.STRING,
+    allowed_values=frozenset({"asyncio", "uvloop"}),
+)
+_TRANSPORT_TYPE_ATTRIBUTE = NsMetricAttributeDefinition(
+    key="transport_type",
+    value_type=NsMetricAttributeValueType.STRING,
+    allowed_values=frozenset({
+        "quic_native",
+        "websocket_http3",
+        "websocket_tcp",
+        "webtransport_http3",
+    }),
+)
+_QUIC_TRANSPORT_TYPE_ATTRIBUTE = NsMetricAttributeDefinition(
+    key="transport_type",
+    value_type=NsMetricAttributeValueType.STRING,
+    allowed_values=frozenset({
+        "quic_native",
+        "websocket_http3",
+        "webtransport_http3",
+    }),
+)
+_TRANSPORT_COMPONENT_ATTRIBUTE = NsMetricAttributeDefinition(
+    key="component_type",
+    value_type=NsMetricAttributeValueType.STRING,
+    allowed_values=frozenset({
+        "backend",
+        "client",
+        "frontend",
+        "node",
+        "runtime",
+        "sub_node",
+    }),
+)
+_TENANT_SCOPE_ATTRIBUTE = NsMetricAttributeDefinition(
+    key="tenant_scope",
+    value_type=NsMetricAttributeValueType.STRING,
+    allowed_values=frozenset(item.value for item in NsMetricTenantScope),
+)
+
+
+def _build_runtime_standard_metric_definitions(
+) -> Mapping[str, NsMetricDefinition]:
+    definitions = {
+        name: NsMetricDefinition(name=name)
+        for name in (
+            RUNTIME_EVENT_LOOP_METRIC_NAMES
+            + RUNTIME_TRANSPORT_METRIC_NAMES
+            + RUNTIME_QUIC_METRIC_NAMES
+        )
+    }
+    definitions["runtime_event_loop_implementation"] = NsMetricDefinition(
+        name="runtime_event_loop_implementation",
+        allowed_attributes={
+            "implementation": _EVENT_LOOP_IMPLEMENTATION_ATTRIBUTE,
+        },
+    )
+    definitions["runtime_pending_task_count"] = NsMetricDefinition(
+        name="runtime_pending_task_count",
+        allowed_attributes={
+            "component_type": _RUNTIME_COMPONENT_ATTRIBUTE,
+        },
+    )
+    for name in RUNTIME_TRANSPORT_METRIC_NAMES:
+        definitions[name] = NsMetricDefinition(
+            name=name,
+            allowed_attributes={
+                "transport_type": _TRANSPORT_TYPE_ATTRIBUTE,
+            },
+        )
+    definitions["runtime_transport_connections"] = NsMetricDefinition(
+        name="runtime_transport_connections",
+        allowed_attributes={
+            "component_type": _TRANSPORT_COMPONENT_ATTRIBUTE,
+            "tenant_scope": _TENANT_SCOPE_ATTRIBUTE,
+            "transport_type": _TRANSPORT_TYPE_ATTRIBUTE,
+        },
+    )
+    for name in RUNTIME_QUIC_METRIC_NAMES:
+        definitions[name] = NsMetricDefinition(
+            name=name,
+            allowed_attributes={
+                "transport_type": _QUIC_TRANSPORT_TYPE_ATTRIBUTE,
+            },
+        )
+    return MappingProxyType(definitions)
+
+
+RUNTIME_STANDARD_METRIC_DEFINITIONS = (
+    _build_runtime_standard_metric_definitions()
+)
+
+
+def _resolve_metric_definition(
+    *,
+    name: str,
+    definition: object,
+    has_attributes: bool,
+) -> NsMetricDefinition | None:
+    if definition is not None and not isinstance(definition, NsMetricDefinition):
+        raise NsValidationError(
+            "definition must be an NsMetricDefinition.",
+            details={
+                "field": "definition",
+                "actual_type": type(definition).__name__,
+            },
+        )
+    explicit_definition = definition
+    standard_definition = RUNTIME_STANDARD_METRIC_DEFINITIONS.get(name)
+    if standard_definition is not None:
+        if (
+            explicit_definition is not None
+            and explicit_definition != standard_definition
+        ):
+            raise NsValidationError(
+                "standard metrics must use the authoritative definition.",
+                details={"field": "definition"},
+            )
+        return standard_definition
+    if explicit_definition is not None:
+        if explicit_definition.name != name:
+            raise NsValidationError(
+                "metric definition name must match record.name.",
+                details={"field": "definition.name"},
+            )
+        return explicit_definition
+    if has_attributes:
+        raise NsValidationError(
+            "non-standard metrics with attributes require a definition.",
+            details={"field": "definition"},
+        )
+    return None
+
+
+def _validate_metric_attribute_value(
+    *,
+    key: str,
+    value: object,
+    definition: NsMetricAttributeDefinition,
+) -> None:
+    if not definition.accepts(value):
+        raise NsValidationError(
+            "metric attribute value is outside its finite definition.",
+            details={
+                "field": f"attributes.{key}",
+                "expected_type": definition.value_type.value,
+            },
+        )
+
+
 def _validate_metric_attributes(
     value: object,
     *,
     sanitizer: Sanitizer,
+    definition: NsMetricDefinition | None,
 ) -> Mapping[str, object]:
     if not isinstance(value, MappingABC):
         raise NsValidationError(
@@ -354,6 +813,9 @@ def _validate_metric_attributes(
             },
         )
 
+    allowed_attributes = (
+        {} if definition is None else definition.allowed_attributes
+    )
     raw_attributes: dict[str, object] = {}
     for key, item in items:
         if not isinstance(key, str) or (
@@ -367,8 +829,7 @@ def _validate_metric_attributes(
                     "maximum_key_length": MAX_METRIC_ATTRIBUTE_KEY_LENGTH,
                 },
             )
-        compact_key = re.sub(r"[^a-z0-9]", "", key.casefold())
-        if compact_key in _HIGH_CARDINALITY_COMPACT_KEYS:
+        if _is_high_cardinality_metric_attribute_key(key):
             raise NsValidationError(
                 "high-cardinality identifiers cannot be metric attributes.",
                 details={
@@ -376,75 +837,74 @@ def _validate_metric_attributes(
                     "use_instead": "trace_or_diagnostic_snapshot",
                 },
             )
-        if isinstance(item, bool):
-            pass
-        elif isinstance(item, str):
-            if len(item) > MAX_METRIC_ATTRIBUTE_VALUE_LENGTH:
-                raise NsValidationError(
-                    "metric attribute value is too long.",
-                    details={
-                        "field": f"attributes.{key}",
-                        "maximum_length": MAX_METRIC_ATTRIBUTE_VALUE_LENGTH,
-                        "actual_length": len(item),
-                    },
-                )
-        elif isinstance(item, (int, float)):
-            _finite_number(
-                item,
-                field_name=f"attributes.{key}",
-            )
-        else:
+        attribute_definition = allowed_attributes.get(key)
+        if attribute_definition is None:
             raise NsValidationError(
-                "metric attribute values must be scalar.",
-                details={
-                    "field": f"attributes.{key}",
-                    "actual_type": type(item).__name__,
-                },
+                "metric attribute is not allowed by the metric definition.",
+                details={"field": f"attributes.{key}"},
             )
+        _validate_metric_attribute_value(
+            key=key,
+            value=item,
+            definition=attribute_definition,
+        )
         raw_attributes[key] = item
 
-    safe_attributes = _safe_frozen_mapping(
-        raw_attributes,
-        field_name="attributes",
-        path=("observability", "metric", "attributes"),
-        sanitizer=sanitizer,
-    )
-    for key, item in safe_attributes.items():
-        if _METRIC_ATTRIBUTE_KEY_PATTERN.fullmatch(key) is None:
-            raise NsValidationError(
-                "sanitized metric attribute keys must use the stable label format.",
-                details={"field": "attributes"},
-            )
-        compact_key = re.sub(r"[^a-z0-9]", "", key.casefold())
-        if compact_key in _HIGH_CARDINALITY_COMPACT_KEYS:
+    try:
+        sanitized = sanitizer.sanitize(
+            raw_attributes,
+            path=("observability", "metric", "attributes"),
+        )
+    except Exception:
+        raise NsValidationError(
+            "metric attributes could not be sanitized safely.",
+            details={"field": "attributes"},
+        ) from None
+    if not isinstance(sanitized, MappingABC):
+        raise NsValidationError(
+            "metric attributes could not be sanitized safely.",
+            details={"field": "attributes"},
+        )
+    try:
+        encoded = json.dumps(
+            sanitized,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        normalized = json.loads(encoded)
+    except Exception:
+        raise NsValidationError(
+            "metric attributes could not be normalized safely.",
+            details={"field": "attributes"},
+        ) from None
+    if not isinstance(normalized, dict) or set(normalized) != set(raw_attributes):
+        raise NsValidationError(
+            "sanitized metric attributes must preserve the definition schema.",
+            details={"field": "attributes"},
+        )
+    for key, item in normalized.items():
+        if _is_high_cardinality_metric_attribute_key(key):
             raise NsValidationError(
                 "sanitized metric attributes cannot introduce high-cardinality identifiers.",
                 details={"field": f"attributes.{key}"},
             )
-        if isinstance(item, bool):
-            continue
-        if isinstance(item, str):
-            if len(item) <= MAX_METRIC_ATTRIBUTE_VALUE_LENGTH:
-                continue
-        elif isinstance(item, (int, float)):
-            _finite_number(item, field_name=f"attributes.{key}")
-            continue
-        if not isinstance(item, (str, bool, int, float)):
+        attribute_definition = allowed_attributes.get(key)
+        if attribute_definition is None:
             raise NsValidationError(
-                "sanitized metric attribute values must remain scalar.",
-                details={
-                    "field": f"attributes.{key}",
-                    "actual_type": type(item).__name__,
-                },
+                "sanitized metric attribute is not allowed by the definition.",
+                details={"field": f"attributes.{key}"},
             )
-        raise NsValidationError(
-            "sanitized metric attribute value is too long.",
-            details={
-                "field": f"attributes.{key}",
-                "maximum_length": MAX_METRIC_ATTRIBUTE_VALUE_LENGTH,
-            },
+        _validate_metric_attribute_value(
+            key=key,
+            value=item,
+            definition=attribute_definition,
         )
-    return safe_attributes
+    frozen = _freeze_json(normalized)
+    if not isinstance(frozen, MappingABC):
+        raise AssertionError("frozen metric attributes must remain a mapping")
+    return frozen
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -455,6 +915,11 @@ class NsMetricRecord:
     observed_at: datetime
     unit: str | None = None
     attributes: Mapping[str, object] = field(default_factory=dict)
+    definition: NsMetricDefinition | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     sanitizer: InitVar[Sanitizer | None] = None
 
     def __post_init__(self, sanitizer: Sanitizer | None) -> None:
@@ -495,9 +960,47 @@ class NsMetricRecord:
             maximum_length=64,
             optional=True,
         )
+        if not isinstance(self.attributes, MappingABC):
+            raise NsValidationError(
+                "metric attributes must be a mapping.",
+                details={
+                    "field": "attributes",
+                    "actual_type": type(self.attributes).__name__,
+                },
+            )
+        try:
+            has_attributes = bool(len(self.attributes))
+        except Exception:
+            raise NsValidationError(
+                "metric attributes could not be read.",
+                details={"field": "attributes"},
+            ) from None
+        definition = _resolve_metric_definition(
+            name=name,
+            definition=self.definition,
+            has_attributes=has_attributes,
+        )
+        if definition is not None:
+            if (
+                definition.expected_kind is not None
+                and definition.expected_kind is not self.kind
+            ):
+                raise NsValidationError(
+                    "metric kind does not match its definition.",
+                    details={"field": "kind"},
+                )
+            if (
+                definition.expected_unit is not None
+                and definition.expected_unit != unit
+            ):
+                raise NsValidationError(
+                    "metric unit does not match its definition.",
+                    details={"field": "unit"},
+                )
         attributes = _validate_metric_attributes(
             self.attributes,
             sanitizer=safe_sanitizer,
+            definition=definition,
         )
 
         object.__setattr__(self, "name", name)
@@ -505,6 +1008,11 @@ class NsMetricRecord:
         object.__setattr__(self, "observed_at", observed_at)
         object.__setattr__(self, "unit", unit)
         object.__setattr__(self, "attributes", attributes)
+        object.__setattr__(self, "definition", definition)
+        _validate_complete_record_size(
+            self.to_dict(),
+            record_type="metric",
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -606,6 +1114,10 @@ class NsTraceRecord:
         object.__setattr__(self, "attributes", attributes)
         for field_name, identifier in identifiers.items():
             object.__setattr__(self, field_name, identifier)
+        _validate_complete_record_size(
+            self.to_dict(),
+            record_type="trace",
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -651,6 +1163,18 @@ class NsDiagnosticSnapshot:
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "captured_at", captured_at)
         object.__setattr__(self, "snapshot", snapshot)
+        actual_bytes = _strict_json_record_size(self.to_dict())
+        if actual_bytes > MAX_OBSERVABILITY_RECORD_BYTES:
+            size_limit_snapshot = _freeze_json(dict(_SIZE_LIMIT_RECORD))
+            if not isinstance(size_limit_snapshot, MappingABC):
+                raise AssertionError(
+                    "diagnostic size-limit snapshot must remain a mapping"
+                )
+            object.__setattr__(self, "snapshot", size_limit_snapshot)
+            _validate_complete_record_size(
+                self.to_dict(),
+                record_type="diagnostic_snapshot",
+            )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -665,7 +1189,7 @@ class MetricsSink(Protocol):
     """Best-effort metric sink injected explicitly by the composition root."""
 
     def record(self, record: NsMetricRecord) -> bool:
-        """Accept a prepared metric record without external I/O."""
+        """Accept locally, or return False when lifecycle state rejects it."""
         ...
 
     async def flush(self) -> None:
@@ -682,7 +1206,7 @@ class TraceSink(Protocol):
     """Best-effort trace sink injected explicitly by the composition root."""
 
     def record(self, record: NsTraceRecord) -> bool:
-        """Accept a prepared trace record without external I/O."""
+        """Accept locally, or return False when lifecycle state rejects it."""
         ...
 
     async def flush(self) -> None:
@@ -699,7 +1223,7 @@ class DiagnosticSnapshotSink(Protocol):
     """Best-effort diagnostic snapshot sink for bounded, sanitized records."""
 
     def record(self, record: NsDiagnosticSnapshot) -> bool:
-        """Accept a prepared diagnostic snapshot without external I/O."""
+        """Accept locally, or return False when lifecycle state rejects it."""
         ...
 
     async def flush(self) -> None:
@@ -733,6 +1257,7 @@ class _InMemorySink(Generic[_RecordT]):
         self._sink_name = sink_name
         self._records: deque[_RecordT] = deque(maxlen=capacity)
         self._dropped_count = 0
+        self._rejected_count = 0
         self._state = NsObservabilitySinkState.OPEN
         self._lock = RLock()
 
@@ -755,12 +1280,17 @@ class _InMemorySink(Generic[_RecordT]):
             return self._dropped_count
 
     @property
+    def rejected_count(self) -> int:
+        with self._lock:
+            return self._rejected_count
+
+    @property
     def records(self) -> tuple[_RecordT, ...]:
         with self._lock:
             return tuple(self._records)
 
     def clear(self) -> int:
-        """Clear retained test records and reset the local drop counter."""
+        """Clear records and drops; retain lifecycle-level closed rejections."""
         with self._lock:
             removed = len(self._records)
             self._records.clear()
@@ -770,13 +1300,8 @@ class _InMemorySink(Generic[_RecordT]):
     def _append(self, record: _RecordT) -> bool:
         with self._lock:
             if self._state is not NsObservabilitySinkState.OPEN:
-                raise NsStateError(
-                    "observability sink is closed.",
-                    details={
-                        "sink": self._sink_name,
-                        "action": "record",
-                    },
-                )
+                self._rejected_count += 1
+                return False
             if len(self._records) == self._capacity:
                 self._dropped_count += 1
             self._records.append(record)
@@ -851,7 +1376,11 @@ class InMemoryDiagnosticSnapshotSink(_InMemorySink[NsDiagnosticSnapshot]):
         return self._append(record)
 
 
+MetricAttributeDefinition = NsMetricAttributeDefinition
+MetricAttributeValueType = NsMetricAttributeValueType
+MetricDefinition = NsMetricDefinition
 MetricKind = NsMetricKind
+MetricTenantScope = NsMetricTenantScope
 TraceStatus = NsTraceStatus
 ObservabilitySinkState = NsObservabilitySinkState
 MetricRecord = NsMetricRecord
@@ -877,16 +1406,24 @@ __all__ = [
     "MAX_METRIC_ATTRIBUTE_KEY_LENGTH",
     "MAX_METRIC_ATTRIBUTE_VALUE_LENGTH",
     "MAX_OBSERVABILITY_RECORD_BYTES",
+    "MetricAttributeDefinition",
+    "MetricAttributeValueType",
+    "MetricDefinition",
     "MetricKind",
     "MetricRecord",
+    "MetricTenantScope",
     "MetricsSink",
     "NsDiagnosticSnapshot",
     "NsDiagnosticSnapshotSink",
     "NsInMemoryDiagnosticSnapshotSink",
     "NsInMemoryMetricsSink",
     "NsInMemoryTraceSink",
+    "NsMetricAttributeDefinition",
+    "NsMetricAttributeValueType",
+    "NsMetricDefinition",
     "NsMetricKind",
     "NsMetricRecord",
+    "NsMetricTenantScope",
     "NsMetricsSink",
     "NsObservabilitySinkState",
     "NsTraceRecord",
@@ -895,6 +1432,7 @@ __all__ = [
     "ObservabilitySinkState",
     "RUNTIME_EVENT_LOOP_METRIC_NAMES",
     "RUNTIME_QUIC_METRIC_NAMES",
+    "RUNTIME_STANDARD_METRIC_DEFINITIONS",
     "RUNTIME_STANDARD_METRIC_NAMES",
     "RUNTIME_TRANSPORT_METRIC_NAMES",
     "TraceRecord",

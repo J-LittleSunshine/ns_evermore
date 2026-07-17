@@ -321,6 +321,25 @@
 - 已知限制：W15 只提供公共记录、sink 协议和内存测试实现；尚未实现 runtime event-loop/transport 采集器、远程 exporter、采样器、聚合器、target health 或 P20 故障注入。公共 sanitizer 仍不能证明任意无标签自由文本安全，调用方必须提供结构化语义；外部 adapter 的非阻塞、丢弃和 exporter conformance 需要在 P20 验证。
 - 下一工作包：`P01-W16 建立 ns_common.testing 测试工厂`，状态为 `NOT_STARTED`。
 
+## P01-FIX-08
+
+- 工作包：`P01-FIX-08 加固观测 sink 故障隔离、metric 基数门禁和完整记录大小限制`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T16:44:27+08:00`。
+- 修改文件：`src/ns_common/observability.py`、`src/ns_common/__init__.py`、`tests/test_observability.py`、实施计划、acceptance log 和 ADR-018；设计边界文档未修改，`src/ns_runtime` 未创建，P01-W16 未开始。会话开始实时执行 `git status --short --branch`，结果仅为干净的 `main...origin/main`；全过程只使用当前本地文件，不读取远程仓库、提交历史、PR、Issue 或远程分支，不切换、重置或清理工作区。
+- 三个修复问题：关闭后的内存 sink 原先抛 `NsStateError`，会把正常关闭竞态扩散到业务主链路；metric attribute 原先只做高基数 key 精确黑名单且允许任意标量值，别名和唯一字符串可绕过；`MAX_OBSERVABILITY_RECORD_BYTES` 原先只检查 attributes/snapshot 子 mapping，完整公开 record 的固定字段开销未计入。FIX-08 分别改为关闭后原子拒绝、显式有限 metric definition/schema 和完整 `to_dict()` 严格 JSON 字节门禁。
+- sink 行为与计数：三个内存 sink 在 `OPEN` 且类型正确时继续返回 `True`；`CLOSED` 后类型正确的 `record()` 返回 `False`，不修改 records、不增加 `dropped_count`，并在同一锁内增加只读 `rejected_count`。`dropped_count` 只表示容量已满时 deque 淘汰的最旧记录数量；`rejected_count` 只表示关闭后的拒绝。`clear()` 清空 records 并重置 `dropped_count`，不重置生命周期级 `rejected_count`；`flush()` 关闭前后均为安全 no-op，`aclose()` 继续幂等。类型错误仍抛 `NsValidationError`，进程级异常继续穿透。并发门禁以 8 个写线程共 800 次调用和一个关闭线程验证：每次调用只可能完整接受或完整拒绝，最终 records 数等于 `True` 数、`rejected_count` 等于 `False` 数，且无状态异常或部分写入。
+- metric schema 与 cardinality：新增冻结 `NsMetricAttributeValueType`、`NsMetricAttributeDefinition`、`NsMetricDefinition`、`NsMetricTenantScope` 及 plain alias。string 与 integer attribute 必须提供非空不可变有限允许集合，boolean 使用有限布尔值域；float、任意未登记 integer/string、list/tuple/mapping/object 均拒绝。raw schema 通过后交给公共 `Sanitizer`，sanitized key/value 再按同一 definition 复核并深度冻结。非标准 metric attributes 为空时可省略 definition；attributes 非空时必须显式提供同名 definition。标准 metric 不能用显式 definition 覆盖权威 schema。
+- 高基数与 tenant 边界：保留 `HIGH_CARDINALITY_METRIC_ATTRIBUTE_KEYS`，并把 key 规范化为 compact form后对明确 identifier 后缀匹配；除原 key 外，`target_connection_id`、`current_session_id`、`source_message_id`、`original_delivery_id`、`customer_tenant_id`、`worker_trace_id`、`peer_request_id`、`transport.connection.id` 等前缀/大小写/点/横线/下划线别名均拒绝，不因普通单词仅包含 `id` 而误拒绝。`tenant_scope` 最终固定为 `system`、`tenant`、`cross_tenant`、`shared`、`unknown`，原始 tenant ID、邮箱和随机唯一值均拒绝。
+- 标准 registry：新增只读 `RUNTIME_STANDARD_METRIC_DEFINITIONS`，与既有 8 个 event-loop、10 个通用 transport、17 个 QUIC/WebTransport 名称一一对应，数量仍为 35、名称全局唯一、key 与 `definition.name` 一致。每项都有显式 schema且不存在 wildcard；明确有限的 event-loop implementation、runtime component、transport type、component type 和 tenant scope 才开放，其余 schema 保守为空。尚未由真实 collector 确认的 kind/unit 保持 `None`，不据名称猜测业务统计语义。
+- 完整 record 大小：`MAX_OBSERVABILITY_RECORD_BYTES=262144` 现在表示完整公开 `to_dict()` 使用 `allow_nan=False`、`ensure_ascii=False`、`separators=(",", ":")`、`sort_keys=True` 后的 UTF-8 最大字节数。metric/trace 在规范化、脱敏、冻结后检查完整 record，超限抛稳定 `NsValidationError`，details 只有 `field=record`、`maximum_bytes`、`actual_bytes` 和 `record_type`，不复制内容、秘密或底层 JSON exception context。diagnostic snapshot 先检查完整 record，超限后替换为 `{"observability_status":"size_limit_exceeded"}` 并再次完整编码；占位仍超限则稳定验证失败。代表性完整记录严格编码结果为 metric 220 字节、trace 150225 字节、diagnostic 150098 字节，均不超过 262144；专项另覆盖 mapping 本身低于边界但固定字段使完整 record 超限、多字节 UTF-8 按字节超限和降级占位复检。
+- 公共导出：observability facade 从 34 项增至 43 项、`ns_common` facade 从 181 项增至 190 项，共新增 9 个公共名称：四个 `Ns*` 类型、四个对应 plain alias 和标准 definition registry。两个 facade 均无重复/缺失，plain/`Ns` alias、子 facade/顶层 facade 对象身份一致，独立解释器冷启动导入和 observability 依赖图无环。
+- 测试结果：observability 专项 `Ran 23, OK`；用户指定的 observability/security/logger/http_client/exceptions/async_runtime/config/config_package/retry/time/identifiers 联合回归 `Ran 213, OK (skipped=1)`；backend 根目录全量回归 `Ran 224, OK (skipped=1)`。两个跳过记录均是 WSL 下同一 Windows 专用 event-loop 用例。全树 `compileall`、runtime/backend 两套 `pip check`、facade/对象身份、35 项 registry、完整 record 字节、独立解释器冷启动、导入循环、禁止 exporter/runtime/global sink 单例依赖、生产源码测试文件、仓库虚拟环境扫描和 `git diff --check` 均通过。
+- 已有成功路径：OPEN sink 正确类型记录、容量淘汰、flush/aclose、标准 metric 空 attributes、已登记有限 attributes、trace 高基数 context、diagnostic snapshot 和三类 `to_dict()` schema 保持成功；完整公开字段名称未改变。原先可成功的任意 metric key/value 路径被有意收紧为显式有限 schema，关闭后的状态异常路径被有意改为 `False`，这两项属于 FIX-08 的契约修复而非兼容保留。
+- 安全/隔离检查：token、Authorization、Bearer、payload、auth_context、签名 URL、嵌套对象、Mapping 读取失败和普通 sanitizer 失败均通过严格 JSON 与零秘密泄露断言；sanitizer 前后 schema 均验证，`KeyboardInterrupt`/`SystemExit` 穿透。未增加 exporter、采集器、OTLP、Prometheus、runtime event-loop/transport collector、HTTP client、网络 I/O、Redis/Valkey、后台线程/task、全局 mutable sink、DeliveryRecord、ACK、控制审计或任何强一致写入。
+- 已知限制：当前只冻结公共记录、definition 与内存 sink；真实 P02/P04 collector 在使用对应 metric 前仍须补齐已确认的 kind/unit 和更具体的有限值域，P20 才负责 exporter、采样/聚合、全量 observability pipeline 与故障注入。`MAX_METRIC_ATTRIBUTE_VALUE_LENGTH` 继续作为 256 字符的额外资源保护；trace 和 diagnostic snapshot 仍可携带高基数 ID，但必须通过脱敏和完整 record 大小门禁。
+- 下一工作包：`P01-W16 建立 ns_common.testing 测试工厂`，状态保持 `NOT_STARTED`；唯一执行游标已指向 P01-W16。
+
 ## 新记录模板
 
 - 工作包：
