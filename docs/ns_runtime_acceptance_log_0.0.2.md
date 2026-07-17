@@ -307,6 +307,20 @@
 - 已知限制：response sanitizer 是同步、无 I/O、由调用方负责 schema 语义的诊断适配器；公共 sanitizer 无法证明任意无标签字符串安全，因此回调不得返回未经语义筛选的原始正文。token URL guard 保护通过 `bearer_token` 参数提供的当前凭据，不把未来 payload_ref 所需的全部签名 query URL 一律禁止。P02 尚未接入 owner，P06 尚未创建真实 IAM client；P01-W15 至 P01-W17 尚未完成。
 - 下一工作包：`P01-W15 建立 MetricsSink、TraceSink、DiagnosticSnapshotSink 接口和内存测试实现`，状态为 `NOT_STARTED`。
 
+## P01-W15
+
+- 工作包：`P01-W15 建立 MetricsSink、TraceSink、DiagnosticSnapshotSink 接口和内存测试实现`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T14:55:21+08:00`。
+- 修改文件：新增 `src/ns_common/observability.py` 和 `tests/test_observability.py`，更新 `src/ns_common/__init__.py`、实施计划、acceptance log，并新增 [ADR-018](ns_runtime_architecture_decisions_0.0.2.md#adr-018)。设计边界文档未修改，未创建 `src/ns_runtime`，未开始 P01-W16。
+- 公共契约变化：新增 runtime-checkable `MetricsSink`、`TraceSink`、`DiagnosticSnapshotSink`，统一使用同步本地 `record()`、异步 `flush()`/`aclose()` 和显式实例注入，不绑定 HTTP/OTLP exporter 或全局 client。新增 UTC、冻结、严格 JSON-safe 的 `NsMetricRecord`、`NsTraceRecord`、`NsDiagnosticSnapshot`，构造时使用显式或隔离默认 `Sanitizer` 脱敏；新增 metric/trace/sink 状态枚举、plain/`Ns` 兼容别名和安全 `to_dict()`。记录限制为 256 KiB；普通失败记录稳定 fail-closed 状态，进程级异常保持穿透。
+- 指标与内存实现：公共常量精确预留设计要求的 8 个 event-loop、10 个通用 transport 和 17 个 QUIC/WebTransport 标准指标名。metric 标签限 32 项且仅接受有限标量，connection/session/transport/path/message/summary/delivery/stream/plan/operation/trace/span/request/correlation/raw tenant ID 等键按大小写和分隔符归一后拒绝，`runtime_id` 与受控 `tenant_scope` 保留。三个内存 sink 使用锁保护、有界 deque、只读 tuple 快照、oldest-drop 计数、测试清理和幂等关闭；关闭后写入返回稳定状态错误，不承担持久化语义。
+- 测试结果：runtime 环境 `tests.test_observability` 13/13；observability/HTTP/exceptions/async runtime/logger/security/config/config package/retry/time/identifiers 的 P01/runtime 联合为 `Ran 203, OK (skipped=1)`；backend 环境根目录全量为 `Ran 214, OK (skipped=1)`。两个跳过记录均为 WSL 下同一 Windows 专用 event-loop 用例；backend 全量包含既有 cache 回归。
+- 静态与环境检查：全树 `compileall` 通过；runtime/backend 两套虚拟环境 `pip check` 均报告 `No broken requirements found`；`ns_common` 181 项和 observability 34 项 facade 导出无缺失、无重复，35 个标准指标名唯一；独立解释器冷启动导入通过。observability 无 httpx/requests/aiohttp、`ns_runtime`、`ns_config` 或 legacy HTTP getter 依赖；`src/` 下无测试文件，仓库内无虚拟环境，`src/ns_runtime` 仍不存在，`git diff --check` 通过。
+- 安全/隔离检查：专项测试覆盖 token、Authorization、Bearer 文本、payload、嵌套对象、输入后续变更、非法/过大记录、普通 sanitizer/Mapping 失败和进程级异常；所有公开序列化均以 `allow_nan=False` 验证且秘密零泄露。测试只使用内存记录、线程池和隔离事件循环，不发起网络请求，不访问 backend、Redis、Valkey 或真实数据目录；观测数据不进入 DeliveryRecord、ACK 或控制审计事务。
+- 已知限制：W15 只提供公共记录、sink 协议和内存测试实现；尚未实现 runtime event-loop/transport 采集器、远程 exporter、采样器、聚合器、target health 或 P20 故障注入。公共 sanitizer 仍不能证明任意无标签自由文本安全，调用方必须提供结构化语义；外部 adapter 的非阻塞、丢弃和 exporter conformance 需要在 P20 验证。
+- 下一工作包：`P01-W16 建立 ns_common.testing 测试工厂`，状态为 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：
