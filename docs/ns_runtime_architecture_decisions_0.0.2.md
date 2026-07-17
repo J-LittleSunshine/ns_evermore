@@ -158,3 +158,12 @@
 - 决策：`NsHttpClientFactory.create()` 每次返回不登记全局状态的独立 `NsAsyncHttpClient`，直接调用方对该实例负责。需要统一生命周期时，composition root 创建局部 `NsHttpClientOwner`，只通过其 `create()` 创建并持有 client，再把显式 client 实例注入 runtime service。Owner 状态固定为 `open -> closing -> closed`，开始关闭后不再接受新 client，在同一 event loop 中串行化并发 `aclose()`，按创建顺序的逆序关闭。正常关闭可幂等重入；取消或普通关闭异常不得丢失尚未成功关闭的所有权，后续 `aclose()` 可继续回收。单个 client 的普通关闭异常不阻断 owner 尝试关闭其他 client，聚合错误只保留 client 名和异常类型。
 - 后果：`get_async_http_client()` 和 `aclose_http_clients()` 继续保留原有按名称缓存/关闭兼容语义，但只是 legacy boundary；runtime 生产模块和测试不得调用该全局 getter。相同名称的显式 factory/owner client 与兼容 map 相互隔离。P02 必须在进程 composition root 中创建和关闭 owner；P06 的 IAM client 只接收显式实例。HTTP 错误 body、URL、token 和 response sanitizer 仍由 P01-W14 冻结，本 ADR 不宣称当前错误输出已安全化。
 - 关联阶段/工作包：`P01-W13`、`P02`、`P06`。
+
+## ADR-017
+
+- ADR 编号：`ADR-017`
+- 状态：`ACCEPTED`
+- 背景：HTTP status、JSON decode 和 transport failure 若复制原始 response body、URL、底层异常文本或异常 cause，会把 IAM token、credential 和上游私有错误带入日志与错误明细；另一方面，IAM 等调用方仍需要从已知响应 schema 中提取少量可诊断字段。
+- 决策：`NsHttpResponse.text`、`url` 和成功路径 `json()` 保持原始调用语义，但所有 HTTP 诊断只使用 `safe_url` 和 `safe_body_summary`。默认 body 摘要不得复制正文、正文片段、正文 digest 或任意响应头值，只保留 `present`、`text_length`，并把 Content-Type 映射为固定的 `json/text/binary/other` 分类。新增同步 `NsHttpResponseSanitizer`：client、factory、owner、legacy getter 可配置默认回调，单次 request/get/post/put/delete 可覆盖；回调只返回结构化 mapping 或 `None`，接收与真实响应隔离的快照，其修改不得改变真实 status、URL、headers、text 或后续状态判断。回调结果必须再次经过公共 `Sanitizer`；普通异常、非 mapping 或公共 sanitizer 失败时只记录稳定的 fail-closed 状态，不复制失败文本；`KeyboardInterrupt`、`SystemExit` 等进程级异常不得吞掉。`bearer_token` 只写入 Authorization header；请求参数先冻结为 `httpx.QueryParams`，若当前 token 出现在解析后的 base URL、request URL 或 query 参数中，必须在发送前以无 token 的稳定验证错误拒绝。completion log、status error、JSON decode error 和 request failure 只使用安全 URL；异常响应 URL 的 path 若仍反射当前 bearer token，则整条诊断 URL 替换。transport failure 不保留底层异常文本或异常对象，JSON decode failure 不保留含原始 doc 的 decode exception context。
+- 后果：业务调用方仍可读取成功响应正文，但不得直接把 `text`、`url` 或原始 response 对象写入日志/错误/审计。response sanitizer 必须是无 I/O 的同步 schema 适配器，并用有语义的字段名返回确有必要的安全诊断值；公共 sanitizer 只能识别已登记字段、路径和文本模式，无法证明无标签任意字符串安全，调用方仍受 ADR-009 约束。未提供回调时错误正文只产生固定元数据，不生成可离线关联的正文 digest。该 token guard 保护通过 `bearer_token` 参数提供的当前凭据，不把所有 query 参数一律禁止；未来 payload_ref 的签名 URL 仍按其专用授权和脱敏边界设计。
+- 关联阶段/工作包：`P01-W14`、`P06`、`P10`、`P20`。

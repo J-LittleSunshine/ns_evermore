@@ -293,6 +293,20 @@
 - 已知限制：W13 只冻结 client 创建与 owner 生命周期。当前 `NsHttpResponse.json()`、status error、request error 和 completion log 仍可保留原始 body preview、URL 或底层错误文本；可注入 response sanitizer、IAM token URL/日志/错误零泄漏属于 P01-W14。P02 尚未把 owner 接入进程启停，P06 尚未创建 IAM client。
 - 下一工作包：`P01-W14 安全化 HTTP 错误响应与 response sanitizer`，状态为 `NOT_STARTED`。
 
+## P01-W14
+
+- 工作包：`P01-W14 安全化 HTTP 错误响应与 response sanitizer`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T13:51:53+08:00`。
+- 修改文件：`src/ns_common/http_client.py`、`src/ns_common/__init__.py`、`tests/test_http_client.py`，更新实施计划、acceptance log 并新增 [ADR-017](ns_runtime_architecture_decisions_0.0.2.md#adr-017)。未修改设计边界文档，未创建 `src/ns_runtime`，未开始 P01-W15。
+- 公共契约变化：`NsHttpResponse` 新增不参与 repr/equality 的 `safe_url` 与 `safe_body_summary`；HTTP status 和 JSON decode 错误从原始 `body_preview` 改为固定摘要，默认只包含 `present`、`text_length` 和可选的固定 `body_format=json/text/binary/other`。新增公开 `NsHttpResponseSanitizer` 同步回调类型；`NsAsyncHttpClient`、factory、owner、legacy getter 可配置默认回调，request/get/post/put/delete 可逐请求覆盖。回调接收隔离快照，只能返回 mapping 或 `None`，输出再次交给公共 `Sanitizer`；普通失败与非法返回 fail-closed，不改变真实响应状态或泄露失败文本。
+- URL、token 与异常边界：`bearer_token` 只写入 Authorization header；params 在检查与发送前冻结，当前 token 若出现在解析后的 base/request URL 或 params 中，会在网络调用前以稳定 `NsValidationError` 拒绝且 details 不含 token。completion log、status/JSON/request error 只使用安全 URL；响应 URL path 若反射当前 bearer token，整条诊断 URL 替换。request failure 不再复制底层异常文本或保留可输出的异常 context，invalid JSON 不再保留含原始 doc 的 `JSONDecodeError` context。成功响应的原始 `text`、`url` 和 `json()` 正常语义保持兼容。
+- 测试结果：runtime 环境 `tests.test_http_client` 14/14；HTTP/exceptions 定向联合 40/40；HTTP/exceptions/async runtime/logger/security/config/config package/retry/time/identifiers 的 P01/runtime 联合为 `Ran 190, OK (skipped=1)`；backend 根目录全量为 `Ran 201, OK (skipped=1)`。两个跳过记录均为 WSL 下同一 Windows 专用 event-loop 用例。
+- 静态与环境检查：全树 `compileall` 通过；runtime/backend 两套虚拟环境 `pip check` 均报告 `No broken requirements found`；HTTP facade 8 项、`ns_common` facade 147 项导出无重复且 `NsHttpResponseSanitizer` 对象一致；独立解释器冷启动导入通过。生产源码不再包含 `body_preview`、response text slice 或底层异常字符串化，旧全局 getter 只在兼容函数定义中出现；`src/ns_runtime` 仍不存在，`src/` 下无 `test_*.py`/`tests.py`，`git diff --check` 通过。
+- 安全/隔离检查：专项测试使用内存 stub response/error，不发送真实网络请求，不访问 backend、Redis、Valkey 或真实数据目录。IAM 401/503 模拟同时放入 bearer token、access/refresh token、client secret、无标签正文 secret、签名 URL token、反射 URL path 和底层 transport/callback failure secret；错误序列化与 logger 入参均逐值验证零泄漏。sanitizer 快照修改不能把 401 改为成功，普通 callback 失败安全关闭；进程级异常继续不被 `Exception` 分支吞掉。
+- 已知限制：response sanitizer 是同步、无 I/O、由调用方负责 schema 语义的诊断适配器；公共 sanitizer 无法证明任意无标签字符串安全，因此回调不得返回未经语义筛选的原始正文。token URL guard 保护通过 `bearer_token` 参数提供的当前凭据，不把未来 payload_ref 所需的全部签名 query URL 一律禁止。P02 尚未接入 owner，P06 尚未创建真实 IAM client；P01-W15 至 P01-W17 尚未完成。
+- 下一工作包：`P01-W15 建立 MetricsSink、TraceSink、DiagnosticSnapshotSink 接口和内存测试实现`，状态为 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

@@ -2,24 +2,65 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 import ns_common
 import ns_common.http_client as http_client_module
 from ns_common.exceptions import (
     NsDependencyError,
     NsStateError,
+    NsValidationError,
 )
 from ns_common.http_client import (
     NsAsyncHttpClient,
     NsHttpClientFactory,
     NsHttpClientOwner,
     NsHttpClientOwnerState,
+    NsHttpResponse,
+    NsHttpResponseSanitizer,
     aclose_http_clients,
     get_async_http_client,
 )
+from ns_common.security import REDACTED
+
+
+class _CapturingLogger:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def info(
+            self,
+            message: str,
+            *,
+            extra: dict[str, object],
+    ) -> None:
+        self.events.append((message, extra))
+
+
+class _StubAsyncHttpxClient:
+    def __init__(self, outcome: httpx.Response | BaseException) -> None:
+        self.outcome = outcome
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
+        self.closed = False
+
+    async def request(
+            self,
+            method: str,
+            url: str,
+            **kwargs: object,
+    ) -> httpx.Response:
+        self.calls.append((method, url, dict(kwargs)))
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 class _LifecycleHttpClient(NsAsyncHttpClient):
@@ -229,6 +270,339 @@ class NsHttpClientFactoryTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((), owner.clients)
 
 
+class NsHttpResponseSecurityTestCase(unittest.IsolatedAsyncioTestCase):
+
+    async def _replace_httpx_client(
+            self,
+            client: NsAsyncHttpClient,
+            replacement: _StubAsyncHttpxClient,
+    ) -> None:
+        await client._client.aclose()
+        client._client = replacement  # type: ignore[assignment]
+
+    async def test_default_error_summary_never_copies_response_body(self) -> None:
+        body_secret = "opaque-iam-body-secret-7d494ef9"
+        url_secret = "iam-url-secret-265f27a1"
+        response = httpx.Response(
+            503,
+            headers={"Content-Type": "text/plain; charset=utf-8"},
+            text=f"upstream unavailable: {body_secret}",
+            request=httpx.Request(
+                "GET",
+                f"https://iam.internal/introspect?access_token={url_secret}",
+            ),
+        )
+        stub = _StubAsyncHttpxClient(response)
+        client = NsAsyncHttpClient(
+            name="iam-default-summary",
+            base_url="https://iam.internal",
+            verify=False,
+        )
+        self.addAsyncCleanup(client.aclose)
+        await self._replace_httpx_client(client, stub)
+        logger = _CapturingLogger()
+        client._logger = logger  # type: ignore[assignment]
+
+        with self.assertRaises(NsDependencyError) as context:
+            await client.get("/introspect")
+
+        details = context.exception.details
+        self.assertNotIn("body_preview", details)
+        self.assertEqual(
+            {
+                "present": True,
+                "text_length": len(response.text),
+                "body_format": "text",
+            },
+            details["body_summary"],
+        )
+        self.assertNotIn(body_secret, repr(details))
+        self.assertNotIn(body_secret, str(context.exception))
+        self.assertNotIn(url_secret, repr(details))
+        self.assertNotIn(url_secret, repr(logger.events))
+        self.assertEqual(1, len(logger.events))
+
+    async def test_iam_error_uses_structured_response_sanitizer(self) -> None:
+        bearer_token = "iam-bearer-8b72d0f0"
+        access_token = "body-access-9010dd0a"
+        refresh_token = "body-refresh-4f0d1770"
+        client_secret = "body-client-secret-d1ee9f16"
+        opaque_body_secret = "opaque-body-only-91fc7142"
+        signed_url_secret = "signed-url-token-6b4694cc"
+        body = json.dumps({
+            "error": "invalid_token",
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "client_secret": client_secret,
+            "opaque": opaque_body_secret,
+            "help_url": (
+                "https://iam.internal/help"
+                f"?token={signed_url_secret}"
+            ),
+        })
+
+        def summarize(response: NsHttpResponse) -> dict[str, object]:
+            payload = json.loads(response.text)
+            response.status_code = 200
+            response.safe_url = payload["help_url"]
+            response.headers["X-Reflected-Secret"] = payload["access_token"]
+            return {
+                "error_code": payload["error"],
+                "access_token": payload["access_token"],
+                "nested": {
+                    "refresh_token": payload["refresh_token"],
+                    "client_secret": payload["client_secret"],
+                },
+                "help_url": payload["help_url"],
+            }
+
+        response = httpx.Response(
+            401,
+            headers={"Content-Type": "application/json"},
+            text=body,
+            request=httpx.Request(
+                "POST",
+                (
+                    "https://iam.internal/reflected/"
+                    f"{bearer_token}?request_id=req-1"
+                ),
+            ),
+        )
+        stub = _StubAsyncHttpxClient(response)
+        owner = NsHttpClientOwner()
+        self.addAsyncCleanup(owner.aclose)
+        client = owner.create(
+            name="iam-custom-summary",
+            base_url="https://iam.internal",
+            verify=False,
+            response_sanitizer=summarize,
+        )
+        await self._replace_httpx_client(client, stub)
+        logger = _CapturingLogger()
+        client._logger = logger  # type: ignore[assignment]
+
+        with self.assertRaises(NsDependencyError) as context:
+            await client.post(
+                "/introspect",
+                params={"tenant_id": "tenant-1"},
+                bearer_token=bearer_token,
+                json_data={"resource": "document"},
+            )
+
+        self.assertIs(summarize, client.response_sanitizer)
+        self.assertEqual(1, len(stub.calls))
+        _, request_url, request_kwargs = stub.calls[0]
+        self.assertNotIn(bearer_token, request_url)
+        self.assertNotIn(bearer_token, repr(request_kwargs["params"]))
+        self.assertEqual(
+            f"Bearer {bearer_token}",
+            request_kwargs["headers"]["Authorization"],  # type: ignore[index]
+        )
+
+        summary = context.exception.details["body_summary"]
+        self.assertEqual(401, context.exception.details["status_code"])
+        self.assertEqual(REDACTED, context.exception.details["url"])
+        self.assertEqual("applied", summary["response_sanitizer"])
+        sanitized = summary["sanitized"]
+        self.assertEqual("invalid_token", sanitized["error_code"])
+        self.assertEqual(REDACTED, sanitized["access_token"])
+        self.assertEqual(REDACTED, sanitized["nested"]["refresh_token"])
+        self.assertEqual(REDACTED, sanitized["nested"]["client_secret"])
+
+        diagnostic_text = repr({
+            "error": context.exception.to_dict(),
+            "logs": logger.events,
+        })
+        for secret in (
+            bearer_token,
+            access_token,
+            refresh_token,
+            client_secret,
+            opaque_body_secret,
+            signed_url_secret,
+        ):
+            with self.subTest(secret=secret):
+                self.assertNotIn(secret, diagnostic_text)
+
+    async def test_response_sanitizer_failure_is_fail_closed(self) -> None:
+        body_secret = "opaque-failed-sanitizer-body-dd845661"
+        callback_secret = "opaque-callback-failure-6181301a"
+
+        def broken_sanitizer(_: NsHttpResponse) -> dict[str, object]:
+            raise RuntimeError(callback_secret)
+
+        response = httpx.Response(
+            500,
+            text=body_secret,
+            request=httpx.Request("GET", "https://iam.internal/failure"),
+        )
+        stub = _StubAsyncHttpxClient(response)
+        client = NsHttpClientFactory().create(
+            name="iam-failed-summary",
+            base_url="https://iam.internal",
+            verify=False,
+            response_sanitizer=broken_sanitizer,
+        )
+        self.addAsyncCleanup(client.aclose)
+        await self._replace_httpx_client(client, stub)
+
+        with self.assertRaises(NsDependencyError) as context:
+            await client.get("/failure")
+
+        summary = context.exception.details["body_summary"]
+        self.assertEqual("failed_closed", summary["response_sanitizer"])
+        self.assertNotIn("sanitized", summary)
+        self.assertNotIn(body_secret, str(context.exception))
+        self.assertNotIn(callback_secret, str(context.exception))
+
+    async def test_request_failures_drop_raw_transport_error_text(self) -> None:
+        transport_secret = "transport-error-secret-b82b0c01"
+        url_secret = "query-secret-94cdf137"
+        request_url = (
+            "https://iam.internal/introspect"
+            f"?access_token={url_secret}"
+        )
+        failures = (
+            httpx.ReadTimeout(
+                f"timeout contained {transport_secret}",
+                request=httpx.Request("GET", request_url),
+            ),
+            httpx.ConnectError(
+                f"connect contained {transport_secret}",
+                request=httpx.Request("GET", request_url),
+            ),
+        )
+
+        for index, failure in enumerate(failures):
+            with self.subTest(failure=type(failure).__name__):
+                client = NsAsyncHttpClient(
+                    name=f"iam-request-failure-{index}",
+                    base_url="https://iam.internal",
+                    verify=False,
+                )
+                self.addAsyncCleanup(client.aclose)
+                await self._replace_httpx_client(
+                    client,
+                    _StubAsyncHttpxClient(failure),
+                )
+
+                with self.assertRaises(NsDependencyError) as context:
+                    await client.get(
+                        f"/introspect?access_token={url_secret}",
+                    )
+
+                details = context.exception.details
+                self.assertNotIn("error", details)
+                self.assertNotIn(transport_secret, repr(details))
+                self.assertNotIn(url_secret, repr(details))
+                self.assertNotIn(transport_secret, str(context.exception))
+                self.assertNotIn(url_secret, str(context.exception))
+                self.assertIsNone(context.exception.__context__)
+
+    async def test_bearer_token_is_rejected_before_entering_url(self) -> None:
+        bearer_token = "iam-bearer-url-guard-1fac2203"
+        response = httpx.Response(
+            200,
+            json={"ok": True},
+            request=httpx.Request("GET", "https://iam.internal/unused"),
+        )
+        stub = _StubAsyncHttpxClient(response)
+        client = NsAsyncHttpClient(
+            name="iam-token-url-guard",
+            base_url="https://iam.internal",
+            verify=False,
+        )
+        self.addAsyncCleanup(client.aclose)
+        await self._replace_httpx_client(client, stub)
+
+        guarded_requests = (
+            {
+                "url": f"/introspect?access_token={bearer_token}",
+                "params": None,
+            },
+            {
+                "url": "/introspect",
+                "params": {"access_token": bearer_token},
+            },
+        )
+        for request in guarded_requests:
+            with self.subTest(request=request):
+                with self.assertRaises(NsValidationError) as context:
+                    await client.get(
+                        request["url"],
+                        params=request["params"],
+                        bearer_token=bearer_token,
+                    )
+                self.assertNotIn(bearer_token, str(context.exception))
+                self.assertEqual(
+                    "remove_bearer_token_from_url",
+                    context.exception.details["action"],
+                )
+
+        self.assertEqual([], stub.calls)
+
+    async def test_per_request_response_sanitizer_overrides_client_default(
+            self,
+    ) -> None:
+        response = httpx.Response(
+            200,
+            text="not-json-but-successful",
+            request=httpx.Request("GET", "https://iam.internal/status"),
+        )
+        client = NsAsyncHttpClient(
+            name="iam-request-summary-override",
+            base_url="https://iam.internal",
+            verify=False,
+            response_sanitizer=lambda _: {"source": "client"},
+        )
+        self.addAsyncCleanup(client.aclose)
+        await self._replace_httpx_client(
+            client,
+            _StubAsyncHttpxClient(response),
+        )
+
+        result = await client.get(
+            "/status",
+            response_sanitizer=lambda _: {"source": "request"},
+        )
+
+        self.assertEqual(
+            "request",
+            result.safe_body_summary["sanitized"]["source"],
+        )
+
+    async def test_invalid_json_error_uses_safe_summary_and_url(self) -> None:
+        body_secret = "invalid-json-body-secret-23239e66"
+        url_secret = "invalid-json-url-secret-29d779b2"
+        response = NsHttpResponse(
+            status_code=200,
+            headers={"Content-Type": "application/json"},
+            text=f"{{invalid-json-{body_secret}",
+            url=(
+                "https://iam.internal/result"
+                f"?access_token={url_secret}"
+            ),
+            method="GET",
+        )
+
+        with self.assertRaises(NsDependencyError) as context:
+            response.json()
+
+        details = context.exception.details
+        self.assertNotIn("body_preview", details)
+        self.assertEqual(
+            {
+                "present": True,
+                "text_length": len(response.text),
+                "body_format": "json",
+            },
+            details["body_summary"],
+        )
+        self.assertNotIn(body_secret, repr(details))
+        self.assertNotIn(url_secret, repr(details))
+        self.assertIsNone(context.exception.__context__)
+
+
 class NsHttpClientCompatibilityTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
@@ -267,6 +641,8 @@ class NsHttpClientPublicContractTestCase(unittest.TestCase):
             "NsHttpClientFactory": NsHttpClientFactory,
             "NsHttpClientOwner": NsHttpClientOwner,
             "NsHttpClientOwnerState": NsHttpClientOwnerState,
+            "NsHttpResponse": NsHttpResponse,
+            "NsHttpResponseSanitizer": NsHttpResponseSanitizer,
         }
 
         for name, expected in expected_exports.items():

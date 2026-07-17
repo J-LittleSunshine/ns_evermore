@@ -91,6 +91,7 @@ from ns_common.http_client import (
     NsHttpClientOwner,
     NsHttpClientOwnerState,
     NsHttpResponse,
+    NsHttpResponseSanitizer,
     aclose_http_clients,
     get_async_http_client,
 )
@@ -279,6 +280,7 @@ __all__ = [
     "NsHttpClientOwner",
     "NsHttpClientOwnerState",
     "NsHttpResponse",
+    "NsHttpResponseSanitizer",
     "NsIdentifier",
     "NsIdentifierFactory",
     "NsIdentifierKind",

@@ -3,22 +3,26 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from threading import RLock
 from typing import (
     Any,
+    Callable,
     Collection,
     Mapping,
 )
+from urllib.parse import unquote, unquote_plus
 
 import httpx
 
 from ns_common.exceptions import (
     NsDependencyError,
     NsStateError,
+    NsValidationError,
 )
 from ns_common.logger import get_ns_logger
+from ns_common.security import REDACTED, Sanitizer
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_MAX_CONNECTIONS = 100
@@ -35,6 +39,12 @@ class NsHttpResponse:
     text: str
     url: str
     method: str
+    safe_url: str | None = field(default=None, repr=False, compare=False)
+    safe_body_summary: Mapping[str, object] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @property
     def ok(self) -> bool:
@@ -46,16 +56,87 @@ class NsHttpResponse:
 
         try:
             return json.loads(self.text)
-        except json.JSONDecodeError as exc:
-            raise NsDependencyError(
-                "HTTP response body is not valid JSON.",
-                details={
-                    "method": self.method,
-                    "url": self.url,
-                    "status_code": self.status_code,
-                    "body_preview": self.text[:500],
-                },
-            ) from exc
+        except json.JSONDecodeError:
+            pass
+
+        sanitizer = Sanitizer()
+        raise NsDependencyError(
+            "HTTP response body is not valid JSON.",
+            details={
+                "method": self.method,
+                "url": sanitizer.sanitize_url(self.safe_url or self.url),
+                "status_code": self.status_code,
+                "body_summary": _safe_body_summary_for_error(
+                    text=self.text,
+                    headers=self.headers,
+                    supplied_summary=self.safe_body_summary,
+                    sanitizer=sanitizer,
+                ),
+            },
+        )
+
+
+# A response sanitizer is synchronous and returns only structured diagnostic
+# fields. The common Sanitizer processes the returned mapping once more.
+NsHttpResponseSanitizer = Callable[
+    [NsHttpResponse],
+    Mapping[str, object] | None,
+]
+
+
+def _default_safe_body_summary(
+        *,
+        text: str,
+        headers: Mapping[str, str],
+) -> dict[str, object]:
+    summary: dict[str, object] = {
+        "present": bool(text),
+        "text_length": len(text),
+    }
+    content_type = next(
+        (
+            value
+            for name, value in headers.items()
+            if name.casefold() == "content-type"
+        ),
+        "",
+    )
+    if isinstance(content_type, str) and content_type:
+        media_type = content_type.partition(";")[0].strip().casefold()
+        if media_type == "application/json" or media_type.endswith("+json"):
+            summary["body_format"] = "json"
+        elif media_type.startswith("text/"):
+            summary["body_format"] = "text"
+        elif media_type == "application/octet-stream":
+            summary["body_format"] = "binary"
+        else:
+            summary["body_format"] = "other"
+    return summary
+
+
+def _safe_body_summary_for_error(
+        *,
+        text: str,
+        headers: Mapping[str, str],
+        supplied_summary: Mapping[str, object] | None,
+        sanitizer: Sanitizer,
+) -> dict[str, object]:
+    default_summary = _default_safe_body_summary(
+        text=text,
+        headers=headers,
+    )
+    if supplied_summary is None:
+        return default_summary
+
+    sanitized_summary = sanitizer.sanitize(
+        supplied_summary,
+        field_name="body_summary",
+    )
+    if not isinstance(sanitized_summary, Mapping):
+        default_summary["response_sanitizer"] = "failed_closed"
+        return default_summary
+
+    return dict(sanitized_summary)
 
 
 class NsAsyncHttpClient:
@@ -68,7 +149,8 @@ class NsAsyncHttpClient:
             default_headers: Mapping[str, str] | None = None,
             verify: bool = True,
             max_connections: int = _DEFAULT_MAX_CONNECTIONS,
-            max_keepalive_connections: int = _DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+            max_keepalive_connections: int = _DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+            response_sanitizer: NsHttpResponseSanitizer | None = None,
     ) -> None:
         self.name: str = name
         self.base_url: str = base_url.rstrip("/")
@@ -77,8 +159,13 @@ class NsAsyncHttpClient:
         self.verify: bool = verify
         self.max_connections: int = max_connections
         self.max_keepalive_connections: int = max_keepalive_connections
+        self.response_sanitizer = response_sanitizer
 
-        self._logger = get_ns_logger(f"ns_http_client.{self.name}")
+        self._sanitizer = Sanitizer()
+        self._logger = get_ns_logger(
+            f"ns_http_client.{self.name}",
+            sanitizer=self._sanitizer,
+        )
         self._client: httpx.AsyncClient = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=httpx.Timeout(timeout_seconds),
@@ -89,6 +176,7 @@ class NsAsyncHttpClient:
                 max_keepalive_connections=max_keepalive_connections,
             ),
         )
+        self._request_base_url = self._client.base_url
         self._closed: bool = False
 
     @property
@@ -108,26 +196,44 @@ class NsAsyncHttpClient:
             trace_id: str | None = None,
             expected_statuses: Collection[int] | None = None,
             raise_for_status: bool = True,
+            response_sanitizer: NsHttpResponseSanitizer | None = None,
     ) -> NsHttpResponse:
         self._ensure_open()
 
         method_text = method.upper().strip()
+        request_params = (
+            httpx.QueryParams(params)
+            if params is not None
+            else None
+        )
+        self._ensure_bearer_token_header_only(
+            url=url,
+            params=request_params,
+            bearer_token=bearer_token,
+        )
         request_headers = self._build_headers(
             headers=headers,
             bearer_token=bearer_token,
             trace_id=trace_id,
         )
 
+        response: httpx.Response
+        failure: tuple[str, str | None] | None = None
         try:
             response = await self._client.request(
                 method_text,
                 url,
-                params=params,
+                params=request_params,
                 headers=request_headers,
                 json=json_data,
                 data=data,
             )
-        except httpx.TimeoutException as exc:
+        except httpx.TimeoutException:
+            failure = ("timeout", None)
+        except httpx.RequestError as error:
+            failure = ("request", type(error).__name__)
+
+        if failure is not None and failure[0] == "timeout":
             raise NsDependencyError(
                 "HTTP request timed out.",
                 details={
@@ -136,18 +242,17 @@ class NsAsyncHttpClient:
                     "url": self._safe_url(url),
                     "timeout_seconds": self.timeout_seconds,
                 },
-            ) from exc
-        except httpx.RequestError as exc:
+            )
+        if failure is not None:
             raise NsDependencyError(
                 "HTTP request failed.",
                 details={
                     "client": self.name,
                     "method": method_text,
                     "url": self._safe_url(url),
-                    "error_type": type(exc).__name__,
-                    "error": str(exc),
+                    "error_type": failure[1],
                 },
-            ) from exc
+            )
 
         result = NsHttpResponse(
             status_code=response.status_code,
@@ -155,6 +260,18 @@ class NsAsyncHttpClient:
             text=response.text,
             url=str(response.url),
             method=method_text,
+            safe_url=self._safe_response_url(
+                str(response.url),
+                bearer_token=bearer_token,
+            ),
+        )
+        result.safe_body_summary = self._build_safe_body_summary(
+            response=result,
+            response_sanitizer=(
+                response_sanitizer
+                if response_sanitizer is not None
+                else self.response_sanitizer
+            ),
         )
 
         self._logger.info(
@@ -162,7 +279,7 @@ class NsAsyncHttpClient:
             extra={
                 "client": self.name,
                 "method": method_text,
-                "url": str(response.url),
+                "url": result.safe_url,
                 "status_code": response.status_code,
             },
         )
@@ -185,6 +302,7 @@ class NsAsyncHttpClient:
             trace_id: str | None = None,
             expected_statuses: Collection[int] | None = None,
             raise_for_status: bool = True,
+            response_sanitizer: NsHttpResponseSanitizer | None = None,
     ) -> NsHttpResponse:
         return await self.request(
             "GET",
@@ -195,6 +313,7 @@ class NsAsyncHttpClient:
             trace_id=trace_id,
             expected_statuses=expected_statuses,
             raise_for_status=raise_for_status,
+            response_sanitizer=response_sanitizer,
         )
 
     async def post(
@@ -209,6 +328,7 @@ class NsAsyncHttpClient:
             trace_id: str | None = None,
             expected_statuses: Collection[int] | None = None,
             raise_for_status: bool = True,
+            response_sanitizer: NsHttpResponseSanitizer | None = None,
     ) -> NsHttpResponse:
         return await self.request(
             "POST",
@@ -221,6 +341,7 @@ class NsAsyncHttpClient:
             trace_id=trace_id,
             expected_statuses=expected_statuses,
             raise_for_status=raise_for_status,
+            response_sanitizer=response_sanitizer,
         )
 
     async def put(
@@ -235,6 +356,7 @@ class NsAsyncHttpClient:
             trace_id: str | None = None,
             expected_statuses: Collection[int] | None = None,
             raise_for_status: bool = True,
+            response_sanitizer: NsHttpResponseSanitizer | None = None,
     ) -> NsHttpResponse:
         return await self.request(
             "PUT",
@@ -247,6 +369,7 @@ class NsAsyncHttpClient:
             trace_id=trace_id,
             expected_statuses=expected_statuses,
             raise_for_status=raise_for_status,
+            response_sanitizer=response_sanitizer,
         )
 
     async def delete(
@@ -259,6 +382,7 @@ class NsAsyncHttpClient:
             trace_id: str | None = None,
             expected_statuses: Collection[int] | None = None,
             raise_for_status: bool = True,
+            response_sanitizer: NsHttpResponseSanitizer | None = None,
     ) -> NsHttpResponse:
         return await self.request(
             "DELETE",
@@ -269,6 +393,7 @@ class NsAsyncHttpClient:
             trace_id=trace_id,
             expected_statuses=expected_statuses,
             raise_for_status=raise_for_status,
+            response_sanitizer=response_sanitizer,
         )
 
     async def aclose(self) -> None:
@@ -326,10 +451,10 @@ class NsAsyncHttpClient:
                     details={
                         "client": self.name,
                         "method": response.method,
-                        "url": response.url,
+                        "url": response.safe_url,
                         "status_code": response.status_code,
                         "expected_statuses": sorted(allowed_statuses),
-                        "body_preview": response.text[:1000],
+                        "body_summary": response.safe_body_summary,
                     },
                 )
             return
@@ -340,17 +465,110 @@ class NsAsyncHttpClient:
                 details={
                     "client": self.name,
                     "method": response.method,
-                    "url": response.url,
+                    "url": response.safe_url,
                     "status_code": response.status_code,
-                    "body_preview": response.text[:1000],
+                    "body_summary": response.safe_body_summary,
                 },
             )
 
     def _safe_url(self, url: str) -> str:
-        if self.base_url and url.startswith("/"):
-            return f"{self.base_url}{url}"
+        return self._sanitizer.sanitize_url(self._resolve_url(url))
 
-        return url
+    def _safe_response_url(
+            self,
+            url: str,
+            *,
+            bearer_token: str | None,
+    ) -> str:
+        safe_url = self._sanitizer.sanitize_url(url)
+        if bearer_token and bearer_token in unquote(safe_url):
+            return REDACTED
+        return safe_url
+
+    def _resolve_url(self, url: str) -> str:
+        return str(self._request_base_url.join(url))
+
+    def _ensure_bearer_token_header_only(
+            self,
+            *,
+            url: str,
+            params: Mapping[str, Any] | None,
+            bearer_token: str | None,
+    ) -> None:
+        if bearer_token is None:
+            return
+        if not isinstance(bearer_token, str):
+            raise NsValidationError(
+                "bearer_token must be a string.",
+                details={
+                    "client": self.name,
+                    "field": "bearer_token",
+                    "actual_type": type(bearer_token).__name__,
+                },
+            )
+        if not bearer_token:
+            return
+
+        raw_url = self._resolve_url(url)
+        request_targets = [raw_url, unquote(raw_url)]
+        if params:
+            raw_query = str(httpx.QueryParams(params))
+            request_targets.extend((raw_query, unquote_plus(raw_query)))
+        if any(bearer_token in target for target in request_targets):
+            raise NsValidationError(
+                "Bearer token must only be sent in the Authorization header.",
+                details={
+                    "client": self.name,
+                    "field": "bearer_token",
+                    "action": "remove_bearer_token_from_url",
+                },
+            )
+
+    def _build_safe_body_summary(
+            self,
+            *,
+            response: NsHttpResponse,
+            response_sanitizer: NsHttpResponseSanitizer | None,
+    ) -> dict[str, object]:
+        summary = _default_safe_body_summary(
+            text=response.text,
+            headers=response.headers,
+        )
+        if response_sanitizer is None:
+            return summary
+
+        try:
+            custom_summary = response_sanitizer(NsHttpResponse(
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                text=response.text,
+                url=response.url,
+                method=response.method,
+                safe_url=response.safe_url,
+                safe_body_summary=dict(summary),
+            ))
+        except Exception:
+            summary["response_sanitizer"] = "failed_closed"
+            return summary
+
+        if custom_summary is None:
+            summary["response_sanitizer"] = "omitted"
+            return summary
+        if not isinstance(custom_summary, Mapping):
+            summary["response_sanitizer"] = "failed_closed"
+            return summary
+
+        sanitized_summary = self._sanitizer.sanitize(
+            custom_summary,
+            field_name="response_summary",
+        )
+        if not isinstance(sanitized_summary, Mapping):
+            summary["response_sanitizer"] = "failed_closed"
+            return summary
+
+        summary["response_sanitizer"] = "applied"
+        summary["sanitized"] = dict(sanitized_summary)
+        return summary
 
 
 class NsHttpClientOwnerState(str, Enum):
@@ -377,6 +595,7 @@ class NsHttpClientFactory:
             verify: bool = True,
             max_connections: int = _DEFAULT_MAX_CONNECTIONS,
             max_keepalive_connections: int = _DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+            response_sanitizer: NsHttpResponseSanitizer | None = None,
     ) -> NsAsyncHttpClient:
         return NsAsyncHttpClient(
             name=name,
@@ -386,6 +605,7 @@ class NsHttpClientFactory:
             verify=verify,
             max_connections=max_connections,
             max_keepalive_connections=max_keepalive_connections,
+            response_sanitizer=response_sanitizer,
         )
 
 
@@ -433,6 +653,7 @@ class NsHttpClientOwner:
             verify: bool = True,
             max_connections: int = _DEFAULT_MAX_CONNECTIONS,
             max_keepalive_connections: int = _DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+            response_sanitizer: NsHttpResponseSanitizer | None = None,
     ) -> NsAsyncHttpClient:
         with self._state_lock:
             self._ensure_open()
@@ -444,6 +665,7 @@ class NsHttpClientOwner:
                 verify=verify,
                 max_connections=max_connections,
                 max_keepalive_connections=max_keepalive_connections,
+                response_sanitizer=response_sanitizer,
             )
             if any(client is owned_client for owned_client in self._clients):
                 raise NsStateError(
@@ -553,7 +775,8 @@ def get_async_http_client(
         default_headers: Mapping[str, str] | None = None,
         verify: bool = True,
         max_connections: int = _DEFAULT_MAX_CONNECTIONS,
-        max_keepalive_connections: int = _DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+        max_keepalive_connections: int = _DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+        response_sanitizer: NsHttpResponseSanitizer | None = None,
 ) -> NsAsyncHttpClient:
     with _CLIENT_LOCK:
         client = _CLIENT_MAP.get(name)
@@ -568,6 +791,7 @@ def get_async_http_client(
             verify=verify,
             max_connections=max_connections,
             max_keepalive_connections=max_keepalive_connections,
+            response_sanitizer=response_sanitizer,
         )
         _CLIENT_MAP[name] = client
         return client
@@ -588,6 +812,7 @@ __all__ = [
     "NsHttpClientOwner",
     "NsHttpClientOwnerState",
     "NsHttpResponse",
+    "NsHttpResponseSanitizer",
     "aclose_http_clients",
     "get_async_http_client",
 ]
