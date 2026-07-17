@@ -340,6 +340,24 @@
 - 已知限制：当前只冻结公共记录、definition 与内存 sink；真实 P02/P04 collector 在使用对应 metric 前仍须补齐已确认的 kind/unit 和更具体的有限值域，P20 才负责 exporter、采样/聚合、全量 observability pipeline 与故障注入。`MAX_METRIC_ATTRIBUTE_VALUE_LENGTH` 继续作为 256 字符的额外资源保护；trace 和 diagnostic snapshot 仍可携带高基数 ID，但必须通过脱敏和完整 record 大小门禁。
 - 下一工作包：`P01-W16 建立 ns_common.testing 测试工厂`，状态保持 `NOT_STARTED`；唯一执行游标已指向 P01-W16。
 
+## P01-W16
+
+- 工作包：`P01-W16 建立 ns_common.testing 测试工厂`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T17:33:12+08:00`。
+- 修改文件：新增 `src/ns_common/testing.py` 和 `tests/test_testing.py`，更新 `src/ns_common/__init__.py`、实施计划、acceptance log，并新增 [ADR-019](ns_runtime_architecture_decisions_0.0.2.md#adr-019)。设计边界文档未修改，`src/ns_runtime` 未创建，P01-W17 未开始。会话开始实时执行 `git status --short --branch`，结果仅为干净的 `main...origin/main`；未读取远程仓库、提交历史、PR、Issue 或远程分支，未切换、重置或清理工作区。
+- 公共工厂与目录契约：新增实例级 `NsTestResourceFactory` 及 plain alias。每个 factory 创建唯一临时根目录和 `data/etc/log/tmp` 子目录，context/显式 `close()` 幂等回收仍持有的端口及整个根目录，关闭后拒绝创建资源；不修改 `NS_ENV`、仓库路径常量、全局 `ns_config`、cache/http client 或全局 sink。`NsTemporaryDirectories.contains()` 可验证显式路径边界，factory 并发创建的 400 个 Redis namespace 全部唯一。
+- 临时配置契约：`create_temporary_config()` 返回冻结 `NsTemporaryConfig`，同时提供显式配置文件、`NsConfig` 快照、目录和配套 Redis namespace。默认生效时间固定为 UTC epoch；调用方 override 先深复制合并，再强制 cache/runtime SQLite、backend SQLite、日志锁目录和 cache/runtime namespace 回到当前 factory 边界，输入 mapping 不被修改。文件名只允许安全 basename且不覆盖同一 factory 已存在文件；保存/重载保持同一快照，不读取或替换全局 `ns_config`。
+- clock、sink 与端口契约：`create_controlled_clock()` 每次返回新的 `ControlledClock`；`create_in_memory_sinks()` 每次返回类型校验的 metrics/trace/diagnostic 有界内存 sink bundle，支持统一 `clear()` 和异步幂等关闭。`reserve_tcp_port()` 使用 IPv4 TCP port 0 让 OS 分配端口并保持 listening socket 绑定，调用方可直接取得 socket，避免“探测后关闭再绑定”的正常竞态；reservation 与 factory 关闭均幂等释放，已释放 socket 不可重新获取。
+- Redis namespace 契约：新增冻结 `NsRedisNamespace`，由安全 `key_prefix`、scope 和 UUID 形成唯一 `key_prefix:namespace:`；提供安全 key 构造、所有权判断、同步/异步 `cleanup()` 及进入/退出双清理的 `manage()`/`amanage()`。清理只调用注入 client 的 `scan_iter(match=prefix*)` 与最多 500 项的批量 `delete()`，逐 key 再校验前缀；client 返回外部 key 时停止且不删除该 key。实现不导入 Redis/Valkey 驱动，不调用 `KEYS`、`FLUSHDB`、`FLUSHALL`，也不持有或关闭调用方 client。
+- 公共导出：`ns_common.testing` 冻结 14 项唯一导出，包括两个常量、六个 `Ns*` 类型与六个 plain alias；`ns_common` facade 从 190 项增至 204 项。子模块/顶层 facade 和 plain/`Ns` alias 对象身份一致，冷启动可在未安装 `redis`/`valkey` Python 包且不存在 `ns_runtime` 时导入。
+- 测试结果：runtime 环境 testing 专项 `Ran 20, OK`；testing/observability/security/logger/http_client/exceptions/async_runtime/config/config_package/retry/time/identifiers 的 P01/runtime 联合为 `Ran 233, OK (skipped=1)`；backend 环境根目录全量为 `Ran 244, OK (skipped=1)`。两个跳过记录均为 WSL 下同一 Windows 专用 event-loop 用例，backend 全量继续包含既有 cache 回归。
+- 真实依赖验证：本机 `/usr/bin/redis-server` 以 factory 随机保留端口、临时工作目录、关闭 RDB save 与 AOF 的 standalone 进程启动；真实 RESP `SET/GET/SCAN/DEL` 验证进入时删除 stale key、退出时删除 body key，同时另一唯一 namespace 和无关 `application:shared:*` key 完整保留。测试结束终止进程并删除临时目录；无 Redis 进程或 `ns-test-*` 目录残留。该证据只验证真实 standalone namespace 隔离，不把普通 cache 或测试 namespace 误标为强一致 StateStore。
+- 静态与环境检查：全树 `compileall` 通过；runtime/backend 两套虚拟环境 `pip check` 均报告 `No broken requirements found`；testing 14 项和 `ns_common` 204 项 facade 无缺失/重复且对象身份一致；AST/冷启动扫描确认 testing 不依赖 `redis`、`valkey` 或 `ns_runtime`。`src/` 下无 `test_*.py`/`tests.py`，仓库内无虚拟环境，测试后无临时目录/Redis 进程残留，`git diff --check` 通过。
+- 安全/隔离检查：专项覆盖两个 factory 目录/clock/sink/namespace 互不共享、并发 namespace 无冲突、配置 override 无法把已知 SQLite/log 路径写回仓库、端口 reservation 在释放前无法重复绑定、同步/异步异常退出后 namespace 被清理、恶意 scan 越界 fail-closed、其他 namespace/共享 key 不删除。测试除临时 loopback Redis 外不访问外部网络、backend、开发者真实数据库或仓库 `data/etc/log/tmp`；未增加后台线程/task、全局 mutable registry、runtime 私有类型、DeliveryRecord、ACK 或任何强一致写入。
+- 已知限制：Redis/Valkey Python 驱动及独立测试依赖清单属于 P01-W17，当前公共模块只接受调用方注入的 sync/async compatible client；client 与 server 生命周期仍由调用方拥有。退出清理前必须停止继续写入该 namespace 的 task/process。真实验收只覆盖 Redis standalone，不覆盖 Sentinel/Cluster、多节点、TLS、StateStore Lua/CAS/lease/fencing 或 P20 故障注入。第三方 server 不接受现有 socket 时，reservation 释放到 server 绑定之间仍存在不可消除的交接窗口，调用方不得把曾经探测为空闲解释为持续所有权。
+- 下一工作包：`P01-W17 建立 runtime 独立生产/测试依赖清单`，状态为 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

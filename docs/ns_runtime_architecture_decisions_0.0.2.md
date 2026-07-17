@@ -178,3 +178,13 @@
 - 决策：记录对象在进入 sink 前形成 timezone-aware UTC、深度不可变、经公共 `Sanitizer` 处理且可用 `allow_nan=False` 严格编码的快照。`MAX_OBSERVABILITY_RECORD_BYTES` 约束完整公开 `to_dict()` 结果以 `allow_nan=False`、`ensure_ascii=False`、紧凑分隔符和排序 key 编码后的 UTF-8 字节数，不只是 attributes 或 snapshot 子 mapping。metric 与 trace 的完整记录超限时返回不复制记录内容的稳定验证错误；diagnostic snapshot 先检查完整记录，超限后替换为稳定 size-limit 占位并再次检查，连占位也无法满足边界时必须验证失败。普通 sanitizer 失败转为稳定 fail-closed 状态，`KeyboardInterrupt`、`SystemExit` 等进程级异常保持穿透。trace 和按需 diagnostic snapshot 可以携带高基数标识，但仍必须经过脱敏与完整记录大小限制。
 - 后果：P02 composition root 必须创建并显式注入 sink，在停止新任务后调用其 `flush()`/`aclose()`；深层 runtime 模块不得获取全局 sink。P02/P04 及后续真实 collector 在使用对应标准 metric 前必须补齐已经确认的 kind/unit 和有限 attribute 语义，不能以 definition 中的未冻结字段推断业务统计含义。P20 可增加 OTLP、Prometheus、backend 推送或其他 adapter，但不得修改公共记录安全边界、在同步 `record()` 中发起网络 I/O，或把 exporter 成功解释为强一致状态提交。未启用 adapter 时标准指标可以不采集，不能因此宣称对应 transport 已实现。
 - 关联阶段/工作包：`P01-W15`、`P01-FIX-08`、`P02`、`P04`、`P05`、`P07`、`P14`、`P20`、`P21`。
+
+## ADR-019
+
+- ADR 编号：`ADR-019`
+- 状态：`ACCEPTED`
+- 背景：后续 runtime 测试会同时使用文件配置、SQLite、可控时间、观测 sink、监听端口和真实 Redis/Valkey。若测试直接读取仓库 `data/etc/log/tmp`、修改全局 `ns_config` 或环境变量、先探测空闲端口再关闭重绑、复用固定 Redis key 前缀，串行和并行测试都会产生跨用例污染；若用 `FLUSHDB`/`FLUSHALL` 清理，则会破坏共享开发实例中的其他数据。把 Redis Python 驱动或服务进程生命周期硬编码进公共工厂，还会提前混合 P01-W17 的依赖分层和调用方所有权。
+- 决策：`ns_common.testing` 只提供实例级、显式拥有的测试资源，不建立模块级 mutable registry，也不修改环境变量、仓库路径常量、全局配置/cache/http/sink 单例。`NsTestResourceFactory` 为每个实例创建并回收独立临时根目录及 `data/etc/log/tmp` 子目录；临时配置写入该实例的显式文件，默认使用确定性的 UTC epoch，并强制已知 SQLite、日志锁目录和 Redis namespace 字段落在实例隔离边界。每次请求的 `ControlledClock`、内存 sink bundle、配置 namespace 都是新对象。测试端口必须让操作系统以 port 0 分配并保持 TCP socket 绑定，调用方可以直接把该 socket 交给 server；仅返回一个已经关闭探测 socket 的端口号不构成无竞态 reservation。工厂关闭按所有权释放仍绑定的端口和临时目录，关闭后拒绝创建新资源。
+- 决策：真实 Redis/Valkey 由调用方创建并持有 client；工厂只创建由安全 key part 和随机 UUID 组成的唯一 `key_prefix:namespace:`。同步/异步托管上下文在进入和退出时使用注入 client 的 `scan_iter(match=prefix*)` 与有界批量 `delete()` 清理，逐 key 复核所有权；scan 返回前缀外 key 时必须停止且不得删除该 key。公共实现禁止调用 `KEYS`、`FLUSHDB` 或 `FLUSHALL`，不隐式选择 Redis database，也不关闭调用方 client。退出清理前，调用方必须先停止仍会向该 namespace 写入的 task/process；namespace 清理不等于强一致 StateStore、Redis Cluster、lease、fencing 或故障恢复验证。
+- 后果：P02 及后续单元、契约和 standalone 集成测试应复用该工厂并显式传递资源，不得自行使用仓库真实目录、固定端口或共享 Redis 前缀。P01-W17 负责提供 Redis/Valkey 等测试驱动和独立测试依赖清单；P08/P17/P20 再分别验证 StateStore、集群协调和故障场景。需要把 reservation 交给不接受现有 socket 的第三方 server 时，调用方只能在启动前最后时刻显式释放并承担交接窗口，不能把“探测到过空闲”当作端口所有权证明。
+- 关联阶段/工作包：`P01-W16`、`P01-W17`、`P02` 至 `P22`。
