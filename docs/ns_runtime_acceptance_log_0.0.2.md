@@ -261,6 +261,23 @@
 - 已知限制：W12 只冻结错误类、code、category、策略 metadata、覆盖矩阵和 NACK 映射，不实现错误 Envelope、transport 库异常适配、IAM 调用、状态机副作用或策略执行；这些能力仍由 P03-P21 的对应阶段落地。新增 transport/cluster/lease 等错误不代表相关 runtime 功能已经启用。
 - 下一工作包：`P01-W13 重构 HTTP client 创建方式与 owner 生命周期`，状态为 `NOT_STARTED`。
 
+## P01-FIX-07
+
+- 工作包：`P01-FIX-07 校准 W12 协议与 processor 错误策略，并补齐 protocol_violation 细粒度错误码`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T09:10:42+08:00`。
+- 修改文件：`src/ns_common/exceptions/processor.py`、`protocol.py`、`nack.py`、`registry.py`、`__init__.py`、`tests/test_exceptions.py`、实施计划、acceptance log 和 ADR-015；未修改设计边界文档、HTTP client 或其他 runtime 功能，未创建 `src/ns_runtime`，未开始 P01-W13。本地校准开始和实施前再次执行 `git status --short --branch`，均只显示干净的 `main...origin/main`；未读取远程仓库、提交记录、PR 或 Issue。
+- processor timeout 策略变化：`NsRuntimeProcessorTimeoutError` 从 `retryable=True/action=retry_processor_execution` 改为 `retryable=False/action=isolate_processor_timeout`；severity 继续为 warning，disconnect_required 继续为 false，audit_required 继续为 true，safe_detail 继续为 false。timeout 只证明调用未在期限内完成，不能证明 processor 未产生副作用、已成功取消、外部调用未成功、状态未写入或具备幂等性；未来实际 retry 必须由具体 processor 的幂等、状态和显式策略决定。
+- protocol parse 策略变化：`NsRuntimeProtocolParseError` 从 `disconnect_required=True` 改为 false；retryable、audit_required、safe_detail 继续为 false，severity/category 和 `reject_unparseable_message` 保持不变。单条不可解析消息默认拒绝，但不直接等同于连接级攻击；连续畸形消息、超大帧、恶意资源消耗和握手失败仍留给后续精确错误、策略与连接状态处理。Envelope schema、协议版本、source/auth_context forged 和 tenant mismatch 的强制断连策略未削弱，其中 forged identity 与 tenant mismatch 继续审计。
+- 新增协议违规错误：确认本地既有最高 numeric code 为 200163 且 200164 未占用后，新增 `NsRuntimeProtocolViolationError`，code 为 `RUNTIME_PROTOCOL_VIOLATION`，numeric code 为 `200164`，继承 `NsRuntimeProtocolError`；默认策略为 error/protocol、不可重试、默认不断连、要求审计、safe_detail=false、action=`reject_protocol_violation`。该叶子只表达已确认协议违规，不复制 forged identity 或 tenant mismatch 的强制断连语义。
+- NACK 映射变化：13 个 reason 的顺序和文本均未改变，其他 12 个映射未改变；`protocol_violation` 从 `RUNTIME_PROTOCOL_ERROR` 改为 `RUNTIME_PROTOCOL_VIOLATION`。验证器新增精确叶子门禁，回退到宽泛领域基类会失败，所有 NACK code 继续要求已注册且使用 `RUNTIME_` 前缀。
+- 覆盖与兼容性：最终共有 72 个异常类/definition、65 个 `RUNTIME_*` code、18 个 coverage 域、19 个独立人工冻结设计场景和 13 个 NACK reason；facade 有 97 项无重复公共导出。72 个类、code、numeric_code 全局唯一，最高 numeric code 为 200164。除上述两个 definition 的默认策略 metadata 外，既有 71 个异常的类名、模块路径、继承关系、code、numeric_code、default_message、构造签名、details、`to_dict()` 和 `__str__()` 均未改变；查询函数和验证函数调用方式、精确类型查询且无 MRO fallback 的语义均保持不变。新增错误继续使用既有构造和四字段序列化。
+- 独立门禁与负向测试：新增不由 registry、coverage matrix、异常类遍历或 Markdown 生成的 `REQUIRED_RUNTIME_ERROR_SCENARIOS`。门禁检查 scenario 名/code 唯一、`RUNTIME_` 前缀、code 已注册且已进入 coverage；负向覆盖 coverage 缺少 violation、scenario 未注册、scenario 未覆盖、scenario 重复 code、NACK 回退宽泛 protocol code、processor timeout 恢复 retryable 和 protocol parse 恢复强制断连。
+- 测试结果：runtime 环境 `tests.test_exceptions` 26/26；W12 指定 exceptions/async runtime/logger/security/config/config package/retry 联合 157/157；P01/runtime 联合 176/176；backend 根目录全量 187/187。全树 `compileall`、runtime/backend 两套环境 `pip check`、exceptions facade 公共导出、类/code/numeric_code 唯一性、覆盖矩阵、独立设计场景、NACK 映射、14 个子模块冷启动导入、导入图无环、生产源码内部 exceptions 路径扫描和 `git diff --check` 均通过。
+- 安全/隔离检查：注册和覆盖继续使用显式冻结聚合，不使用 decorator、import 副作用、动态扫描或 `__subclasses__()`；exceptions 不依赖 sanitizer/logger/config，metadata 不读取异常 details，新增与校准 definition 的 safe_detail 均为 false。未修改 `NsRuntimeProcessorFailedError`，静态检查未发现其现有保守隔离与审计策略和设计直接冲突。
+- 已知限制：本修复只冻结默认策略 metadata、精确协议违规错误、NACK 映射和测试门禁；不实现 processor 幂等判定、取消确认、自动 retry 决策、协议滥用检测、频率计数、限流、断连升级、连接状态机或错误 Envelope。P01-W13 的 HTTP client 生命周期重构保持 `NOT_STARTED`。
+- 下一工作包：`P01-W13 重构 HTTP client 创建方式与 owner 生命周期`，状态为 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

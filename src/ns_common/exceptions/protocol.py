@@ -65,6 +65,12 @@ class NsRuntimeProtocolParseError(NsRuntimeProtocolError):
     default_message = "Runtime protocol payload cannot be parsed."
 
 
+class NsRuntimeProtocolViolationError(NsRuntimeProtocolError):
+    code = "RUNTIME_PROTOCOL_VIOLATION"
+    numeric_code = 200164
+    default_message = "Runtime protocol violation is detected."
+
+
 PROTOCOL_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
     NsErrorDefinition.for_error_type(
         NsRuntimeProtocolError,
@@ -131,7 +137,20 @@ PROTOCOL_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
         NsRuntimeProtocolParseError,
         severity=NsErrorSeverity.ERROR,
         category=NsErrorCategory.PROTOCOL,
-        disconnect_required=True,
+        retryable=False,
+        disconnect_required=False,
+        audit_required=False,
+        safe_detail=False,
         action="reject_unparseable_message",
+    ),
+    NsErrorDefinition.for_error_type(
+        NsRuntimeProtocolViolationError,
+        severity=NsErrorSeverity.ERROR,
+        category=NsErrorCategory.PROTOCOL,
+        retryable=False,
+        disconnect_required=False,
+        audit_required=True,
+        safe_detail=False,
+        action="reject_protocol_violation",
     ),
 )

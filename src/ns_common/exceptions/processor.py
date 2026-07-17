@@ -26,9 +26,11 @@ PROCESSOR_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
         NsRuntimeProcessorTimeoutError,
         severity=NsErrorSeverity.WARNING,
         category=NsErrorCategory.PROCESSOR,
-        retryable=True,
+        retryable=False,
+        disconnect_required=False,
         audit_required=True,
-        action="retry_processor_execution",
+        safe_detail=False,
+        action="isolate_processor_timeout",
     ),
     NsErrorDefinition.for_error_type(
         NsRuntimeProcessorFailedError,

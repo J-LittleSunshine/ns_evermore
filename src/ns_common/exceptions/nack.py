@@ -16,11 +16,16 @@ from .payload_ref import (
 )
 from .protocol import (
     NsRuntimeAuthContextForgedError,
-    NsRuntimeProtocolError,
+    NsRuntimeProtocolViolationError,
     NsRuntimeSourceForgedError,
     NsRuntimeTenantMismatchError,
 )
 from .registry import ERROR_REGISTRY
+
+
+_PRECISE_NACK_REASON_ERROR_CODES = {
+    "protocol_violation": NsRuntimeProtocolViolationError.code,
+}
 
 
 def validate_runtime_nack_reason_error_codes(
@@ -45,6 +50,11 @@ def validate_runtime_nack_reason_error_codes(
             raise ValueError("NACK error code must start with RUNTIME_")
         if ERROR_REGISTRY.get_by_code(code) is None:
             raise ValueError(f"unregistered NACK error code: {code}")
+        precise_code = _PRECISE_NACK_REASON_ERROR_CODES.get(reason)
+        if precise_code is not None and code != precise_code:
+            raise ValueError(
+                f"NACK reason {reason} must map to {precise_code}"
+            )
         seen_reasons.add(reason)
 
     return normalized_entries
@@ -77,7 +87,10 @@ RUNTIME_NACK_REASON_ERROR_CODES: tuple[tuple[str, str], ...] = (
                 "auth_context_forged",
                 NsRuntimeAuthContextForgedError.code,
             ),
-            ("protocol_violation", NsRuntimeProtocolError.code),
+            (
+                "protocol_violation",
+                NsRuntimeProtocolViolationError.code,
+            ),
         )
     )
 )

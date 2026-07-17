@@ -9,7 +9,7 @@ import subprocess
 import sys
 import types
 import unittest
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import ns_common
@@ -496,6 +496,12 @@ EXCEPTION_SNAPSHOTS = {
         200163,
         "Runtime dependency is unavailable.",
     ),
+    "NsRuntimeProtocolViolationError": (
+        "NsRuntimeProtocolError",
+        "RUNTIME_PROTOCOL_VIOLATION",
+        200164,
+        "Runtime protocol violation is detected.",
+    ),
 }
 
 TOP_LEVEL_EXCEPTION_EXPORTS = (
@@ -523,6 +529,73 @@ TOP_LEVEL_EXCEPTION_EXPORTS = (
     "NsStateError",
     "NsValidationError",
 )
+
+
+REQUIRED_RUNTIME_ERROR_SCENARIOS = {
+    "protocol_parse": "RUNTIME_PROTOCOL_PARSE_ERROR",
+    "protocol_violation": "RUNTIME_PROTOCOL_VIOLATION",
+    "envelope_schema": "RUNTIME_ENVELOPE_SCHEMA_ERROR",
+    "protocol_version": "RUNTIME_PROTOCOL_VERSION_ERROR",
+    "source_forged": "RUNTIME_SOURCE_FORGED",
+    "auth_context_forged": "RUNTIME_AUTH_CONTEXT_FORGED",
+    "iam_denied": "RUNTIME_IAM_DENIED",
+    "tenant_mismatch": "RUNTIME_TENANT_MISMATCH",
+    "target_not_found": "RUNTIME_TARGET_NOT_FOUND",
+    "route_unavailable": "RUNTIME_ROUTE_UNAVAILABLE",
+    "ack_timeout": "RUNTIME_ACK_TIMEOUT",
+    "nack_non_retryable": "RUNTIME_NACK_NON_RETRYABLE",
+    "defer_budget_exceeded": "RUNTIME_DEFER_BUDGET_EXCEEDED",
+    "fencing_rejected": "RUNTIME_FENCING_REJECTED",
+    "owner_mismatch": "RUNTIME_OWNER_MISMATCH",
+    "payload_ref_invalid": "RUNTIME_PAYLOAD_REF_INVALID",
+    "leader_lease_lost": "RUNTIME_LEADER_LEASE_LOST",
+    "processor_timeout": "RUNTIME_PROCESSOR_TIMEOUT",
+    "illegal_delivery_transition": "RUNTIME_DELIVERY_STATE_ERROR",
+}
+
+
+def validate_required_runtime_error_scenarios(
+    scenarios: dict[str, str] = REQUIRED_RUNTIME_ERROR_SCENARIOS,
+    coverage_matrix: tuple[tuple[str, tuple[str, ...]], ...] = (
+        RUNTIME_ERROR_COVERAGE_MATRIX
+    ),
+    registry: NsErrorRegistry = ERROR_REGISTRY,
+) -> dict[str, str]:
+    if not isinstance(scenarios, dict):
+        raise TypeError("required runtime error scenarios must be a dict")
+    if not isinstance(registry, NsErrorRegistry):
+        raise TypeError("registry must be NsErrorRegistry")
+
+    scenario_names = tuple(scenarios)
+    if len(scenario_names) != len(set(scenario_names)):
+        raise ValueError("required runtime scenario names must be unique")
+
+    scenario_codes = tuple(scenarios.values())
+    if len(scenario_codes) != len(set(scenario_codes)):
+        raise ValueError("required runtime scenario codes must be unique")
+
+    covered_codes = {
+        code
+        for _, codes in coverage_matrix
+        for code in codes
+    }
+    for scenario_name, code in scenarios.items():
+        if not isinstance(scenario_name, str) or not scenario_name.strip():
+            raise ValueError("required runtime scenario name must be non-empty")
+        if not isinstance(code, str) or not code.startswith("RUNTIME_"):
+            raise ValueError(
+                "required runtime scenario code must start with RUNTIME_"
+            )
+        if registry.get_by_code(code) is None:
+            raise ValueError(
+                f"required runtime scenario code is not registered: {code}"
+            )
+        if code not in covered_codes:
+            raise ValueError(
+                f"required runtime scenario code is not covered: {code}"
+            )
+
+    return scenarios
 
 
 def expected_policy(
@@ -742,7 +815,12 @@ EXPECTED_ERROR_POLICIES = {
         NsErrorSeverity.ERROR,
         NsErrorCategory.PROTOCOL,
         "reject_unparseable_message",
-        disconnect_required=True,
+    ),
+    exceptions_facade.NsRuntimeProtocolViolationError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.PROTOCOL,
+        "reject_protocol_violation",
+        audit_required=True,
     ),
     exceptions_facade.NsRuntimeIamDeniedError: expected_policy(
         NsErrorSeverity.ERROR,
@@ -843,8 +921,7 @@ EXPECTED_ERROR_POLICIES = {
     exceptions_facade.NsRuntimeProcessorTimeoutError: expected_policy(
         NsErrorSeverity.WARNING,
         NsErrorCategory.PROCESSOR,
-        "retry_processor_execution",
-        retryable=True,
+        "isolate_processor_timeout",
         audit_required=True,
     ),
     exceptions_facade.NsRuntimeProcessorFailedError: expected_policy(
@@ -965,6 +1042,58 @@ EXPECTED_ERROR_POLICIES = {
         retryable=True,
     ),
 }
+
+
+def validate_fix_07_policy_invariants(
+    definitions: dict[
+        type[NsEvermoreError], NsErrorDefinition
+    ] | None = None,
+) -> None:
+    expected = {
+        exceptions_facade.NsRuntimeProcessorTimeoutError: (
+            False,
+            False,
+            True,
+            False,
+            "isolate_processor_timeout",
+        ),
+        exceptions_facade.NsRuntimeProtocolParseError: (
+            False,
+            False,
+            False,
+            False,
+            "reject_unparseable_message",
+        ),
+        exceptions_facade.NsRuntimeProtocolViolationError: (
+            False,
+            False,
+            True,
+            False,
+            "reject_protocol_violation",
+        ),
+    }
+
+    for error_type, expected_policy_values in expected.items():
+        definition = (
+            get_error_definition(error_type)
+            if definitions is None
+            else definitions.get(error_type)
+        )
+        if definition is None:
+            raise ValueError(
+                f"missing FIX-07 definition: {error_type.__name__}"
+            )
+        actual_policy_values = (
+            definition.retryable,
+            definition.disconnect_required,
+            definition.audit_required,
+            definition.safe_detail,
+            definition.action,
+        )
+        if actual_policy_values != expected_policy_values:
+            raise ValueError(
+                f"FIX-07 policy mismatch: {error_type.__name__}"
+            )
 
 
 def make_definition(
@@ -1116,7 +1245,7 @@ class NsExceptionsPackageStructureTestCase(unittest.TestCase):
 class NsExceptionCompatibilityTestCase(unittest.TestCase):
 
     def test_class_metadata_and_inheritance_match_legacy_contract(self) -> None:
-        self.assertEqual(71, len(EXCEPTION_SNAPSHOTS))
+        self.assertEqual(72, len(EXCEPTION_SNAPSHOTS))
         for class_name, snapshot in EXCEPTION_SNAPSHOTS.items():
             with self.subTest(class_name=class_name):
                 base_name, code, numeric_code, default_message = snapshot
@@ -1152,6 +1281,15 @@ class NsExceptionCompatibilityTestCase(unittest.TestCase):
                 self.assertEqual(snapshot[2], default_error.numeric_code)
                 self.assertEqual(snapshot[3], default_error.message)
                 self.assertEqual({}, default_error.details)
+                self.assertEqual(
+                    {
+                        "code": snapshot[1],
+                        "numeric_code": snapshot[2],
+                        "message": snapshot[3],
+                        "details": {},
+                    },
+                    default_error.to_dict(),
+                )
 
                 custom_error = error_type(
                     "custom message",
@@ -1217,7 +1355,7 @@ class NsExceptionCompatibilityTestCase(unittest.TestCase):
 class NsErrorMetadataRegistryTestCase(unittest.TestCase):
 
     def test_all_current_error_policies_match_explicit_matrix(self) -> None:
-        self.assertEqual(71, len(EXPECTED_ERROR_POLICIES))
+        self.assertEqual(72, len(EXPECTED_ERROR_POLICIES))
         self.assertEqual(
             set(EXPECTED_ERROR_POLICIES),
             {definition.error_type for definition in ALL_ERROR_DEFINITIONS},
@@ -1272,7 +1410,6 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             exceptions_facade.NsRuntimeDeliveryLeaseRenewFailedError,
             exceptions_facade.NsRuntimeIamUnavailableError,
             exceptions_facade.NsRuntimeIamTimeoutError,
-            exceptions_facade.NsRuntimeProcessorTimeoutError,
             exceptions_facade.NsRuntimeRouteUnavailableError,
             exceptions_facade.NsRuntimeTenantPausedError,
             exceptions_facade.NsRuntimeTenantQuotaExceededError,
@@ -1309,6 +1446,41 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
                         definition.audit_required,
                     ),
                 )
+
+    def test_fix_07_policy_invariants_reject_unsafe_regressions(self) -> None:
+        validate_fix_07_policy_invariants()
+        definitions = {
+            error_type: get_error_definition(error_type)
+            for error_type in (
+                exceptions_facade.NsRuntimeProcessorTimeoutError,
+                exceptions_facade.NsRuntimeProtocolParseError,
+                exceptions_facade.NsRuntimeProtocolViolationError,
+            )
+        }
+        self.assertTrue(all(definitions.values()))
+        checked_definitions = {
+            error_type: definition
+            for error_type, definition in definitions.items()
+            if definition is not None
+        }
+
+        processor_type = exceptions_facade.NsRuntimeProcessorTimeoutError
+        retryable_timeout = dict(checked_definitions)
+        retryable_timeout[processor_type] = replace(
+            checked_definitions[processor_type],
+            retryable=True,
+        )
+        with self.assertRaisesRegex(ValueError, "ProcessorTimeout"):
+            validate_fix_07_policy_invariants(retryable_timeout)
+
+        parse_type = exceptions_facade.NsRuntimeProtocolParseError
+        disconnecting_parse = dict(checked_definitions)
+        disconnecting_parse[parse_type] = replace(
+            checked_definitions[parse_type],
+            disconnect_required=True,
+        )
+        with self.assertRaisesRegex(ValueError, "ProtocolParse"):
+            validate_fix_07_policy_invariants(disconnecting_parse)
 
     def test_current_dependency_scenarios_use_conservative_definition(self) -> None:
         config = NsRuntimeEventLoopConfig(
@@ -1427,10 +1599,10 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
     def test_registry_is_complete_unique_queryable_and_json_safe(self) -> None:
         definitions = list_error_definitions()
         self.assertIs(ALL_ERROR_DEFINITIONS, definitions)
-        self.assertEqual(71, len(definitions))
-        self.assertEqual(71, len({item.error_type for item in definitions}))
-        self.assertEqual(71, len({item.code for item in definitions}))
-        self.assertEqual(71, len({item.numeric_code for item in definitions}))
+        self.assertEqual(72, len(definitions))
+        self.assertEqual(72, len({item.error_type for item in definitions}))
+        self.assertEqual(72, len({item.code for item in definitions}))
+        self.assertEqual(72, len({item.numeric_code for item in definitions}))
 
         validate_error_registry()
         for definition in definitions:
@@ -1477,7 +1649,7 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             for definition in ALL_ERROR_DEFINITIONS
             if definition.code.startswith("RUNTIME_")
         }
-        self.assertEqual(64, len(covered_codes))
+        self.assertEqual(65, len(covered_codes))
         self.assertEqual(registered_runtime_codes, set(covered_codes))
         self.assertEqual(len(covered_codes), len(set(covered_codes)))
 
@@ -1504,6 +1676,63 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             with self.subTest(matrix=matrix):
                 with self.assertRaises((TypeError, ValueError)):
                     validate_runtime_error_coverage_matrix(matrix)
+
+        missing_violation_matrix = tuple(
+            (
+                area,
+                tuple(
+                    code
+                    for code in codes
+                    if code != "RUNTIME_PROTOCOL_VIOLATION"
+                ),
+            )
+            for area, codes in RUNTIME_ERROR_COVERAGE_MATRIX
+        )
+        with self.assertRaisesRegex(ValueError, "PROTOCOL_VIOLATION"):
+            validate_runtime_error_coverage_matrix(missing_violation_matrix)
+
+    def test_required_runtime_error_scenarios_are_independent_and_complete(
+        self,
+    ) -> None:
+        self.assertEqual(19, len(REQUIRED_RUNTIME_ERROR_SCENARIOS))
+        self.assertEqual(
+            len(REQUIRED_RUNTIME_ERROR_SCENARIOS),
+            len(set(REQUIRED_RUNTIME_ERROR_SCENARIOS)),
+        )
+        self.assertEqual(
+            len(REQUIRED_RUNTIME_ERROR_SCENARIOS),
+            len(set(REQUIRED_RUNTIME_ERROR_SCENARIOS.values())),
+        )
+        self.assertIs(
+            REQUIRED_RUNTIME_ERROR_SCENARIOS,
+            validate_required_runtime_error_scenarios(),
+        )
+
+        unregistered = dict(REQUIRED_RUNTIME_ERROR_SCENARIOS)
+        unregistered["protocol_violation"] = "RUNTIME_UNKNOWN_SCENARIO"
+        with self.assertRaisesRegex(ValueError, "not registered"):
+            validate_required_runtime_error_scenarios(unregistered)
+
+        missing_violation_matrix = tuple(
+            (
+                area,
+                tuple(
+                    code
+                    for code in codes
+                    if code != "RUNTIME_PROTOCOL_VIOLATION"
+                ),
+            )
+            for area, codes in RUNTIME_ERROR_COVERAGE_MATRIX
+        )
+        with self.assertRaisesRegex(ValueError, "not covered"):
+            validate_required_runtime_error_scenarios(
+                coverage_matrix=missing_violation_matrix
+            )
+
+        duplicate_code = dict(REQUIRED_RUNTIME_ERROR_SCENARIOS)
+        duplicate_code["protocol_parse"] = "RUNTIME_PROTOCOL_VIOLATION"
+        with self.assertRaisesRegex(ValueError, "codes must be unique"):
+            validate_required_runtime_error_scenarios(duplicate_code)
 
     def test_every_public_exception_class_has_one_definition(self) -> None:
         registered_types = {definition.error_type for definition in ALL_ERROR_DEFINITIONS}
@@ -1593,7 +1822,7 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             ("payload_ref_denied", "RUNTIME_PAYLOAD_REF_DENIED"),
             ("source_forged", "RUNTIME_SOURCE_FORGED"),
             ("auth_context_forged", "RUNTIME_AUTH_CONTEXT_FORGED"),
-            ("protocol_violation", "RUNTIME_PROTOCOL_ERROR"),
+            ("protocol_violation", "RUNTIME_PROTOCOL_VIOLATION"),
         )
         self.assertEqual(expected_mapping, RUNTIME_NACK_REASON_ERROR_CODES)
         self.assertEqual(
@@ -1618,6 +1847,13 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             with self.subTest(entries=entries):
                 with self.assertRaises((TypeError, ValueError)):
                     validate_runtime_nack_reason_error_codes(entries)
+
+        broad_protocol_mapping = (
+            *RUNTIME_NACK_REASON_ERROR_CODES[:-1],
+            ("protocol_violation", "RUNTIME_PROTOCOL_ERROR"),
+        )
+        with self.assertRaisesRegex(ValueError, "PROTOCOL_VIOLATION"):
+            validate_runtime_nack_reason_error_codes(broad_protocol_mapping)
 
 
 if __name__ == "__main__":

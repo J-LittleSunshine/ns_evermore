@@ -39,6 +39,7 @@ RUNTIME_ERROR_COVERAGE_MATRIX: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "RUNTIME_PROTOCOL_ERROR",
             "RUNTIME_PROTOCOL_PARSE_ERROR",
+            "RUNTIME_PROTOCOL_VIOLATION",
             "RUNTIME_ENVELOPE_SCHEMA_ERROR",
             "RUNTIME_PROTOCOL_VERSION_ERROR",
             "RUNTIME_SOURCE_FORGED",
