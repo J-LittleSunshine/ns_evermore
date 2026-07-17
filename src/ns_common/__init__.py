@@ -226,11 +226,13 @@ from ns_common.testing import (
     NsTemporaryConfig,
     NsTemporaryDirectories,
     NsTestResourceFactory,
+    NsTestResourceFactoryState,
     RedisNamespace,
     ReservedPort,
     TemporaryConfig,
     TemporaryDirectories,
     TestResourceFactory,
+    TestResourceFactoryState,
 )
 
 if TYPE_CHECKING:
@@ -326,6 +328,7 @@ __all__ = [
     "NsTemporaryConfig",
     "NsTemporaryDirectories",
     "NsTestResourceFactory",
+    "NsTestResourceFactoryState",
     "NsTraceRecord",
     "NsTraceSink",
     "NsTraceStatus",
@@ -389,6 +392,7 @@ __all__ = [
     "TemporaryConfig",
     "TemporaryDirectories",
     "TestResourceFactory",
+    "TestResourceFactoryState",
     "TraceRecord",
     "TraceSink",
     "TraceStatus",

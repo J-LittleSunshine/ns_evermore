@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import socket
@@ -13,7 +14,9 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event, Lock, Thread
 from typing import Iterator
+from unittest import mock
 
 import ns_common
 import ns_common.testing as testing_module
@@ -30,11 +33,13 @@ from ns_common.testing import (
     NsTemporaryConfig,
     NsTemporaryDirectories,
     NsTestResourceFactory,
+    NsTestResourceFactoryState,
     RedisNamespace,
     ReservedPort,
     TemporaryConfig,
     TemporaryDirectories,
     TestResourceFactory,
+    TestResourceFactoryState,
 )
 from ns_common.time import UTC_EPOCH
 
@@ -51,11 +56,13 @@ TESTING_PUBLIC_EXPORTS = frozenset({
     "NsTemporaryConfig",
     "NsTemporaryDirectories",
     "NsTestResourceFactory",
+    "NsTestResourceFactoryState",
     "RedisNamespace",
     "ReservedPort",
     "TemporaryConfig",
     "TemporaryDirectories",
     "TestResourceFactory",
+    "TestResourceFactoryState",
 })
 
 
@@ -219,6 +226,9 @@ class NsTestResourceFactoryTestCase(unittest.TestCase):
     def test_factory_owns_unique_directories_and_removes_them(self) -> None:
         first = NsTestResourceFactory()
         second = NsTestResourceFactory()
+        self.assertIs(first.state, NsTestResourceFactoryState.OPEN)
+        self.assertFalse(first.is_closing)
+        self.assertFalse(first.is_closed)
         first_root = first.directories.root
         second_root = second.directories.root
         try:
@@ -240,8 +250,12 @@ class NsTestResourceFactoryTestCase(unittest.TestCase):
 
         self.assertFalse(first_root.exists())
         self.assertFalse(second_root.exists())
+        self.assertIs(first.state, NsTestResourceFactoryState.CLOSED)
+        self.assertFalse(first.is_closing)
+        self.assertTrue(first.is_closed)
         first.close()
         second.close()
+        self.assertIs(first.state, NsTestResourceFactoryState.CLOSED)
 
     def test_factory_rejects_invalid_roots_and_use_after_close(self) -> None:
         with self.assertRaises(NsValidationError):
@@ -257,16 +271,30 @@ class NsTestResourceFactoryTestCase(unittest.TestCase):
 
         factory = NsTestResourceFactory()
         factory.close()
-        with self.assertRaises(NsStateError):
-            _ = factory.directories
-        with self.assertRaises(NsStateError):
-            factory.create_controlled_clock()
-        with self.assertRaises(NsStateError):
-            factory.create_in_memory_sinks()
-        with self.assertRaises(NsStateError):
-            factory.create_redis_namespace()
-        with self.assertRaises(NsStateError):
-            factory.reserve_tcp_port()
+        closed_operations = (
+            ("directories", lambda: factory.directories),
+            ("create_temporary_config", factory.create_temporary_config),
+            ("create_controlled_clock", factory.create_controlled_clock),
+            ("create_in_memory_sinks", factory.create_in_memory_sinks),
+            ("create_redis_namespace", factory.create_redis_namespace),
+            ("reserve_tcp_port", factory.reserve_tcp_port),
+            (
+                "manage_redis_namespace",
+                lambda: factory.manage_redis_namespace(_SyncRedisClient()),
+            ),
+            (
+                "amanage_redis_namespace",
+                lambda: factory.amanage_redis_namespace(_AsyncRedisClient()),
+            ),
+        )
+        for operation, action in closed_operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(NsStateError) as caught:
+                    action()
+                self.assertEqual(
+                    {"operation": operation, "state": "closed"},
+                    caught.exception.details,
+                )
 
     def test_temporary_config_is_frozen_explicit_and_path_isolated(self) -> None:
         original_overrides = {
@@ -454,6 +482,9 @@ class NsTestResourceFactoryTestCase(unittest.TestCase):
         factory.close()
         self.assertTrue(second.is_released)
         self.assertFalse(root.exists())
+        self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+        self.assertEqual([], factory._ports)
+        self.assertTrue(factory._temporary_directory_released)
         available_after_close = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             available_after_close.bind(("127.0.0.1", second_port))
@@ -481,6 +512,607 @@ class NsTestResourceFactoryTestCase(unittest.TestCase):
             self.assertNotIn(key, client.keys)
             with self.assertRaises(NsValidationError):
                 factory.create_redis_namespace(scope="x" * 65)
+
+
+class NsTestResourceFactoryCloseTestCase(unittest.TestCase):
+    def test_port_release_failure_preserves_only_pending_ownership(self) -> None:
+        factory = NsTestResourceFactory()
+        self.addCleanup(factory.close)
+        root = factory.directories.root
+        first = factory.reserve_tcp_port()
+        middle = factory.reserve_tcp_port()
+        last = factory.reserve_tcp_port()
+        first_release = first.release
+        middle_release = middle.release
+        last_release = last.release
+        order: list[str] = []
+        middle_attempts = 0
+
+        def release_first() -> bool:
+            order.append("first")
+            return first_release()
+
+        def release_middle() -> bool:
+            nonlocal middle_attempts
+            order.append("middle")
+            middle_attempts += 1
+            if middle_attempts == 1:
+                raise OSError("private port cleanup failure")
+            return middle_release()
+
+        def release_last() -> bool:
+            order.append("last")
+            return last_release()
+
+        with (
+            mock.patch.object(first, "release", side_effect=release_first) as first_mock,
+            mock.patch.object(
+                middle,
+                "release",
+                side_effect=release_middle,
+            ) as middle_mock,
+            mock.patch.object(last, "release", side_effect=release_last) as last_mock,
+        ):
+            with self.assertRaises(NsStateError) as caught:
+                factory.close()
+
+            self.assertEqual(["last", "middle", "first"], order)
+            self.assertEqual(1, first_mock.call_count)
+            self.assertEqual(1, middle_mock.call_count)
+            self.assertEqual(1, last_mock.call_count)
+            self.assertTrue(first.is_released)
+            self.assertFalse(middle.is_released)
+            self.assertTrue(last.is_released)
+            self.assertEqual([middle], factory._ports)
+            self.assertTrue(factory._temporary_directory_released)
+            self.assertFalse(root.exists())
+            self.assertIs(factory.state, NsTestResourceFactoryState.CLOSING)
+            self.assertTrue(factory.is_closing)
+            self.assertFalse(factory.is_closed)
+            self.assertEqual(
+                {
+                    "operation": "close_test_resources",
+                    "state": "closing",
+                    "failed_resource_types": ["reserved_port"],
+                    "failed_resource_count": 1,
+                    "remaining_port_count": 1,
+                    "temporary_directory_pending": False,
+                    "failures": [
+                        {
+                            "resource_type": "reserved_port",
+                            "error_type": "OSError",
+                        }
+                    ],
+                },
+                caught.exception.details,
+            )
+
+            factory.close()
+            factory.close()
+            self.assertEqual(
+                ["last", "middle", "first", "middle"],
+                order,
+            )
+            self.assertEqual(1, first_mock.call_count)
+            self.assertEqual(2, middle_mock.call_count)
+            self.assertEqual(1, last_mock.call_count)
+
+        self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+        self.assertFalse(factory.is_closing)
+        self.assertTrue(factory.is_closed)
+        self.assertEqual([], factory._ports)
+
+    def test_temporary_directory_failure_is_retryable_and_not_repeated(self) -> None:
+        factory = NsTestResourceFactory()
+        self.addCleanup(factory.close)
+        root = factory.directories.root
+        cleanup = factory._temporary_directory.cleanup
+        cleanup_attempts = 0
+
+        def flaky_cleanup() -> None:
+            nonlocal cleanup_attempts
+            cleanup_attempts += 1
+            if cleanup_attempts == 1:
+                raise PermissionError("private temporary directory failure")
+            cleanup()
+
+        with mock.patch.object(
+            factory._temporary_directory,
+            "cleanup",
+            side_effect=flaky_cleanup,
+        ) as cleanup_mock:
+            with self.assertRaises(NsStateError) as caught:
+                factory.close()
+            self.assertIs(factory.state, NsTestResourceFactoryState.CLOSING)
+            self.assertFalse(factory.is_closed)
+            self.assertFalse(factory._temporary_directory_released)
+            self.assertTrue(root.exists())
+            self.assertEqual(1, cleanup_mock.call_count)
+            self.assertEqual(
+                ["temporary_directory"],
+                caught.exception.details["failed_resource_types"],
+            )
+
+            factory.close()
+            self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+            self.assertTrue(factory._temporary_directory_released)
+            self.assertFalse(root.exists())
+            self.assertEqual(2, cleanup_mock.call_count)
+
+            factory.close()
+            self.assertEqual(2, cleanup_mock.call_count)
+
+    def test_port_and_directory_failures_are_aggregated_without_secrets(self) -> None:
+        factory = NsTestResourceFactory()
+        self.addCleanup(factory.close)
+        root = factory.directories.root
+        temporary = factory.create_temporary_config(filename="private-config.json")
+        namespace = factory.create_redis_namespace(scope="private")
+        successful = factory.reserve_tcp_port()
+        failing = factory.reserve_tcp_port()
+        successful_release = successful.release
+        failing_release = failing.release
+        cleanup = factory._temporary_directory.cleanup
+        secret = "cleanup-secret-do-not-copy"
+        release_attempts = 0
+        cleanup_attempts = 0
+
+        def release_successful() -> bool:
+            return successful_release()
+
+        def release_failing() -> bool:
+            nonlocal release_attempts
+            release_attempts += 1
+            if release_attempts == 1:
+                raise OSError(f"{secret}: {failing.host}:{failing.port}")
+            return failing_release()
+
+        def cleanup_failing() -> None:
+            nonlocal cleanup_attempts
+            cleanup_attempts += 1
+            if cleanup_attempts == 1:
+                raise PermissionError(f"{secret}: {root}")
+            cleanup()
+
+        with (
+            mock.patch.object(
+                successful,
+                "release",
+                side_effect=release_successful,
+            ) as successful_mock,
+            mock.patch.object(
+                failing,
+                "release",
+                side_effect=release_failing,
+            ) as failing_mock,
+            mock.patch.object(
+                factory._temporary_directory,
+                "cleanup",
+                side_effect=cleanup_failing,
+            ) as cleanup_mock,
+        ):
+            with self.assertRaises(NsStateError) as caught:
+                factory.close()
+
+            error = caught.exception
+            self.assertEqual(
+                ["reserved_port", "temporary_directory"],
+                error.details["failed_resource_types"],
+            )
+            self.assertEqual(2, error.details["failed_resource_count"])
+            self.assertEqual(1, error.details["remaining_port_count"])
+            self.assertTrue(error.details["temporary_directory_pending"])
+            self.assertEqual(
+                [
+                    {
+                        "resource_type": "reserved_port",
+                        "error_type": "OSError",
+                    },
+                    {
+                        "resource_type": "temporary_directory",
+                        "error_type": "PermissionError",
+                    },
+                ],
+                error.details["failures"],
+            )
+            self.assertIsNone(error.__cause__)
+            self.assertIsNone(error.__context__)
+            serialized_forms = (
+                str(error),
+                json.dumps(error.details, sort_keys=True),
+                json.dumps(error.to_dict(), sort_keys=True),
+            )
+            sensitive_values = (
+                secret,
+                str(root),
+                str(temporary.path),
+                failing.host,
+                str(failing.port),
+                namespace.namespace,
+            )
+            for serialized in serialized_forms:
+                for sensitive in sensitive_values:
+                    with self.subTest(sensitive=sensitive, serialized=serialized):
+                        self.assertNotIn(sensitive, serialized)
+
+            self.assertTrue(successful.is_released)
+            self.assertFalse(failing.is_released)
+            self.assertEqual([failing], factory._ports)
+            self.assertFalse(factory._temporary_directory_released)
+            self.assertEqual(1, successful_mock.call_count)
+            self.assertEqual(1, failing_mock.call_count)
+            self.assertEqual(1, cleanup_mock.call_count)
+
+            factory.close()
+            self.assertEqual(1, successful_mock.call_count)
+            self.assertEqual(2, failing_mock.call_count)
+            self.assertEqual(2, cleanup_mock.call_count)
+
+        self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+        self.assertFalse(root.exists())
+
+    def test_concurrent_close_waits_for_one_successful_executor(self) -> None:
+        factory = NsTestResourceFactory()
+        self.addCleanup(factory.close)
+        root = factory.directories.root
+        reservation = factory.reserve_tcp_port()
+        release = reservation.release
+        release_entered = Event()
+        allow_release = Event()
+        start_gate = Event()
+        called = [Event() for _ in range(4)]
+        completed = [Event() for _ in range(4)]
+        errors: list[BaseException | None] = [None] * 4
+        active_lock = Lock()
+        active_count = 0
+        maximum_active = 0
+
+        def blocking_release() -> bool:
+            nonlocal active_count, maximum_active
+            with active_lock:
+                active_count += 1
+                maximum_active = max(maximum_active, active_count)
+            release_entered.set()
+            try:
+                if not allow_release.wait(5):
+                    raise AssertionError("release gate timed out")
+                return release()
+            finally:
+                with active_lock:
+                    active_count -= 1
+
+        def close_in_thread(index: int) -> None:
+            if not start_gate.wait(5):
+                errors[index] = AssertionError("start gate timed out")
+                completed[index].set()
+                return
+            called[index].set()
+            try:
+                factory.close()
+            except BaseException as error:
+                errors[index] = error
+            finally:
+                completed[index].set()
+
+        threads = [
+            Thread(target=close_in_thread, args=(index,), daemon=True)
+            for index in range(4)
+        ]
+        with mock.patch.object(
+            reservation,
+            "release",
+            side_effect=blocking_release,
+        ) as release_mock:
+            for thread in threads:
+                thread.start()
+            start_gate.set()
+            try:
+                self.assertTrue(release_entered.wait(5))
+                self.assertTrue(all(event.wait(5) for event in called))
+                self.assertIs(factory.state, NsTestResourceFactoryState.CLOSING)
+                self.assertFalse(any(event.is_set() for event in completed))
+                self.assertEqual(1, release_mock.call_count)
+                self.assertEqual(1, maximum_active)
+            finally:
+                allow_release.set()
+
+            self.assertTrue(all(event.wait(5) for event in completed))
+            for thread in threads:
+                thread.join(timeout=1)
+                self.assertFalse(thread.is_alive())
+
+            self.assertEqual([None] * 4, errors)
+            self.assertEqual(1, release_mock.call_count)
+            self.assertEqual(1, maximum_active)
+
+        self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+        self.assertTrue(reservation.is_released)
+        self.assertFalse(root.exists())
+
+    def test_concurrent_close_retries_after_first_executor_failure(self) -> None:
+        factory = NsTestResourceFactory()
+        self.addCleanup(factory.close)
+        reservation = factory.reserve_tcp_port()
+        release = reservation.release
+        first_release_entered = Event()
+        allow_first_failure = Event()
+        start_gate = Event()
+        called = [Event() for _ in range(4)]
+        completed = [Event() for _ in range(4)]
+        errors: list[BaseException | None] = [None] * 4
+        active_lock = Lock()
+        active_count = 0
+        maximum_active = 0
+        release_attempts = 0
+
+        def flaky_release() -> bool:
+            nonlocal active_count, maximum_active, release_attempts
+            with active_lock:
+                active_count += 1
+                maximum_active = max(maximum_active, active_count)
+                release_attempts += 1
+                attempt = release_attempts
+            try:
+                if attempt == 1:
+                    first_release_entered.set()
+                    if not allow_first_failure.wait(5):
+                        raise AssertionError("failure gate timed out")
+                    raise OSError("private concurrent cleanup failure")
+                return release()
+            finally:
+                with active_lock:
+                    active_count -= 1
+
+        def close_in_thread(index: int) -> None:
+            if not start_gate.wait(5):
+                errors[index] = AssertionError("start gate timed out")
+                completed[index].set()
+                return
+            called[index].set()
+            try:
+                factory.close()
+            except BaseException as error:
+                errors[index] = error
+            finally:
+                completed[index].set()
+
+        threads = [
+            Thread(target=close_in_thread, args=(index,), daemon=True)
+            for index in range(4)
+        ]
+        with mock.patch.object(
+            reservation,
+            "release",
+            side_effect=flaky_release,
+        ) as release_mock:
+            for thread in threads:
+                thread.start()
+            start_gate.set()
+            try:
+                self.assertTrue(first_release_entered.wait(5))
+                self.assertTrue(all(event.wait(5) for event in called))
+                self.assertFalse(any(event.is_set() for event in completed))
+                self.assertEqual(1, release_mock.call_count)
+                self.assertEqual(1, maximum_active)
+            finally:
+                allow_first_failure.set()
+
+            self.assertTrue(all(event.wait(5) for event in completed))
+            for thread in threads:
+                thread.join(timeout=1)
+                self.assertFalse(thread.is_alive())
+
+            stable_errors = [
+                error for error in errors if isinstance(error, NsStateError)
+            ]
+            self.assertEqual(1, len(stable_errors), errors)
+            self.assertEqual(3, sum(error is None for error in errors))
+            self.assertEqual(2, release_mock.call_count)
+            self.assertEqual(2, release_attempts)
+            self.assertEqual(1, maximum_active)
+            self.assertEqual(
+                "closing",
+                stable_errors[0].details["state"],
+            )
+
+        self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+        self.assertTrue(reservation.is_released)
+
+    def test_closing_state_rejects_every_creation_entry_at_call_time(self) -> None:
+        factory = NsTestResourceFactory()
+        self.addCleanup(factory.close)
+        root = factory.directories.root
+        entries_before = tuple(sorted(root.rglob("*")))
+        owned_port_count = len(factory._ports)
+        cleanup = factory._temporary_directory.cleanup
+        cleanup_entered = Event()
+        allow_cleanup = Event()
+        close_completed = Event()
+        close_error: list[BaseException] = []
+
+        def blocking_cleanup() -> None:
+            cleanup_entered.set()
+            if not allow_cleanup.wait(5):
+                raise AssertionError("cleanup gate timed out")
+            cleanup()
+
+        def close_in_thread() -> None:
+            try:
+                factory.close()
+            except BaseException as error:
+                close_error.append(error)
+            finally:
+                close_completed.set()
+
+        with (
+            mock.patch.object(
+                factory._temporary_directory,
+                "cleanup",
+                side_effect=blocking_cleanup,
+            ),
+            mock.patch.object(
+                testing_module.uuid,
+                "uuid4",
+                side_effect=AssertionError("uuid allocation must not run"),
+            ) as uuid_mock,
+            mock.patch.object(
+                testing_module.socket_module,
+                "socket",
+                side_effect=AssertionError("socket allocation must not run"),
+            ) as socket_mock,
+            mock.patch.object(
+                testing_module,
+                "ControlledClock",
+                side_effect=AssertionError("clock allocation must not run"),
+            ) as clock_mock,
+            mock.patch.object(
+                testing_module,
+                "InMemoryMetricsSink",
+                side_effect=AssertionError("sink allocation must not run"),
+            ) as sink_mock,
+        ):
+            thread = Thread(target=close_in_thread, daemon=True)
+            thread.start()
+            try:
+                self.assertTrue(cleanup_entered.wait(5))
+                self.assertIs(factory.state, NsTestResourceFactoryState.CLOSING)
+                self.assertTrue(factory.is_closing)
+                self.assertFalse(factory.is_closed)
+
+                closing_operations = (
+                    ("directories", lambda: factory.directories),
+                    (
+                        "create_temporary_config",
+                        factory.create_temporary_config,
+                    ),
+                    ("create_controlled_clock", factory.create_controlled_clock),
+                    ("create_in_memory_sinks", factory.create_in_memory_sinks),
+                    ("reserve_tcp_port", factory.reserve_tcp_port),
+                    ("create_redis_namespace", factory.create_redis_namespace),
+                    (
+                        "manage_redis_namespace",
+                        lambda: factory.manage_redis_namespace(_SyncRedisClient()),
+                    ),
+                    (
+                        "amanage_redis_namespace",
+                        lambda: factory.amanage_redis_namespace(
+                            _AsyncRedisClient()
+                        ),
+                    ),
+                )
+                for operation, action in closing_operations:
+                    with self.subTest(operation=operation):
+                        with self.assertRaises(NsStateError) as caught:
+                            action()
+                        self.assertEqual(
+                            {"operation": operation, "state": "closing"},
+                            caught.exception.details,
+                        )
+
+                self.assertEqual(entries_before, tuple(sorted(root.rglob("*"))))
+                self.assertEqual(owned_port_count, len(factory._ports))
+                uuid_mock.assert_not_called()
+                socket_mock.assert_not_called()
+                clock_mock.assert_not_called()
+                sink_mock.assert_not_called()
+                self.assertFalse(close_completed.is_set())
+            finally:
+                allow_cleanup.set()
+
+            self.assertTrue(close_completed.wait(5))
+            thread.join(timeout=1)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual([], close_error)
+
+        self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+
+    def test_process_level_cleanup_exceptions_preserve_pending_ownership(self) -> None:
+        for exception_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(exception_type=exception_type.__name__):
+                factory = NsTestResourceFactory()
+                self.addCleanup(factory.close)
+                root = factory.directories.root
+                first = factory.reserve_tcp_port()
+                interrupting = factory.reserve_tcp_port()
+                last = factory.reserve_tcp_port()
+                first_release = first.release
+                last_release = last.release
+                process_error = exception_type("process-level-stop")
+
+                with (
+                    mock.patch.object(
+                        first,
+                        "release",
+                        wraps=first_release,
+                    ) as first_mock,
+                    mock.patch.object(
+                        interrupting,
+                        "release",
+                        side_effect=process_error,
+                    ) as interrupting_mock,
+                    mock.patch.object(
+                        last,
+                        "release",
+                        wraps=last_release,
+                    ) as last_mock,
+                ):
+                    with self.assertRaises(exception_type) as caught:
+                        factory.close()
+                    self.assertIs(process_error, caught.exception)
+                    self.assertEqual(0, first_mock.call_count)
+                    self.assertEqual(1, interrupting_mock.call_count)
+                    self.assertEqual(1, last_mock.call_count)
+                    self.assertFalse(first.is_released)
+                    self.assertFalse(interrupting.is_released)
+                    self.assertTrue(last.is_released)
+                    self.assertEqual([first, interrupting], factory._ports)
+                    self.assertFalse(factory._temporary_directory_released)
+                    self.assertTrue(root.exists())
+                    self.assertIs(
+                        factory.state,
+                        NsTestResourceFactoryState.CLOSING,
+                    )
+
+                factory.close()
+                self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+                self.assertTrue(first.is_released)
+                self.assertTrue(interrupting.is_released)
+                self.assertFalse(root.exists())
+
+    def test_context_manager_preserves_body_and_cleanup_failure_facts(self) -> None:
+        normal_body = NsTestResourceFactory()
+        self.addCleanup(normal_body.close)
+        with mock.patch.object(
+            normal_body._temporary_directory,
+            "cleanup",
+            side_effect=OSError("private cleanup failure"),
+        ):
+            with self.assertRaises(NsStateError):
+                with normal_body:
+                    pass
+        self.assertIs(normal_body.state, NsTestResourceFactoryState.CLOSING)
+        normal_body.close()
+
+        body_failure = NsTestResourceFactory()
+        with self.assertRaisesRegex(ValueError, "body-failure"):
+            with body_failure:
+                raise ValueError("body-failure")
+        self.assertIs(body_failure.state, NsTestResourceFactoryState.CLOSED)
+
+        both_fail = NsTestResourceFactory()
+        self.addCleanup(both_fail.close)
+        with mock.patch.object(
+            both_fail._temporary_directory,
+            "cleanup",
+            side_effect=OSError("private cleanup failure"),
+        ):
+            with self.assertRaises(NsStateError) as caught:
+                with both_fail:
+                    raise ValueError("body-failure")
+        self.assertIsInstance(caught.exception.__context__, ValueError)
+        self.assertEqual("body-failure", str(caught.exception.__context__))
+        self.assertNotIn("private cleanup failure", str(caught.exception))
+        both_fail.close()
 
 
 class NsRedisNamespaceTestCase(unittest.TestCase):
@@ -609,6 +1241,7 @@ class NsRedisNamespaceAsyncTestCase(unittest.IsolatedAsyncioTestCase):
                 )
             )
             await sinks.aclose()
+            await sinks.aclose()
             self.assertTrue(sinks.metrics.is_closed)
             self.assertTrue(sinks.traces.is_closed)
             self.assertTrue(sinks.diagnostics.is_closed)
@@ -734,6 +1367,7 @@ class NsTestingFacadeTestCase(unittest.TestCase):
         self.assertIs(InMemorySinkBundle, NsInMemorySinkBundle)
         self.assertIs(ReservedPort, NsReservedPort)
         self.assertIs(TestResourceFactory, NsTestResourceFactory)
+        self.assertIs(TestResourceFactoryState, NsTestResourceFactoryState)
         self.assertEqual(500, DEFAULT_REDIS_CLEANUP_BATCH_SIZE)
         self.assertEqual("ns_test", DEFAULT_TEST_REDIS_KEY_PREFIX)
 

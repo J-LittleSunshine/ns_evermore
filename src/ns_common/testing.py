@@ -15,8 +15,9 @@ from contextlib import (
 )
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
-from threading import RLock
+from threading import Condition, RLock
 from typing import Any
 
 from ns_common.config import NsConfig
@@ -36,6 +37,14 @@ DEFAULT_TEST_REDIS_KEY_PREFIX = "ns_test"
 _SAFE_RESOURCE_PART_PATTERN = re.compile(r"[A-Za-z0-9_.-]+\Z")
 _SAFE_FILE_PREFIX_PATTERN = re.compile(r"[A-Za-z0-9_.-]+\Z")
 _SAFE_REDIS_KEY_SEGMENT_PATTERN = re.compile(r"[A-Za-z0-9_.-]+\Z")
+
+
+class NsTestResourceFactoryState(str, Enum):
+    """Lifecycle state for an explicitly owned test resource factory."""
+
+    OPEN = "open"
+    CLOSING = "closing"
+    CLOSED = "closed"
 
 
 def _validate_resource_part(value: object, *, field_name: str) -> str:
@@ -600,12 +609,15 @@ class NsTestResourceFactory:
                 )
 
         self._lock = RLock()
-        self._closed = False
+        self._close_condition = Condition(self._lock)
+        self._state = NsTestResourceFactoryState.OPEN
+        self._close_attempt_active = False
         self._ports: list[NsReservedPort] = []
         self._temporary_directory = tempfile.TemporaryDirectory(
             prefix=prefix,
             dir=None if parent is None else str(parent),
         )
+        self._temporary_directory_released = False
         root = Path(self._temporary_directory.name).resolve()
         directories = NsTemporaryDirectories(
             root=root,
@@ -626,13 +638,23 @@ class NsTestResourceFactory:
     @property
     def directories(self) -> NsTemporaryDirectories:
         with self._lock:
-            self._require_open()
+            self._require_open("directories")
             return self._directories
+
+    @property
+    def state(self) -> NsTestResourceFactoryState:
+        with self._lock:
+            return self._state
 
     @property
     def is_closed(self) -> bool:
         with self._lock:
-            return self._closed
+            return self._state is NsTestResourceFactoryState.CLOSED
+
+    @property
+    def is_closing(self) -> bool:
+        with self._lock:
+            return self._state is NsTestResourceFactoryState.CLOSING
 
     def create_temporary_config(
         self,
@@ -644,7 +666,7 @@ class NsTestResourceFactory:
         redis_namespace: NsRedisNamespace | None = None,
     ) -> NsTemporaryConfig:
         with self._lock:
-            self._require_open()
+            self._require_open("create_temporary_config")
             if overrides is not None and not isinstance(overrides, Mapping):
                 raise NsValidationError(
                     "overrides must be a mapping.",
@@ -704,7 +726,7 @@ class NsTestResourceFactory:
         monotonic_start: float = 0.0,
     ) -> ControlledClock:
         with self._lock:
-            self._require_open()
+            self._require_open("create_controlled_clock")
             return ControlledClock(
                 utc_start=utc_start,
                 monotonic_start=monotonic_start,
@@ -716,7 +738,7 @@ class NsTestResourceFactory:
         capacity: int = DEFAULT_IN_MEMORY_SINK_CAPACITY,
     ) -> NsInMemorySinkBundle:
         with self._lock:
-            self._require_open()
+            self._require_open("create_in_memory_sinks")
             return NsInMemorySinkBundle(
                 metrics=InMemoryMetricsSink(capacity=capacity),
                 traces=InMemoryTraceSink(capacity=capacity),
@@ -724,16 +746,16 @@ class NsTestResourceFactory:
             )
 
     def reserve_tcp_port(self, *, host: str = "127.0.0.1") -> NsReservedPort:
-        if not isinstance(host, str) or not host or host != host.strip():
-            raise NsValidationError(
-                "host must be a non-empty string without surrounding whitespace.",
-                details={
-                    "field": "host",
-                    "actual_type": type(host).__name__,
-                },
-            )
         with self._lock:
-            self._require_open()
+            self._require_open("reserve_tcp_port")
+            if not isinstance(host, str) or not host or host != host.strip():
+                raise NsValidationError(
+                    "host must be a non-empty string without surrounding whitespace.",
+                    details={
+                        "field": "host",
+                        "actual_type": type(host).__name__,
+                    },
+                )
             reserved_socket = socket_module.socket(
                 socket_module.AF_INET,
                 socket_module.SOCK_STREAM,
@@ -755,7 +777,7 @@ class NsTestResourceFactory:
         key_prefix: str = DEFAULT_TEST_REDIS_KEY_PREFIX,
     ) -> NsRedisNamespace:
         with self._lock:
-            self._require_open()
+            self._require_open("create_redis_namespace")
             return self._create_redis_namespace_locked(
                 scope=scope,
                 key_prefix=key_prefix,
@@ -769,10 +791,12 @@ class NsTestResourceFactory:
         key_prefix: str = DEFAULT_TEST_REDIS_KEY_PREFIX,
         batch_size: int = DEFAULT_REDIS_CLEANUP_BATCH_SIZE,
     ) -> AbstractContextManager[NsRedisNamespace]:
-        namespace = self.create_redis_namespace(
-            scope=scope,
-            key_prefix=key_prefix,
-        )
+        with self._lock:
+            self._require_open("manage_redis_namespace")
+            namespace = self._create_redis_namespace_locked(
+                scope=scope,
+                key_prefix=key_prefix,
+            )
         return namespace.manage(client, batch_size=batch_size)
 
     def amanage_redis_namespace(
@@ -783,39 +807,77 @@ class NsTestResourceFactory:
         key_prefix: str = DEFAULT_TEST_REDIS_KEY_PREFIX,
         batch_size: int = DEFAULT_REDIS_CLEANUP_BATCH_SIZE,
     ) -> AbstractAsyncContextManager[NsRedisNamespace]:
-        namespace = self.create_redis_namespace(
-            scope=scope,
-            key_prefix=key_prefix,
-        )
+        with self._lock:
+            self._require_open("amanage_redis_namespace")
+            namespace = self._create_redis_namespace_locked(
+                scope=scope,
+                key_prefix=key_prefix,
+            )
         return namespace.amanage(client, batch_size=batch_size)
 
     def close(self) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-            reservations = tuple(reversed(self._ports))
-            self._ports.clear()
-        first_error: Exception | None = None
+        with self._close_condition:
+            while True:
+                if self._state is NsTestResourceFactoryState.CLOSED:
+                    return
+                if self._state is NsTestResourceFactoryState.OPEN:
+                    self._state = NsTestResourceFactoryState.CLOSING
+                if not self._close_attempt_active:
+                    self._close_attempt_active = True
+                    break
+                self._close_condition.wait()
+
         try:
-            for reservation in reservations:
-                try:
-                    reservation.release()
-                except Exception as error:
-                    if first_error is None:
-                        first_error = error
-        finally:
-            try:
-                self._temporary_directory.cleanup()
-            except Exception as error:
-                if first_error is None:
-                    first_error = error
-        if first_error is not None:
-            raise first_error
+            failures = self._cleanup_owned_resources_once()
+        except BaseException:
+            # Process-level exceptions remain authoritative, but a waiting closer
+            # must be allowed to retry every resource whose ownership remains.
+            with self._close_condition:
+                self._close_attempt_active = False
+                self._close_condition.notify_all()
+            raise
+
+        with self._close_condition:
+            remaining_port_count = len(self._ports)
+            temporary_directory_pending = not self._temporary_directory_released
+            cleanup_complete = (
+                remaining_port_count == 0
+                and not temporary_directory_pending
+            )
+            if cleanup_complete:
+                self._state = NsTestResourceFactoryState.CLOSED
+            state_value = self._state.value
+            self._close_attempt_active = False
+            self._close_condition.notify_all()
+
+        if cleanup_complete:
+            return
+
+        failed_resource_types = list(
+            dict.fromkeys(resource_type for resource_type, _ in failures)
+        )
+        raise NsStateError(
+            "Test resource factory cleanup is incomplete.",
+            details={
+                "operation": "close_test_resources",
+                "state": state_value,
+                "failed_resource_types": failed_resource_types,
+                "failed_resource_count": len(failures),
+                "remaining_port_count": remaining_port_count,
+                "temporary_directory_pending": temporary_directory_pending,
+                "failures": [
+                    {
+                        "resource_type": resource_type,
+                        "error_type": error_type,
+                    }
+                    for resource_type, error_type in failures
+                ],
+            },
+        ) from None
 
     def __enter__(self) -> "NsTestResourceFactory":
         with self._lock:
-            self._require_open()
+            self._require_open("enter_test_resource_factory")
         return self
 
     def __exit__(
@@ -826,12 +888,50 @@ class NsTestResourceFactory:
     ) -> None:
         self.close()
 
-    def _require_open(self) -> None:
-        if self._closed:
+    def _require_open(self, operation: str) -> None:
+        if self._state is not NsTestResourceFactoryState.OPEN:
             raise NsStateError(
-                "Test resource factory is closed.",
-                details={"operation": "create_test_resource"},
+                "Test resource factory does not accept new resources.",
+                details={
+                    "operation": operation,
+                    "state": self._state.value,
+                },
             )
+
+    def _cleanup_owned_resources_once(self) -> list[tuple[str, str]]:
+        failures: list[tuple[str, str]] = []
+        with self._lock:
+            reservations = tuple(reversed(self._ports))
+
+        for reservation in reservations:
+            try:
+                reservation.release()
+            except Exception as error:
+                failures.append(("reserved_port", type(error).__name__))
+            else:
+                with self._lock:
+                    self._remove_port_reservation_locked(reservation)
+
+        with self._lock:
+            temporary_directory_pending = not self._temporary_directory_released
+        if temporary_directory_pending:
+            try:
+                self._temporary_directory.cleanup()
+            except Exception as error:
+                failures.append(("temporary_directory", type(error).__name__))
+            else:
+                with self._lock:
+                    self._temporary_directory_released = True
+        return failures
+
+    def _remove_port_reservation_locked(
+        self,
+        reservation: NsReservedPort,
+    ) -> None:
+        for index, owned_reservation in enumerate(self._ports):
+            if owned_reservation is reservation:
+                del self._ports[index]
+                return
 
     def _create_redis_namespace_locked(
         self,
@@ -966,6 +1066,7 @@ TemporaryConfig = NsTemporaryConfig
 InMemorySinkBundle = NsInMemorySinkBundle
 ReservedPort = NsReservedPort
 TestResourceFactory = NsTestResourceFactory
+TestResourceFactoryState = NsTestResourceFactoryState
 
 
 __all__ = [
@@ -978,9 +1079,11 @@ __all__ = [
     "NsTemporaryConfig",
     "NsTemporaryDirectories",
     "NsTestResourceFactory",
+    "NsTestResourceFactoryState",
     "RedisNamespace",
     "ReservedPort",
     "TemporaryConfig",
     "TemporaryDirectories",
     "TestResourceFactory",
+    "TestResourceFactoryState",
 ]

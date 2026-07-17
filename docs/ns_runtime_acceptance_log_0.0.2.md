@@ -375,6 +375,27 @@
 - 已知限制：本次真实安装与回归运行在 WSL2/Python 3.10.12，Windows 只通过精确 marker 门禁确认 uvloop 被排除，未在 Windows 新环境重复安装。依赖文件是当前精确顶层/公共解析基线，不替代未来发布制品的跨平台 lock/hash/SBOM。P08 才能把已选 Redis/Valkey 驱动纳入生产 StateStore 并验证 Sentinel/Cluster/TLS/Lua/CAS/lease/fencing；P21 才能引入 QUIC/WebTransport adapter 依赖；P22 才建立正式负载模型、报告和性能阈值。
 - 下一工作包：`P02-W01 建立 src/ns_runtime 独立组件和唯一进程入口 main.py`，状态为 `NOT_STARTED`；唯一执行游标已推进到 P02-W01，P01 阶段标记为 `VERIFIED`。
 
+## P01-FIX-09
+
+- 工作包：`P01-FIX-09 修复测试资源 Factory 的可重试关闭和并发关闭语义`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T19:49:10+08:00`。
+- 修改文件：更新 `src/ns_common/testing.py`、`src/ns_common/__init__.py`、`tests/test_testing.py`、实施计划、acceptance log 和 [ADR-019](ns_runtime_architecture_decisions_0.0.2.md#adr-019)；为匹配本工作包指定回归入口，把原 7 项 W17 清单门禁模块从 `tests/test_dependency_manifests.py` 原样改名为 `tests/test_requirements.py`，断言内容与五份 requirements 清单均未改变。设计边界文档未修改，`src/ns_runtime` 未创建，P02-W01 未开始。会话开始实时记录 `pwd=/mnt/s/PythonProject/ns/ns_evermore`、干净的 `main...origin/main` 和空子模块输出；全过程只读取当前本地工作区，不读取远程仓库、提交历史、PR、Issue、远程分支或提交消息，不切换、重置、清理或覆盖工作区。
+- 原缺陷：旧 `NsTestResourceFactory.close()` 在任何实际清理前设置 `_closed=True` 并整体清空 `_ports`。任一 reservation 或临时目录清理失败后，Factory 已被误标为关闭且失败资源所有权丢失，第二次 close 无法重试；并发调用者也会因 `_closed` 提前成功返回，无法把 close 返回解释为真实回收完成。
+- Factory 状态机与门禁：新增稳定 `NsTestResourceFactoryState(str, Enum)` 及 plain alias，状态只允许 `OPEN -> CLOSING -> CLOSED`；新增线程安全只读 `state`、`is_closing`，并把 `is_closed` 严格冻结为 `state is CLOSED`。首次 close 在锁内进入 `CLOSING`；`directories`、`create_temporary_config()`、`create_controlled_clock()`、`create_in_memory_sinks()`、`reserve_tcp_port()`、`create_redis_namespace()`、`manage_redis_namespace()`、`amanage_redis_namespace()` 从调用入口即拒绝，稳定 details 只有对应 operation 和 state。失败后不回退 OPEN；只有端口与临时目录所有权全部完成转移才进入 CLOSED。
+- 关闭屏障与返回保证：Factory 使用现有 `RLock` 配合 `Condition` 和单一 active-attempt 标记，同一时刻只有一个线程执行实际回收。其他 close 调用等待当前尝试结束；成功时全部观察 CLOSED，普通失败时失败执行者收到稳定异常且一个等待者串行接手下一次重试。成功 close 正常返回时 `_ports` 为空、临时目录 cleanup 已成功、Factory 不再持有待清理资源；CLOSED 后重复 close 幂等。并发成功与先失败后接管两种多线程场景均使用 event、明确 5 秒等待上限和线程 join timeout 验证，无提前返回、重复 release、并行 cleanup 或死锁。
+- 资源所有权与重试：每次尝试对当前仍持有的 reservation 按逆创建顺序逐个 release，只有该调用正常返回后才按对象身份从 `_ports` 精确移除；普通失败项保留，其他端口和临时目录仍继续尝试，后续 close 只重试剩余项，已成功端口不重复处理。`TemporaryDirectory` 新增独立 released 所有权标记，只有 `cleanup()` 正常返回后置位；失败时对象引用与所有权保留，下一次 close 再调用，成功后不进行第三次 cleanup。端口和目录同时失败时，两个资源类别均被尝试并可分别重试。
+- 异常与 context manager：普通资源异常不直接重抛、不复制 `str(error)` 或异常对象，聚合 `NsStateError` details 只含 `operation=close_test_resources`、`state=closing`、稳定 `failed_resource_types`/数量、剩余端口数、目录 pending 标记，以及 `resource_type/error_type`；直接 close 的底层普通异常不保留 cause/context。`KeyboardInterrupt`、`SystemExit` 原对象穿透；穿透前已成功端口已移出所有权，未执行/失败资源继续保留，状态保持 CLOSING，替换为正常行为后可重试到 CLOSED。`__exit__()` 继续调用 close：主体正常而清理失败返回稳定清理错误；主体失败而清理成功保留主体错误；二者同时失败时稳定清理错误为当前异常，主体错误保留在 Python `__context__`，底层清理文本不进入公开异常。
+- 敏感信息边界：专项同时构造端口与目录失败，并检查 `str(error)`、`error.details`、`error.to_dict()`；均不含临时根目录、临时配置路径、host、port、Redis namespace UUID 或 mock 底层秘密文本。创建门禁也不复制路径、端口、URL、namespace 或底层异常。
+- sink 同类风险复核：`NsInMemorySinkBundle.aclose()` 仍通过嵌套 `finally` 按 diagnostics、traces、metrics 顺序关闭，当前三个 `_InMemorySink.aclose()` 只在锁内幂等设置 CLOSED，不存在普通异常或资源所有权集合，`clear()` 只在三者关闭后执行；新增重复 aclose 回归后保持原实现，不扩大 FIX 范围。
+- 公共导出：`ns_common.testing` 从 14 项增至 16 项，`ns_common` facade 从 204 项增至 206 项；新增 `NsTestResourceFactoryState` 与 `TestResourceFactoryState`。testing/top-level facade 均无重复，子 facade、顶层 facade、plain alias 与 `Ns*` 类型对象身份一致；独立解释器冷导入仍不加载 `redis`、`valkey`、`concurrent_log_handler`、`portalocker` 或 `ns_runtime`。
+- W16 专项与原功能回归：runtime 环境 `tests.test_testing` 为 `Ran 28, OK`，覆盖状态机、端口/目录独立与同时失败重试、敏感信息、并发关闭成功/失败屏障、CLOSING 全入口门禁、KeyboardInterrupt/SystemExit、context manager 双异常，以及既有目录/配置/clock/sink/port/Redis namespace/SCAN + bounded DELETE/前缀逃逸/同步异步 cleanup/真实 Redis standalone/facade/冷启动路径。原 port 0、socket 保留、reservation 布尔返回、配置隔离、全局 `ns_config` 身份、namespace 清理与禁止 `KEYS`/`FLUSHDB`/`FLUSHALL` 契约未削弱。
+- W17 回归与依赖边界：`tests.test_requirements` 为 `Ran 7, OK`，五层 include 图仍为 common -> backend/runtime、runtime -> test -> benchmark 的单向无环结构；精确 `==` pin、uvloop 非 Windows marker、Redis/Valkey 仅测试层、pyperf/psutil 仅 benchmark 层、backend 不引入 runtime/test/benchmark、QUIC/WebTransport 延迟到 P21 全部保持。`git diff --exit-code` 确认五份清单字节内容未修改，因此未重复四类仓库外全新环境安装；两套持久隔离环境 `pip check` 均通过，W17 既有全新环境证据不被本 FIX 替代或扩大。
+- 联合与全量结果：用户指定的 testing/requirements/observability/time/config/config_package/async_runtime/http_client/exceptions/logger/security/retry/identifiers P01/runtime 联合为 `Ran 249, OK (skipped=1)`；backend 环境根目录全量为 `Ran 260, OK (skipped=1)`。两项跳过均是 WSL 下同一真实 Windows event-loop policy 用例，backend 全量继续包含 cache 11 项回归。
+- 静态与环境检查：全树 `compileall`、runtime/backend `pip check`、testing 16 项与 `ns_common` 206 项 facade/身份、独立解释器冷启动、requirements 解析与隔离、生产源码测试文件、仓库虚拟环境、`src/ns_runtime`、临时 `ns-test-*`/W17 环境和测试 Redis 进程残留、`git diff --check` 均通过。进程扫描只见系统管理的 `redis-server 127.0.0.1:6379`，专项真实 Redis 使用独立随机端口且已终止，未访问或清理该系统服务。
+- 已知限制：Factory 仍不拥有 Redis/Valkey client 或外部服务进程，调用方必须在 Factory 关闭前停止 namespace 写入者并自行关闭 client/process；真实依赖回归仍只覆盖 standalone，不覆盖 Sentinel/Cluster/TLS/StateStore/Lua/CAS/lease/fencing。同步 close 屏障会等待当前清理调用返回，不提供超时中断底层阻塞 API；底层清理函数自身必须可终止。双异常沿用 Python 3.10 原生 context 语义，未为本 FIX 引入 ExceptionGroup 兼容层。
+- 下一工作包：`P02-W01 建立 src/ns_runtime 独立组件和唯一进程入口 main.py`，状态保持 `NOT_STARTED`；P01-FIX-09、P01-W16、P01-W17 与 P01 恢复 `VERIFIED`，唯一执行游标指向 P02-W01，但本工作包未实施 P02。
+
 ## 新记录模板
 
 - 工作包：

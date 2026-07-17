@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+"""Regression gates for the five-layer dependency manifest contract."""
+
 from __future__ import annotations
 
 import re
