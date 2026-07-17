@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
+from enum import Enum
 from threading import RLock
 from typing import (
     Any,
@@ -12,7 +14,10 @@ from typing import (
 
 import httpx
 
-from ns_common.exceptions import NsDependencyError
+from ns_common.exceptions import (
+    NsDependencyError,
+    NsStateError,
+)
 from ns_common.logger import get_ns_logger
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
@@ -85,6 +90,10 @@ class NsAsyncHttpClient:
             ),
         )
         self._closed: bool = False
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed
 
     async def request(
             self,
@@ -344,6 +353,198 @@ class NsAsyncHttpClient:
         return url
 
 
+class NsHttpClientOwnerState(str, Enum):
+    OPEN = "open"
+    CLOSING = "closing"
+    CLOSED = "closed"
+
+
+class NsHttpClientFactory:
+    """Create independent HTTP clients without registering global state.
+
+    A client returned by this factory is owned by its caller. Use
+    :class:`NsHttpClientOwner` when a composition root needs to own and close
+    several clients as one lifecycle resource.
+    """
+
+    def create(
+            self,
+            *,
+            name: str,
+            base_url: str = "",
+            timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+            default_headers: Mapping[str, str] | None = None,
+            verify: bool = True,
+            max_connections: int = _DEFAULT_MAX_CONNECTIONS,
+            max_keepalive_connections: int = _DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+    ) -> NsAsyncHttpClient:
+        return NsAsyncHttpClient(
+            name=name,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            default_headers=default_headers,
+            verify=verify,
+            max_connections=max_connections,
+            max_keepalive_connections=max_keepalive_connections,
+        )
+
+
+class NsHttpClientOwner:
+    """Own explicitly created HTTP clients and close them in reverse order.
+
+    The owner is intentionally local to a process composition root. It never
+    reads or mutates the compatibility client map used by
+    :func:`get_async_http_client`.
+    """
+
+    def __init__(
+            self,
+            *,
+            factory: NsHttpClientFactory | None = None,
+    ) -> None:
+        self._factory = factory if factory is not None else NsHttpClientFactory()
+        self._state = NsHttpClientOwnerState.OPEN
+        self._clients: list[NsAsyncHttpClient] = []
+        self._state_lock = RLock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._close_lock: asyncio.Lock | None = None
+
+    @property
+    def factory(self) -> NsHttpClientFactory:
+        return self._factory
+
+    @property
+    def state(self) -> NsHttpClientOwnerState:
+        with self._state_lock:
+            return self._state
+
+    @property
+    def clients(self) -> tuple[NsAsyncHttpClient, ...]:
+        with self._state_lock:
+            return tuple(self._clients)
+
+    def create(
+            self,
+            *,
+            name: str,
+            base_url: str = "",
+            timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+            default_headers: Mapping[str, str] | None = None,
+            verify: bool = True,
+            max_connections: int = _DEFAULT_MAX_CONNECTIONS,
+            max_keepalive_connections: int = _DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+    ) -> NsAsyncHttpClient:
+        with self._state_lock:
+            self._ensure_open()
+            client = self._factory.create(
+                name=name,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
+                default_headers=default_headers,
+                verify=verify,
+                max_connections=max_connections,
+                max_keepalive_connections=max_keepalive_connections,
+            )
+            if any(client is owned_client for owned_client in self._clients):
+                raise NsStateError(
+                    "HTTP client factory returned an instance already owned.",
+                    details={
+                        "client": client.name,
+                        "owner_state": self._state.value,
+                        "action": "create_http_client",
+                    },
+                )
+            self._clients.append(client)
+            return client
+
+    async def aclose(self) -> None:
+        loop = asyncio.get_running_loop()
+        with self._state_lock:
+            if self._state is NsHttpClientOwnerState.CLOSED:
+                return
+            self._bind_loop(loop)
+            if self._close_lock is None:
+                self._close_lock = asyncio.Lock()
+            close_lock = self._close_lock
+            self._state = NsHttpClientOwnerState.CLOSING
+
+        async with close_lock:
+            with self._state_lock:
+                if self._state is NsHttpClientOwnerState.CLOSED:
+                    return
+                clients = tuple(reversed(self._clients))
+
+            failures: list[tuple[NsAsyncHttpClient, Exception]] = []
+            try:
+                for client in clients:
+                    try:
+                        await client.aclose()
+                    except Exception as error:
+                        failures.append((client, error))
+                    else:
+                        self._forget_client(client)
+            finally:
+                with self._state_lock:
+                    if not self._clients:
+                        self._state = NsHttpClientOwnerState.CLOSED
+
+            if failures:
+                raise NsDependencyError(
+                    "One or more owned HTTP clients failed to close.",
+                    details={
+                        "action": "close_http_clients",
+                        "failed_clients": [
+                            {
+                                "client": client.name,
+                                "error_type": type(error).__name__,
+                            }
+                            for client, error in failures
+                        ],
+                    },
+                ) from failures[0][1]
+
+    async def __aenter__(self) -> "NsHttpClientOwner":
+        with self._state_lock:
+            self._ensure_open()
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        await self.aclose()
+
+    def _ensure_open(self) -> None:
+        if self._state is not NsHttpClientOwnerState.OPEN:
+            raise NsStateError(
+                "HTTP client owner is not accepting new clients.",
+                details={
+                    "owner_state": self._state.value,
+                    "action": "create_http_client",
+                },
+            )
+
+    def _bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        if self._loop is None:
+            self._loop = loop
+            return
+        if self._loop is not loop:
+            raise NsStateError(
+                "HTTP client owner cannot be shared across event loops.",
+                details={
+                    "owner_state": self._state.value,
+                    "action": "close_http_clients",
+                },
+            )
+
+    def _forget_client(self, client: NsAsyncHttpClient) -> None:
+        with self._state_lock:
+            for index, owned_client in enumerate(self._clients):
+                if owned_client is client:
+                    del self._clients[index]
+                    return
+
+
+_COMPATIBILITY_FACTORY = NsHttpClientFactory()
+
+
 def get_async_http_client(
         name: str = "default",
         *,
@@ -359,7 +560,7 @@ def get_async_http_client(
         if client is not None:
             return client
 
-        client = NsAsyncHttpClient(
+        client = _COMPATIBILITY_FACTORY.create(
             name=name,
             base_url=base_url,
             timeout_seconds=timeout_seconds,
@@ -379,3 +580,14 @@ async def aclose_http_clients() -> None:
 
     for client in clients:
         await client.aclose()
+
+
+__all__ = [
+    "NsAsyncHttpClient",
+    "NsHttpClientFactory",
+    "NsHttpClientOwner",
+    "NsHttpClientOwnerState",
+    "NsHttpResponse",
+    "aclose_http_clients",
+    "get_async_http_client",
+]

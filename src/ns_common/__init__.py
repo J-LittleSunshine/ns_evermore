@@ -87,6 +87,9 @@ from ns_common.exceptions import (
 )
 from ns_common.http_client import (
     NsAsyncHttpClient,
+    NsHttpClientFactory,
+    NsHttpClientOwner,
+    NsHttpClientOwnerState,
     NsHttpResponse,
     aclose_http_clients,
     get_async_http_client,
@@ -272,6 +275,9 @@ __all__ = [
     "SystemClock",
     "UTC_EPOCH",
     "NsAsyncHttpClient",
+    "NsHttpClientFactory",
+    "NsHttpClientOwner",
+    "NsHttpClientOwnerState",
     "NsHttpResponse",
     "NsIdentifier",
     "NsIdentifierFactory",

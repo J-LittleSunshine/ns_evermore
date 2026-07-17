@@ -278,6 +278,21 @@
 - 已知限制：本修复只冻结默认策略 metadata、精确协议违规错误、NACK 映射和测试门禁；不实现 processor 幂等判定、取消确认、自动 retry 决策、协议滥用检测、频率计数、限流、断连升级、连接状态机或错误 Envelope。P01-W13 的 HTTP client 生命周期重构保持 `NOT_STARTED`。
 - 下一工作包：`P01-W13 重构 HTTP client 创建方式与 owner 生命周期`，状态为 `NOT_STARTED`。
 
+## P01-W13
+
+- 工作包：`P01-W13 重构 HTTP client 创建方式与 owner 生命周期`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T11:36:05+08:00`。
+- 修改文件：`src/ns_common/http_client.py`、`src/ns_common/__init__.py`，新增 `tests/test_http_client.py`，更新实施计划、acceptance log 和新增 [ADR-016](ns_runtime_architecture_decisions_0.0.2.md#adr-016)。未修改设计边界文档，未创建 `src/ns_runtime`，未开始 P01-W14。
+- 本地基线校准：当前工作区为 Ubuntu 22.04.5 LTS / WSL2 中的 `/mnt/s/PythonProject/ns/ns_evermore`，对应 Windows `S:\PythonProject\ns\ns_evermore`；分支为 `main`，实施前 `git status --short --branch` 仅显示本地跟踪信息且工作树干净，子模块状态无输出。使用 Python `3.10.12`、`/home/ns/.virtualenvs/ns_runtime` 和 `/home/ns/.virtualenvs/ns_backend`；未在仓库或 `/mnt` 下创建虚拟环境。未读取远程仓库、提交历史、PR 或 Issue。
+- 公共契约变化：新增 `NsHttpClientFactory.create()`，每次返回不登记全局 map 的独立 caller-owned `NsAsyncHttpClient`；新增 `NsHttpClientOwner`、`NsHttpClientOwnerState.OPEN/CLOSING/CLOSED` 和 `NsAsyncHttpClient.is_closed`。Owner 只管理自己创建的 client，开始关闭后拒绝新建，在同一 event loop 中串行化并发 `aclose()` 并按创建逆序回收。取消或普通关闭异常不丢失未回收 client，后续可重试；单个普通异常不阻断其他 client 关闭，聚合 details 只包含 client 名和异常类型。
+- 兼容与依赖边界：`get_async_http_client()` 和 `aclose_http_clients()` 的原按名称缓存/清理入口继续存在，内部创建收敛到 factory；显式 factory/owner 不读写兼容 map，即使 client 同名也与 legacy 实例隔离。`ns_common.http_client` 和 `ns_common` facade 导出权威对象，runtime 后续只允许 composition root 创建 owner/client 并向下注入显式实例。
+- 测试结果：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest tests.test_http_client -v` 通过 7/7；HTTP/exceptions/async runtime/logger/security/config/config package/retry/time/identifiers 指定联合为 `Ran 183, OK (skipped=1)`；`PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m unittest discover -s tests -p 'test_*.py' -v` 根目录全量为 `Ran 194, OK (skipped=1)`。两个跳过记录均是 WSL 下的同一 Windows 专用 event-loop 用例。runtime 环境直接 discover 依旧因不安装 Django 无法导入 `tests.test_cache`，因此 cache 及根回归按文档要求使用 backend 隔离环境，未把缺少 Django 解释为 W13 失败。
+- 静态与环境检查：全树 `compileall` 通过；runtime/backend 两套虚拟环境 `pip check` 均报告 `No broken requirements found`；HTTP facade 7 项、`ns_common` facade 146 项导出均无重复且权威对象一致；独立解释器冷启动导入通过。生产源码扫描只在兼容函数本身发现 `get_async_http_client(`，`src/ns_runtime` 仍不存在，`src/` 下无 `test_*.py`/`tests.py`，`git diff --check` 通过。
+- 安全/隔离检查：专项测试只构造和关闭 httpx client，不发送真实网络请求，不访问 backend、Redis、Valkey 或真实数据目录。关闭失败聚合不包含底层异常文本；`KeyboardInterrupt`/`SystemExit`/cancellation 不被当作普通关闭异常吞掉，取消后仍保留 client 所有权。旧 HTTP response body preview、URL 和 request error 输出未在本工作包中被误标为安全。
+- 已知限制：W13 只冻结 client 创建与 owner 生命周期。当前 `NsHttpResponse.json()`、status error、request error 和 completion log 仍可保留原始 body preview、URL 或底层错误文本；可注入 response sanitizer、IAM token URL/日志/错误零泄漏属于 P01-W14。P02 尚未把 owner 接入进程启停，P06 尚未创建 IAM client。
+- 下一工作包：`P01-W14 安全化 HTTP 错误响应与 response sanitizer`，状态为 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：
