@@ -59,6 +59,12 @@ class NsRuntimeTenantMismatchError(NsRuntimeProtocolError):
     default_message = "Runtime tenant boundary is violated."
 
 
+class NsRuntimeProtocolParseError(NsRuntimeProtocolError):
+    code = "RUNTIME_PROTOCOL_PARSE_ERROR"
+    numeric_code = 200126
+    default_message = "Runtime protocol payload cannot be parsed."
+
+
 PROTOCOL_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
     NsErrorDefinition.for_error_type(
         NsRuntimeProtocolError,
@@ -120,5 +126,12 @@ PROTOCOL_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
         disconnect_required=True,
         audit_required=True,
         action="reject_tenant_mismatch",
+    ),
+    NsErrorDefinition.for_error_type(
+        NsRuntimeProtocolParseError,
+        severity=NsErrorSeverity.ERROR,
+        category=NsErrorCategory.PROTOCOL,
+        disconnect_required=True,
+        action="reject_unparseable_message",
     ),
 )

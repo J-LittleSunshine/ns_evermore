@@ -39,6 +39,12 @@ class NsHttpClientError(NsEvermoreError):
     default_message = "NsEvermore HTTP client error."
 
 
+class NsRuntimeDependencyUnavailableError(NsRuntimeError):
+    code = "RUNTIME_DEPENDENCY_UNAVAILABLE"
+    numeric_code = 200163
+    default_message = "Runtime dependency is unavailable."
+
+
 COMMON_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
     NsErrorDefinition.for_error_type(
         NsEvermoreError,
@@ -89,5 +95,12 @@ COMMON_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
         audit_required=False,
         safe_detail=False,
         action="handle_http_failure",
+    ),
+    NsErrorDefinition.for_error_type(
+        NsRuntimeDependencyUnavailableError,
+        severity=NsErrorSeverity.WARNING,
+        category=NsErrorCategory.DEPENDENCY,
+        retryable=True,
+        action="retry_runtime_dependency",
     ),
 )

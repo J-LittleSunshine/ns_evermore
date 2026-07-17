@@ -3,19 +3,22 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .cluster import NsRuntimeClusterCoordinationError
-from .common import NsDependencyError
+from .cluster import NsRuntimeClusterMemberUnavailableError
+from .common import NsRuntimeDependencyUnavailableError
 from .delivery import (
     NsRuntimeBackpressureError,
     NsRuntimeTargetUnavailableError,
 )
-from .payload_ref import NsRuntimePayloadRefDeniedError
+from .iam import NsRuntimeIamDeniedError
+from .payload_ref import (
+    NsRuntimePayloadRefDeniedError,
+    NsRuntimePayloadRefInvalidError,
+)
 from .protocol import (
     NsRuntimeAuthContextForgedError,
     NsRuntimeProtocolError,
     NsRuntimeSourceForgedError,
     NsRuntimeTenantMismatchError,
-    NsRuntimeUnauthorizedMessageTypeError,
 )
 from .registry import ERROR_REGISTRY
 
@@ -38,6 +41,8 @@ def validate_runtime_nack_reason_error_codes(
             raise ValueError(f"duplicate NACK reason: {reason}")
         if not isinstance(code, str) or not code.strip():
             raise ValueError("NACK error code must be a non-empty string")
+        if not code.startswith("RUNTIME_"):
+            raise ValueError("NACK error code must start with RUNTIME_")
         if ERROR_REGISTRY.get_by_code(code) is None:
             raise ValueError(f"unregistered NACK error code: {code}")
         seen_reasons.add(reason)
@@ -51,15 +56,21 @@ RUNTIME_NACK_REASON_ERROR_CODES: tuple[tuple[str, str], ...] = (
             ("target_overloaded", NsRuntimeBackpressureError.code),
             ("temporarily_unavailable", NsRuntimeTargetUnavailableError.code),
             ("queue_full", NsRuntimeBackpressureError.code),
-            ("dependency_unavailable", NsDependencyError.code),
+            (
+                "dependency_unavailable",
+                NsRuntimeDependencyUnavailableError.code,
+            ),
             ("target_draining", NsRuntimeTargetUnavailableError.code),
-            ("node_degraded", NsRuntimeClusterCoordinationError.code),
+            (
+                "node_degraded",
+                NsRuntimeClusterMemberUnavailableError.code,
+            ),
             (
                 "permission_denied",
-                NsRuntimeUnauthorizedMessageTypeError.code,
+                NsRuntimeIamDeniedError.code,
             ),
             ("tenant_mismatch", NsRuntimeTenantMismatchError.code),
-            ("invalid_payload_ref", NsRuntimePayloadRefDeniedError.code),
+            ("invalid_payload_ref", NsRuntimePayloadRefInvalidError.code),
             ("payload_ref_denied", NsRuntimePayloadRefDeniedError.code),
             ("source_forged", NsRuntimeSourceForgedError.code),
             (

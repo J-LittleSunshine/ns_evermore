@@ -40,6 +40,24 @@ class NsRuntimeStartupSecurityError(NsConfigError):
     default_message = "Runtime startup security validation failed."
 
 
+class NsRuntimeLeaderLeaseLostError(NsRuntimeClusterCoordinationError):
+    code = "RUNTIME_LEADER_LEASE_LOST"
+    numeric_code = 200157
+    default_message = "Runtime leader lease is lost."
+
+
+class NsRuntimeClusterMemberUnavailableError(NsRuntimeClusterCoordinationError):
+    code = "RUNTIME_CLUSTER_MEMBER_UNAVAILABLE"
+    numeric_code = 200158
+    default_message = "Runtime cluster member is unavailable."
+
+
+class NsRuntimeClusterConfigDriftError(NsRuntimeClusterCoordinationError):
+    code = "RUNTIME_CLUSTER_CONFIG_DRIFT"
+    numeric_code = 200159
+    default_message = "Runtime cluster configuration drift is detected."
+
+
 CLUSTER_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
     NsErrorDefinition.for_error_type(
         NsRuntimeClusterCoordinationError,
@@ -79,5 +97,26 @@ CLUSTER_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
         category=NsErrorCategory.SECURITY,
         audit_required=True,
         action="stop_insecure_startup",
+    ),
+    NsErrorDefinition.for_error_type(
+        NsRuntimeLeaderLeaseLostError,
+        severity=NsErrorSeverity.CRITICAL,
+        category=NsErrorCategory.LEASE,
+        audit_required=True,
+        action="stop_leader_writes",
+    ),
+    NsErrorDefinition.for_error_type(
+        NsRuntimeClusterMemberUnavailableError,
+        severity=NsErrorSeverity.WARNING,
+        category=NsErrorCategory.CLUSTER,
+        retryable=True,
+        action="retry_cluster_member",
+    ),
+    NsErrorDefinition.for_error_type(
+        NsRuntimeClusterConfigDriftError,
+        severity=NsErrorSeverity.ERROR,
+        category=NsErrorCategory.CLUSTER,
+        audit_required=True,
+        action="isolate_config_drift",
     ),
 )

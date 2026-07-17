@@ -248,6 +248,19 @@
 - 已知限制：通用 definition 只能提供保守提示；W12 才通过新增细粒度叶子错误表达 dependency/HTTP/protocol/cluster 的可重试、不可重试和安全处置差异。策略执行仍属于后续上下文和状态机，不由 registry 自动完成。
 - 下一工作包：`P01-W12 补齐设计文档已明确的 RUNTIME_* 错误覆盖矩阵`，状态保持 `NOT_STARTED`。
 
+## P01-W12
+
+- 工作包：`P01-W12 补齐设计文档已明确的 RUNTIME_* 错误覆盖矩阵`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T01:10:53+08:00`。
+- 修改文件：新增 `src/ns_common/exceptions/configuration.py`、`iam.py`、`processor.py`、`routing.py`、`transport.py`；更新 exceptions facade、common/protocol/delivery/cluster/metadata/registry/nack、`tests/test_exceptions.py`、实施计划和 acceptance log。设计边界文档与 ADR-015 未修改，`src/ns_runtime` 未创建。
+- 公共契约变化：在保留既有 33 个异常的类名、code、numeric_code、构造、继承、details、`to_dict()` 和 `__str__()` 契约的基础上，新增 38 个细粒度叶子/领域异常和 11 个稳定 category，注册表扩展为 71 个 definition。新增冻结 `RUNTIME_ERROR_COVERAGE_MATRIX` 与完整性验证，覆盖 protocol、IAM、dependency、tenant、target、route、payload_ref、ACK、NACK、Defer、lease、fencing、owner、processor、configuration、transport、cluster、delivery 共 18 域、64 个 `RUNTIME_*` code；类/code/numeric_code 继续全局唯一，精确类型查询继续不做 MRO fallback。
+- 公共契约变化：13 个 `RUNTIME_NACK_REASON_ERROR_CODES` reason 的稳定顺序保持不变，所有目标 code 统一收敛为已注册的细粒度 `RUNTIME_*` code；其中 dependency unavailable、node degraded、permission denied、invalid payload_ref 分别改为 `RUNTIME_DEPENDENCY_UNAVAILABLE`、`RUNTIME_CLUSTER_MEMBER_UNAVAILABLE`、`RUNTIME_IAM_DENIED`、`RUNTIME_PAYLOAD_REF_INVALID`。NACK 映射验证新增 `RUNTIME_` 前缀门禁。
+- 测试结果：runtime 环境 `tests.test_exceptions` 24/24；W12 指定 exceptions/async runtime/logger/security/config/config package/retry 联合 155/155；P01/runtime 联合 174/174；backend 根目录全量 185/185。`compileall`、runtime/backend 两套环境 `pip check`、96 项 exceptions facade 公共导出、71 类/definition/code/numeric_code 唯一、18 域/64 码覆盖矩阵、13 个 NACK reason、严格 JSON、14 个子模块冷启动、导入图无环、生产源码无内部 exceptions 路径依赖和 `git diff --check` 均通过。
+- 安全/隔离检查：新增细粒度错误根据精确语义独立声明 retry/disconnect/audit，新增 definition 的 `safe_detail` 全部保持 false；IAM 拒绝、route loop/hop、lease/fencing/owner、processor、配置和集群漂移等安全或权威状态错误要求审计。覆盖矩阵与 NACK 验证只读取冻结 definition 元数据，不读取异常 details、不触发异常字符串化，也不依赖 sanitizer/logger/config、网络、Redis、Valkey 或 backend。
+- 已知限制：W12 只冻结错误类、code、category、策略 metadata、覆盖矩阵和 NACK 映射，不实现错误 Envelope、transport 库异常适配、IAM 调用、状态机副作用或策略执行；这些能力仍由 P03-P21 的对应阶段落地。新增 transport/cluster/lease 等错误不代表相关 runtime 功能已经启用。
+- 下一工作包：`P01-W13 重构 HTTP client 创建方式与 owner 生命周期`，状态为 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

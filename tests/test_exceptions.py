@@ -19,6 +19,7 @@ from ns_common.config import NsConfigGroupMetadata, NsRuntimeEventLoopConfig
 from ns_common.exceptions import (
     ALL_ERROR_DEFINITIONS,
     ERROR_REGISTRY,
+    RUNTIME_ERROR_COVERAGE_MATRIX,
     RUNTIME_NACK_REASON_ERROR_CODES,
     NsConfigError,
     NsErrorCategory,
@@ -38,6 +39,7 @@ from ns_common.exceptions import (
     get_error_definition_by_numeric_code,
     list_error_definitions,
     validate_error_registry,
+    validate_runtime_error_coverage_matrix,
     validate_runtime_nack_reason_error_codes,
 )
 from ns_common.http_client import NsHttpResponse
@@ -50,9 +52,14 @@ EXCEPTION_SUBMODULES = (
     "ns_common.exceptions.base",
     "ns_common.exceptions.metadata",
     "ns_common.exceptions.common",
+    "ns_common.exceptions.configuration",
     "ns_common.exceptions.protocol",
+    "ns_common.exceptions.iam",
+    "ns_common.exceptions.routing",
     "ns_common.exceptions.payload_ref",
     "ns_common.exceptions.delivery",
+    "ns_common.exceptions.processor",
+    "ns_common.exceptions.transport",
     "ns_common.exceptions.cluster",
     "ns_common.exceptions.registry",
     "ns_common.exceptions.nack",
@@ -256,6 +263,238 @@ EXCEPTION_SNAPSHOTS = {
         "RUNTIME_STARTUP_SECURITY_ERROR",
         200125,
         "Runtime startup security validation failed.",
+    ),
+}
+
+EXCEPTION_SNAPSHOTS = {
+    **EXCEPTION_SNAPSHOTS,
+    "NsRuntimeProtocolParseError": (
+        "NsRuntimeProtocolError",
+        "RUNTIME_PROTOCOL_PARSE_ERROR",
+        200126,
+        "Runtime protocol payload cannot be parsed.",
+    ),
+    "NsRuntimeIamDeniedError": (
+        "NsRuntimeError",
+        "RUNTIME_IAM_DENIED",
+        200127,
+        "Runtime IAM denied the operation.",
+    ),
+    "NsRuntimeIamUnavailableError": (
+        "NsRuntimeError",
+        "RUNTIME_IAM_UNAVAILABLE",
+        200128,
+        "Runtime IAM service is unavailable.",
+    ),
+    "NsRuntimeIamTimeoutError": (
+        "NsRuntimeIamUnavailableError",
+        "RUNTIME_IAM_TIMEOUT",
+        200129,
+        "Runtime IAM request timed out.",
+    ),
+    "NsRuntimeTenantQuotaExceededError": (
+        "NsRuntimeError",
+        "RUNTIME_TENANT_QUOTA_EXCEEDED",
+        200130,
+        "Runtime tenant quota is exceeded.",
+    ),
+    "NsRuntimeTargetNotFoundError": (
+        "NsRuntimeError",
+        "RUNTIME_TARGET_NOT_FOUND",
+        200131,
+        "Runtime target does not exist.",
+    ),
+    "NsRuntimeRouteUnavailableError": (
+        "NsRuntimeError",
+        "RUNTIME_ROUTE_UNAVAILABLE",
+        200132,
+        "Runtime route is unavailable.",
+    ),
+    "NsRuntimeRouteLoopError": (
+        "NsRuntimeError",
+        "RUNTIME_ROUTE_LOOP",
+        200133,
+        "Runtime route loop is detected.",
+    ),
+    "NsRuntimeRouteHopLimitExceededError": (
+        "NsRuntimeError",
+        "RUNTIME_ROUTE_HOP_LIMIT_EXCEEDED",
+        200134,
+        "Runtime route hop limit is exceeded.",
+    ),
+    "NsRuntimeAckTimeoutError": (
+        "NsRuntimeDeliveryStateError",
+        "RUNTIME_ACK_TIMEOUT",
+        200135,
+        "Runtime ACK deadline is exceeded.",
+    ),
+    "NsRuntimeNackNonRetryableError": (
+        "NsRuntimeDeliveryStateError",
+        "RUNTIME_NACK_NON_RETRYABLE",
+        200136,
+        "Runtime NACK is not retryable.",
+    ),
+    "NsRuntimeDeferBudgetExceededError": (
+        "NsRuntimeDeliveryStateError",
+        "RUNTIME_DEFER_BUDGET_EXCEEDED",
+        200137,
+        "Runtime Defer budget is exceeded.",
+    ),
+    "NsRuntimeDeliveryLeaseExpiredError": (
+        "NsRuntimeDeliveryStateError",
+        "RUNTIME_DELIVERY_LEASE_EXPIRED",
+        200138,
+        "Runtime delivery lease has expired.",
+    ),
+    "NsRuntimeDeliveryLeaseRenewFailedError": (
+        "NsRuntimeDeliveryStateError",
+        "RUNTIME_DELIVERY_LEASE_RENEW_FAILED",
+        200139,
+        "Runtime delivery lease renewal failed.",
+    ),
+    "NsRuntimeFencingRejectedError": (
+        "NsRuntimeDeliveryStateError",
+        "RUNTIME_FENCING_REJECTED",
+        200140,
+        "Runtime fencing validation rejected the operation.",
+    ),
+    "NsRuntimeOwnerMismatchError": (
+        "NsRuntimeDeliveryStateError",
+        "RUNTIME_OWNER_MISMATCH",
+        200141,
+        "Runtime delivery owner does not match.",
+    ),
+    "NsRuntimeOwnerTransferRejectedError": (
+        "NsRuntimeDeliveryStateError",
+        "RUNTIME_OWNER_TRANSFER_REJECTED",
+        200142,
+        "Runtime delivery owner transfer is rejected.",
+    ),
+    "NsRuntimeProcessorTimeoutError": (
+        "NsRuntimeError",
+        "RUNTIME_PROCESSOR_TIMEOUT",
+        200143,
+        "Runtime processor timed out.",
+    ),
+    "NsRuntimeProcessorFailedError": (
+        "NsRuntimeError",
+        "RUNTIME_PROCESSOR_FAILED",
+        200144,
+        "Runtime processor failed.",
+    ),
+    "NsRuntimeConfigInvalidError": (
+        "NsConfigError",
+        "RUNTIME_CONFIG_INVALID",
+        200145,
+        "Runtime configuration is invalid.",
+    ),
+    "NsRuntimeConfigVersionConflictError": (
+        "NsConfigError",
+        "RUNTIME_CONFIG_VERSION_CONFLICT",
+        200146,
+        "Runtime configuration version conflicts.",
+    ),
+    "NsRuntimeConfigApplyFailedError": (
+        "NsConfigError",
+        "RUNTIME_CONFIG_APPLY_FAILED",
+        200147,
+        "Runtime configuration could not be applied.",
+    ),
+    "NsRuntimeTransportError": (
+        "NsRuntimeError",
+        "RUNTIME_TRANSPORT_ERROR",
+        200148,
+        "Runtime transport error.",
+    ),
+    "NsRuntimeTransportDisabledError": (
+        "NsRuntimeTransportError",
+        "RUNTIME_TRANSPORT_DISABLED",
+        200149,
+        "Runtime transport is disabled.",
+    ),
+    "NsRuntimeTransportHandshakeFailedError": (
+        "NsRuntimeTransportError",
+        "RUNTIME_TRANSPORT_HANDSHAKE_FAILED",
+        200150,
+        "Runtime transport handshake failed.",
+    ),
+    "NsRuntimeTransportSendFailedError": (
+        "NsRuntimeTransportError",
+        "RUNTIME_TRANSPORT_SEND_FAILED",
+        200151,
+        "Runtime transport send failed.",
+    ),
+    "NsRuntimeTransportReceiveFailedError": (
+        "NsRuntimeTransportError",
+        "RUNTIME_TRANSPORT_RECEIVE_FAILED",
+        200152,
+        "Runtime transport receive failed.",
+    ),
+    "NsRuntimeTransportStreamResetError": (
+        "NsRuntimeTransportError",
+        "RUNTIME_TRANSPORT_STREAM_RESET",
+        200153,
+        "Runtime transport stream was reset.",
+    ),
+    "NsRuntimeTransportFlowControlBlockedError": (
+        "NsRuntimeTransportError",
+        "RUNTIME_TRANSPORT_FLOW_CONTROL_BLOCKED",
+        200154,
+        "Runtime transport flow control is blocked.",
+    ),
+    "NsRuntimeTransportPathMigrationFailedError": (
+        "NsRuntimeTransportError",
+        "RUNTIME_TRANSPORT_PATH_MIGRATION_FAILED",
+        200155,
+        "Runtime transport path migration failed.",
+    ),
+    "NsRuntimeTransportFallbackFailedError": (
+        "NsRuntimeTransportError",
+        "RUNTIME_TRANSPORT_FALLBACK_FAILED",
+        200156,
+        "Runtime transport fallback failed.",
+    ),
+    "NsRuntimeLeaderLeaseLostError": (
+        "NsRuntimeClusterCoordinationError",
+        "RUNTIME_LEADER_LEASE_LOST",
+        200157,
+        "Runtime leader lease is lost.",
+    ),
+    "NsRuntimeClusterMemberUnavailableError": (
+        "NsRuntimeClusterCoordinationError",
+        "RUNTIME_CLUSTER_MEMBER_UNAVAILABLE",
+        200158,
+        "Runtime cluster member is unavailable.",
+    ),
+    "NsRuntimeClusterConfigDriftError": (
+        "NsRuntimeClusterCoordinationError",
+        "RUNTIME_CLUSTER_CONFIG_DRIFT",
+        200159,
+        "Runtime cluster configuration drift is detected.",
+    ),
+    "NsRuntimeTenantPausedError": (
+        "NsRuntimeError",
+        "RUNTIME_TENANT_PAUSED",
+        200160,
+        "Runtime tenant processing is paused.",
+    ),
+    "NsRuntimeTransportCapabilityUnavailableError": (
+        "NsRuntimeTransportError",
+        "RUNTIME_TRANSPORT_CAPABILITY_UNAVAILABLE",
+        200161,
+        "Runtime transport capability is unavailable.",
+    ),
+    "NsRuntimeDeliveryLeaseRejectedError": (
+        "NsRuntimeDeliveryStateError",
+        "RUNTIME_DELIVERY_LEASE_REJECTED",
+        200162,
+        "Runtime delivery lease token is rejected.",
+    ),
+    "NsRuntimeDependencyUnavailableError": (
+        "NsRuntimeError",
+        "RUNTIME_DEPENDENCY_UNAVAILABLE",
+        200163,
+        "Runtime dependency is unavailable.",
     ),
 }
 
@@ -497,6 +736,236 @@ EXPECTED_ERROR_POLICIES: dict[
     ),
 }
 
+EXPECTED_ERROR_POLICIES = {
+    **EXPECTED_ERROR_POLICIES,
+    exceptions_facade.NsRuntimeProtocolParseError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.PROTOCOL,
+        "reject_unparseable_message",
+        disconnect_required=True,
+    ),
+    exceptions_facade.NsRuntimeIamDeniedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.IAM,
+        "reject_iam_denied",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeIamUnavailableError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.IAM,
+        "retry_iam_request",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeIamTimeoutError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.IAM,
+        "retry_iam_request",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeTenantQuotaExceededError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.TENANT,
+        "defer_for_tenant_quota",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeTargetNotFoundError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.ROUTING,
+        "reject_missing_target",
+    ),
+    exceptions_facade.NsRuntimeRouteUnavailableError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.ROUTING,
+        "retry_route_resolution",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeRouteLoopError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.ROUTING,
+        "stop_route_loop",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeRouteHopLimitExceededError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.ROUTING,
+        "stop_route_forwarding",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeAckTimeoutError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.ACK,
+        "schedule_ack_timeout_retry",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeNackNonRetryableError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.NACK,
+        "dead_letter_non_retryable_nack",
+    ),
+    exceptions_facade.NsRuntimeDeferBudgetExceededError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.DEFER,
+        "handle_defer_as_ack_timeout",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeDeliveryLeaseExpiredError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.LEASE,
+        "recover_expired_delivery_lease",
+        retryable=True,
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeDeliveryLeaseRenewFailedError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.LEASE,
+        "retry_delivery_lease_renewal",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeFencingRejectedError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.FENCING,
+        "reject_stale_fencing",
+        disconnect_required=True,
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeOwnerMismatchError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.OWNER,
+        "reject_non_owner_write",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeOwnerTransferRejectedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.OWNER,
+        "reject_owner_transfer",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeProcessorTimeoutError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.PROCESSOR,
+        "retry_processor_execution",
+        retryable=True,
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeProcessorFailedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.PROCESSOR,
+        "isolate_processor_failure",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeConfigInvalidError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.CONFIGURATION,
+        "reject_runtime_configuration",
+    ),
+    exceptions_facade.NsRuntimeConfigVersionConflictError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.CONFIGURATION,
+        "reject_config_version_conflict",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeConfigApplyFailedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.CONFIGURATION,
+        "rollback_runtime_configuration",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeTransportError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.TRANSPORT,
+        "handle_transport_failure",
+    ),
+    exceptions_facade.NsRuntimeTransportDisabledError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.TRANSPORT,
+        "reject_disabled_transport",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeTransportHandshakeFailedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.TRANSPORT,
+        "close_failed_handshake",
+        disconnect_required=True,
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeTransportSendFailedError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.TRANSPORT,
+        "retry_transport_send",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeTransportReceiveFailedError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.TRANSPORT,
+        "close_failed_transport_receive",
+        disconnect_required=True,
+    ),
+    exceptions_facade.NsRuntimeTransportStreamResetError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.TRANSPORT,
+        "retry_after_stream_reset",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeTransportFlowControlBlockedError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.TRANSPORT,
+        "wait_for_transport_capacity",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeTransportPathMigrationFailedError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.TRANSPORT,
+        "reconnect_after_path_failure",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeTransportFallbackFailedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.TRANSPORT,
+        "report_transport_fallback_failure",
+    ),
+    exceptions_facade.NsRuntimeLeaderLeaseLostError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.LEASE,
+        "stop_leader_writes",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeClusterMemberUnavailableError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.CLUSTER,
+        "retry_cluster_member",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeClusterConfigDriftError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.CLUSTER,
+        "isolate_config_drift",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeTenantPausedError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.TENANT,
+        "wait_for_tenant_resume",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeTransportCapabilityUnavailableError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.TRANSPORT,
+        "reject_transport_capability",
+    ),
+    exceptions_facade.NsRuntimeDeliveryLeaseRejectedError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.LEASE,
+        "reject_delivery_lease",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeDependencyUnavailableError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.DEPENDENCY,
+        "retry_runtime_dependency",
+        retryable=True,
+    ),
+}
+
 
 def make_definition(
     error_type: type[NsEvermoreError],
@@ -532,12 +1001,17 @@ class NsExceptionsPackageStructureTestCase(unittest.TestCase):
             "base.py",
             "cluster.py",
             "common.py",
+            "configuration.py",
             "delivery.py",
+            "iam.py",
             "metadata.py",
             "nack.py",
             "payload_ref.py",
+            "processor.py",
             "protocol.py",
             "registry.py",
+            "routing.py",
+            "transport.py",
         }
         actual_files = {
             path.relative_to(EXCEPTIONS_PACKAGE).as_posix()
@@ -615,9 +1089,14 @@ class NsExceptionsPackageStructureTestCase(unittest.TestCase):
             self.assertNotIn(forbidden, base_source)
         for domain_module in (
             ".common",
+            ".configuration",
             ".protocol",
+            ".iam",
+            ".routing",
             ".payload_ref",
             ".delivery",
+            ".processor",
+            ".transport",
             ".cluster",
         ):
             self.assertNotIn(domain_module, metadata_source)
@@ -637,7 +1116,7 @@ class NsExceptionsPackageStructureTestCase(unittest.TestCase):
 class NsExceptionCompatibilityTestCase(unittest.TestCase):
 
     def test_class_metadata_and_inheritance_match_legacy_contract(self) -> None:
-        self.assertEqual(33, len(EXCEPTION_SNAPSHOTS))
+        self.assertEqual(71, len(EXCEPTION_SNAPSHOTS))
         for class_name, snapshot in EXCEPTION_SNAPSHOTS.items():
             with self.subTest(class_name=class_name):
                 base_name, code, numeric_code, default_message = snapshot
@@ -738,7 +1217,7 @@ class NsExceptionCompatibilityTestCase(unittest.TestCase):
 class NsErrorMetadataRegistryTestCase(unittest.TestCase):
 
     def test_all_current_error_policies_match_explicit_matrix(self) -> None:
-        self.assertEqual(33, len(EXPECTED_ERROR_POLICIES))
+        self.assertEqual(71, len(EXPECTED_ERROR_POLICIES))
         self.assertEqual(
             set(EXPECTED_ERROR_POLICIES),
             {definition.error_type for definition in ALL_ERROR_DEFINITIONS},
@@ -767,6 +1246,7 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             exceptions_facade.NsStateError,
             exceptions_facade.NsHttpClientError,
             exceptions_facade.NsRuntimeProtocolError,
+            exceptions_facade.NsRuntimeTransportError,
             exceptions_facade.NsRuntimeClusterCoordinationError,
         )
         for error_type in general_error_types:
@@ -785,6 +1265,22 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             exceptions_facade.NsRuntimePayloadRefValidationTimeoutError,
             exceptions_facade.NsRuntimeTargetUnavailableError,
             exceptions_facade.NsRuntimeBackpressureError,
+            exceptions_facade.NsRuntimeAckTimeoutError,
+            exceptions_facade.NsRuntimeDeferBudgetExceededError,
+            exceptions_facade.NsRuntimeDependencyUnavailableError,
+            exceptions_facade.NsRuntimeDeliveryLeaseExpiredError,
+            exceptions_facade.NsRuntimeDeliveryLeaseRenewFailedError,
+            exceptions_facade.NsRuntimeIamUnavailableError,
+            exceptions_facade.NsRuntimeIamTimeoutError,
+            exceptions_facade.NsRuntimeProcessorTimeoutError,
+            exceptions_facade.NsRuntimeRouteUnavailableError,
+            exceptions_facade.NsRuntimeTenantPausedError,
+            exceptions_facade.NsRuntimeTenantQuotaExceededError,
+            exceptions_facade.NsRuntimeTransportFlowControlBlockedError,
+            exceptions_facade.NsRuntimeTransportPathMigrationFailedError,
+            exceptions_facade.NsRuntimeTransportSendFailedError,
+            exceptions_facade.NsRuntimeTransportStreamResetError,
+            exceptions_facade.NsRuntimeClusterMemberUnavailableError,
         )
         for error_type in retryable_types:
             with self.subTest(error_type=error_type.__name__):
@@ -798,6 +1294,7 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             exceptions_facade.NsRuntimeAuthContextForgedError: (True, True),
             exceptions_facade.NsRuntimeTenantMismatchError: (True, True),
             exceptions_facade.NsRuntimeClusterFencingError: (True, True),
+            exceptions_facade.NsRuntimeFencingRejectedError: (True, True),
             exceptions_facade.NsRuntimeStartupSecurityError: (False, True),
         }
         for error_type, expected_flags in security_flags.items():
@@ -930,10 +1427,10 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
     def test_registry_is_complete_unique_queryable_and_json_safe(self) -> None:
         definitions = list_error_definitions()
         self.assertIs(ALL_ERROR_DEFINITIONS, definitions)
-        self.assertEqual(33, len(definitions))
-        self.assertEqual(33, len({item.error_type for item in definitions}))
-        self.assertEqual(33, len({item.code for item in definitions}))
-        self.assertEqual(33, len({item.numeric_code for item in definitions}))
+        self.assertEqual(71, len(definitions))
+        self.assertEqual(71, len({item.error_type for item in definitions}))
+        self.assertEqual(71, len({item.code for item in definitions}))
+        self.assertEqual(71, len({item.numeric_code for item in definitions}))
 
         validate_error_registry()
         for definition in definitions:
@@ -964,6 +1461,49 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
         self.assertIsNone(get_error_definition_by_code("UNKNOWN"))
         self.assertIsNone(get_error_definition_by_numeric_code(999999))
         json.dumps(ERROR_REGISTRY.to_dict(), allow_nan=False)
+
+    def test_runtime_error_coverage_matrix_is_complete_and_validated(self) -> None:
+        self.assertEqual(18, len(RUNTIME_ERROR_COVERAGE_MATRIX))
+        validated = validate_runtime_error_coverage_matrix()
+        self.assertIs(RUNTIME_ERROR_COVERAGE_MATRIX, validated)
+
+        covered_codes = tuple(
+            code
+            for _, codes in RUNTIME_ERROR_COVERAGE_MATRIX
+            for code in codes
+        )
+        registered_runtime_codes = {
+            definition.code
+            for definition in ALL_ERROR_DEFINITIONS
+            if definition.code.startswith("RUNTIME_")
+        }
+        self.assertEqual(64, len(covered_codes))
+        self.assertEqual(registered_runtime_codes, set(covered_codes))
+        self.assertEqual(len(covered_codes), len(set(covered_codes)))
+
+        invalid_matrices = (
+            (("", ("RUNTIME_PROTOCOL_ERROR",)),),
+            (("protocol", ()),),
+            (("protocol", ("NS_ERROR",)),),
+            (("protocol", ("RUNTIME_UNKNOWN",)),),
+            (
+                ("protocol", ("RUNTIME_PROTOCOL_ERROR",)),
+                ("protocol", ("RUNTIME_PROTOCOL_PARSE_ERROR",)),
+            ),
+            (
+                (
+                    "protocol",
+                    (
+                        "RUNTIME_PROTOCOL_ERROR",
+                        "RUNTIME_PROTOCOL_ERROR",
+                    ),
+                ),
+            ),
+        )
+        for matrix in invalid_matrices:
+            with self.subTest(matrix=matrix):
+                with self.assertRaises((TypeError, ValueError)):
+                    validate_runtime_error_coverage_matrix(matrix)
 
     def test_every_public_exception_class_has_one_definition(self) -> None:
         registered_types = {definition.error_type for definition in ALL_ERROR_DEFINITIONS}
@@ -1040,25 +1580,22 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
         self.assertNotIn("registry-string-secret", serialized)
 
     def test_nack_mapping_is_stable_complete_and_validated(self) -> None:
-        expected_reasons = (
-            "target_overloaded",
-            "temporarily_unavailable",
-            "queue_full",
-            "dependency_unavailable",
-            "target_draining",
-            "node_degraded",
-            "permission_denied",
-            "tenant_mismatch",
-            "invalid_payload_ref",
-            "payload_ref_denied",
-            "source_forged",
-            "auth_context_forged",
-            "protocol_violation",
+        expected_mapping = (
+            ("target_overloaded", "RUNTIME_BACKPRESSURE"),
+            ("temporarily_unavailable", "RUNTIME_TARGET_UNAVAILABLE"),
+            ("queue_full", "RUNTIME_BACKPRESSURE"),
+            ("dependency_unavailable", "RUNTIME_DEPENDENCY_UNAVAILABLE"),
+            ("target_draining", "RUNTIME_TARGET_UNAVAILABLE"),
+            ("node_degraded", "RUNTIME_CLUSTER_MEMBER_UNAVAILABLE"),
+            ("permission_denied", "RUNTIME_IAM_DENIED"),
+            ("tenant_mismatch", "RUNTIME_TENANT_MISMATCH"),
+            ("invalid_payload_ref", "RUNTIME_PAYLOAD_REF_INVALID"),
+            ("payload_ref_denied", "RUNTIME_PAYLOAD_REF_DENIED"),
+            ("source_forged", "RUNTIME_SOURCE_FORGED"),
+            ("auth_context_forged", "RUNTIME_AUTH_CONTEXT_FORGED"),
+            ("protocol_violation", "RUNTIME_PROTOCOL_ERROR"),
         )
-        self.assertEqual(
-            expected_reasons,
-            tuple(reason for reason, _ in RUNTIME_NACK_REASON_ERROR_CODES),
-        )
+        self.assertEqual(expected_mapping, RUNTIME_NACK_REASON_ERROR_CODES)
         self.assertEqual(
             len(RUNTIME_NACK_REASON_ERROR_CODES),
             len({reason for reason, _ in RUNTIME_NACK_REASON_ERROR_CODES}),
@@ -1068,6 +1605,7 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             validate_runtime_nack_reason_error_codes(),
         )
         for _, code in RUNTIME_NACK_REASON_ERROR_CODES:
+            self.assertTrue(code.startswith("RUNTIME_"))
             self.assertIsNotNone(get_error_definition_by_code(code))
 
         invalid_mappings = (
