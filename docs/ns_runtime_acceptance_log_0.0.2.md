@@ -411,6 +411,18 @@
 - 已知限制：本工作包只交付组件与可执行模块边界，不代表 RuntimeService、生命周期状态、RuntimeContext、启动校验、信号关闭、event loop 选择/观测或任何 transport/协议能力可用；这些能力保持 F0，由 P02-W02 至 P02-W08 依序实现。
 - 下一工作包：`P02-W02 建立 RuntimeService 生命周期：created、starting、running、stopping、stopped、failed`，状态为 `NOT_STARTED`；P02 阶段保持 `IN_PROGRESS`。
 
+## P02-W02
+
+- 工作包：`P02-W02 建立 RuntimeService 生命周期状态机`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T22:58:14+08:00`。
+- 修改文件：新增 `src/ns_runtime/service.py` 和 `tests/test_runtime_service.py`；更新实施计划与 acceptance log。未修改 `src/ns_runtime/main.py`、package facade、设计边界、architecture decisions、`ns_common`、backend、配置或依赖清单，未开始 P02-W03。
+- 公共契约变化：新增 `RSL-1`。`ns_runtime.service` 提供 `RuntimeServiceState` 六个稳定小写值 created/starting/running/stopping/stopped/failed，以及一次性 `RuntimeService.state/start()/stop()` 生命周期。正常路径为 created → starting → running → stopping → stopped；start/stop hook 的普通异常、取消或其他 `BaseException` 在原对象穿透前分别从 starting/stopping 进入 failed；stopped/failed 为终态。生命周期操作在首次使用的 event loop 上通过实例级 lock 串行化，跨 loop 和非法迁移统一返回 `NsStateError`；非法迁移固定使用 `NS_STATE_ERROR`、固定 message，以及仅含 component、operation、current_state、requested_state、allowed_target_states 的结构化 details。
+- 测试结果：runtime 环境 `tests.test_runtime_service` 为 `Ran 10, OK`，与 W01 入口联合专项为 `Ran 13, OK`；加入 P02-W01/W02 后的 P01/runtime 联合回归为 `Ran 269, OK (skipped=1)`；backend 环境根目录全量为 `Ran 280, OK (skipped=1)`。两项跳过均为 WSL 下同一 Windows 专用 event-loop policy 用例。专项覆盖正常过渡态可见性、六值顺序、created/stopped/failed 非法操作、启动/停止原异常穿透、取消后 failed 和 lock 释放、并发 start 串行化、start 期间 stop 等待，以及跨 event loop 拒绝。
+- 安全/隔离检查：RuntimeService 不保存 hook 异常对象或异常文本，稳定迁移错误只含固定机器值；模块没有全局 service、可变 registry、后台 task/thread、I/O、环境变量读取或 service locator，唯一模块级迁移表使用只读 mapping 与 tuple。实现不直接读取全局 `ns_config`、HTTP/cache client、logger/sink，不导入 backend、transport、Redis/Valkey 或 WebSocket，也不创建 listener、Envelope、DeliveryRecord 或管理旁路。W01 冷导入和模块启动专项保持通过；全树 `compileall`、两套环境 `pip check`、生产源码测试文件、仓库虚拟环境和 `git diff --check` 门禁通过。
+- 已知限制：`main.py` 尚未构造或运行 RuntimeService；protected start/stop hook 当前为空，RuntimeContext 和实际资源所有权由 P02-W03 引入。启动校验、角色状态、信号关闭/重复 shutdown、后台任务失败联动、event loop 指标和本地诊断分别留给 P02-W04 至 W08；本工作包不把 transport、cluster 或 delivery 标记为可用。
+- 下一工作包：`P02-W03 建立显式 RuntimeContext，持有配置快照、clock、logger、metrics、trace、task supervisor 和后续依赖占位`，状态为 `NOT_STARTED`；P02 阶段保持 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
