@@ -125,6 +125,112 @@ class _AsyncRedisClient:
         return deleted
 
 
+class _FlakyCloseSocket(socket.socket):
+    """Real bound TCP socket whose close failures occur before OS release."""
+
+    def __init__(self, *close_errors: BaseException) -> None:
+        super().__init__(socket.AF_INET, socket.SOCK_STREAM)
+        self.close_attempt_count = 0
+        self.successful_close_count = 0
+        self._close_errors = list(close_errors)
+        self.bind(("127.0.0.1", 0))
+        self.listen(1)
+
+    def close(self) -> None:
+        self.close_attempt_count += 1
+        if self._close_errors:
+            raise self._close_errors.pop(0)
+        super().close()
+        self.successful_close_count += 1
+
+    def allow_successful_close(self) -> None:
+        self._close_errors.clear()
+
+
+class _BlockingCloseSocket(socket.socket):
+    """Real bound TCP socket with a controllable first close boundary."""
+
+    def __init__(self, *, first_close_error: BaseException | None = None) -> None:
+        super().__init__(socket.AF_INET, socket.SOCK_STREAM)
+        self.first_close_entered = Event()
+        self.allow_first_close = Event()
+        self.close_attempt_count = 0
+        self.successful_close_count = 0
+        self.maximum_concurrent_close_count = 0
+        self.retry_observed_same_socket = False
+        self.retry_observed_unreleased = False
+        self.reservation: NsReservedPort | None = None
+        self._first_close_error = first_close_error
+        self._active_close_count = 0
+        self._counter_lock = Lock()
+        self.bind(("127.0.0.1", 0))
+        self.listen(1)
+
+    def close(self) -> None:
+        with self._counter_lock:
+            self.close_attempt_count += 1
+            attempt = self.close_attempt_count
+            self._active_close_count += 1
+            self.maximum_concurrent_close_count = max(
+                self.maximum_concurrent_close_count,
+                self._active_close_count,
+            )
+        if attempt == 1:
+            self.first_close_entered.set()
+        try:
+            if attempt == 1:
+                if not self.allow_first_close.wait(5):
+                    raise AssertionError("socket close gate timed out")
+                if self._first_close_error is not None:
+                    raise self._first_close_error
+            if attempt == 2 and self.reservation is not None:
+                self.retry_observed_same_socket = (
+                    self.reservation.socket is self
+                )
+                self.retry_observed_unreleased = (
+                    not self.reservation.is_released
+                )
+            super().close()
+            with self._counter_lock:
+                self.successful_close_count += 1
+        finally:
+            with self._counter_lock:
+                self._active_close_count -= 1
+
+    def allow_cleanup(self) -> None:
+        self._first_close_error = None
+        self.allow_first_close.set()
+
+
+def _force_close_test_socket(test_socket: socket.socket) -> None:
+    if test_socket.fileno() >= 0:
+        socket.socket.close(test_socket)
+
+
+def _adopt_test_reservation(
+    factory: NsTestResourceFactory,
+    reservation: NsReservedPort,
+) -> None:
+    # White-box ownership setup keeps failure injection out of the production API.
+    with factory._lock:
+        factory._ports.append(reservation)
+
+
+def _wait_for_factory_state(
+    factory: NsTestResourceFactory,
+    expected: NsTestResourceFactoryState,
+    *,
+    timeout: float = 5.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while factory.state is not expected:
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"factory did not enter {expected.value!r} within {timeout}s"
+            )
+        time.sleep(0.005)
+
+
 class _RespRedisClient:
     """Tiny test-only RESP2 client; no production Redis dependency is needed."""
 
@@ -220,6 +326,464 @@ class _RespRedisClient:
         if isinstance(value, bytes):
             return value.decode("utf-8")
         return str(value)
+
+
+class NsReservedPortReleaseTestCase(unittest.TestCase):
+    def test_bottom_close_failure_preserves_socket_for_real_retry(self) -> None:
+        close_error = OSError("bottom-close-secret")
+        controlled_socket = _FlakyCloseSocket(close_error)
+        self.addCleanup(_force_close_test_socket, controlled_socket)
+        reservation = NsReservedPort(controlled_socket)
+        released_port = reservation.port
+
+        self.assertIs(NsReservedPort.close, NsReservedPort.release)
+        with self.assertRaises(OSError) as caught:
+            reservation.release()
+
+        self.assertIs(close_error, caught.exception)
+        self.assertFalse(reservation.is_released)
+        self.assertIs(controlled_socket, reservation.socket)
+        self.assertGreaterEqual(reservation.fileno(), 0)
+        self.assertEqual(1, controlled_socket.close_attempt_count)
+        self.assertEqual(0, controlled_socket.successful_close_count)
+
+        self.assertTrue(reservation.release())
+        self.assertTrue(reservation.is_released)
+        self.assertEqual(2, controlled_socket.close_attempt_count)
+        self.assertEqual(1, controlled_socket.successful_close_count)
+        self.assertEqual(-1, controlled_socket.fileno())
+        with self.assertRaises(NsStateError) as released_socket_error:
+            _ = reservation.socket
+        self.assertEqual(
+            {"operation": "get_socket"},
+            released_socket_error.exception.details,
+        )
+
+        self.assertFalse(reservation.release())
+        self.assertEqual(2, controlled_socket.close_attempt_count)
+        self.assertEqual(1, controlled_socket.successful_close_count)
+
+        available = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            available.bind((reservation.host, released_port))
+        finally:
+            available.close()
+
+    def test_concurrent_direct_release_waits_for_successful_close(self) -> None:
+        controlled_socket = _BlockingCloseSocket()
+        self.addCleanup(_force_close_test_socket, controlled_socket)
+        reservation = NsReservedPort(controlled_socket)
+        controlled_socket.reservation = reservation
+        start_gate = Event()
+        called = [Event() for _ in range(4)]
+        completed = [Event() for _ in range(4)]
+        results: list[bool | None] = [None] * 4
+        errors: list[BaseException | None] = [None] * 4
+
+        def release_in_thread(index: int) -> None:
+            if not start_gate.wait(5):
+                errors[index] = AssertionError("start gate timed out")
+                completed[index].set()
+                return
+            called[index].set()
+            try:
+                results[index] = reservation.release()
+            except BaseException as error:
+                errors[index] = error
+            finally:
+                completed[index].set()
+
+        threads = [
+            Thread(target=release_in_thread, args=(index,), daemon=True)
+            for index in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        start_gate.set()
+        try:
+            self.assertTrue(controlled_socket.first_close_entered.wait(5))
+            self.assertTrue(all(event.wait(5) for event in called))
+            self.assertFalse(any(event.is_set() for event in completed))
+            self.assertEqual(1, controlled_socket.close_attempt_count)
+            self.assertEqual(
+                1,
+                controlled_socket.maximum_concurrent_close_count,
+            )
+        finally:
+            controlled_socket.allow_first_close.set()
+            for event in completed:
+                event.wait(5)
+            for thread in threads:
+                thread.join(timeout=1)
+
+        self.assertTrue(all(event.is_set() for event in completed))
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual([None] * 4, errors)
+        self.assertEqual(1, sum(result is True for result in results))
+        self.assertEqual(3, sum(result is False for result in results))
+        self.assertEqual(1, controlled_socket.close_attempt_count)
+        self.assertEqual(1, controlled_socket.successful_close_count)
+        self.assertEqual(1, controlled_socket.maximum_concurrent_close_count)
+        self.assertTrue(reservation.is_released)
+
+    def test_concurrent_direct_release_retries_after_first_failure(self) -> None:
+        close_error = OSError("concurrent-direct-close-secret")
+        controlled_socket = _BlockingCloseSocket(
+            first_close_error=close_error,
+        )
+        self.addCleanup(_force_close_test_socket, controlled_socket)
+        reservation = NsReservedPort(controlled_socket)
+        controlled_socket.reservation = reservation
+        start_gate = Event()
+        called = [Event() for _ in range(4)]
+        completed = [Event() for _ in range(4)]
+        results: list[bool | None] = [None] * 4
+        errors: list[BaseException | None] = [None] * 4
+
+        def release_in_thread(index: int) -> None:
+            if not start_gate.wait(5):
+                errors[index] = AssertionError("start gate timed out")
+                completed[index].set()
+                return
+            called[index].set()
+            try:
+                results[index] = reservation.release()
+            except BaseException as error:
+                errors[index] = error
+            finally:
+                completed[index].set()
+
+        threads = [
+            Thread(target=release_in_thread, args=(index,), daemon=True)
+            for index in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        start_gate.set()
+        try:
+            self.assertTrue(controlled_socket.first_close_entered.wait(5))
+            self.assertTrue(all(event.wait(5) for event in called))
+            self.assertFalse(any(event.is_set() for event in completed))
+            self.assertEqual(1, controlled_socket.close_attempt_count)
+            self.assertEqual(
+                1,
+                controlled_socket.maximum_concurrent_close_count,
+            )
+        finally:
+            controlled_socket.allow_first_close.set()
+            for event in completed:
+                event.wait(5)
+            for thread in threads:
+                thread.join(timeout=1)
+
+        self.assertTrue(all(event.is_set() for event in completed))
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(1, sum(error is close_error for error in errors))
+        self.assertEqual(3, sum(error is None for error in errors))
+        self.assertEqual(1, sum(result is True for result in results))
+        self.assertEqual(2, sum(result is False for result in results))
+        self.assertEqual(1, sum(result is None for result in results))
+        self.assertEqual(2, controlled_socket.close_attempt_count)
+        self.assertEqual(1, controlled_socket.successful_close_count)
+        self.assertEqual(1, controlled_socket.maximum_concurrent_close_count)
+        self.assertTrue(controlled_socket.retry_observed_same_socket)
+        self.assertTrue(controlled_socket.retry_observed_unreleased)
+        self.assertTrue(reservation.is_released)
+
+    def test_factory_retries_same_socket_after_bottom_close_failure(self) -> None:
+        factory = NsTestResourceFactory()
+        root = factory.directories.root
+        close_secret = "factory-bottom-close-secret"
+        close_error = OSError(close_secret)
+        controlled_socket = _FlakyCloseSocket(close_error)
+        reservation = NsReservedPort(controlled_socket)
+        released_port = reservation.port
+        _adopt_test_reservation(factory, reservation)
+
+        try:
+            with self.assertRaises(NsStateError) as caught:
+                factory.close()
+
+            error = caught.exception
+            self.assertEqual(
+                {
+                    "operation": "close_test_resources",
+                    "state": "closing",
+                    "failed_resource_types": ["reserved_port"],
+                    "failed_resource_count": 1,
+                    "remaining_port_count": 1,
+                    "temporary_directory_pending": False,
+                    "failures": [
+                        {
+                            "resource_type": "reserved_port",
+                            "error_type": "OSError",
+                        }
+                    ],
+                },
+                error.details,
+            )
+            self.assertIsNone(error.__cause__)
+            self.assertIsNone(error.__context__)
+            self.assertIs(factory.state, NsTestResourceFactoryState.CLOSING)
+            self.assertEqual([reservation], factory._ports)
+            self.assertFalse(reservation.is_released)
+            self.assertIs(controlled_socket, reservation.socket)
+            self.assertGreaterEqual(reservation.fileno(), 0)
+            self.assertEqual(1, controlled_socket.close_attempt_count)
+            self.assertEqual(0, controlled_socket.successful_close_count)
+            self.assertTrue(factory._temporary_directory_released)
+            self.assertFalse(root.exists())
+
+            serialized = "\n".join(
+                (
+                    str(error),
+                    json.dumps(error.details, sort_keys=True),
+                    json.dumps(error.to_dict(), sort_keys=True),
+                )
+            )
+            for sensitive in (
+                close_secret,
+                reservation.host,
+                str(reservation.port),
+                repr(controlled_socket),
+            ):
+                self.assertNotIn(sensitive, serialized)
+            self.assertNotIn('"host"', serialized)
+            self.assertNotIn('"port"', serialized)
+            self.assertNotIn('"fileno"', serialized)
+            self.assertNotIn('"socket"', serialized)
+
+            factory.close()
+            self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+            self.assertEqual([], factory._ports)
+            self.assertTrue(reservation.is_released)
+            self.assertEqual(2, controlled_socket.close_attempt_count)
+            self.assertEqual(1, controlled_socket.successful_close_count)
+        finally:
+            controlled_socket.allow_successful_close()
+            if not factory.is_closed:
+                factory.close()
+            _force_close_test_socket(controlled_socket)
+
+        available = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            available.bind((reservation.host, released_port))
+        finally:
+            available.close()
+
+    def test_direct_release_and_factory_close_share_success_barrier(self) -> None:
+        factory = NsTestResourceFactory()
+        root = factory.directories.root
+        controlled_socket = _BlockingCloseSocket()
+        reservation = NsReservedPort(controlled_socket)
+        controlled_socket.reservation = reservation
+        _adopt_test_reservation(factory, reservation)
+        direct_result: list[bool] = []
+        direct_errors: list[BaseException] = []
+        factory_errors: list[BaseException] = []
+        direct_completed = Event()
+        factory_started = Event()
+        factory_completed = Event()
+
+        def release_directly() -> None:
+            try:
+                direct_result.append(reservation.release())
+            except BaseException as error:
+                direct_errors.append(error)
+            finally:
+                direct_completed.set()
+
+        def close_factory() -> None:
+            factory_started.set()
+            try:
+                factory.close()
+            except BaseException as error:
+                factory_errors.append(error)
+            finally:
+                factory_completed.set()
+
+        direct_thread = Thread(target=release_directly, daemon=True)
+        factory_thread = Thread(target=close_factory, daemon=True)
+        direct_thread.start()
+        try:
+            self.assertTrue(controlled_socket.first_close_entered.wait(5))
+            factory_thread.start()
+            self.assertTrue(factory_started.wait(5))
+            _wait_for_factory_state(
+                factory,
+                NsTestResourceFactoryState.CLOSING,
+            )
+            self.assertFalse(direct_completed.is_set())
+            self.assertFalse(factory_completed.is_set())
+            self.assertEqual([reservation], factory._ports)
+            self.assertTrue(root.exists())
+            self.assertEqual(1, controlled_socket.close_attempt_count)
+            self.assertEqual(
+                1,
+                controlled_socket.maximum_concurrent_close_count,
+            )
+        finally:
+            controlled_socket.allow_first_close.set()
+            direct_completed.wait(5)
+            factory_completed.wait(5)
+            direct_thread.join(timeout=1)
+            if factory_thread.ident is not None:
+                factory_thread.join(timeout=1)
+
+        try:
+            self.assertFalse(direct_thread.is_alive())
+            self.assertFalse(factory_thread.is_alive())
+            self.assertEqual([True], direct_result)
+            self.assertEqual([], direct_errors)
+            self.assertEqual([], factory_errors)
+            self.assertEqual(1, controlled_socket.close_attempt_count)
+            self.assertEqual(1, controlled_socket.successful_close_count)
+            self.assertEqual(
+                1,
+                controlled_socket.maximum_concurrent_close_count,
+            )
+            self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+            self.assertEqual([], factory._ports)
+            self.assertTrue(reservation.is_released)
+            self.assertFalse(root.exists())
+        finally:
+            controlled_socket.allow_cleanup()
+            if not factory.is_closed:
+                factory.close()
+            _force_close_test_socket(controlled_socket)
+
+    def test_direct_release_failure_allows_factory_retry(self) -> None:
+        factory = NsTestResourceFactory()
+        root = factory.directories.root
+        close_error = OSError("direct-failure-before-factory-retry")
+        controlled_socket = _BlockingCloseSocket(
+            first_close_error=close_error,
+        )
+        reservation = NsReservedPort(controlled_socket)
+        controlled_socket.reservation = reservation
+        _adopt_test_reservation(factory, reservation)
+        direct_errors: list[BaseException] = []
+        factory_errors: list[BaseException] = []
+        direct_completed = Event()
+        factory_started = Event()
+        factory_completed = Event()
+
+        def release_directly() -> None:
+            try:
+                reservation.release()
+            except BaseException as error:
+                direct_errors.append(error)
+            finally:
+                direct_completed.set()
+
+        def close_factory() -> None:
+            factory_started.set()
+            try:
+                factory.close()
+            except BaseException as error:
+                factory_errors.append(error)
+            finally:
+                factory_completed.set()
+
+        direct_thread = Thread(target=release_directly, daemon=True)
+        factory_thread = Thread(target=close_factory, daemon=True)
+        direct_thread.start()
+        try:
+            self.assertTrue(controlled_socket.first_close_entered.wait(5))
+            factory_thread.start()
+            self.assertTrue(factory_started.wait(5))
+            _wait_for_factory_state(
+                factory,
+                NsTestResourceFactoryState.CLOSING,
+            )
+            self.assertFalse(direct_completed.is_set())
+            self.assertFalse(factory_completed.is_set())
+            self.assertEqual([reservation], factory._ports)
+            self.assertEqual(1, controlled_socket.close_attempt_count)
+            self.assertEqual(
+                1,
+                controlled_socket.maximum_concurrent_close_count,
+            )
+        finally:
+            controlled_socket.allow_first_close.set()
+            direct_completed.wait(5)
+            factory_completed.wait(5)
+            direct_thread.join(timeout=1)
+            if factory_thread.ident is not None:
+                factory_thread.join(timeout=1)
+
+        try:
+            self.assertFalse(direct_thread.is_alive())
+            self.assertFalse(factory_thread.is_alive())
+            self.assertEqual([close_error], direct_errors)
+            self.assertEqual([], factory_errors)
+            self.assertEqual(2, controlled_socket.close_attempt_count)
+            self.assertEqual(1, controlled_socket.successful_close_count)
+            self.assertEqual(
+                1,
+                controlled_socket.maximum_concurrent_close_count,
+            )
+            self.assertTrue(controlled_socket.retry_observed_same_socket)
+            self.assertTrue(controlled_socket.retry_observed_unreleased)
+            self.assertIs(factory.state, NsTestResourceFactoryState.CLOSED)
+            self.assertEqual([], factory._ports)
+            self.assertTrue(reservation.is_released)
+            self.assertFalse(root.exists())
+        finally:
+            controlled_socket.allow_cleanup()
+            if not factory.is_closed:
+                factory.close()
+            _force_close_test_socket(controlled_socket)
+
+    def test_factory_preserves_socket_after_process_level_close_error(self) -> None:
+        for exception_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(exception_type=exception_type.__name__):
+                factory = NsTestResourceFactory()
+                root = factory.directories.root
+                process_error = exception_type("process-close-stop")
+                controlled_socket = _FlakyCloseSocket(process_error)
+                reservation = NsReservedPort(controlled_socket)
+                _adopt_test_reservation(factory, reservation)
+
+                try:
+                    with self.assertRaises(exception_type) as caught:
+                        factory.close()
+
+                    self.assertIs(process_error, caught.exception)
+                    self.assertIs(
+                        factory.state,
+                        NsTestResourceFactoryState.CLOSING,
+                    )
+                    self.assertEqual([reservation], factory._ports)
+                    self.assertFalse(reservation.is_released)
+                    self.assertIs(controlled_socket, reservation.socket)
+                    self.assertGreaterEqual(reservation.fileno(), 0)
+                    self.assertEqual(1, controlled_socket.close_attempt_count)
+                    self.assertEqual(
+                        0,
+                        controlled_socket.successful_close_count,
+                    )
+                    self.assertFalse(factory._temporary_directory_released)
+                    self.assertTrue(root.exists())
+
+                    factory.close()
+                    self.assertIs(
+                        factory.state,
+                        NsTestResourceFactoryState.CLOSED,
+                    )
+                    self.assertEqual([], factory._ports)
+                    self.assertTrue(reservation.is_released)
+                    self.assertEqual(2, controlled_socket.close_attempt_count)
+                    self.assertEqual(
+                        1,
+                        controlled_socket.successful_close_count,
+                    )
+                    self.assertFalse(root.exists())
+                finally:
+                    controlled_socket.allow_successful_close()
+                    if not factory.is_closed:
+                        factory.close()
+                    _force_close_test_socket(controlled_socket)
 
 
 class NsTestResourceFactoryTestCase(unittest.TestCase):

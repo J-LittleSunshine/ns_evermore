@@ -532,11 +532,11 @@ class NsReservedPort:
     def release(self) -> bool:
         with self._lock:
             reserved_socket = self._socket
+            if reserved_socket is None:
+                return False
+            reserved_socket.close()
             self._socket = None
-        if reserved_socket is None:
-            return False
-        reserved_socket.close()
-        return True
+            return True
 
     close = release
 
