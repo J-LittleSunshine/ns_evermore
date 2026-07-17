@@ -399,6 +399,18 @@
 - 已知限制：Factory 仍不拥有 Redis/Valkey client 或外部服务进程，调用方必须在 Factory 关闭前停止 namespace 写入者并自行关闭 client/process；真实依赖回归仍只覆盖 standalone，不覆盖 Sentinel/Cluster/TLS/StateStore/Lua/CAS/lease/fencing。同步 close 屏障会等待当前清理调用返回，不提供超时中断底层阻塞 API；底层清理函数自身必须可终止。双异常沿用 Python 3.10 原生 context 语义，未为本 FIX 引入 ExceptionGroup 兼容层。
 - 下一工作包：`P02-W01 建立 src/ns_runtime 独立组件和唯一进程入口 main.py`，状态保持 `NOT_STARTED`；P01-FIX-09、P01-W16、P01-W17 与 P01 恢复 `VERIFIED`，唯一执行游标指向 P02-W01，但本工作包未实施 P02。
 
+## P02-W01
+
+- 工作包：`P02-W01 建立 src/ns_runtime 独立组件和唯一进程入口 main.py`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-17T22:08:57+08:00`。
+- 修改文件：新增 `src/ns_runtime/__init__.py`、`src/ns_runtime/main.py` 和 `tests/test_runtime_main.py`；更新实施计划与 acceptance log。未修改设计边界、architecture decisions、`ns_common`、backend、依赖清单或配置，未开始 P02-W02。
+- 公共契约变化：新增 `RTE-1`。`src/ns_runtime` 成为独立组件边界，`python -m ns_runtime.main` 是唯一模块进程入口；package facade 保持无启动副作用，入口当前只建立进程边界并确定性返回状态 0。未新增 `__main__.py`、脚本旁路、listener、管理端口、Envelope 或全局可变 service。
+- 测试结果：runtime 环境 `tests.test_runtime_main` 为 `Ran 3, OK`；加入该专项后的 P01/runtime 联合回归为 `Ran 259, OK (skipped=1)`；backend 环境根目录全量为 `Ran 270, OK (skipped=1)`。两项跳过均为 WSL 下同一 Windows 专用 event-loop policy 用例。入口在仓库根目录及 `/tmp` 外部工作目录下均通过模块方式以状态 0、空 stdout/stderr 退出；全树 `compileall` 与 runtime/backend 两套环境 `pip check` 通过。
+- 安全/隔离检查：独立解释器验证 `import ns_runtime` 不启动服务、不安装或替换 event loop policy；生产 package 不导入配置、logger、HTTP、cache、Redis/Valkey、transport 或 backend，不读取环境变量、全局 `ns_config`、仓库真实目录和外部网络。`src/` 下无测试文件，仓库内无虚拟环境，唯一 `main()`/`__main__` guard 均位于 `src/ns_runtime/main.py`，`git diff --check` 通过。
+- 已知限制：本工作包只交付组件与可执行模块边界，不代表 RuntimeService、生命周期状态、RuntimeContext、启动校验、信号关闭、event loop 选择/观测或任何 transport/协议能力可用；这些能力保持 F0，由 P02-W02 至 P02-W08 依序实现。
+- 下一工作包：`P02-W02 建立 RuntimeService 生命周期：created、starting、running、stopping、stopped、failed`，状态为 `NOT_STARTED`；P02 阶段保持 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
