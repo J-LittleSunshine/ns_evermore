@@ -203,3 +203,16 @@
 - 决策：`NsLogger` 的 concurrent-log-handler 子类和 `ns_common.cache` 多进程 logger 延迟到实际使用时加载。普通导入 `ns_common` 或 `ns_common.testing` 不得因为测试环境已安装 Redis/Valkey 而加载 concurrent-log-handler、portalocker、Redis、Valkey 或创建 cache client；真正使用多进程日志时仍按既有配置创建 concurrent handler，缺失依赖继续稳定失败。该调整只改变可选依赖加载时机，不改变 LOG-1 输出、脱敏、rotation、cache soft-failure 或 TST-1 client 所有权契约。
 - 后果：P02 生产或最小运行环境只安装 runtime 生产清单；普通 runtime 测试显式安装 test 清单；性能进程才安装 benchmark 清单。清单结构和禁止包由自动化门禁持续验证，真实隔离环境还必须执行 pip resolver、`pip check`、导入与冷启动检查。P08、P21、P22 若新增生产 StateStore、QUIC/WebTransport 或负载工具，必须修改对应最窄层并重新验证 backend/runtime 生产环境没有依赖泄漏。
 - 关联阶段/工作包：`P01-W17`、`P02`、`P04`、`P08`、`P20`、`P21`、`P22`。
+
+## ADR-021
+
+- ADR 编号：`ADR-021`
+- 状态：`ACCEPTED`
+- 背景：RuntimeService 的一次性启动边界需要同时区分“禁止 restart”和“资源已成功清理”。如果把 `STOPPED` 与 `FAILED` 都建模为无条件拒绝 `stop()` 的绝对终态，重复关闭会报错，启动或关闭失败后也无法回收部分资源；如果 event-loop owner 的首次绑定没有同步保护，两个线程中的独立 event loop 还可能同时进入 asyncio lifecycle lock，暴露非确定性的底层 loop mismatch。
+- 决策：RuntimeService 的公开状态固定为 `created`、`starting`、`running`、`stopping`、`stopped`、`failed` 六态，并保持一次性启动、不支持 restart。`start()` 只允许 `CREATED -> STARTING -> RUNNING`；start hook 抛任意 `BaseException` 时先进入 `FAILED` 再原对象穿透。`RUNNING`、`STOPPING`、`STOPPED`、`FAILED` 均不得再次 start，start 失败或取消后也不会自动调用 stop hook，资源清理由调用方显式触发 `stop()`。
+- 决策：`stop()` 从 `CREATED` 调用时保持稳定非法迁移错误；在 `STARTING` 或 `STOPPING` 期间发起的同 loop 调用等待当前 lifecycle 尝试完成，再根据完成后的权威状态处理。`RUNNING` 和 `FAILED` 都允许进入 `STOPPING` 并执行 stop hook；成功后进入 `STOPPED`，普通异常、取消、`KeyboardInterrupt`、`SystemExit` 或其他 `BaseException` 则先回到 `FAILED` 再原对象穿透。`FAILED` 表示启动、运行或清理失败，不表示资源已经释放；后续 `stop()` 可以继续执行或重试清理。`STOPPED` 禁止 restart，但同一 owner event loop 上的 `stop()` 幂等正常返回且不重复执行 hook；只有 `STOPPED` 才表示 lifecycle cleanup hook 已成功完成。
+- 决策：同一 event loop 内的 start/stop 继续由实例级 asyncio lifecycle lock 串行化，hook 在锁内执行。并发 start 中只有首个调用可以执行 start hook；并发 stop 中同一时刻只有一个 stop hook 执行。首个关闭成功后等待者观察 `STOPPED` 并正常返回；首个关闭失败后，一个观察到 `FAILED` 的等待者可以接管下一次清理，成功后其余等待者不再重复 hook。该模型不增加公开 attempt 状态、后台 task 或额外清理报告。
+- 决策：event-loop owner 的首次绑定使用独立实例级同步锁，只在锁内比较和设置 loop 引用，不在锁内 await、运行 hook 或获取 asyncio lifecycle lock。只有一个 loop 能成为 owner；其他 loop 必须在尝试获取 lifecycle lock 前收到固定 `NsStateError`。跨 loop 错误只公开 component、operation、current_state 和 `event_loop_mismatch` reason，不公开 loop/task/thread repr、线程标识或底层 asyncio 异常文本。
+- 决策：start/stop hook 的普通异常、取消和进程级异常均保持原类型和原对象穿透，状态必须在穿透前进入 `FAILED`。RuntimeService 不保存异常对象、异常文本或底层 cause，不把其内容复制到状态、非法迁移错误或跨 loop 错误；稳定非法迁移错误继续只包含 component、operation、current_state、requested_state 和 allowed_target_states。
+- 后果：P02-W06 可以在这一生命周期基础上增加信号驱动的进程关闭、实际资源关闭编排和超时观测，但不得重新把 `STOPPED` 后 stop 改为错误，也不得禁止 `FAILED` 后显式清理或重试。后续 RuntimeContext、HTTP owner、sink、TaskSupervisor 和 transport 资源必须通过 stop hook 遵守相同的一次性启动、失败保留所有权和成功后才进入 `STOPPED` 的边界。
+- 关联阶段/工作包：`P02-W02`、`P02-FIX-01`、`P02-W06`。

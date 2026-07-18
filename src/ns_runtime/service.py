@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from enum import Enum
+from threading import Lock
 from types import MappingProxyType
 from typing import Mapping
 
@@ -38,7 +39,7 @@ _RUNTIME_SERVICE_TRANSITIONS: Mapping[
         RuntimeServiceState.FAILED,
     ),
     RuntimeServiceState.STOPPED: (),
-    RuntimeServiceState.FAILED: (),
+    RuntimeServiceState.FAILED: (RuntimeServiceState.STOPPING,),
 })
 
 
@@ -46,13 +47,16 @@ class RuntimeService:
     """Own the one-shot lifecycle of one runtime process.
 
     Lifecycle operations are serialized on the first event loop that uses the
-    service. Subclasses may implement the protected start and stop hooks while
-    retaining the same state transition and failure semantics.
+    service. ``FAILED`` blocks restart but remains eligible for explicit cleanup
+    through ``stop()``; ``STOPPED`` makes later ``stop()`` calls idempotent.
+    Subclasses may implement the protected hooks while retaining these state
+    transition and failure semantics.
     """
 
     def __init__(self) -> None:
         self._state = RuntimeServiceState.CREATED
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_binding_lock = Lock()
         self._lifecycle_lock = asyncio.Lock()
 
     @property
@@ -77,6 +81,8 @@ class RuntimeService:
         self._bind_loop(loop, operation="stop")
 
         async with self._lifecycle_lock:
+            if self._state is RuntimeServiceState.STOPPED:
+                return
             self._transition(RuntimeServiceState.STOPPING, operation="stop")
             try:
                 await self._on_stop()
@@ -119,19 +125,20 @@ class RuntimeService:
         *,
         operation: str,
     ) -> None:
-        if self._loop is None:
-            self._loop = loop
-            return
-        if self._loop is not loop:
-            raise NsStateError(
-                "RuntimeService cannot be shared across event loops.",
-                details={
-                    "component": "runtime_service",
-                    "operation": operation,
-                    "current_state": self._state.value,
-                    "reason": "event_loop_mismatch",
-                },
-            )
+        with self._loop_binding_lock:
+            if self._loop is None:
+                self._loop = loop
+                return
+            if self._loop is not loop:
+                raise NsStateError(
+                    "RuntimeService cannot be shared across event loops.",
+                    details={
+                        "component": "runtime_service",
+                        "operation": operation,
+                        "current_state": self._state.value,
+                        "reason": "event_loop_mismatch",
+                    },
+                )
 
 
 __all__ = [
