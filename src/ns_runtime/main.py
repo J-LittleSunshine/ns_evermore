@@ -18,8 +18,15 @@ if TYPE_CHECKING:
 async def _run_service_once(service: RuntimeService) -> None:
     """Run the current no-listener service through one clean lifecycle."""
 
-    await service.start()
-    await service.stop()
+    from ns_runtime.shutdown import RuntimeShutdownReason
+
+    with service.shutdown_coordinator.install_signal_handlers():
+        await service.start()
+        service.shutdown_coordinator.request_shutdown(
+            RuntimeShutdownReason.SELF_CHECK_COMPLETE,
+        )
+        await service.shutdown_coordinator.wait_requested()
+        await service.stop()
 
 
 def main(
@@ -132,8 +139,16 @@ def main(
     import asyncio
 
     from ns_runtime.service import RuntimeService
+    from ns_runtime.shutdown import RuntimeShutdownCoordinator
 
-    service = RuntimeService(context=context)
+    shutdown_coordinator = RuntimeShutdownCoordinator(
+        context=context,
+        logger_close=logger.close,
+    )
+    service = RuntimeService(
+        context=context,
+        shutdown_coordinator=shutdown_coordinator,
+    )
     asyncio.run(_run_service_once(service))
 
     return 0

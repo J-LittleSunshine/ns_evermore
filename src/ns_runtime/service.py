@@ -16,6 +16,10 @@ from ns_runtime.roles import (
     RuntimeRoleSnapshot,
     RuntimeRoleState,
 )
+from ns_runtime.shutdown import (
+    RuntimeShutdownCoordinator,
+    RuntimeShutdownReport,
+)
 
 
 class RuntimeServiceState(str, Enum):
@@ -53,8 +57,9 @@ class RuntimeService:
     """Own the one-shot lifecycle of one runtime process.
 
     Every service is constructed with one immutable ``RuntimeContext``.  This
-    class retains that wiring identity but does not create, start or close the
-    injected dependencies; resource orchestration belongs to later P02 work.
+    class retains that wiring identity and does not create or start injected
+    dependencies.  Its shutdown coordinator stops supervised work and closes
+    explicitly wired sinks/clients after the subclass stop hook succeeds.
     Lifecycle operations are serialized on the first event loop that uses the
     service. ``FAILED`` blocks restart but remains eligible for explicit cleanup
     through ``stop()``; ``STOPPED`` makes later ``stop()`` calls idempotent.
@@ -62,7 +67,12 @@ class RuntimeService:
     transition and failure semantics.
     """
 
-    def __init__(self, *, context: RuntimeContext) -> None:
+    def __init__(
+        self,
+        *,
+        context: RuntimeContext,
+        shutdown_coordinator: RuntimeShutdownCoordinator | None = None,
+    ) -> None:
         if not isinstance(context, RuntimeContext):
             raise NsValidationError(
                 "RuntimeService requires a RuntimeContext.",
@@ -74,6 +84,37 @@ class RuntimeService:
                 },
             )
         self._context = context
+        if shutdown_coordinator is not None and not isinstance(
+            shutdown_coordinator,
+            RuntimeShutdownCoordinator,
+        ):
+            raise NsValidationError(
+                "RuntimeService shutdown coordinator is invalid.",
+                details={
+                    "component": "runtime_service",
+                    "dependency": "shutdown_coordinator",
+                    "expected_type": "RuntimeShutdownCoordinator",
+                    "actual_type": type(shutdown_coordinator).__name__,
+                },
+            )
+        if (
+            shutdown_coordinator is not None
+            and shutdown_coordinator.context is not context
+        ):
+            raise NsValidationError(
+                "RuntimeService shutdown coordinator context is invalid.",
+                details={
+                    "component": "runtime_service",
+                    "dependency": "shutdown_coordinator.context",
+                    "reason": "context_identity_mismatch",
+                },
+            )
+        self._shutdown_coordinator = (
+            RuntimeShutdownCoordinator(context=context)
+            if shutdown_coordinator is None
+            else shutdown_coordinator
+        )
+        self._shutdown_report: RuntimeShutdownReport | None = None
         self._role_state = RuntimeRoleState(
             configured_role=context.config.runtime.cluster.role,
             logger=context.logger,
@@ -94,6 +135,14 @@ class RuntimeService:
     @property
     def role(self) -> RuntimeRoleSnapshot:
         return self._role_state.snapshot
+
+    @property
+    def shutdown_coordinator(self) -> RuntimeShutdownCoordinator:
+        return self._shutdown_coordinator
+
+    @property
+    def shutdown_report(self) -> RuntimeShutdownReport | None:
+        return self._shutdown_report
 
     def require_capability(self, capability: RuntimeCapability) -> None:
         """Reject capabilities that are intentionally unavailable in P02."""
@@ -123,6 +172,7 @@ class RuntimeService:
             self._transition(RuntimeServiceState.STOPPING, operation="stop")
             try:
                 await self._on_stop()
+                self._shutdown_report = await self._shutdown_coordinator.shutdown()
             except BaseException:
                 self._transition(RuntimeServiceState.FAILED, operation="stop")
                 raise

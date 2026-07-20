@@ -566,6 +566,14 @@ class NsLogger(logging.Logger):
     def sanitizer(self) -> Sanitizer:
         return self._sanitizer
 
+    def close(self) -> None:
+        """Flush and close this logger's handlers idempotently."""
+
+        with _LOGGER_LOCK:
+            self._reset_handlers()
+            self._initialized = False
+            self._owner_pid = -1
+
     def _log(self, level: int, msg: object, args: Any, exc_info: Any = None, extra: Mapping[str, object] | None = None, stack_info: bool = False, stacklevel: int = 1) -> None:
         self._ensure_current_process()
         super()._log(level, msg, args, exc_info, extra, stack_info, stacklevel)
@@ -801,6 +809,4 @@ def get_ns_logger(
 def close_ns_loggers() -> None:
     with _LOGGER_LOCK:
         for logger in _LOGGER_MAP.values():
-            logger._reset_handlers()  # noqa
-            logger._initialized = False
-            logger._owner_pid = -1
+            logger.close()

@@ -256,3 +256,16 @@
 - 决策：生产 runtime logger 只在 RSP-1 preflight 全部成功且显式目录已准备后创建。NsLogger 可接收显式配置 mapping 与显式 log root；显式模式不得读取 global `ns_config`，未提供显式参数时保留原兼容行为。main 的 preflight context 使用无 handler bootstrap Logger，成功后才以当前配置快照、runtime log level、Sanitizer 和 startup log_dir 构造 NsLogger，并复用同一 clock、sink、TaskSupervisor 和 dependency slots 创建最终 context。该两段接线不改变 RTC-1 的冻结身份规则，也不使 context 成为资源 owner。
 - 后果：active_master 仅是初始本地角色标签；在同时满足 backend 控制面授权、节点凭证、角色允许、Redis/Valkey leader lease 与有效 fencing_token 前，不得执行全局协调写入。P04/P10/P17/P08 分别实现 transport、delivery、集群角色权威和强一致/审计后，才能按契约有选择地启用对应 capability。P02-W06 负责 logger/sink/supervisor 等资源的关闭编排，不得把当前 main 的一次性自检误当作完整信号生命周期。
 - 关联阶段/工作包：`P02-W05`、`P02-W06`、`P03-W11`、`P04`、`P08`、`P10`、`P17`。
+
+## ADR-025
+
+- ADR 编号：`ADR-025`
+- 状态：`ACCEPTED`
+- 背景：P01 的 TaskSupervisor、observability sinks、HTTP owner 和 logger 已各自具备显式生命周期，P02 的 RuntimeContext 与 RuntimeService 也已冻结依赖身份和一次性状态机，但此前没有进程级所有者统一 SIGINT/SIGTERM、停止新任务、取消后台任务和资源关闭顺序。若各资源自行注册信号或深层模块从全局查找依赖，关闭可能重复、乱序或清理另一组 context；若为满足“停止接入”提前引入 listener/drain stub，又会越过 P04 transport 边界。
+- 决策：新增 `RSD-1` 进程私有关闭契约。RuntimeShutdownCoordinator 必须显式接收一个 RuntimeContext，RuntimeService 注入 coordinator 时必须验证双方 context 对象身份相同；coordinator 不创建、查找或替换任何依赖。首次有效关闭原因胜出，并立即把本地 admission gate 置为 closed；后续原因不得覆盖。SIGINT、SIGTERM、service stop、外部调用和当前无 listener 自检均复用同一 request/shutdown 路径，不建立第二套 signal 或 cleanup owner。
+- 决策：固定关闭相位为 stop admission、TaskSupervisor shutdown、flush sinks、close sinks、close clients、write summary、close logger。sinks 只包括 context 中已冻结的 metrics、traces 与可选 diagnostic，client 只包括显式 NsHttpClientOwner；logger 只关闭 composition root 明确传入的 owned logger。coordinator 使用实例级异步锁，成功形成报告后重复关闭必须返回同一冻结报告且不重复资源操作。RuntimeService 只在自身 stop hook 成功后执行 coordinator；既有 stopped 幂等、failed 后可显式清理/重试和 event-loop owner 规则保持。
+- 决策：普通资源异常按 phase、固定 resource 名和异常类型记录，继续尝试后续资源；不得把异常文本、对象 repr、路径、URL、credential、payload 或底层 cause 写入报告或摘要。进程级异常不吞并，继续按 RSL-1 进入 failed 并允许调用方重试。TaskSupervisor 超时作为可观测结果而非无限等待；本地报告可以保留既有 supervisor 任务名合同，但日志只允许数量和有界 digest，不得输出原始未完成任务名。摘要必须在 logger close 前写入，logger close 自身保持幂等。
+- 决策：signal registration 只属于 composition root 当前 event loop；优先使用 add_signal_handler，不支持时才使用 signal.signal 并通过 call_soon_threadsafe 回到 owner loop，作用域结束时撤销本次注册。当前 main 没有 listener，因此完成 preflight 和 service start 后以 SELF_CHECK_COMPLETE 请求同一关闭路径并退出；这只证明无监听进程自检和资源编排，不表示常驻 transport 生命周期已经实现。
+- 决策：P02 的 stop admission 仅为进程本地 gate，TaskSupervisor 进入 closing 后负责拒绝新任务。coordinator 明确不依赖 transport、Envelope、connection/session、DeliveryRecord、StateStore、role transition 或 management processor。P04 创建首个 listener 时必须先冻结类型化 admission/drain hook，再把 transport 停止新连接、已有连接 draining 与最终 close 插入既有相位边界；不得通过任意 callback bag、HTTP 管理端口或私有信号旁路扩展。delivery 转移、owner handoff 和跨节点 draining 继续分别服从 P10/P18 等后续合同。
+- 后果：当前进程对 SIGINT/SIGTERM 和显式停止具有一致、幂等、可观测且不泄密的资源释放路径；普通单资源失败不会跳过其他已注入资源。P02-W07 可以在同一显式 context 上增加 event-loop implementation/lag 观测，但不得让 collector 自行拥有信号或重复关闭 sinks。P04 及后续阶段扩展关闭序列时必须保持 RSD-1 的单 owner、同 context、固定相位、安全摘要和失败隔离规则。
+- 关联阶段/工作包：`P01-W05`、`P01-W13`、`P01-W15`、`P02-W02`、`P02-W03`、`P02-W06`、`P02-W07`、`P04`、`P10`、`P18`。

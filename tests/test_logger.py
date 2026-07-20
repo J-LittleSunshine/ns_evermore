@@ -84,7 +84,7 @@ import pathlib
 import sys
 import tempfile
 
-from ns_common.logger import NsLogger, close_ns_loggers
+from ns_common.logger import NsLogger
 from ns_common.security import Sanitizer
 import ns_common.config.model as config_model
 
@@ -109,7 +109,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         "token=logger-message-secret",
         extra={"payload": "logger-payload-secret", "event": "safe-event"},
     )
-    close_ns_loggers()
+    logger.close()
+    logger.close()
     files = list((root / "explicit-runtime").rglob("explicit-runtime.log"))
     assert len(files) == 1
     payload = json.loads(files[0].read_text(encoding="utf-8").strip())

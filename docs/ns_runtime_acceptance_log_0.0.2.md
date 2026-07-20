@@ -513,6 +513,20 @@
 - 已知限制：角色与健康状态当前只读且只表示进程启动快照；强一致角色切换、active 权威、审计持久化和恢复分别依赖后续 P17/P08 等阶段。能力门禁的日志审计在 P08 强一致审计路径前仍是 best-effort，但日志失败始终 fail-closed。main 仍只运行一次无监听生命周期，未等待信号，也未编排 sink/logger/supervisor/client 的关闭；这些属于 P02-W06。
 - 下一工作包：`P02-W06 SIGINT/SIGTERM 优雅关闭顺序与资源清理编排`，状态为 `NOT_STARTED`；P02 阶段保持 `IN_PROGRESS`，当前执行游标已更新为 P02-W06。
 
+## P02-W06
+
+- 工作包：`P02-W06 SIGINT/SIGTERM 优雅关闭顺序与资源清理编排`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T18:43:02+08:00`。
+- 修改文件：新增 `src/ns_runtime/shutdown.py` 与 `tests/test_runtime_shutdown.py`；更新 `src/ns_runtime/service.py`、`src/ns_runtime/main.py`、`src/ns_common/logger.py`、`tests/test_runtime_main.py`、`tests/test_logger.py`、实施计划、acceptance log，并新增 [ADR-025](ns_runtime_architecture_decisions_0.0.2.md#adr-025)。设计边界、配置模型/示例、RuntimeContext 字段、startup preflight、角色/能力门禁、backend、requirements 和既有 observability/TaskSupervisor 公共契约均未扩展。
+- `RSD-1` 契约：新增进程私有 `RuntimeShutdownCoordinator`，首次 SIGINT、SIGTERM、service stop、外部请求或无监听自检原因胜出并立即关闭本地 admission gate。实际 shutdown 在实例锁内只执行一次，固定按停止新任务并取消后台任务、flush metrics/traces/可选 diagnostic、close sinks、close 显式 HTTP owner、写结构化摘要、close owned logger 的顺序执行；重复调用返回同一冻结 `RuntimeShutdownReport`。coordinator 与 service 必须持有同一 `RuntimeContext` 身份，避免关闭另一组依赖。
+- 失败与安全语义：TaskSupervisor 超时保留冻结未完成任务报告；日志只输出任务数量和 16 字符 SHA-256 digest，不输出原任务名。普通 sink/client/logger/summary 异常只记录固定 phase、resource 和异常类型，绝不复制异常消息、资源 repr 或底层 cause，并继续尝试后续资源；进程级 `BaseException` 保持穿透并由 RuntimeService 进入 failed 后允许显式重试。`NsLogger.close()` 幂等 flush/close 自有 handlers 并清除初始化/进程所有权；全局 `close_ns_loggers()` 复用同一实例入口。
+- 进程与信号路径：`RuntimeSignalRegistration` 为当前 event loop 安装 SIGINT/SIGTERM，平台不支持 loop signal handler 时回退到 `signal.signal` + `call_soon_threadsafe`，退出作用域时恢复。`main.py` 保持唯一入口、冷导入与 RSP-1 顺序；preflight 成功后的无 listener 自检通过 `SELF_CHECK_COMPLETE` 请求同一 coordinator 后退出，未来常驻 listener 不得另建第二套关闭路径。
+- 测试结果：shutdown/service/main/context/bootstrap/logger 专项在边界修复后为 `Ran 66, OK`；runtime 环境排除按 DEP-1 不安装的 Django cache 用例后全量 `Ran 330, OK (skipped=1)`；backend 环境根目录全量 `Ran 341, OK (skipped=1)`，包含 cache 11 项。唯一跳过为 WSL 下 Windows 专用 event-loop policy。两套 `pip check`、全树 `compileall` 和 `git diff --check` 通过。
+- 设计边界 review：首次审查发现 coordinator 可与 service 使用不同 context，已在提交前增加身份校验和负向测试。修复后源码扫描只命中明确的 no-listener/transport 禁止说明；没有新增 socket/listener/server、transport adapter/session、Envelope、StateStore、Redis/Valkey client、DeliveryRecord、leader/lease/fencing、角色迁移、HTTP 管理端口、后台常驻 task/thread 或管理旁路。测试全部位于根 `tests/`，仅使用内存依赖、临时目录与本进程信号，未访问真实远程服务或共享数据，设计边界文档未修改。
+- 已知限制：本阶段的“停止接入”仅指关闭进程本地 admission gate，TaskSupervisor shutdown 同时拒绝新任务。P04 创建首个 listener 后必须通过冻结的类型化 admission/drain hook 扩展关闭序列，并独立实现连接 draining、通知重连和 transport close；P10/P18 前不存在 delivery 转移或 owner handoff。本阶段不建立 Envelope、管理通道、StateStore、角色迁移或 loop lag collector。
+- 下一工作包：`P02-W07 建立 event loop lag 采样和 implementation 指标`，状态为 `IN_PROGRESS`；P02 阶段保持 `IN_PROGRESS`，当前执行游标已更新为 P02-W07。
+
 ## 新记录模板
 
 - 工作包：

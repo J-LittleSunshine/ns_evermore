@@ -83,8 +83,14 @@ class NsRuntimeMainTestCase(unittest.TestCase):
         captured_contexts: list[object] = []
 
         class CapturingService:
-            def __init__(self, *, context: object) -> None:
+            def __init__(
+                self,
+                *,
+                context: object,
+                shutdown_coordinator: object,
+            ) -> None:
                 captured_contexts.append(context)
+                self.shutdown_coordinator = shutdown_coordinator
 
             async def start(self) -> None:
                 return None
@@ -172,8 +178,15 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             self.assertIn("websockets", completed.stderr)
         else:
             self.assertEqual(0, completed.returncode, completed.stderr)
-            self.assertEqual("", completed.stdout)
             self.assertEqual("", completed.stderr)
+            summary = json.loads(completed.stdout.strip())
+            self.assertEqual("runtime_shutdown_summary", summary["event"])
+            self.assertEqual(
+                "self_check_complete",
+                summary["shutdown_reason"],
+            )
+            self.assertEqual(0, summary["task_unfinished_count"])
+            self.assertEqual(0, summary["cleanup_failure_count"])
 
     def test_main_normalizes_production_plaintext_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
