@@ -32,10 +32,16 @@ from .models import (
     TraceGroup,
     envelope_from_mapping,
 )
+from .schema import (
+    EnvelopeSchemaValidator,
+    InlinePayloadSchema,
+    MessageTypeSchema,
+)
 
 __all__ = (
     "AuthContextGroup", "CallbackGroup", "DEFAULT_JSON_LIMITS", "DeliveryGroup", "ENVELOPE_GROUP_NAMES",
-    "Envelope", "ExtensionsGroup", "InboundEnvelope", "MessageGroup", "PayloadGroup", "ProtocolGroup",
+    "Envelope", "EnvelopeSchemaValidator", "ExtensionsGroup", "InboundEnvelope",
+    "InlinePayloadSchema", "MessageGroup", "MessageTypeSchema", "PayloadGroup", "ProtocolGroup",
     "RouteGroup", "SourceGroup", "StreamGroup", "TargetGroup", "TraceGroup",
     "JsonResourceLimits", "JsonV1Codec", "RuntimeAuthority", "WIRE_CODEC_JSON_V1",
     "envelope_from_mapping", "inbound_envelope_from_mapping",

@@ -613,6 +613,18 @@
 - 已知限制：P03 只定义 application JSON 文档预算；P04 adapter 仍须独立限制 transport frame/queue，连续恶意消息的断连与限流策略属于后续连接/安全阶段。除 max_envelope_bytes 外的预算当前为显式 codec 常量，未来配置化必须维护此安全上限合同。
 - 下一工作包：`P03-W04 基础 schema 与 message.type schema 叠加`，状态为 `IN_PROGRESS`。
 
+## P03-W04
+
+- 工作包：`P03-W04 基础 schema 与 message.type schema 叠加校验`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T21:00:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/protocol/schema.py` 与 `tests/test_runtime_protocol_schema.py`；更新 protocol facade、实施计划、acceptance log 与 ADR-028。
+- 公共契约变化：新增不可绕过的 `EnvelopeSchemaValidator` base 规则，以及冻结 `MessageTypeSchema`/`InlinePayloadSchema` 声明；message 规则只能收紧 required/forbidden group 和 inline payload 字段集合，不能放宽核心模型与 base schema。
+- 测试结果：schema/codec/models 专项 `Ran 19, OK`；compileall 与 `git diff --check` 通过。
+- 安全/隔离检查：负向覆盖类型专属 group/field 缺失、额外 payload 字段、禁止 group、target 寻址缺失、route loop segment、非法 delivery attempt 与 schema mismatch；错误不回显攻击者 message type 或 payload 字段。实现无 callback、processor 执行、ACK、transport/session/IAM/StateStore 或成功结果。
+- 已知限制：W04 只建立声明式字段边界；内置类型到 schema 的完整映射由 W06/W07 注册表冻结，实际业务语义与状态变化仍由后续 processor 阶段实现。
+- 下一工作包：`P03-W05 协议版本兼容矩阵`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
