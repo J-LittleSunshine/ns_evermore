@@ -7,6 +7,7 @@ from pathlib import Path
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 
 from ns_common.async_runtime import TaskSupervisor
@@ -247,6 +248,117 @@ class RuntimeContextTestCase(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertEqual("", completed.stdout)
         self.assertEqual("", completed.stderr)
+
+    def test_context_cold_import_does_not_load_config_or_touch_filesystem(
+        self,
+    ) -> None:
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(SRC_DIR)
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        probe = """
+import asyncio
+import builtins
+import logging
+import os
+from pathlib import Path
+import sys
+import threading
+
+events = []
+original_builtin_open = builtins.open
+original_exists = Path.exists
+original_mkdir = Path.mkdir
+original_open = Path.open
+original_getenv = os.getenv
+original_thread_start = threading.Thread.start
+original_create_task = asyncio.create_task
+original_new_event_loop = asyncio.new_event_loop
+
+def watched_builtin_open(file, *args, **kwargs):
+    events.append(("builtin_open", os.fspath(file)))
+    return original_builtin_open(file, *args, **kwargs)
+
+def watched_exists(path):
+    events.append(("path_exists", os.fspath(path)))
+    return original_exists(path)
+
+def watched_mkdir(path, *args, **kwargs):
+    events.append(("path_mkdir", os.fspath(path)))
+    return original_mkdir(path, *args, **kwargs)
+
+def watched_open(path, *args, **kwargs):
+    events.append(("path_open", os.fspath(path)))
+    return original_open(path, *args, **kwargs)
+
+def watched_getenv(*args, **kwargs):
+    events.append(("getenv", str(args[0]) if args else ""))
+    return original_getenv(*args, **kwargs)
+
+def watched_thread_start(thread, *args, **kwargs):
+    events.append(("thread_start", thread.name))
+    return original_thread_start(thread, *args, **kwargs)
+
+def watched_create_task(*args, **kwargs):
+    events.append(("create_task", "asyncio"))
+    return original_create_task(*args, **kwargs)
+
+def watched_new_event_loop(*args, **kwargs):
+    events.append(("new_event_loop", "asyncio"))
+    return original_new_event_loop(*args, **kwargs)
+
+builtins.open = watched_builtin_open
+Path.exists = watched_exists
+Path.mkdir = watched_mkdir
+Path.open = watched_open
+os.getenv = watched_getenv
+threading.Thread.start = watched_thread_start
+asyncio.create_task = watched_create_task
+asyncio.new_event_loop = watched_new_event_loop
+
+before_threads = tuple(threading.enumerate())
+before_root_handlers = tuple(logging.getLogger().handlers)
+before_handler_refs = tuple(logging._handlerList)
+before_loggers = tuple(logging.Logger.manager.loggerDict)
+
+import ns_runtime.context as module
+slots = module.RuntimeDependencySlots()
+
+assert slots.diagnostic_snapshot_sink is None
+assert slots.http_client_owner is None
+assert events == [], events
+assert before_threads == tuple(threading.enumerate())
+assert before_root_handlers == tuple(logging.getLogger().handlers)
+assert before_handler_refs == tuple(logging._handlerList)
+assert before_loggers == tuple(logging.Logger.manager.loggerDict)
+for forbidden_module in (
+    "ns_common",
+    "ns_common.config",
+    "ns_common.config.model",
+    "ns_common.paths",
+    "ns_common.logger",
+    "ns_common.http_client",
+):
+    assert forbidden_module not in sys.modules, forbidden_module
+"""
+
+        with tempfile.TemporaryDirectory(
+            prefix="ns-runtime-context-cold-import-",
+        ) as temporary_root:
+            completed = subprocess.run(
+                [sys.executable, "-c", probe],
+                cwd=temporary_root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            remaining_paths = tuple(Path(temporary_root).iterdir())
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("", completed.stdout)
+        self.assertEqual("", completed.stderr)
+        self.assertEqual((), remaining_paths)
 
 
 if __name__ == "__main__":

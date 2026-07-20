@@ -5,29 +5,31 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Type
+from typing import TYPE_CHECKING
 
-from ns_common.async_runtime import TaskSupervisor
-from ns_common.config import NsConfig
-from ns_common.exceptions import NsValidationError
-from ns_common.http_client import NsHttpClientOwner
-from ns_common.observability import (
-    DiagnosticSnapshotSink,
-    MetricsSink,
-    TraceSink,
-)
-from ns_common.time import Clock
+if TYPE_CHECKING:
+    from ns_common.async_runtime import TaskSupervisor
+    from ns_common.config.model import NsConfig
+    from ns_common.http_client import NsHttpClientOwner
+    from ns_common.observability import (
+        DiagnosticSnapshotSink,
+        MetricsSink,
+        TraceSink,
+    )
+    from ns_common.time import Clock
 
 
 def _require_dependency(
     value: object,
     *,
     dependency: str,
-    expected_type: Type[object],
+    expected_type: type[object],
     expected_type_name: str | None = None,
 ) -> None:
     if isinstance(value, expected_type):
         return
+    from ns_common.exceptions import NsValidationError
+
     raise NsValidationError(
         "RuntimeContext dependency is invalid.",
         details={
@@ -53,12 +55,16 @@ class RuntimeDependencySlots:
 
     def __post_init__(self) -> None:
         if self.diagnostic_snapshot_sink is not None:
+            from ns_common.observability import DiagnosticSnapshotSink
+
             _require_dependency(
                 self.diagnostic_snapshot_sink,
                 dependency="dependencies.diagnostic_snapshot_sink",
                 expected_type=DiagnosticSnapshotSink,
             )
         if self.http_client_owner is not None:
+            from ns_common.http_client import NsHttpClientOwner
+
             _require_dependency(
                 self.http_client_owner,
                 dependency="dependencies.http_client_owner",
@@ -86,6 +92,11 @@ class RuntimeContext:
     )
 
     def __post_init__(self) -> None:
+        from ns_common.async_runtime import TaskSupervisor
+        from ns_common.config.model import NsConfig
+        from ns_common.observability import MetricsSink, TraceSink
+        from ns_common.time import Clock
+
         expectations = (
             (self.config, "config", NsConfig, None),
             (self.clock, "clock", Clock, None),

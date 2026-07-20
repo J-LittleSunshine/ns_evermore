@@ -451,9 +451,24 @@
 - RuntimeService 接入：构造函数改为必须通过关键字接收有效 `RuntimeContext`，`service.context` 始终返回同一对象且无 public setter；无参或错误类型不再产生隐式默认依赖。created/starting/running/stopping/stopped/failed 六态、start/stop 矩阵、loop owner、并发和失败清理语义均未改变。构造 context/service 不调用依赖方法，protected hooks 仍为空；本包没有创建 task/client/listener/exporter，没有 flush/aclose sink/owner，也没有修改 main 运行 service。
 - 验证与安全错误：所有 core/optional 字段均在构造时检查公共类型，错误使用固定 `NS_VALIDATION_ERROR` 和固定 message；details 仅含 component、dependency、expected_type、actual_type，不复制对象值、repr、配置、URL、路径或底层文本。含秘密 `__str__`/`__repr__` 的错误依赖专项确认 `str(error)`、details 和 `to_dict()` 均无秘密文本。
 - 测试结果：runtime 环境 `tests.test_runtime_context` 为 `Ran 8, OK`；W03 context、W02/FIX 生命周期和 W01 入口联合为 `Ran 32, OK`。testing/requirements/observability/time/config/config_package/async_runtime/http_client/exceptions/logger/security/retry/identifiers 加 P02-W01/W02/FIX-01/W03 的 P01/runtime 联合回归为 `Ran 288, OK (skipped=1)`；backend 环境根目录全量为 `Ran 299, OK (skipped=1)`。两项跳过均为 WSL 下同一 Windows 专用 event-loop policy 用例。
-- 静态与隔离检查：全树 `compileall`、runtime/backend 两套 `pip check`、package/context 独立解释器冷导入、无 event loop policy/thread 变化、无模块级 RuntimeContext 或 ambient locator、根目录和 `/tmp` 外部工作目录模块入口、生产源码测试文件、仓库虚拟环境、禁止 transport/Envelope/StateStore/signal/task 创建源码扫描、requirements/入口/package facade/设计边界未改和 `git diff --check` 均通过。入口继续状态 0、空 stdout/stderr；五份 requirements 内容未改变且没有新增依赖。
+- 静态与隔离检查：原 W03 验收时全树 `compileall`、runtime/backend 两套 `pip check`、package/context 独立解释器导入、无 event loop policy/thread 变化、无模块级 RuntimeContext 或 ambient locator、根目录和 `/tmp` 外部工作目录模块入口、生产源码测试文件、仓库虚拟环境、禁止 transport/Envelope/StateStore/signal/task 创建源码扫描、requirements/入口/package facade/设计边界未改和 `git diff --check` 均通过。入口继续状态 0、空 stdout/stderr；五份 requirements 内容未改变且没有新增依赖。该次 context 导入检查没有隔离并观测 `ns_common.config.model -> ns_config = NsConfig.load()` 的配置与文件系统链，相关过强结论由 P02-FIX-02 校准。
 - 已知限制：本包只建立显式依赖接线，不加载或校验启动环境，不构造 composition root，不创建或关闭 HTTP client/sink/TaskSupervisor，不实现 shutdown timeout、信号、角色、event-loop 指标、本地诊断、transport、Envelope 或 StateStore。可选槽位表示未来接线位置，不表示资源已经创建、可用或由 context 自动拥有；实际启动校验与资源关闭必须继续遵守 `RTC-1`、`RSL-1`、`HTTP-1` 和 `OBS-1`。
 - 下一工作包：`P02-W04 启动时执行环境、依赖、目录、event loop、transport 配置、state store 生产限制和 TLS 前置校验`，状态为 `NOT_STARTED`；P02 阶段保持 `IN_PROGRESS`，本工作包未实施 W04。
+
+## P02-FIX-02
+
+- 工作包：`P02-FIX-02 修复 RuntimeContext 冷导入隐式全局配置与文件系统副作用`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T10:01:54+08:00`。
+- 原缺陷：`ns_runtime.context` 顶层类型导入会加载 `ns_common` package；`NsConfig` 路径继续触发 `ns_common.config.model` 的全局 `ns_config = NsConfig.load()`，并可能执行默认配置路径解析、文件读取和 `ensure_runtime_dirs()`，`NsHttpClientOwner` 路径还会经 HTTP/logger/config 链带入同类隐式依赖。这使模块冷导入违反 `RTC-1` / ADR-022，即使 W03 的 API 没有 ambient getter 或 locator。
+- 修改文件：更新 `src/ns_runtime/context.py`、`tests/test_runtime_context.py`、实施计划、acceptance log 和 [ADR-022](ns_runtime_architecture_decisions_0.0.2.md#adr-022)。`src/ns_runtime/main.py`、`src/ns_runtime/__init__.py`、`ns_common` 公共契约、backend、设计边界文档、配置和五份 requirements 均未修改；没有实施 P02-W04。
+- 冷导入边界：`context.py` 通过 postponed annotations 与 `TYPE_CHECKING` 保存 `NsConfig`、Clock、sink、TaskSupervisor 和 `NsHttpClientOwner` 的具体类型合同，不再为类型引用顶层导入 `ns_common`。必需依赖的运行时类型只在显式构造 `RuntimeContext` 时解析；两个可选槽位分别只在实际注入非 `None` 对象时解析对应公共类型。因此默认 `RuntimeDependencySlots()` 不加载 HTTP/logger/config 链，字段没有降级为 `Any`、dict、任意 object 或字符串 registry。
+- 保持契约：`RuntimeContext` 与 `RuntimeDependencySlots` 继续 frozen、slots、kw-only，保留注入对象身份、只读别名、有限类型化槽位和稳定 `NsValidationError`；`RuntimeService` 仍强制注入同一 context。构造后的类型校验、秘密文本隔离、W02/FIX-01 六态生命周期与 W01 入口行为均未变化；没有默认依赖、ambient getter、task/client/listener/exporter 或资源生命周期编排。
+- 冷导入专项：新增独立解释器与独立临时工作目录测试，在导入前监控内建文件打开、`Path.exists/mkdir/open`、环境读取、logger handler/registry、thread/task/event-loop 创建，并检查与缺陷直接相关的 `ns_common`、config/model/paths、logger、http_client 模块。`import ns_runtime.context` 及默认可选槽位构造未产生任何观测事件，临时目录保持为空，相关模块均未加载；未调用 `ensure_runtime_dirs`、未加载全局 `ns_config`、未读取默认配置文件、未创建 data/etc/log、HTTP client、handler、task、thread 或 event loop。
+- 测试结果：runtime 环境 `tests.test_runtime_context` 为 `Ran 9, OK`；W03/FIX-02 context、W02/FIX-01 lifecycle 和 W01 入口联合为 `Ran 33, OK`。testing/requirements/observability/time/config/config_package/async_runtime/http_client/exceptions/logger/security/retry/identifiers 加 P02 的 P01/runtime 联合回归为 `Ran 289, OK (skipped=1)`；backend 环境根目录全量为 `Ran 300, OK (skipped=1)`。两项跳过均为 WSL 下同一 Windows 专用 event-loop policy 用例。
+- 静态与隔离检查：全树 `compileall`、runtime/backend 两套 `pip check`、冷导入副作用专项、根目录和 `/tmp` 外部工作目录模块入口均通过；入口状态为 0 且 stdout/stderr 为空。requirements、入口、package facade、`ns_common`、backend 与设计边界内容未改变，范围扫描和 `git diff --check` 通过。
+- 已知限制：本 FIX 只修复 RuntimeContext 的模块导入边界。显式构造 context 仍按 W03 合同解析并验证调用方提供的既有公共依赖；本包不加载启动配置、不建立 composition root、不创建或关闭 HTTP client/sink/TaskSupervisor，也不实现 W04 的启动前校验及任何 transport、Envelope、StateStore、角色、信号、event-loop lag 或本地诊断能力。
+- 下一工作包：`P02-W04 启动时执行环境、依赖、目录、event loop、transport 配置、state store 生产限制和 TLS 前置校验`，状态保持 `NOT_STARTED`；P02 阶段保持 `IN_PROGRESS`，本 FIX 未实施 W04。
 
 ## 新记录模板
 
