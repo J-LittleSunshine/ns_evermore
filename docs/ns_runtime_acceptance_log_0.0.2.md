@@ -601,6 +601,18 @@
 - 已知限制：`RuntimeAuthority` 只定义注入类型边界，真实性与 tenant/capability 一致性必须由 P05/P06 权威连接上下文建立；P03 不提前实现这些能力。
 - 下一工作包：`P03-W03 JSON 资源限制`，状态为 `IN_PROGRESS`。
 
+## P03-W03
+
+- 工作包：`P03-W03 JSON 资源限制`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T20:45:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/protocol/codec.py` 与 `tests/test_runtime_protocol_codec.py`；更新 protocol facade、实施计划、acceptance log 与 ADR-028。
+- 公共契约变化：冻结唯一 `json.v1` codec 及 `JsonResourceLimits`；默认约束 1 MiB 文档、32 层、65536 字符、4096 容器项、100000 节点、signed 64-bit integer 与有限 float 范围，并拒绝重复 object key、非有限数字、非法 UTF-8 和非 text/bytes 输入。
+- 测试结果：codec/models/ERR-1 联合 `Ran 40, OK`；compileall 与 `git diff --check` 通过。
+- 安全/隔离检查：深度在 json recursive decode 前扫描，超长 integer 在构造大整数前按位数拒绝；所有 parse/limit error 只含固定 reason，负向测试确认不回显 token/payload/parser exception。没有 frame、socket、连接关闭策略、transport/session/IAM/StateStore、ACK 或 processor 行为。
+- 已知限制：P03 只定义 application JSON 文档预算；P04 adapter 仍须独立限制 transport frame/queue，连续恶意消息的断连与限流策略属于后续连接/安全阶段。除 max_envelope_bytes 外的预算当前为显式 codec 常量，未来配置化必须维护此安全上限合同。
+- 下一工作包：`P03-W04 基础 schema 与 message.type schema 叠加`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
