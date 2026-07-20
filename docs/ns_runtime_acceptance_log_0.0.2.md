@@ -581,7 +581,7 @@
 
 - 工作包：`P03-W01 核心 Envelope 分组类型模型`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T20:15:00+08:00`。
+- 完成时间：`2026-07-20T21:08:02+08:00`。
 - 修改文件：新增 `src/ns_runtime/protocol/models.py`、`src/ns_runtime/protocol/__init__.py` 与 `tests/test_runtime_protocol_models.py`；更新实施计划、acceptance log，并新增 [ADR-028](ns_runtime_architecture_decisions_0.0.2.md#adr-028)。
 - 公共契约变化：建立 `ENV-1` 的 12 个固定 Envelope 分组、冻结类型、严格字段集合、protocol/message 必需和不适用分组省略语义；payload/extensions 动态 JSON 在构造时递归冻结。当前只冻结模型，不声明任何 message capability 可执行。
 - 测试结果：W01 专项 5/5；与 exceptions/context/service/roles 联合回归 `Ran 69, OK`；protocol 与测试 compileall、`git diff --check` 通过。
@@ -593,7 +593,7 @@
 
 - 工作包：`P03-W02 inbound raw 与 normalized model 分离`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T20:30:00+08:00`。
+- 完成时间：`2026-07-20T21:10:01+08:00`。
 - 修改文件：新增 `src/ns_runtime/protocol/inbound.py`；更新 protocol facade、模型测试、实施计划、acceptance log 与 ADR-028。
 - 公共契约变化：`InboundEnvelope` 不含 source/auth_context；入站 mapping 在基础 schema 前对二者分别返回既有 `RUNTIME_SOURCE_FORGED`/`RUNTIME_AUTH_CONTEXT_FORGED`。`normalize_inbound()` 只接受显式 `RuntimeAuthority` 并生成权威 Envelope，sender target capability 仍只是请求条件。
 - 测试结果：protocol 模型/入站与 ERR-1 联合 `Ran 34, OK`；compileall、`git diff --check` 通过。
@@ -605,7 +605,7 @@
 
 - 工作包：`P03-W03 JSON 资源限制`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T20:45:00+08:00`。
+- 完成时间：`2026-07-20T21:12:42+08:00`。
 - 修改文件：新增 `src/ns_runtime/protocol/codec.py` 与 `tests/test_runtime_protocol_codec.py`；更新 protocol facade、实施计划、acceptance log 与 ADR-028。
 - 公共契约变化：冻结唯一 `json.v1` codec 及 `JsonResourceLimits`；默认约束 1 MiB 文档、32 层、65536 字符、4096 容器项、100000 节点、signed 64-bit integer 与有限 float 范围，并拒绝重复 object key、非有限数字、非法 UTF-8 和非 text/bytes 输入。
 - 测试结果：codec/models/ERR-1 联合 `Ran 40, OK`；compileall 与 `git diff --check` 通过。
@@ -617,7 +617,7 @@
 
 - 工作包：`P03-W04 基础 schema 与 message.type schema 叠加校验`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T21:00:00+08:00`。
+- 完成时间：`2026-07-20T21:14:45+08:00`。
 - 修改文件：新增 `src/ns_runtime/protocol/schema.py` 与 `tests/test_runtime_protocol_schema.py`；更新 protocol facade、实施计划、acceptance log 与 ADR-028。
 - 公共契约变化：新增不可绕过的 `EnvelopeSchemaValidator` base 规则，以及冻结 `MessageTypeSchema`/`InlinePayloadSchema` 声明；message 规则只能收紧 required/forbidden group 和 inline payload 字段集合，不能放宽核心模型与 base schema。
 - 测试结果：schema/codec/models 专项 `Ran 19, OK`；compileall 与 `git diff --check` 通过。
@@ -629,7 +629,7 @@
 
 - 工作包：`P03-W05 协议版本模型、兼容矩阵与 schema 选择`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T21:15:00+08:00`。
+- 完成时间：`2026-07-20T21:16:41+08:00`。
 - 修改文件：新增 `src/ns_runtime/protocol/versioning.py` 与 `tests/test_runtime_protocol_versioning.py`；更新 protocol facade、实施计划、acceptance log 与 ADR-028。
 - 公共契约变化：冻结 `ProtocolVersion`、`ProtocolCompatibilityMatrix`、`NegotiatedProtocol` 与当前 `JSON_V1_PROTOCOL_MATRIX`。major 严格，minor/patch 只向显式支持版本降级并同时选择 schema key；当前仅启用 protocol 1.0 schema。
 - 测试结果：version/schema/codec/models 专项 `Ran 25, OK`；compileall 与 `git diff --check` 通过。
@@ -641,7 +641,7 @@
 
 - 工作包：`P03-W06 内置 message type 全量注册表`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T21:35:00+08:00`。
+- 完成时间：`2026-07-20T21:19:09+08:00`。
 - 修改文件：新增 `src/ns_runtime/protocol/registry.py` 与 `tests/test_runtime_protocol_registry.py`；更新 protocol facade、实施计划、acceptance log 与 ADR-028。
 - 公共契约变化：显式冻结 50 个 protocol 1.0 内置 message types 和 13 个必需类型族；`MessageTypeRegistry` 提供不可变 exact lookup 与 version-selected schema lookup，未知 type/schema 使用既有稳定 unsupported error。
 - 测试结果：registry/schema/version 专项 `Ran 15, OK`；`git diff --check` 通过。
@@ -653,7 +653,7 @@
 
 - 工作包：`P03-W07 注册元数据完整性`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T21:50:00+08:00`。
+- 完成时间：`2026-07-20T21:21:24+08:00`。
 - 修改文件：扩展 `src/ns_runtime/protocol/registry.py`、protocol facade 与 registry tests；更新实施计划、acceptance log 与 ADR-028。
 - 公共契约变化：全部 50 个注册项现具备 schema、强类型 category/default reliability/audit level、权限 tuple、processor key、feature flag/enabled 与 response types；registry 统一执行 category/reliability 基础校验。仅 `runtime.error` 协议构造能力 enabled，其余 49 项明确 disabled。
 - 测试结果：registry 专项 6/6；前序 registry/schema/version 联合已通过，`git diff --check` 通过。
@@ -665,7 +665,7 @@
 
 - 工作包：`P03-W08 extension namespace 注册与 schema 边界`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T22:10:00+08:00`。
+- 完成时间：`2026-07-20T21:23:56+08:00`。
 - 修改文件：新增 `src/ns_runtime/protocol/extensions.py` 与 `tests/test_runtime_protocol_extensions.py`；校准 `ExtensionsGroup` 直接 namespace wire 形状并更新 facade/models tests、实施计划、acceptance log 与 ADR-028。
 - 公共契约变化：`extensions` 现直接承载 namespace keys；新增显式不可变 `ExtensionNamespaceRegistry`、contract/schema、unknown policy 与 validation result。默认拒绝未知 namespace；可选 ignore 必须返回 `audit_required=true` 且不传播内容。
 - 测试结果：extensions/models/registry 专项 `Ran 18, OK`；`git diff --check` 通过。
@@ -677,7 +677,7 @@
 
 - 工作包：`P03-W09 标准错误 Envelope`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T22:30:00+08:00`。
+- 完成时间：`2026-07-20T21:26:41+08:00`。
 - 修改文件：新增 `src/ns_runtime/protocol/error_envelope.py` 与 `tests/test_runtime_protocol_error_envelope.py`；收紧 runtime.error 专属 schema，更新 protocol facade、实施计划、acceptance log 与 ADR-028。
 - 公共契约变化：新增显式 Sanitizer 的 `ErrorEnvelopeBuilder`/`ErrorEnvelopeContext`；标准 payload 完整映射 ERR-1 policy metadata，runtime.error schema 精确限制字段集合。未知普通异常安全映射 `NS_RUNTIME_ERROR`，进程级异常穿透。
 - 测试结果：error Envelope/registry/ERR-1 联合 `Ran 36, OK`；`git diff --check` 通过。
@@ -689,7 +689,7 @@
 
 - 工作包：`P03-W10 canonical serialization`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T22:45:00+08:00`。
+- 完成时间：`2026-07-20T21:28:34+08:00`。
 - 修改文件：新增 `src/ns_runtime/protocol/canonical.py` 与 `tests/test_runtime_protocol_canonical.py`；公开复用 codec resource validator，更新 protocol facade、实施计划、acceptance log 与 ADR-028。
 - 公共契约变化：冻结 `json.v1.canonical` 为递归 key 排序、UTF-8、紧凑、strict number 的确定性 bytes；checksum 固定 SHA-256 前缀格式，并继续受 W03 所有资源上限约束。
 - 测试结果：canonical/codec/error 专项初轮 14/14，补充 round-trip 后专项继续通过；`git diff --check` 通过。
@@ -701,7 +701,7 @@
 
 - 工作包：`P03-W11 FeatureDisabledProcessor`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T23:00:00+08:00`。
+- 完成时间：`2026-07-20T21:31:01+08:00`。
 - 修改文件：新增 `src/ns_runtime/protocol/processors.py` 与 `tests/test_runtime_protocol_processors.py`；更新 protocol facade、实施计划、acceptance log 与 ADR-028。
 - 公共契约变化：49 个 disabled 内置类型的 processor key 全部映射到同一 `FeatureDisabledProcessor`；正确请求只返回 `RUNTIME_FEATURE_DISABLED` 标准 runtime.error Envelope，并写固定 best-effort audit fields。enabled 的 runtime.error 输出合同不注册为业务 processor。
 - 测试结果：processor/error/P02 role gate 联合 `Ran 13, OK`；W11 后 P03 阶段出口全量结果将在 P03 记录追加。
@@ -713,11 +713,23 @@
 
 - 工作包：`P03-FIX-01 阶段出口严格类型与深度口径校准`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T23:20:00+08:00`。
+- 完成时间：`2026-07-20T21:35:39+08:00`。
 - 修改文件：更新 `src/ns_runtime/protocol/models.py`、`codec.py`、models/codec tests、实施计划、acceptance log 与 ADR-028。
 - 契约校准：必填 protocol/route/delivery 整数不再通过 optional 检查接受 None；capabilities/route_segment 明确要求 array，未知 direct mapping key 固定拒绝。JSON depth 统一表示 object/array nesting，容器标量不额外增加一层。
 - 测试与边界：补充 None、字符串伪数组、非字符串 unknown key 和 depth=1 边界；P03 专项增至 `Ran 49, OK`。校准只收紧 W01/W03，不新增 transport/session/IAM/StateStore/processor success 或任何后续能力。
 - 下一工作包：继续 P03 阶段出口全量回归。
+
+## P03
+
+- 阶段：`P03 Envelope 协议层与类型注册表`。
+- 状态：`VERIFIED`，目标完成度 `F2`。
+- 完成时间：`2026-07-20T21:36:57+08:00`。
+- 工作包状态：`P03-W01` 至 `P03-W11` 全部 `VERIFIED`；阶段出口复审校准 `P03-FIX-01` 同为 `VERIFIED`。
+- 冻结契约：`ENV-1` 完整覆盖唯一 `json.v1` grouped Envelope、raw/normalized authority、严格字段/资源/schema/version、50 项 registry、extension namespace、标准 error、canonical serialization 与 49 项 unified feature-disabled processor；ADR-028 更新为阶段冻结事实。P01/P02 的 CFG/SEC/LOG/ERR/RTC/RRS/RSD 等合同未修改。
+- 最终测试：P03 专项 `Ran 49, OK`；runtime 环境排除按 DEP-1 不安装的 Django cache 后 P01+P02+P03 联合 `Ran 398, OK (skipped=1)`；backend 环境根目录全量 `Ran 409, OK (skipped=1)`。唯一 skip 为 WSL 下 Windows 专用 event-loop policy。runtime/backend 两套全树 `compileall`、两套 `pip check`、`git diff --check` 全部通过。
+- 负向/安全/边界：覆盖 source/auth_context 伪造、unknown/null/empty、duplicate key、invalid UTF-8/JSON、depth/size/string/array/object/node/integer/float、major/minor/patch、type/schema/category/reliability、extension 四路径、error secret/exception repr、canonical determinism 及 task/ACK/management disabled。源码边界扫描确认 protocol 包无 socket/websocket/listener、Redis/Valkey/StateStore、SessionContext/IAM、DeliveryRecord 或旁路成功实现。
+- 已知限制：仅 runtime.error 构造 enabled；49 个其余内置类型均稳定 feature disabled。extension 默认 registry 为空，audit ignore 只产生待 P07 消费的结构化要求；canonical 是项目 deterministic JSON 而非外部 JCS 声明；P04/P05/P06/P07/P08 及 delivery/cluster 能力均未实现。
+- 执行游标：当前阶段 `P04 Transport 抽象与 WebSocket/TCP Adapter`；当前工作包 `P04-W01`；状态 `NOT_STARTED`；最近已验证阶段 `P03 Envelope 协议层与类型注册表`。按停止条件不开始 P04，等待外部 review。
 
 ## 新记录模板
 
