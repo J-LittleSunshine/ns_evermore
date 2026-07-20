@@ -5,6 +5,7 @@ import asyncio
 import logging
 import signal
 import unittest
+from unittest import mock
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.config import NsConfig
@@ -289,6 +290,80 @@ class RuntimeShutdownCoordinatorTestCase(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(RuntimeShutdownReason.SIGTERM, reason)
         self.assertEqual(previous, signal.getsignal(signal.SIGTERM))
+
+    async def test_loop_signal_registration_restores_exact_custom_handlers(
+        self,
+    ) -> None:
+        context = _context(
+            logger=logging.Logger("runtime-signal-loop-restore"),
+            supervisor=TaskSupervisor(),
+            metrics=InMemoryMetricsSink(),
+            traces=InMemoryTraceSink(),
+        )
+        coordinator = RuntimeShutdownCoordinator(context=context)
+
+        def original_sigint(_signum: int, _frame: object) -> None:
+            return None
+
+        def original_sigterm(_signum: int, _frame: object) -> None:
+            return None
+
+        previous = {
+            signal.SIGINT: signal.getsignal(signal.SIGINT),
+            signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+        }
+        try:
+            signal.signal(signal.SIGINT, original_sigint)
+            signal.signal(signal.SIGTERM, original_sigterm)
+            with coordinator.install_signal_handlers() as registration:
+                pass
+            registration.close()
+
+            self.assertIs(original_sigint, signal.getsignal(signal.SIGINT))
+            self.assertIs(original_sigterm, signal.getsignal(signal.SIGTERM))
+        finally:
+            signal.signal(signal.SIGINT, previous[signal.SIGINT])
+            signal.signal(signal.SIGTERM, previous[signal.SIGTERM])
+
+    async def test_fallback_signal_registration_restores_exact_custom_handlers(
+        self,
+    ) -> None:
+        context = _context(
+            logger=logging.Logger("runtime-signal-fallback-restore"),
+            supervisor=TaskSupervisor(),
+            metrics=InMemoryMetricsSink(),
+            traces=InMemoryTraceSink(),
+        )
+        coordinator = RuntimeShutdownCoordinator(context=context)
+        loop = asyncio.get_running_loop()
+
+        def original_sigint(_signum: int, _frame: object) -> None:
+            return None
+
+        def original_sigterm(_signum: int, _frame: object) -> None:
+            return None
+
+        previous = {
+            signal.SIGINT: signal.getsignal(signal.SIGINT),
+            signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+        }
+        try:
+            signal.signal(signal.SIGINT, original_sigint)
+            signal.signal(signal.SIGTERM, original_sigterm)
+            with mock.patch.object(
+                loop,
+                "add_signal_handler",
+                side_effect=NotImplementedError,
+            ):
+                with coordinator.install_signal_handlers() as registration:
+                    pass
+                registration.close()
+
+            self.assertIs(original_sigint, signal.getsignal(signal.SIGINT))
+            self.assertIs(original_sigterm, signal.getsignal(signal.SIGTERM))
+        finally:
+            signal.signal(signal.SIGINT, previous[signal.SIGINT])
+            signal.signal(signal.SIGTERM, previous[signal.SIGTERM])
 
     async def test_runtime_service_exposes_shutdown_report_and_stops_cleanly(
         self,

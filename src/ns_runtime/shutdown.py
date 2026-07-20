@@ -23,6 +23,7 @@ class RuntimeShutdownReason(str, Enum):
     SELF_CHECK_COMPLETE = "self_check_complete"
     SERVICE_STOP = "service_stop"
     EXTERNAL = "external"
+    CRITICAL_TASK_FAILURE = "critical_task_failure"
 
 
 class RuntimeShutdownPhase(str, Enum):
@@ -74,9 +75,8 @@ class RuntimeSignalRegistration:
     ) -> None:
         self._loop = loop
         self._coordinator = coordinator
-        self._loop_handlers: list[signal.Signals] = []
-        self._fallback_handlers: list[
-            tuple[signal.Signals, signal.Handlers]
+        self._registrations: list[
+            tuple[signal.Signals, signal.Handlers, bool]
         ] = []
         self._closed = False
         self._install()
@@ -86,6 +86,7 @@ class RuntimeSignalRegistration:
             (signal.SIGINT, RuntimeShutdownReason.SIGINT),
             (signal.SIGTERM, RuntimeShutdownReason.SIGTERM),
         ):
+            previous = signal.getsignal(signal_value)
             try:
                 self._loop.add_signal_handler(
                     signal_value,
@@ -93,8 +94,6 @@ class RuntimeSignalRegistration:
                     reason,
                 )
             except (NotImplementedError, RuntimeError):
-                previous = signal.getsignal(signal_value)
-
                 def fallback_handler(
                     _signum: int,
                     _frame: object,
@@ -107,17 +106,17 @@ class RuntimeSignalRegistration:
                     )
 
                 signal.signal(signal_value, fallback_handler)
-                self._fallback_handlers.append((signal_value, previous))
+                self._registrations.append((signal_value, previous, False))
             else:
-                self._loop_handlers.append(signal_value)
+                self._registrations.append((signal_value, previous, True))
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        for signal_value in reversed(self._loop_handlers):
-            self._loop.remove_signal_handler(signal_value)
-        for signal_value, previous in reversed(self._fallback_handlers):
+        for signal_value, previous, uses_loop in reversed(self._registrations):
+            if uses_loop:
+                self._loop.remove_signal_handler(signal_value)
             signal.signal(signal_value, previous)
 
     def __enter__(self) -> "RuntimeSignalRegistration":

@@ -22,6 +22,7 @@ from ns_runtime.roles import (
 )
 from ns_runtime.shutdown import (
     RuntimeShutdownCoordinator,
+    RuntimeShutdownReason,
     RuntimeShutdownReport,
 )
 
@@ -145,6 +146,7 @@ class RuntimeService:
                 },
             )
         self._event_loop_monitor = event_loop_monitor
+        self._critical_task_failed = False
         self._shutdown_report: RuntimeShutdownReport | None = None
         self._role_state = RuntimeRoleState(
             configured_role=context.config.runtime.cluster.role,
@@ -195,7 +197,10 @@ class RuntimeService:
             try:
                 await self._on_start()
                 if self._event_loop_monitor is not None:
-                    self._event_loop_monitor.start()
+                    monitor_task = self._event_loop_monitor.start()
+                    monitor_task.add_done_callback(
+                        self._on_critical_monitor_done,
+                    )
             except BaseException:
                 self._transition(RuntimeServiceState.FAILED, operation="start")
                 raise
@@ -215,7 +220,38 @@ class RuntimeService:
             except BaseException:
                 self._transition(RuntimeServiceState.FAILED, operation="stop")
                 raise
-            self._transition(RuntimeServiceState.STOPPED, operation="stop")
+            self._transition(
+                (
+                    RuntimeServiceState.FAILED
+                    if self._critical_task_failed
+                    else RuntimeServiceState.STOPPED
+                ),
+                operation=(
+                    "critical_task_failure"
+                    if self._critical_task_failed
+                    else "stop"
+                ),
+            )
+
+    def _on_critical_monitor_done(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        try:
+            failure = task.exception()
+        except asyncio.CancelledError:
+            return
+        if failure is None:
+            return
+
+        self._critical_task_failed = True
+        self._shutdown_coordinator.request_shutdown(
+            RuntimeShutdownReason.CRITICAL_TASK_FAILURE,
+        )
+        if self._state is RuntimeServiceState.RUNNING:
+            self._transition(
+                RuntimeServiceState.FAILED,
+                operation="critical_task_failure",
+            )
 
     async def _on_start(self) -> None:
         """Start runtime-owned resources in later P02 work packages."""

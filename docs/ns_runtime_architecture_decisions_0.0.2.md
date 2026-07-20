@@ -214,8 +214,9 @@
 - 决策：同一 event loop 内的 start/stop 继续由实例级 asyncio lifecycle lock 串行化，hook 在锁内执行。并发 start 中只有首个调用可以执行 start hook；并发 stop 中同一时刻只有一个 stop hook 执行。首个关闭成功后等待者观察 `STOPPED` 并正常返回；首个关闭失败后，一个观察到 `FAILED` 的等待者可以接管下一次清理，成功后其余等待者不再重复 hook。该模型不增加公开 attempt 状态、后台 task 或额外清理报告。
 - 决策：event-loop owner 的首次绑定使用独立实例级同步锁，只在锁内比较和设置 loop 引用，不在锁内 await、运行 hook 或获取 asyncio lifecycle lock。只有一个 loop 能成为 owner；其他 loop 必须在尝试获取 lifecycle lock 前收到固定 `NsStateError`。跨 loop 错误只公开 component、operation、current_state 和 `event_loop_mismatch` reason，不公开 loop/task/thread repr、线程标识或底层 asyncio 异常文本。
 - 决策：start/stop hook 的普通异常、取消和进程级异常均保持原类型和原对象穿透，状态必须在穿透前进入 `FAILED`。RuntimeService 不保存异常对象、异常文本或底层 cause，不把其内容复制到状态、非法迁移错误或跨 loop 错误；稳定非法迁移错误继续只包含 component、operation、current_state、requested_state 和 allowed_target_states。
+- 决策（P02-FIX-05 校准）：RuntimeService 登记的 runtime-owned critical supervised task 出现非取消异常时，必须请求同一 RuntimeShutdownCoordinator 并从 `RUNNING` 进入 `FAILED`；后续 `stop()` 仍执行既有统一清理，但 critical failure 清理成功后保持 `FAILED`，不得伪装为正常 `STOPPED`。联动只保存布尔失败事实，不保存或输出异常对象、message/repr/cause；正常取消不得触发。普通 probe、clock、metric/sink 等已经由所属合同定义为 fail-soft 的失败不属于 critical task terminal failure。
 - 后果：P02-W06 可以在这一生命周期基础上增加信号驱动的进程关闭、实际资源关闭编排和超时观测，但不得重新把 `STOPPED` 后 stop 改为错误，也不得禁止 `FAILED` 后显式清理或重试。后续 RuntimeContext、HTTP owner、sink、TaskSupervisor 和 transport 资源必须通过 stop hook 遵守相同的一次性启动、失败保留所有权和成功后才进入 `STOPPED` 的边界。
-- 关联阶段/工作包：`P02-W02`、`P02-FIX-01`、`P02-W06`。
+- 关联阶段/工作包：`P02-W02`、`P02-FIX-01`、`P02-W06`、`P02-W07`、`P02-FIX-05`。
 
 ## ADR-022
 
@@ -265,10 +266,10 @@
 - 决策：新增 `RSD-1` 进程私有关闭契约。RuntimeShutdownCoordinator 必须显式接收一个 RuntimeContext，RuntimeService 注入 coordinator 时必须验证双方 context 对象身份相同；coordinator 不创建、查找或替换任何依赖。首次有效关闭原因胜出，并立即把本地 admission gate 置为 closed；后续原因不得覆盖。SIGINT、SIGTERM、service stop、外部调用和当前无 listener 自检均复用同一 request/shutdown 路径，不建立第二套 signal 或 cleanup owner。
 - 决策：固定关闭相位为 stop admission、TaskSupervisor shutdown、flush sinks、close sinks、close clients、write summary、close logger。sinks 只包括 context 中已冻结的 metrics、traces 与可选 diagnostic，client 只包括显式 NsHttpClientOwner；logger 只关闭 composition root 明确传入的 owned logger。coordinator 使用实例级异步锁，成功形成报告后重复关闭必须返回同一冻结报告且不重复资源操作。RuntimeService 只在自身 stop hook 成功后执行 coordinator；既有 stopped 幂等、failed 后可显式清理/重试和 event-loop owner 规则保持。
 - 决策：普通资源异常按 phase、固定 resource 名和异常类型记录，继续尝试后续资源；不得把异常文本、对象 repr、路径、URL、credential、payload 或底层 cause 写入报告或摘要。进程级异常不吞并，继续按 RSL-1 进入 failed 并允许调用方重试。TaskSupervisor 超时作为可观测结果而非无限等待；本地报告可以保留既有 supervisor 任务名合同，但日志只允许数量和有界 digest，不得输出原始未完成任务名。摘要必须在 logger close 前写入，logger close 自身保持幂等。
-- 决策：signal registration 只属于 composition root 当前 event loop；优先使用 add_signal_handler，不支持时才使用 signal.signal 并通过 call_soon_threadsafe 回到 owner loop，作用域结束时撤销本次注册。当前 main 没有 listener，因此完成 preflight 和 service start 后以 SELF_CHECK_COMPLETE 请求同一关闭路径并退出；这只证明无监听进程自检和资源编排，不表示常驻 transport 生命周期已经实现。
+- 决策：signal registration 只属于 composition root 当前 event loop；优先使用 add_signal_handler，不支持时才使用 signal.signal 并通过 call_soon_threadsafe 回到 owner loop。P02-FIX-04 校准后，两条安装路径都必须在修改前保存 SIGINT/SIGTERM 的原 handler 对象；close 在 asyncio 路径先 remove loop handler，再通过 signal.signal 精确恢复保存对象，fallback 路径同样恢复，重复 close 不重复操作。当前 main 没有 listener，因此完成 preflight 和 service start 后以 SELF_CHECK_COMPLETE 请求同一关闭路径并退出；这只证明无监听进程自检和资源编排，不表示常驻 transport 生命周期已经实现。
 - 决策：P02 的 stop admission 仅为进程本地 gate，TaskSupervisor 进入 closing 后负责拒绝新任务。coordinator 明确不依赖 transport、Envelope、connection/session、DeliveryRecord、StateStore、role transition 或 management processor。P04 创建首个 listener 时必须先冻结类型化 admission/drain hook，再把 transport 停止新连接、已有连接 draining 与最终 close 插入既有相位边界；不得通过任意 callback bag、HTTP 管理端口或私有信号旁路扩展。delivery 转移、owner handoff 和跨节点 draining 继续分别服从 P10/P18 等后续合同。
 - 后果：当前进程对 SIGINT/SIGTERM 和显式停止具有一致、幂等、可观测且不泄密的资源释放路径；普通单资源失败不会跳过其他已注入资源。P02-W07 可以在同一显式 context 上增加 event-loop implementation/lag 观测，但不得让 collector 自行拥有信号或重复关闭 sinks。P04 及后续阶段扩展关闭序列时必须保持 RSD-1 的单 owner、同 context、固定相位、安全摘要和失败隔离规则。
-- 关联阶段/工作包：`P01-W05`、`P01-W13`、`P01-W15`、`P02-W02`、`P02-W03`、`P02-W06`、`P02-W07`、`P04`、`P10`、`P18`。
+- 关联阶段/工作包：`P01-W05`、`P01-W13`、`P01-W15`、`P02-W02`、`P02-W03`、`P02-W06`、`P02-FIX-04`、`P02-W07`、`P02-FIX-05`、`P04`、`P10`、`P18`。
 
 ## ADR-026
 
@@ -280,8 +281,9 @@
 - 决策：slow callback total 的可移植运行定义固定为 scheduling lag 大于等于 `runtime.event_loop.slow_callback_threshold_ms` 的 observation 累计数；monitor 同时把配置的 debug 和 slow-callback duration 应用到实际 loop，但不得解析 asyncio/uvloop 私有日志文本、安装额外日志 handler 或复制 callback repr。pending task 使用当前 loop 的公开 `all_tasks()` 并排除采样 task 本身；cancelled task 使用同一 TaskSupervisor 已观察的终态计数。executor 未创建时队列深度为 0；已有 executor 的本地队列无法安全探测时为未知。
 - 决策：必须复用 OBS-1 的 8 个权威标准 definition，不新增同义指标或高基数 attributes。implementation 以 value=1 gauge 加有限 implementation 标签；lag sample 为 histogram，P95/P99、pending 与 executor 为 gauge，slow/cancelled 为累计 counter。metrics disabled 时 monitor 仍维护内部 snapshot；普通 clock、record、sink 和 probe 异常不得终止 service或复制异常文本。clock/record/sink 失败累计 metric rejection；probe 失败累计 probe failure，对应值使用 `None` 并省略该次 metric，不得输出虚假 0。进程级异常仍按既有公共边界穿透。
 - 决策：event-loop 指标是异步可观测数据，不进入 DeliveryRecord、AckRecord、StateStore 或控制审计事务，也不构成 health、角色、transport 或发布性能权威。W08 本地诊断可以只读已经存在的 snapshot 与 startup 结果，但不得启动第二个 monitor、修改 loop 或开放 HTTP 管理端口。P20/P22 的 exporter、故障注入和基准验收必须消费同一 OBS-1/RLO-1 语义，不得改变 ACK/delivery 主链路。
+- 决策（P02-FIX-05 校准）：monitor supervised task 的正常 shutdown 取消是预期终态，不触发 service failure；monitor coroutine 的非取消异常是 critical terminal failure，RuntimeService 必须按 RSL-1 请求同一 RSD-1 shutdown 并保持 `FAILED`。不得为此创建第二个 TaskSupervisor、shutdown owner、signal owner 或独立清理 task。`_safe_count()`、metric record、clock 与 sink 的普通异常继续只更新既有 failure/rejection counter、使用未知值并保持 service 运行，不得升级为 critical failure。
 - 后果：标准 asyncio 与 uvloop 现在具有同一冻结 snapshot 和指标表面，且在 shutdown 时不会向已关闭 sink 写入；长暂停不会造成采样追赶风暴，观测失败也不会伪装正常。未来更精确的 loop-native callback/executor 数据只有在两个实现均完成兼容与失败语义验收后才能替换受限探针，指标名和低基数边界保持。
-- 关联阶段/工作包：`P01-W04`、`P01-W05`、`P01-W15`、`P02-W04`、`P02-W06`、`P02-W07`、`P02-W08`、`P20`、`P22`。
+- 关联阶段/工作包：`P01-W04`、`P01-W05`、`P01-W15`、`P02-W04`、`P02-W06`、`P02-W07`、`P02-FIX-05`、`P02-W08`、`P20`、`P22`。
 
 ## ADR-027
 
