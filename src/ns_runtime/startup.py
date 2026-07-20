@@ -16,7 +16,7 @@ import ssl
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Callable, Mapping, NoReturn
+from typing import Callable, Literal, Mapping, NoReturn
 
 from ns_common.async_runtime import (
     NsEventLoopSelection,
@@ -189,6 +189,34 @@ class RuntimeStartupPreflightResult:
     prepared_directories: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeStartupDirectoryStatus:
+    role: str
+    state: Literal[
+        "accessible",
+        "access_denied",
+        "missing",
+        "not_directory",
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeStartupInspectionResult:
+    """Read-only local startup facts; no policy or directory is changed."""
+
+    environment: str
+    event_loop: NsEventLoopSelection
+    enabled_transport_adapters: tuple[str, ...]
+    tls_transport_adapters: tuple[str, ...]
+    state_store_backend: str
+    checked_dependencies: tuple[str, ...]
+    directories: tuple[RuntimeStartupDirectoryStatus, ...]
+
+    @property
+    def ready(self) -> bool:
+        return all(item.state == "accessible" for item in self.directories)
+
+
 class RuntimeStartupPreflight:
     """Validate and prepare process startup without opening a listener."""
 
@@ -342,6 +370,47 @@ class RuntimeStartupPreflight:
             install_event_loop_policy=True,
         )
 
+    def inspect(
+        self,
+        context: RuntimeContext,
+        *,
+        environment: str | None = None,
+        directories: RuntimeStartupDirectories | None = None,
+    ) -> RuntimeStartupInspectionResult:
+        """Inspect startup requirements without mutating local process state."""
+
+        startup_directories = self._resolve_inputs(
+            context,
+            directories=directories,
+        )
+        resolved_environment = self.resolve_environment(environment)
+        self._validate_config(context, resolved_environment)
+        self._validate_startup_security(context, resolved_environment)
+        self._validate_transport_availability(context)
+        checked_dependencies = self._validate_dependencies(context)
+        self._validate_tls_capability(context)
+        directory_statuses = self._inspect_directories(
+            context,
+            startup_directories,
+        )
+        event_loop_selection = self._event_loop_selector.select(
+            context.config.runtime.event_loop,
+        )
+        transport = context.config.runtime.transport
+        return RuntimeStartupInspectionResult(
+            environment=resolved_environment,
+            event_loop=event_loop_selection,
+            enabled_transport_adapters=transport.enabled_adapters,
+            tls_transport_adapters=tuple(
+                name
+                for name, adapter in transport.adapters()
+                if adapter.enabled and adapter.tls_enabled
+            ),
+            state_store_backend=context.config.runtime.state_store.backend,
+            checked_dependencies=checked_dependencies,
+            directories=directory_statuses,
+        )
+
     def _run(
         self,
         context: RuntimeContext,
@@ -350,32 +419,10 @@ class RuntimeStartupPreflight:
         directories: RuntimeStartupDirectories | None,
         install_event_loop_policy: bool,
     ) -> RuntimeStartupPreflightResult:
-        if not isinstance(context, RuntimeContext):
-            raise NsValidationError(
-                "Runtime startup requires a RuntimeContext.",
-                details={
-                    "component": "runtime_startup",
-                    "dependency": "context",
-                    "expected_type": "RuntimeContext",
-                    "actual_type": type(context).__name__,
-                },
-            )
-
-        startup_directories = (
-            RuntimeStartupDirectories.repository_defaults()
-            if directories is None
-            else directories
+        startup_directories = self._resolve_inputs(
+            context,
+            directories=directories,
         )
-        if not isinstance(startup_directories, RuntimeStartupDirectories):
-            raise NsValidationError(
-                "Runtime startup directories are invalid.",
-                details={
-                    "component": "runtime_startup",
-                    "dependency": "directories",
-                    "expected_type": "RuntimeStartupDirectories",
-                    "actual_type": type(startup_directories).__name__,
-                },
-            )
 
         resolved_environment = self.resolve_environment(environment)
         self._validate_config(context, resolved_environment)
@@ -413,6 +460,41 @@ class RuntimeStartupPreflight:
             checked_dependencies=checked_dependencies,
             prepared_directories=prepared_directories,
         )
+
+    @staticmethod
+    def _resolve_inputs(
+        context: RuntimeContext,
+        *,
+        directories: RuntimeStartupDirectories | None,
+    ) -> RuntimeStartupDirectories:
+        if not isinstance(context, RuntimeContext):
+            raise NsValidationError(
+                "Runtime startup requires a RuntimeContext.",
+                details={
+                    "component": "runtime_startup",
+                    "dependency": "context",
+                    "expected_type": "RuntimeContext",
+                    "actual_type": type(context).__name__,
+                },
+            )
+
+        startup_directories = (
+            RuntimeStartupDirectories.repository_defaults()
+            if directories is None
+            else directories
+        )
+        if not isinstance(startup_directories, RuntimeStartupDirectories):
+            raise NsValidationError(
+                "Runtime startup directories are invalid.",
+                details={
+                    "component": "runtime_startup",
+                    "dependency": "directories",
+                    "expected_type": "RuntimeStartupDirectories",
+                    "actual_type": type(startup_directories).__name__,
+                },
+            )
+
+        return startup_directories
 
     @staticmethod
     def _validate_config(
@@ -564,6 +646,19 @@ class RuntimeStartupPreflight:
         context: RuntimeContext,
         directories: RuntimeStartupDirectories,
     ) -> tuple[str, ...]:
+        required_directories = self._required_directories(context, directories)
+
+        prepared_roles: list[str] = []
+        for role, path in required_directories:
+            self._prepare_directory(path, role=role)
+            prepared_roles.append(role)
+        return tuple(prepared_roles)
+
+    @staticmethod
+    def _required_directories(
+        context: RuntimeContext,
+        directories: RuntimeStartupDirectories,
+    ) -> tuple[tuple[str, Path], ...]:
         required_directories = list(directories.required_directories())
         state_store = context.config.runtime.state_store
         if state_store.backend == "sqlite":
@@ -572,16 +667,55 @@ class RuntimeStartupPreflight:
                 sqlite_path = directories.root_dir / sqlite_path
             required_directories.append(("state_store", sqlite_path.parent))
 
-        prepared_roles: list[str] = []
+        unique_directories: list[tuple[str, Path]] = []
         prepared_paths: set[Path] = set()
         for role, path in required_directories:
             normalized_path = Path(path)
             if normalized_path in prepared_paths:
                 continue
-            self._prepare_directory(normalized_path, role=role)
             prepared_paths.add(normalized_path)
-            prepared_roles.append(role)
-        return tuple(prepared_roles)
+            unique_directories.append((role, normalized_path))
+        return tuple(unique_directories)
+
+    def _inspect_directories(
+        self,
+        context: RuntimeContext,
+        directories: RuntimeStartupDirectories,
+    ) -> tuple[RuntimeStartupDirectoryStatus, ...]:
+        return tuple(
+            RuntimeStartupDirectoryStatus(
+                role=role,
+                state=self._inspect_directory(path),
+            )
+            for role, path in self._required_directories(context, directories)
+        )
+
+    def _inspect_directory(
+        self,
+        path: Path,
+    ) -> Literal[
+        "accessible",
+        "access_denied",
+        "missing",
+        "not_directory",
+    ]:
+        try:
+            exists = path.exists()
+            is_directory = path.is_dir()
+        except OSError:
+            return "access_denied"
+        if not exists:
+            return "missing"
+        if not is_directory:
+            return "not_directory"
+        try:
+            accessible = self._directory_access_probe(
+                path,
+                os.R_OK | os.W_OK | os.X_OK,
+            ) is True
+        except Exception:
+            accessible = False
+        return "accessible" if accessible else "access_denied"
 
     def _prepare_directory(self, path: Path, *, role: str) -> None:
         try:
@@ -630,7 +764,9 @@ class RuntimeStartupPreflight:
 
 
 __all__ = [
+    "RuntimeStartupDirectoryStatus",
     "RuntimeStartupDirectories",
+    "RuntimeStartupInspectionResult",
     "RuntimeStartupPreflight",
     "RuntimeStartupPreflightResult",
 ]

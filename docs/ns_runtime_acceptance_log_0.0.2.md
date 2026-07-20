@@ -541,6 +541,20 @@
 - 已知限制：1 秒采样周期与 1024 项窗口是当前内部实现常量，尚无热更新合同；slow callback 是 lag-threshold observation，而不是对 asyncio 私有日志的解析。executor queue depth 受 Python loop 实现可观察接口限制，未知时明确省略。W08 只能只读现有启动结果与 snapshot，不得启动第二个 monitor、创建 HTTP 管理端口或宣称 transport/cluster/delivery 可用。
 - 下一工作包：`P02-W08 建立本地进程诊断命令，只读取启动配置和本地状态，不开 HTTP 管理端口`，状态为 `IN_PROGRESS`；P02 阶段保持 `IN_PROGRESS`，当前执行游标已更新为 P02-W08。按用户校准后的流程，每个 W 工作包 review 通过后均在同一 codex 分支提交并立即推送，不为工作包创建新分支；W07 提交后的首次推送同时补齐此前尚未推送的 W05/W06 本地提交。
 
+## P02-W08
+
+- 工作包：`P02-W08 本地进程诊断命令`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T19:11:35+08:00`。
+- 修改文件：新增 `src/ns_runtime/diagnostics.py` 与 `tests/test_runtime_diagnostics.py`；更新 `src/ns_runtime/startup.py`、`src/ns_runtime/main.py`、`tests/test_runtime_startup.py`、实施计划、acceptance log，并新增 [ADR-027](ns_runtime_architecture_decisions_0.0.2.md#adr-027)。设计边界、配置 schema/示例、RuntimeContext、RuntimeService、event-loop monitor、shutdown、backend、requirements 与公共错误注册均未修改。
+- `RDI-1` 契约：唯一 `python -m ns_runtime.main` 入口新增 `diagnose` 子命令；程序化 `main()` 与无参数模块自检行为保持不变。`RuntimeStartupPreflight.inspect()` 复用 RSP-1 的环境、配置、安全、transport admission、本地依赖、TLS 与 event-loop selection 校验，只把必需目录检查改为只读四态。冻结 `RuntimeLocalDiagnosticReport` 提供 ready、配置/依赖通过标记、有限 adapter/TLS/state-store/event-loop 事实和不含路径的目录 role/state；ready/not_ready 分别返回 0/1，稳定公共错误返回 2。
+- 只读与安全语义：diagnose 不调用 prepare 或 policy install，不创建/修复目录，不运行 service、monitor 或 task，不构造文件 logger/client/exporter，不注册 signal，不访问远端。错误 JSON 只保留 code、numeric code 以及 component/dependency/directory/field/phase/reason 中的标量值；不输出公共错误 message、完整 details、配置路径、异常 repr 或 cause，未知普通异常统一为无细节 `NS_ERROR`，进程级异常不吞并。backend 环境按 DEP-1 缺少 websockets 时稳定返回 `NS_DEPENDENCY_ERROR`，不伪装 ready。
+- 测试结果：startup/diagnostic/main 专项 `Ran 35, OK`；runtime 环境排除 DEP-1 不安装的 Django cache 后全量 `Ran 345, OK (skipped=1)`；backend 环境根目录全量 `Ran 356, OK (skipped=1)`，唯一跳过为 WSL 下 Windows 专用 event-loop policy。两套 `pip check`、全树 `compileall` 与 `git diff --check` 通过。真实 `python -m ns_runtime.main diagnose` 与冷子进程还验证唯一模块入口、稳定退出码、不加载 RuntimeService/RuntimeEventLoopMonitor/websockets 模块以及不创建缺失 startup root。
+- 设计边界 review：首轮全量矩阵发现 backend 环境缺少 runtime 可选依赖时测试误期待 not_ready，已修正为验证稳定 dependency error；实现语义无需放宽。最终源码与冷进程扫描确认没有新增 cli/app 入口、listener/socket/server、HTTP 管理端口、transport adapter/session、Envelope、StateStore、Redis/Valkey、DeliveryRecord、leader/fencing、exporter、后台线程/任务、全局 context 或远端访问。诊断只读取显式启动配置和本地能力，设计边界文档未修改。
+- 已知限制：本地 ready 只证明当前配置、Python 包、TLS/event-loop capability 与目录访问状态，不代表 listener、IAM、运行中 health、角色权威、StateStore、cluster 或 delivery 已可用；诊断不读取 RLO-1 运行中 snapshot。P16 管理查询仍必须使用统一管理 Envelope，P20 exporter/diagnostic snapshot 仍须独立验收。
+- 阶段出口：P02 所有工作包和阶段出口均已验证：无监听模块自检可优雅退出、event-loop implementation/lag 有内部 snapshot、核心依赖均为显式构造注入、本地诊断零启动副作用。P02 状态更新为 `VERIFIED/F2`。
+- 下一工作包：`P03-W01 定义核心 Envelope 分组类型模型`，状态为 `IN_PROGRESS`；P03 阶段更新为 `IN_PROGRESS`。继续遵守每个 W 在设计边界 review 通过后，于同一 codex 分支提交并立即推送远端。
+
 ## 新记录模板
 
 - 工作包：

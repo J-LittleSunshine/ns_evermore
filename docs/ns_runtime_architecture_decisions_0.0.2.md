@@ -282,3 +282,14 @@
 - 决策：event-loop 指标是异步可观测数据，不进入 DeliveryRecord、AckRecord、StateStore 或控制审计事务，也不构成 health、角色、transport 或发布性能权威。W08 本地诊断可以只读已经存在的 snapshot 与 startup 结果，但不得启动第二个 monitor、修改 loop 或开放 HTTP 管理端口。P20/P22 的 exporter、故障注入和基准验收必须消费同一 OBS-1/RLO-1 语义，不得改变 ACK/delivery 主链路。
 - 后果：标准 asyncio 与 uvloop 现在具有同一冻结 snapshot 和指标表面，且在 shutdown 时不会向已关闭 sink 写入；长暂停不会造成采样追赶风暴，观测失败也不会伪装正常。未来更精确的 loop-native callback/executor 数据只有在两个实现均完成兼容与失败语义验收后才能替换受限探针，指标名和低基数边界保持。
 - 关联阶段/工作包：`P01-W04`、`P01-W05`、`P01-W15`、`P02-W04`、`P02-W06`、`P02-W07`、`P02-W08`、`P20`、`P22`。
+
+## ADR-027
+
+- ADR 编号：`ADR-027`
+- 状态：`ACCEPTED`
+- 背景：P02 阶段出口需要在不启动服务或监听器时判断本地配置与启动依赖是否可用。若为此增加独立入口、HTTP 管理端口、运行中 monitor 或目录准备，会破坏 RTE-1 唯一入口、RSP-1 启动顺序以及 P16/P20 的管理和诊断边界；若直接序列化底层错误，又可能泄露配置路径、异常文本或凭证内容。
+- 决策：新增 `RDI-1` runtime 私有本地诊断契约。`python -m ns_runtime.main diagnose` 是 RTE-1 唯一 main 模块入口的子命令，不新增 cli/app 入口模块。诊断必须复用 RSP-1 对环境、显式配置、安全、transport admission、本地 Python 依赖、TLS capability 和 event-loop selection 的权威校验，但只能调用只读 inspection；不得调用目录 prepare、policy install、`asyncio.run()`、RuntimeService、RuntimeEventLoopMonitor、信号注册、文件 logger、HTTP client、sink exporter 或远端探针。
+- 决策：目录检查只返回固定 role 和 `accessible`、`access_denied`、`missing`、`not_directory` 四态，不创建、修复或输出实际路径。成功报告是冻结本地事实，包含 config/dependency 通过标记、有限 transport/TLS/state-store 名称和 event-loop 选择；ready 只表示当前启动前本地要求通过，不是运行中 health、角色、IAM、listener、StateStore 或集群权威。目录未就绪返回可机读 not_ready 与非零退出码；配置、依赖或安全失败返回稳定公共 error code/numeric code，仅允许固定标量 detail key，禁止输出 message、完整 details、路径、对象 repr 或 cause；未知普通异常收敛为不带细节的 `NS_ERROR`，进程级异常保持穿透。
+- 决策：诊断不得读取或启动 RLO-1 monitor，也不得建立 socket、HTTP 管理端口、Envelope、transport/session、DeliveryRecord 或强一致记录。P16 的管理状态查询仍必须经已启用 runtime transport 的管理 Envelope，P20 的 diagnostic snapshot/exporter 仍使用 OBS-1 并保持显式生命周期；两者不得把本地 diagnose 扩展为旁路控制面。
+- 后果：运维和本地开发可以在零启动副作用下区分 ready、目录未就绪和配置/依赖失败，同时 backend 依赖层缺少 runtime 可选包时稳定 fail-closed。后续启动要求变化必须同时扩展 RSP-1 inspection 与 RDI-1 测试，不能在诊断模块建立第二套校验或资源所有权。
+- 关联阶段/工作包：`P02-W01`、`P02-W04`、`P02-W07`、`P02-W08`、`P16`、`P20`、`P22`。

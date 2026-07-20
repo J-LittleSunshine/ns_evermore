@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     from os import PathLike
@@ -160,5 +160,97 @@ def main(
     return 0
 
 
+_SAFE_DIAGNOSTIC_DETAIL_KEYS = frozenset({
+    "component",
+    "dependency",
+    "directory",
+    "field",
+    "phase",
+    "reason",
+})
+
+
+def _write_diagnostic_json(payload: dict[str, object]) -> None:
+    import json
+    import sys
+
+    sys.stdout.write(
+        json.dumps(
+            payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n",
+    )
+
+
+def _run_local_diagnostic(
+    *,
+    environment: str | None,
+    config_path: str | None,
+    startup_root: str | None,
+) -> int:
+    from _ns_common_error_types import NsEvermoreError
+    from ns_runtime.diagnostics import inspect_local_runtime
+
+    try:
+        report = inspect_local_runtime(
+            environment=environment,
+            config_path=config_path,
+            startup_root=startup_root,
+        )
+    except NsEvermoreError as error:
+        safe_details = {
+            key: value
+            for key, value in error.details.items()
+            if key in _SAFE_DIAGNOSTIC_DETAIL_KEYS
+            and isinstance(value, (bool, int, float, str))
+        }
+        payload: dict[str, object] = {
+            "status": "error",
+            "error_code": error.code,
+            "numeric_code": error.numeric_code,
+        }
+        if safe_details:
+            payload["details"] = safe_details
+        _write_diagnostic_json(payload)
+        return 2
+    except Exception:
+        _write_diagnostic_json({
+            "status": "error",
+            "error_code": "NS_ERROR",
+            "numeric_code": 100000,
+        })
+        return 2
+
+    _write_diagnostic_json(report.to_dict())
+    return 0 if report.ready else 1
+
+
+def _module_main(argv: Sequence[str] | None = None) -> int:
+    """Dispatch the sole module entry without adding another process entry."""
+
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m ns_runtime.main")
+    parser.add_argument("command", nargs="?", choices=("diagnose",))
+    parser.add_argument("--environment")
+    parser.add_argument("--config", dest="config_path")
+    parser.add_argument("--startup-root")
+    arguments = parser.parse_args(argv)
+    if arguments.command is None:
+        return main(
+            environment=arguments.environment,
+            config_path=arguments.config_path,
+            startup_root=arguments.startup_root,
+        )
+    return _run_local_diagnostic(
+        environment=arguments.environment,
+        config_path=arguments.config_path,
+        startup_root=arguments.startup_root,
+    )
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_module_main())
