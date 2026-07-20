@@ -577,6 +577,18 @@
 - P02 阶段复审：逐项复核唯一 main 入口、六态 lifecycle、显式 context、startup preflight、角色能力门禁、signal/shutdown、event-loop monitor 与只读 diagnose。未发现 listener/socket/server、transport adapter/session、Envelope/processor、StateStore、Redis/Valkey 权威写入、DeliveryRecord、leader/fencing、HTTP 管理端口、exporter、第二 supervisor/signal/shutdown owner 或远端访问。W08 diagnose 专项仍包含在全量回归且保持零启动副作用；P02 所有工作包、FIX 与阶段出口恢复为 `VERIFIED/F2`。
 - 下一工作包：`P03-W01 核心 Envelope 分组类型模型`，状态为 `IN_PROGRESS`；只在本提交推送成功后继续 P03。
 
+## P03-W01
+
+- 工作包：`P03-W01 核心 Envelope 分组类型模型`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T20:15:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/protocol/models.py`、`src/ns_runtime/protocol/__init__.py` 与 `tests/test_runtime_protocol_models.py`；更新实施计划、acceptance log，并新增 [ADR-028](ns_runtime_architecture_decisions_0.0.2.md#adr-028)。
+- 公共契约变化：建立 `ENV-1` 的 12 个固定 Envelope 分组、冻结类型、严格字段集合、protocol/message 必需和不适用分组省略语义；payload/extensions 动态 JSON 在构造时递归冻结。当前只冻结模型，不声明任何 message capability 可执行。
+- 测试结果：W01 专项 5/5；与 exceptions/context/service/roles 联合回归 `Ran 69, OK`；protocol 与测试 compileall、`git diff --check` 通过。
+- 安全/隔离检查：首轮发现未知字段名会进入公共异常 details，已改为固定 `$unknown` 并补充不回显测试。源码扫描确认没有 listener/socket/server、transport adapter/session、IAM、StateStore、Redis/Valkey、DeliveryRecord、leader/fencing、管理旁路、ACK 执行或成功响应；未修改 P01/P02 公共对象与异常格式。
+- 已知限制：尚未建立 inbound raw/normalized 分离、资源限制、message 专属 schema、版本矩阵、类型注册表、extension 策略、错误 Envelope、canonical serialization 或 processor；这些均保持未启用。
+- 下一工作包：`P03-W02 inbound raw 与 normalized model 分离`，状态为 `IN_PROGRESS`；P03 保持 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：

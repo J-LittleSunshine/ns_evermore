@@ -295,3 +295,13 @@
 - 决策：诊断不得读取或启动 RLO-1 monitor，也不得建立 socket、HTTP 管理端口、Envelope、transport/session、DeliveryRecord 或强一致记录。P16 的管理状态查询仍必须经已启用 runtime transport 的管理 Envelope，P20 的 diagnostic snapshot/exporter 仍使用 OBS-1 并保持显式生命周期；两者不得把本地 diagnose 扩展为旁路控制面。
 - 后果：运维和本地开发可以在零启动副作用下区分 ready、目录未就绪和配置/依赖失败，同时 backend 依赖层缺少 runtime 可选包时稳定 fail-closed。后续启动要求变化必须同时扩展 RSP-1 inspection 与 RDI-1 测试，不能在诊断模块建立第二套校验或资源所有权。
 - 关联阶段/工作包：`P02-W01`、`P02-W04`、`P02-W07`、`P02-W08`、`P16`、`P20`、`P22`。
+
+## ADR-028
+
+- ADR 编号：`ADR-028`
+- 状态：`ACCEPTED`
+- 背景：P03 必须一次建立唯一 `json.v1` Envelope 边界；如果各 transport、processor 或插件使用裸 dict、自定义顶层字段、空分组占位或可变嵌套对象，会在 IAM、路由和可靠投递前形成多套协议与检查时差。
+- 决策：新增 `ENV-1`。`ns_runtime.protocol` 是 transport-independent 的唯一 Envelope 协议包；固定顶层顺序为 `protocol/message/source/target/route/delivery/stream/auth_context/payload/callback/trace/extensions`，其中 protocol/message 必需，不适用分组必须省略。每个核心分组由冻结类型表达，只接受显式字段集合；顶层与分组未知字段、null/空对象占位、非 JSON 动态值和不满足基本结构的值稳定拒绝。payload 与 extension 动态内容在进入模型时形成递归不可变快照；协议异常 detail 只含固定 group/field/reason 语义，未知输入 key 使用固定占位，不复制输入值或对象 repr。
+- 决策：P03-W01 只冻结类型和分组结构，不解析 wire bytes、不建立 transport/session/IAM/route/delivery 状态、不执行 message 行为。source/auth_context 的出站类型存在不代表允许客户端入站携带；该权威注入边界由 P03-W02 在独立 raw/normalized 模型中完成。目标类型条件、message 专属必填、资源限制、版本矩阵、注册表、extension 策略、错误 Envelope、canonical serialization 与 feature-disabled processor 依次由 P03 后续工作包补齐，不得由当前宽松默认推断功能已启用。
+- 后果：后续 adapter 只能向统一 codec 提交完整应用消息边界，processor 只能接收完成 P03 normalization 的 Envelope；现阶段没有 listener、ACK 快速通道、裸 JSON 管理命令、业务 processor 或伪成功。修改分组字段或允许规则必须重跑 P03 及所有下游协议回归。
+- 关联阶段/工作包：`P03-W01` 至 `P03-W11`、`P04`、`P05`、`P07`、`P10`、`P12`、`P16`、`P21`。
