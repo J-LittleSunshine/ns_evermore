@@ -28,6 +28,146 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
 
 
+_CONTEXT_SIDE_EFFECT_PROBE_SETUP = """
+import asyncio
+import builtins
+import logging
+import os
+from pathlib import Path
+import sys
+import threading
+
+for forbidden_module in (
+    "ns_common",
+    "ns_common.config",
+    "ns_common.config.model",
+    "ns_common.paths",
+    "ns_common.logger",
+    "ns_common.http_client",
+):
+    assert forbidden_module not in sys.modules, forbidden_module
+
+events = []
+original_builtin_open = builtins.open
+original_exists = Path.exists
+original_mkdir = Path.mkdir
+original_open = Path.open
+original_getenv = os.getenv
+environ_type = type(os.environ)
+original_environ_getitem = environ_type.__getitem__
+original_thread_start = threading.Thread.start
+original_create_task = asyncio.create_task
+original_new_event_loop = asyncio.new_event_loop
+policy = asyncio.get_event_loop_policy()
+policy_type = type(policy)
+original_policy_new_event_loop = policy_type.new_event_loop
+
+def watched_builtin_open(file, *args, **kwargs):
+    events.append(("builtin_open", os.fspath(file)))
+    return original_builtin_open(file, *args, **kwargs)
+
+def watched_exists(path):
+    events.append(("path_exists", os.fspath(path)))
+    return original_exists(path)
+
+def watched_mkdir(path, *args, **kwargs):
+    events.append(("path_mkdir", os.fspath(path)))
+    return original_mkdir(path, *args, **kwargs)
+
+def watched_open(path, *args, **kwargs):
+    events.append(("path_open", os.fspath(path)))
+    return original_open(path, *args, **kwargs)
+
+def watched_getenv(*args, **kwargs):
+    events.append(("getenv", str(args[0]) if args else ""))
+    return original_getenv(*args, **kwargs)
+
+def watched_environ_getitem(environ, key):
+    events.append(("environ_getitem", str(key)))
+    return original_environ_getitem(environ, key)
+
+def watched_thread_start(thread, *args, **kwargs):
+    events.append(("thread_start", thread.name))
+    return original_thread_start(thread, *args, **kwargs)
+
+def watched_create_task(*args, **kwargs):
+    events.append(("create_task", "asyncio"))
+    return original_create_task(*args, **kwargs)
+
+def watched_new_event_loop(*args, **kwargs):
+    events.append(("new_event_loop", "asyncio"))
+    return original_new_event_loop(*args, **kwargs)
+
+def watched_policy_new_event_loop(policy_instance, *args, **kwargs):
+    events.append(("policy_new_event_loop", type(policy_instance).__name__))
+    return original_policy_new_event_loop(policy_instance, *args, **kwargs)
+
+builtins.open = watched_builtin_open
+Path.exists = watched_exists
+Path.mkdir = watched_mkdir
+Path.open = watched_open
+os.getenv = watched_getenv
+environ_type.__getitem__ = watched_environ_getitem
+threading.Thread.start = watched_thread_start
+asyncio.create_task = watched_create_task
+asyncio.new_event_loop = watched_new_event_loop
+policy_type.new_event_loop = watched_policy_new_event_loop
+
+before_threads = tuple(threading.enumerate())
+before_root_handlers = tuple(logging.getLogger().handlers)
+before_handler_refs = tuple(logging._handlerList)
+before_loggers = tuple(logging.Logger.manager.loggerDict)
+"""
+
+
+_CONTEXT_SIDE_EFFECT_PROBE_ASSERTIONS = """
+assert events == [], events
+assert before_threads == tuple(threading.enumerate())
+assert before_root_handlers == tuple(logging.getLogger().handlers)
+assert before_handler_refs == tuple(logging._handlerList)
+assert before_loggers == tuple(logging.Logger.manager.loggerDict)
+assert policy is asyncio.get_event_loop_policy()
+for forbidden_module in (
+    "ns_common",
+    "ns_common.config",
+    "ns_common.config.model",
+    "ns_common.paths",
+    "ns_common.logger",
+    "ns_common.http_client",
+):
+    assert forbidden_module not in sys.modules, forbidden_module
+"""
+
+
+def _run_context_side_effect_probe(
+    body: str,
+    *,
+    temporary_prefix: str,
+) -> tuple[subprocess.CompletedProcess[str], tuple[Path, ...]]:
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(SRC_DIR)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    probe = (
+        _CONTEXT_SIDE_EFFECT_PROBE_SETUP
+        + body
+        + _CONTEXT_SIDE_EFFECT_PROBE_ASSERTIONS
+    )
+
+    with tempfile.TemporaryDirectory(prefix=temporary_prefix) as temporary_root:
+        completed = subprocess.run(
+            [sys.executable, "-c", probe],
+            cwd=temporary_root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        remaining_paths = tuple(Path(temporary_root).iterdir())
+
+    return completed, remaining_paths
+
+
 def _create_dependencies() -> dict[str, object]:
     return {
         "config": NsConfig(),
@@ -62,6 +202,12 @@ class RuntimeContextTestCase(unittest.TestCase):
         )
         for dependency, value in injected.items():
             self.assertIs(value, getattr(context, dependency))
+        self.assertIsInstance(context.config, NsConfig)
+        self.assertIsInstance(context.clock, SystemClock)
+        self.assertIsInstance(context.logger, logging.Logger)
+        self.assertIsInstance(context.metrics, InMemoryMetricsSink)
+        self.assertIsInstance(context.traces, InMemoryTraceSink)
+        self.assertIsInstance(context.task_supervisor, TaskSupervisor)
         self.assertIs(context.config, context.config_snapshot)
         self.assertIs(context.metrics, context.metrics_sink)
         self.assertIs(context.traces, context.trace_sink)
@@ -152,6 +298,19 @@ class RuntimeContextTestCase(unittest.TestCase):
                     },
                     context.exception.details,
                 )
+
+    def test_matching_class_names_do_not_bypass_exact_type_validation(self) -> None:
+        FakeNsConfig = type("NsConfig", (), {})
+        arguments = _create_dependencies()
+        arguments["config"] = FakeNsConfig()
+        with self.assertRaises(NsValidationError):
+            RuntimeContext(**arguments)
+
+        FakeNsHttpClientOwner = type("NsHttpClientOwner", (), {})
+        with self.assertRaises(NsValidationError):
+            RuntimeDependencySlots(
+                http_client_owner=FakeNsHttpClientOwner(),  # type: ignore[arg-type]
+            )
 
     def test_validation_errors_do_not_copy_dependency_repr_or_secret_text(
         self,
@@ -252,108 +411,91 @@ class RuntimeContextTestCase(unittest.TestCase):
     def test_context_cold_import_does_not_load_config_or_touch_filesystem(
         self,
     ) -> None:
-        environment = os.environ.copy()
-        environment["PYTHONPATH"] = str(SRC_DIR)
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        probe = """
-import asyncio
-import builtins
-import logging
-import os
-from pathlib import Path
-import sys
-import threading
-
-events = []
-original_builtin_open = builtins.open
-original_exists = Path.exists
-original_mkdir = Path.mkdir
-original_open = Path.open
-original_getenv = os.getenv
-original_thread_start = threading.Thread.start
-original_create_task = asyncio.create_task
-original_new_event_loop = asyncio.new_event_loop
-
-def watched_builtin_open(file, *args, **kwargs):
-    events.append(("builtin_open", os.fspath(file)))
-    return original_builtin_open(file, *args, **kwargs)
-
-def watched_exists(path):
-    events.append(("path_exists", os.fspath(path)))
-    return original_exists(path)
-
-def watched_mkdir(path, *args, **kwargs):
-    events.append(("path_mkdir", os.fspath(path)))
-    return original_mkdir(path, *args, **kwargs)
-
-def watched_open(path, *args, **kwargs):
-    events.append(("path_open", os.fspath(path)))
-    return original_open(path, *args, **kwargs)
-
-def watched_getenv(*args, **kwargs):
-    events.append(("getenv", str(args[0]) if args else ""))
-    return original_getenv(*args, **kwargs)
-
-def watched_thread_start(thread, *args, **kwargs):
-    events.append(("thread_start", thread.name))
-    return original_thread_start(thread, *args, **kwargs)
-
-def watched_create_task(*args, **kwargs):
-    events.append(("create_task", "asyncio"))
-    return original_create_task(*args, **kwargs)
-
-def watched_new_event_loop(*args, **kwargs):
-    events.append(("new_event_loop", "asyncio"))
-    return original_new_event_loop(*args, **kwargs)
-
-builtins.open = watched_builtin_open
-Path.exists = watched_exists
-Path.mkdir = watched_mkdir
-Path.open = watched_open
-os.getenv = watched_getenv
-threading.Thread.start = watched_thread_start
-asyncio.create_task = watched_create_task
-asyncio.new_event_loop = watched_new_event_loop
-
-before_threads = tuple(threading.enumerate())
-before_root_handlers = tuple(logging.getLogger().handlers)
-before_handler_refs = tuple(logging._handlerList)
-before_loggers = tuple(logging.Logger.manager.loggerDict)
-
+        completed, remaining_paths = _run_context_side_effect_probe(
+            """
 import ns_runtime.context as module
 slots = module.RuntimeDependencySlots()
 
 assert slots.diagnostic_snapshot_sink is None
 assert slots.http_client_owner is None
-assert events == [], events
-assert before_threads == tuple(threading.enumerate())
-assert before_root_handlers == tuple(logging.getLogger().handlers)
-assert before_handler_refs == tuple(logging._handlerList)
-assert before_loggers == tuple(logging.Logger.manager.loggerDict)
-for forbidden_module in (
-    "ns_common",
-    "ns_common.config",
-    "ns_common.config.model",
-    "ns_common.paths",
-    "ns_common.logger",
-    "ns_common.http_client",
-):
-    assert forbidden_module not in sys.modules, forbidden_module
-"""
+""",
+            temporary_prefix="ns-runtime-context-cold-import-",
+        )
 
-        with tempfile.TemporaryDirectory(
-            prefix="ns-runtime-context-cold-import-",
-        ) as temporary_root:
-            completed = subprocess.run(
-                [sys.executable, "-c", probe],
-                cwd=temporary_root,
-                env=environment,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            remaining_paths = tuple(Path(temporary_root).iterdir())
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("", completed.stdout)
+        self.assertEqual("", completed.stderr)
+        self.assertEqual((), remaining_paths)
+
+    def test_invalid_context_construction_has_no_import_side_effects(
+        self,
+    ) -> None:
+        completed, remaining_paths = _run_context_side_effect_probe(
+            """
+import ns_runtime.context as module
+
+try:
+    module.RuntimeContext(
+        config=object(),
+        clock=object(),
+        logger=object(),
+        metrics=object(),
+        traces=object(),
+        task_supervisor=object(),
+    )
+except BaseException as error:
+    expected_details = {
+        "component": "runtime_context",
+        "dependency": "config",
+        "expected_type": "NsConfig",
+        "actual_type": "object",
+    }
+    assert type(error).__module__ == "ns_common.exceptions.common"
+    assert type(error).__name__ == "NsValidationError"
+    assert error.code == "NS_VALIDATION_ERROR"
+    assert error.message == "RuntimeContext dependency is invalid."
+    assert error.details == expected_details
+    assert error.to_dict() == {
+        "code": "NS_VALIDATION_ERROR",
+        "numeric_code": 100200,
+        "message": "RuntimeContext dependency is invalid.",
+        "details": expected_details,
+    }
+else:
+    raise AssertionError("invalid config must be rejected")
+""",
+            temporary_prefix="ns-runtime-context-invalid-config-",
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("", completed.stdout)
+        self.assertEqual("", completed.stderr)
+        self.assertEqual((), remaining_paths)
+
+    def test_invalid_http_owner_has_no_import_side_effects(self) -> None:
+        completed, remaining_paths = _run_context_side_effect_probe(
+            """
+import ns_runtime.context as module
+
+try:
+    module.RuntimeDependencySlots(http_client_owner=object())
+except BaseException as error:
+    expected_details = {
+        "component": "runtime_context",
+        "dependency": "dependencies.http_client_owner",
+        "expected_type": "NsHttpClientOwner",
+        "actual_type": "object",
+    }
+    assert type(error).__module__ == "ns_common.exceptions.common"
+    assert type(error).__name__ == "NsValidationError"
+    assert error.code == "NS_VALIDATION_ERROR"
+    assert error.message == "RuntimeContext dependency is invalid."
+    assert error.details == expected_details
+else:
+    raise AssertionError("invalid HTTP owner must be rejected")
+""",
+            temporary_prefix="ns-runtime-context-invalid-http-owner-",
+        )
 
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertEqual("", completed.stdout)

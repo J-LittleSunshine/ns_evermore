@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from _ns_common_error_types import NsValidationError
+
 from .base import NsEvermoreError, NsRuntimeError
 from .metadata import (
     NsErrorCategory,
@@ -13,12 +15,6 @@ class NsConfigError(NsEvermoreError):
     code = "NS_CONFIG_ERROR"
     numeric_code = 100100
     default_message = "Invalid ns_evermore configuration."
-
-
-class NsValidationError(NsEvermoreError):
-    code = "NS_VALIDATION_ERROR"
-    numeric_code = 100200
-    default_message = "Validation failed."
 
 
 class NsDependencyError(NsEvermoreError):
