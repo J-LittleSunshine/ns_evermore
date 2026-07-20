@@ -2,12 +2,29 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import queue
 import threading
 import unittest
 
+from ns_common.async_runtime import TaskSupervisor
+from ns_common.config import NsConfig
 from ns_common.exceptions import NsStateError
+from ns_common.observability import InMemoryMetricsSink, InMemoryTraceSink
+from ns_common.time import SystemClock
+from ns_runtime.context import RuntimeContext
 from ns_runtime.service import RuntimeService, RuntimeServiceState
+
+
+def _create_runtime_context() -> RuntimeContext:
+    return RuntimeContext(
+        config=NsConfig(),
+        clock=SystemClock(),
+        logger=logging.Logger("runtime-service-test"),
+        metrics=InMemoryMetricsSink(),
+        traces=InMemoryTraceSink(),
+        task_supervisor=TaskSupervisor(),
+    )
 
 
 class _RecordingRuntimeService(RuntimeService):
@@ -17,7 +34,7 @@ class _RecordingRuntimeService(RuntimeService):
         start_error: BaseException | None = None,
         stop_error: BaseException | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(context=_create_runtime_context())
         self.events: list[tuple[str, RuntimeServiceState]] = []
         self.start_error = start_error
         self.stop_error = stop_error
@@ -35,7 +52,7 @@ class _RecordingRuntimeService(RuntimeService):
 
 class _BlockingRuntimeService(RuntimeService):
     def __init__(self, *, start_error: BaseException | None = None) -> None:
-        super().__init__()
+        super().__init__(context=_create_runtime_context())
         self.start_calls = 0
         self.stop_calls = 0
         self.start_error = start_error
@@ -59,7 +76,7 @@ class _BlockingStopRuntimeService(RuntimeService):
         *,
         first_stop_error: BaseException | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(context=_create_runtime_context())
         self.first_stop_error = first_stop_error
         self.stop_calls = 0
         self.active_stop_calls = 0
@@ -90,7 +107,7 @@ class _BlockingStopRuntimeService(RuntimeService):
 
 class _ThreadRaceRuntimeService(RuntimeService):
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(context=_create_runtime_context())
         self.start_calls = 0
         self.start_calls_lock = threading.Lock()
         self.start_entered = threading.Event()
@@ -136,7 +153,7 @@ class RuntimeServiceTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_invalid_transition_returns_stable_state_error(self) -> None:
-        service = RuntimeService()
+        service = RuntimeService(context=_create_runtime_context())
 
         with self.assertRaises(NsStateError) as context:
             await service.stop()
@@ -218,7 +235,7 @@ class RuntimeServiceTestCase(unittest.IsolatedAsyncioTestCase):
 
         class _PartiallyStartedRuntimeService(RuntimeService):
             def __init__(self) -> None:
-                super().__init__()
+                super().__init__(context=_create_runtime_context())
                 self.resource_acquired = False
                 self.stop_calls = 0
 
@@ -473,7 +490,9 @@ class RuntimeServiceTestCase(unittest.IsolatedAsyncioTestCase):
             async def _on_start(self) -> None:
                 raise failure
 
-        service = _SensitiveFailureRuntimeService()
+        service = _SensitiveFailureRuntimeService(
+            context=_create_runtime_context(),
+        )
         with self.assertRaises(RuntimeError) as context:
             await service.start()
         self.assertIs(failure, context.exception)
@@ -491,7 +510,7 @@ class RuntimeServiceTestCase(unittest.IsolatedAsyncioTestCase):
 class RuntimeServiceLoopBindingTestCase(unittest.TestCase):
 
     def test_service_cannot_cross_event_loops(self) -> None:
-        service = RuntimeService()
+        service = RuntimeService(context=_create_runtime_context())
         asyncio.run(service.start())
 
         with self.assertRaises(NsStateError) as context:

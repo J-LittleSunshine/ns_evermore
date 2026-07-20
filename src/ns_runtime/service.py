@@ -9,7 +9,8 @@ from threading import Lock
 from types import MappingProxyType
 from typing import Mapping
 
-from ns_common.exceptions import NsStateError
+from ns_common.exceptions import NsStateError, NsValidationError
+from ns_runtime.context import RuntimeContext
 
 
 class RuntimeServiceState(str, Enum):
@@ -46,6 +47,9 @@ _RUNTIME_SERVICE_TRANSITIONS: Mapping[
 class RuntimeService:
     """Own the one-shot lifecycle of one runtime process.
 
+    Every service is constructed with one immutable ``RuntimeContext``.  This
+    class retains that wiring identity but does not create, start or close the
+    injected dependencies; resource orchestration belongs to later P02 work.
     Lifecycle operations are serialized on the first event loop that uses the
     service. ``FAILED`` blocks restart but remains eligible for explicit cleanup
     through ``stop()``; ``STOPPED`` makes later ``stop()`` calls idempotent.
@@ -53,7 +57,18 @@ class RuntimeService:
     transition and failure semantics.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, context: RuntimeContext) -> None:
+        if not isinstance(context, RuntimeContext):
+            raise NsValidationError(
+                "RuntimeService requires a RuntimeContext.",
+                details={
+                    "component": "runtime_service",
+                    "dependency": "context",
+                    "expected_type": "RuntimeContext",
+                    "actual_type": type(context).__name__,
+                },
+            )
+        self._context = context
         self._state = RuntimeServiceState.CREATED
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_binding_lock = Lock()
@@ -62,6 +77,10 @@ class RuntimeService:
     @property
     def state(self) -> RuntimeServiceState:
         return self._state
+
+    @property
+    def context(self) -> RuntimeContext:
+        return self._context
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()

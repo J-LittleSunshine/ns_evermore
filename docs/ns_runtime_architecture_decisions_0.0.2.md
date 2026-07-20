@@ -216,3 +216,15 @@
 - 决策：start/stop hook 的普通异常、取消和进程级异常均保持原类型和原对象穿透，状态必须在穿透前进入 `FAILED`。RuntimeService 不保存异常对象、异常文本或底层 cause，不把其内容复制到状态、非法迁移错误或跨 loop 错误；稳定非法迁移错误继续只包含 component、operation、current_state、requested_state 和 allowed_target_states。
 - 后果：P02-W06 可以在这一生命周期基础上增加信号驱动的进程关闭、实际资源关闭编排和超时观测，但不得重新把 `STOPPED` 后 stop 改为错误，也不得禁止 `FAILED` 后显式清理或重试。后续 RuntimeContext、HTTP owner、sink、TaskSupervisor 和 transport 资源必须通过 stop hook 遵守相同的一次性启动、失败保留所有权和成功后才进入 `STOPPED` 的边界。
 - 关联阶段/工作包：`P02-W02`、`P02-FIX-01`、`P02-W06`。
+
+## ADR-022
+
+- ADR 编号：`ADR-022`
+- 状态：`ACCEPTED`
+- 背景：runtime 后续模块需要共享配置快照、时间、日志、观测和任务监督能力。如果深层模块自行读取全局 `ns_config`、按名称获取 logger/client/sink，或通过模块级 current context、ContextVar、字符串 registry 和 ambient getter 查找依赖，则 composition root 无法证明实例隔离、测试替换、资源所有权和关闭顺序。另一方面，把尚未冻结的 transport、StateStore、processor 等接口提前放进无类型字典，会把显式依赖容器退化为服务定位器。
+- 决策：`RuntimeContext` 是冻结、slots、仅关键字构造的进程级接线快照。必需字段固定为 `NsConfig`、`Clock`、`logging.Logger`、`MetricsSink`、`TraceSink` 和 `TaskSupervisor`；context 保留调用方注入对象的身份，不复制配置、不创建默认 logger/sink/supervisor，也不读取环境、文件或全局服务。`config_snapshot`、`metrics_sink` 和 `trace_sink` 只是对应必需字段的只读身份别名。生产接线仍须遵守 `CFG-1`、`LOG-1` 和 `OBS-1` 的安全边界。
+- 决策：后续公共依赖使用冻结且有限的 `RuntimeDependencySlots`。当前只为既有公共合同 `DiagnosticSnapshotSink` 与 `NsHttpClientOwner` 提供可选类型化槽位；未注入时明确为 `None`。不得增加按字符串查找的 mapping、`get/register/resolve` API、模块级 context 单例、线程局部变量或 ContextVar。尚未冻结的 runtime 私有依赖必须在其所属工作包明确接口后增加类型化字段或专用子上下文，不能通过任意 object bag 提前绕过契约。
+- 决策：所有字段在构造时验证公共类型。错误固定为不含依赖值或 repr 的 `NsValidationError`，details 只含 component、dependency、expected_type 和 actual_type；不得复制配置、路径、URL、credential、对象 repr 或底层异常文本。context 的冻结只保证字段引用不能替换，不声称 logger、sink、TaskSupervisor 或 owner 的内部生命周期不可变。
+- 决策：每个 `RuntimeService` 必须通过构造参数接收一个有效 `RuntimeContext`，并通过只读 `context` 属性保持同一对象身份；不提供无参 fallback 或隐式默认 context。W03 只建立接线关系，构造 context/service 时不得创建 task、client、listener 或 exporter，也不得启动、flush、关闭任何依赖。配置加载与启动前校验、composition root、信号和资源关闭顺序仍由后续 P02 工作包负责；只有未来 stop hook 按 `RSL-1` 成功完成资源清理后，service 才能进入 `STOPPED`。
+- 后果：深层 runtime 模块可以通过显式构造参数接收所需 context 或其中的具体依赖，不再需要全局服务定位。package facade 和 `main.py` 可以继续保持无启动副作用，直到 composition root 工作包显式接线。后续为 RuntimeContext 增加字段属于 `RTC-1` 变更，必须使用已冻结类型并重新运行 P02 与下游回归；不得借字段扩展提前宣称 transport、StateStore、角色、观测 collector 或关闭编排已经实现。
+- 关联阶段/工作包：`P02-W03`、`P02-W04`、`P02-W06`、`P04` 至 `P08`。
