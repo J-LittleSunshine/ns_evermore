@@ -569,9 +569,9 @@
 
 - 工作包：`P02-FIX-05 critical background task 与 RuntimeService 生命周期联动`。
 - 状态：`VERIFIED`。
-- 完成时间：`2026-07-20T19:20:15+08:00`。
+- 完成时间：`2026-07-20T19:48:39+08:00`。
 - 修改文件：更新 `src/ns_runtime/service.py`、`src/ns_runtime/shutdown.py`、`tests/test_runtime_event_loop_observability.py`、实施计划、acceptance log，并校准 [ADR-021](ns_runtime_architecture_decisions_0.0.2.md#adr-021)、[ADR-025](ns_runtime_architecture_decisions_0.0.2.md#adr-025) 与 [ADR-026](ns_runtime_architecture_decisions_0.0.2.md#adr-026)。
-- 契约校准：RuntimeService 对唯一 RuntimeEventLoopMonitor supervised task 登记 critical done callback。正常取消直接忽略；非取消异常只设置内部失败事实，不保存异常对象或文本，使用新增固定原因 `critical_task_failure` 请求同一 RuntimeShutdownCoordinator，并把 RUNNING 转为 FAILED。调用既有 stop 后仍执行同一 TaskSupervisor/sink/client/logger 清理顺序，清理完成后保持 FAILED，避免伪装为正常 STOPPED。
+- 契约校准：RuntimeService 对唯一 RuntimeEventLoopMonitor supervised task 登记 critical done callback。正常取消直接忽略；非取消异常不保存异常对象或文本，使用固定原因 `critical_task_failure` 请求同一 RuntimeShutdownCoordinator，并把 RUNNING 转为 FAILED。后续显式 stop 严格执行 RSL-1 的 `FAILED -> STOPPING -> STOPPED`：成功后 STOPPED，失败才回 FAILED。critical 原因与 monitor failed task 分别由 shutdown report 的 reason/failed_tasks 保留；第二次 stop 幂等，不重复 stop hook、coordinator 或资源清理。
 - fail-soft 保持：pending/executor probe、clock、metric 构造/record 与 sink 普通失败仍由 RLO-1 内部收敛为 probe failure/metric rejection、未知值或省略指标，不终止 monitor 或 service。正常 shutdown 的 CancelledError 仍产生 cancelled task 和 STOPPED。没有新增 TaskSupervisor、signal owner、shutdown owner、清理 task、线程或端口；shutdown report 与日志只含固定 reason、任务名/数量和异常类型边界，不包含 critical 异常 message/repr。
 - 测试结果：要求的 shutdown/monitor/service/main 专项 `Ran 49, OK`；runtime 环境排除 DEP-1 不安装的 Django cache 后 P01/runtime + P02 联合 `Ran 349, OK (skipped=1)`；backend 根目录全量 `Ran 360, OK (skipped=1)`，唯一跳过仍为 WSL 下 Windows 专用 event-loop policy。两套 `pip check`、全树 `compileall` 与 `git diff --check` 通过。
 - P02 阶段复审：逐项复核唯一 main 入口、六态 lifecycle、显式 context、startup preflight、角色能力门禁、signal/shutdown、event-loop monitor 与只读 diagnose。未发现 listener/socket/server、transport adapter/session、Envelope/processor、StateStore、Redis/Valkey 权威写入、DeliveryRecord、leader/fencing、HTTP 管理端口、exporter、第二 supervisor/signal/shutdown owner 或远端访问。W08 diagnose 专项仍包含在全量回归且保持零启动副作用；P02 所有工作包、FIX 与阶段出口恢复为 `VERIFIED/F2`。

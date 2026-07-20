@@ -29,6 +29,7 @@ from ns_runtime.service import RuntimeService, RuntimeServiceState
 from ns_runtime.shutdown import (
     RuntimeShutdownCoordinator,
     RuntimeShutdownReason,
+    RuntimeShutdownReport,
 )
 
 
@@ -68,6 +69,35 @@ class _FailingMonitor(RuntimeEventLoopMonitor):
     async def _run(self, _loop: asyncio.AbstractEventLoop) -> None:
         await asyncio.sleep(0)
         raise RuntimeError("critical-monitor-secret")
+
+
+class _CountingShutdownCoordinator(RuntimeShutdownCoordinator):
+    def __init__(self, *, context: RuntimeContext) -> None:
+        super().__init__(context=context)
+        self.shutdown_count = 0
+
+    async def shutdown(self) -> RuntimeShutdownReport:
+        self.shutdown_count += 1
+        return await super().shutdown()
+
+
+class _CountingStopService(RuntimeService):
+    def __init__(
+        self,
+        *,
+        context: RuntimeContext,
+        shutdown_coordinator: RuntimeShutdownCoordinator,
+        event_loop_monitor: RuntimeEventLoopMonitor,
+    ) -> None:
+        super().__init__(
+            context=context,
+            shutdown_coordinator=shutdown_coordinator,
+            event_loop_monitor=event_loop_monitor,
+        )
+        self.stop_hook_count = 0
+
+    async def _on_stop(self) -> None:
+        self.stop_hook_count += 1
 
 
 class RuntimeEventLoopMonitorTestCase(unittest.IsolatedAsyncioTestCase):
@@ -286,8 +316,8 @@ class RuntimeEventLoopMonitorTestCase(unittest.IsolatedAsyncioTestCase):
             context=context,
             implementation=NsEventLoopImplementation.ASYNCIO,
         )
-        coordinator = RuntimeShutdownCoordinator(context=context)
-        service = RuntimeService(
+        coordinator = _CountingShutdownCoordinator(context=context)
+        service = _CountingStopService(
             context=context,
             shutdown_coordinator=coordinator,
             event_loop_monitor=monitor,
@@ -299,12 +329,23 @@ class RuntimeEventLoopMonitorTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(RuntimeShutdownReason.CRITICAL_TASK_FAILURE, reason)
         self.assertIs(RuntimeServiceState.FAILED, service.state)
         await service.stop()
-        self.assertIs(RuntimeServiceState.FAILED, service.state)
+        self.assertIs(RuntimeServiceState.STOPPED, service.state)
+        report = service.shutdown_report
+        self.assertIsNotNone(report)
+        self.assertIs(RuntimeShutdownReason.CRITICAL_TASK_FAILURE, report.reason)
         self.assertEqual(
             (EVENT_LOOP_MONITOR_TASK_NAME,),
-            service.shutdown_report.failed_tasks,  # type: ignore[union-attr]
+            report.failed_tasks,  # type: ignore[union-attr]
         )
-        self.assertNotIn("critical-monitor-secret", repr(service.shutdown_report))
+        self.assertEqual(1, service.stop_hook_count)
+        self.assertEqual(1, coordinator.shutdown_count)
+
+        await service.stop()
+        self.assertIs(RuntimeServiceState.STOPPED, service.state)
+        self.assertIs(report, service.shutdown_report)
+        self.assertEqual(1, service.stop_hook_count)
+        self.assertEqual(1, coordinator.shutdown_count)
+        self.assertNotIn("critical-monitor-secret", repr(report))
         self.assertNotIn("critical-monitor-secret", log_output.getvalue())
 
     async def test_probe_failure_remains_fail_soft_for_running_service(self) -> None:

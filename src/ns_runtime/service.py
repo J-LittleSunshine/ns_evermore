@@ -146,7 +146,6 @@ class RuntimeService:
                 },
             )
         self._event_loop_monitor = event_loop_monitor
-        self._critical_task_failed = False
         self._shutdown_report: RuntimeShutdownReport | None = None
         self._role_state = RuntimeRoleState(
             configured_role=context.config.runtime.cluster.role,
@@ -220,18 +219,7 @@ class RuntimeService:
             except BaseException:
                 self._transition(RuntimeServiceState.FAILED, operation="stop")
                 raise
-            self._transition(
-                (
-                    RuntimeServiceState.FAILED
-                    if self._critical_task_failed
-                    else RuntimeServiceState.STOPPED
-                ),
-                operation=(
-                    "critical_task_failure"
-                    if self._critical_task_failed
-                    else "stop"
-                ),
-            )
+            self._transition(RuntimeServiceState.STOPPED, operation="stop")
 
     def _on_critical_monitor_done(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
@@ -243,7 +231,6 @@ class RuntimeService:
         if failure is None:
             return
 
-        self._critical_task_failed = True
         self._shutdown_coordinator.request_shutdown(
             RuntimeShutdownReason.CRITICAL_TASK_FAILURE,
         )
