@@ -79,7 +79,6 @@ class RuntimeProtocolModelTestCase(unittest.TestCase):
             (TargetGroup, {"kind": "runtime", "runtime_id": "runtime_2"}),
             (PayloadGroup, {"mode": "inline", "inline": {"answer": 42}}),
             (TraceGroup, {"trace_id": "trace_1"}),
-            (ExtensionsGroup, {"namespaces": {"example.plugin": {"x": 1}}}),
         )
         for group_type, value in group_cases:
             with self.subTest(group=group_type.__name__):
@@ -87,6 +86,9 @@ class RuntimeProtocolModelTestCase(unittest.TestCase):
                 with_unknown["unknown"] = "no"
                 with self.assertRaises(NsRuntimeEnvelopeSchemaError):
                     group_type.from_mapping(with_unknown)
+
+        extensions = ExtensionsGroup.from_mapping({"example.plugin": {"x": 1}})
+        self.assertEqual({"example.plugin": {"x": 1}}, extensions.to_dict())
 
     def test_null_empty_and_mutable_payload_placeholders_are_rejected_or_frozen(self) -> None:
         raw = _minimal_envelope()

@@ -14,6 +14,14 @@ from .inbound import (
     inbound_envelope_from_mapping,
     normalize_inbound,
 )
+from .extensions import (
+    EMPTY_EXTENSION_REGISTRY,
+    ExtensionNamespaceContract,
+    ExtensionNamespaceRegistry,
+    ExtensionObjectSchema,
+    ExtensionValidationResult,
+    UnknownExtensionPolicy,
+)
 
 from .models import (
     AuthContextGroup,
@@ -60,7 +68,9 @@ __all__ = (
     "AuthContextGroup", "BUILTIN_MESSAGE_CONTRACTS", "BUILTIN_MESSAGE_FAMILIES",
     "BUILTIN_MESSAGE_REGISTRY", "CURRENT_PROTOCOL_SCHEMA_KEY", "CallbackGroup",
     "DEFAULT_JSON_LIMITS", "DeliveryGroup", "ENVELOPE_GROUP_NAMES",
-    "Envelope", "EnvelopeSchemaValidator", "ExtensionsGroup", "InboundEnvelope",
+    "EMPTY_EXTENSION_REGISTRY", "Envelope", "EnvelopeSchemaValidator",
+    "ExtensionNamespaceContract", "ExtensionNamespaceRegistry", "ExtensionObjectSchema",
+    "ExtensionValidationResult", "ExtensionsGroup", "InboundEnvelope",
     "InlinePayloadSchema", "MessageGroup", "MessageTypeContract", "MessageTypeRegistry",
     "MessageAuditLevel", "MessageCategory", "MessageReliability", "MessageTypeSchema",
     "PayloadGroup", "ProtocolGroup",
@@ -68,6 +78,7 @@ __all__ = (
     "JSON_V1_PROTOCOL_MATRIX", "JsonResourceLimits", "JsonV1Codec", "NegotiatedProtocol",
     "ProtocolCompatibilityMatrix", "ProtocolVersion", "ProtocolVersionSupport",
     "RuntimeAuthority", "WIRE_CODEC_JSON_V1",
+    "UnknownExtensionPolicy",
     "envelope_from_mapping", "inbound_envelope_from_mapping",
     "normalize_inbound",
 )

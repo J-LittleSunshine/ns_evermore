@@ -366,6 +366,15 @@ class ExtensionsGroup(StrictGroup):
             raise _schema_error(self.GROUP_NAME, "namespaces", "non_empty_object_required")
         object.__setattr__(self, "namespaces", frozen)
 
+    @classmethod
+    def from_mapping(cls, value: object) -> "ExtensionsGroup":
+        if not isinstance(value, Mapping) or not value:
+            raise _schema_error(cls.GROUP_NAME, cls.GROUP_NAME, "non_empty_object_required")
+        return cls(namespaces=value)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _thaw_json(self.namespaces)
+
 
 @dataclass(frozen=True, slots=True)
 class Envelope:

@@ -661,6 +661,18 @@
 - 已知限制：注册的 capability 与 audit level 只是 P06/P07 将消费的静态声明；P03 不宣称权限已校验或审计已持久化。disabled 行为由 W11 统一 processor 固化。
 - 下一工作包：`P03-W08 extension namespace 注册与 schema 边界`，状态为 `IN_PROGRESS`。
 
+## P03-W08
+
+- 工作包：`P03-W08 extension namespace 注册与 schema 边界`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T22:10:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/protocol/extensions.py` 与 `tests/test_runtime_protocol_extensions.py`；校准 `ExtensionsGroup` 直接 namespace wire 形状并更新 facade/models tests、实施计划、acceptance log 与 ADR-028。
+- 公共契约变化：`extensions` 现直接承载 namespace keys；新增显式不可变 `ExtensionNamespaceRegistry`、contract/schema、unknown policy 与 validation result。默认拒绝未知 namespace；可选 ignore 必须返回 `audit_required=true` 且不传播内容。
+- 测试结果：extensions/models/registry 专项 `Ran 18, OK`；`git diff --check` 通过。
+- 安全/隔离检查：覆盖未注册、disabled、unauthorized、schema missing/unknown 和 authorized 四类路径；错误不回显 namespace/token/payload，ignored namespace 不进入 accepted。review 确认 extension schema 只能收紧自身对象，不能修改核心 group 规则、注入 source/auth_context、注册 callback、执行插件或开放旁路。
+- 已知限制：P03 只返回结构化 audit requirement，不提前实现 P07/P08 审计 sink 或持久化；默认 registry 为空，因此没有任何 extension capability 默认可用。
+- 下一工作包：`P03-W09 标准错误 Envelope`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
