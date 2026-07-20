@@ -16,12 +16,13 @@ import ssl
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Callable, Mapping
+from typing import Callable, Mapping, NoReturn
 
 from ns_common.async_runtime import (
     NsEventLoopSelection,
     NsEventLoopSelector,
 )
+from ns_common.config import NsConfig
 from ns_common.exceptions import (
     NsConfigError,
     NsDependencyError,
@@ -50,6 +51,42 @@ _TRANSPORT_DEPENDENCIES: Mapping[str, str] = MappingProxyType({
 DependencyProbe = Callable[[str], object | None]
 DirectoryAccessProbe = Callable[[Path, int], bool]
 TlsCapabilityProbe = Callable[[], bool]
+
+
+def _raise_normalized_startup_config_error(
+    error: NsConfigError,
+    *,
+    environment: str,
+) -> NoReturn:
+    """Raise one stable RSP-1 error for a configuration validation failure."""
+
+    field = error.details.get("field")
+    reason: str | None = None
+    if (
+        environment == "prod"
+        and isinstance(field, str)
+        and field.startswith("runtime.transport.")
+        and field.endswith(".tls_enabled")
+    ):
+        reason = "plaintext_transport_in_production"
+    elif field == "runtime.security.require_tls_in_prod":
+        reason = "production_tls_requirement_disabled"
+    elif field == "runtime.security.allow_plaintext_non_prod":
+        reason = "plaintext_transport_disabled"
+    elif environment == "prod" and field == "runtime.state_store.backend":
+        reason = "non_production_state_store_backend"
+
+    if reason is None:
+        raise error
+    raise NsRuntimeStartupSecurityError(
+        "Runtime startup security configuration is invalid.",
+        details={
+            "component": "runtime_startup",
+            "field": field,
+            "environment": environment,
+            "reason": reason,
+        },
+    ) from None
 
 
 def _find_python_dependency(package_name: str) -> object | None:
@@ -205,6 +242,40 @@ class RuntimeStartupPreflight:
         self._directory_access_probe = directory_access_probe
         self._tls_capability_probe = tls_capability_probe
 
+    def load_config_snapshot(
+        self,
+        config_path: str | os.PathLike[str],
+        *,
+        environment: str | None = None,
+    ) -> NsConfig:
+        """Load an explicitly addressed snapshot under the RSP-1 error boundary.
+
+        An explicit path is required so CFG-1's compatible no-path directory
+        preparation behavior cannot run before this preflight prepares its own
+        explicitly wired directories.
+        """
+
+        resolved_environment = self.resolve_environment(environment)
+        if config_path is None:
+            raise NsValidationError(
+                "Runtime startup config path must be explicit.",
+                details={
+                    "component": "runtime_startup",
+                    "dependency": "config_path",
+                    "actual_type": "NoneType",
+                },
+            )
+        try:
+            return NsConfig.load(
+                config_path=config_path,
+                environment=resolved_environment,
+            )
+        except NsConfigError as error:
+            _raise_normalized_startup_config_error(
+                error,
+                environment=resolved_environment,
+            )
+
     @staticmethod
     def resolve_environment(environment: str | None = None) -> str:
         raw_environment: object = (
@@ -347,33 +418,10 @@ class RuntimeStartupPreflight:
         try:
             context.config.validate(environment=environment)
         except NsConfigError as error:
-            field = error.details.get("field")
-            reason: str | None = None
-            if (
-                environment == "prod"
-                and isinstance(field, str)
-                and field.startswith("runtime.transport.")
-                and field.endswith(".tls_enabled")
-            ):
-                reason = "plaintext_transport_in_production"
-            elif field == "runtime.security.require_tls_in_prod":
-                reason = "production_tls_requirement_disabled"
-            elif field == "runtime.security.allow_plaintext_non_prod":
-                reason = "plaintext_transport_disabled"
-            elif environment == "prod" and field == "runtime.state_store.backend":
-                reason = "non_production_state_store_backend"
-
-            if reason is None:
-                raise
-            raise NsRuntimeStartupSecurityError(
-                "Runtime startup security configuration is invalid.",
-                details={
-                    "component": "runtime_startup",
-                    "field": field,
-                    "environment": environment,
-                    "reason": reason,
-                },
-            ) from None
+            _raise_normalized_startup_config_error(
+                error,
+                environment=environment,
+            )
 
     @staticmethod
     def _validate_startup_security(

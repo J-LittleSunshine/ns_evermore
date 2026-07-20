@@ -2,18 +2,78 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
-from ns_common.exceptions import NsDependencyError
+from ns_common.async_runtime import NsEventLoopSelector
+from ns_common.exceptions import (
+    NsConfigError,
+    NsDependencyError,
+    NsRuntimeStartupSecurityError,
+    NsRuntimeTransportDisabledError,
+)
 from ns_runtime.main import main
+from ns_runtime.startup import (
+    RuntimeStartupDirectories,
+    RuntimeStartupPreflight,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
+
+
+def _write_config(
+    directory: Path,
+    raw_config: dict[str, object],
+    *,
+    filename: str = "ns_config.json",
+) -> Path:
+    config_path = directory / filename
+    config_path.write_text(
+        json.dumps(raw_config),
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def _production_config(runtime: dict[str, object] | None = None) -> dict[str, object]:
+    config: dict[str, object] = {
+        "backend": {
+            "debug": False,
+            "secret_key": "s" * 32,
+        },
+    }
+    if runtime is not None:
+        config["runtime"] = runtime
+    return config
+
+
+def _controlled_preflight(
+    *,
+    dependency_available: bool = True,
+    tls_available: bool = True,
+) -> tuple[RuntimeStartupPreflight, list[object]]:
+    installed_policies: list[object] = []
+    preflight = RuntimeStartupPreflight(
+        event_loop_selector=NsEventLoopSelector(
+            platform_system=lambda: "Windows",
+            policy_setter=installed_policies.append,
+        ),
+        dependency_probe=(
+            (lambda _: object())
+            if dependency_available
+            else (lambda _: None)
+        ),
+        tls_capability_probe=lambda: tls_available,
+    )
+    return preflight, installed_policies
 
 
 class NsRuntimeMainTestCase(unittest.TestCase):
@@ -50,6 +110,319 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             self.assertEqual(0, completed.returncode, completed.stderr)
             self.assertEqual("", completed.stdout)
             self.assertEqual("", completed.stderr)
+
+    def test_main_normalizes_production_plaintext_config_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            config_path = _write_config(
+                temporary_root,
+                _production_config(),
+            )
+            startup_root = temporary_root / "runtime-root"
+            preflight, installed_policies = _controlled_preflight()
+
+            with mock.patch(
+                "ns_runtime.service.RuntimeService",
+                side_effect=AssertionError("service must not be constructed"),
+            ):
+                with self.assertRaises(
+                    NsRuntimeStartupSecurityError,
+                ) as context:
+                    main(
+                        environment="prod",
+                        config_path=config_path,
+                        startup_directories=(
+                            RuntimeStartupDirectories.for_root(startup_root)
+                        ),
+                        preflight=preflight,
+                    )
+
+            self.assertEqual(
+                "RUNTIME_STARTUP_SECURITY_ERROR",
+                context.exception.code,
+            )
+            self.assertEqual(
+                "plaintext_transport_in_production",
+                context.exception.details["reason"],
+            )
+            self.assertFalse(startup_root.exists())
+            self.assertEqual([], installed_policies)
+
+    def test_main_normalizes_production_sqlite_config_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            config_path = _write_config(
+                temporary_root,
+                _production_config({
+                    "transport": {
+                        "websocket_tcp": {
+                            "tls_enabled": True,
+                        },
+                    },
+                }),
+            )
+            startup_root = temporary_root / "runtime-root"
+            preflight, installed_policies = _controlled_preflight()
+
+            with mock.patch(
+                "ns_runtime.service.RuntimeService",
+                side_effect=AssertionError("service must not be constructed"),
+            ):
+                with self.assertRaises(
+                    NsRuntimeStartupSecurityError,
+                ) as context:
+                    main(
+                        environment="prod",
+                        config_path=config_path,
+                        startup_directories=(
+                            RuntimeStartupDirectories.for_root(startup_root)
+                        ),
+                        preflight=preflight,
+                    )
+
+            self.assertEqual(
+                "non_production_state_store_backend",
+                context.exception.details["reason"],
+            )
+            self.assertFalse(startup_root.exists())
+            self.assertEqual([], installed_policies)
+
+    def test_main_normalizes_remaining_startup_security_config_errors(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "disabled_production_tls_requirement",
+                {
+                    "runtime": {
+                        "security": {
+                            "require_tls_in_prod": False,
+                        },
+                    },
+                },
+                "production_tls_requirement_disabled",
+            ),
+            (
+                "disabled_non_production_plaintext",
+                {
+                    "runtime": {
+                        "security": {
+                            "allow_plaintext_non_prod": False,
+                        },
+                    },
+                },
+                "plaintext_transport_disabled",
+            ),
+        )
+        for case_name, raw_config, expected_reason in cases:
+            with self.subTest(case=case_name):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    temporary_root = Path(temporary_directory)
+                    config_path = _write_config(temporary_root, raw_config)
+                    startup_root = temporary_root / "runtime-root"
+                    preflight, installed_policies = _controlled_preflight()
+
+                    with mock.patch(
+                        "ns_runtime.service.RuntimeService",
+                        side_effect=AssertionError(
+                            "service must not be constructed",
+                        ),
+                    ):
+                        with self.assertRaises(
+                            NsRuntimeStartupSecurityError,
+                        ) as context:
+                            main(
+                                environment="local",
+                                config_path=config_path,
+                                startup_directories=(
+                                    RuntimeStartupDirectories.for_root(
+                                        startup_root,
+                                    )
+                                ),
+                                preflight=preflight,
+                            )
+
+                    self.assertEqual(
+                        expected_reason,
+                        context.exception.details["reason"],
+                    )
+                    self.assertFalse(startup_root.exists())
+                    self.assertEqual([], installed_policies)
+
+    def test_main_preserves_ordinary_config_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            config_path = _write_config(
+                temporary_root,
+                {
+                    "runtime": {
+                        "transport": {
+                            "listen_port": 0,
+                        },
+                    },
+                },
+            )
+            startup_root = temporary_root / "runtime-root"
+            preflight, installed_policies = _controlled_preflight()
+
+            with mock.patch(
+                "ns_runtime.service.RuntimeService",
+                side_effect=AssertionError("service must not be constructed"),
+            ):
+                with self.assertRaises(NsConfigError) as context:
+                    main(
+                        environment="local",
+                        config_path=config_path,
+                        startup_directories=(
+                            RuntimeStartupDirectories.for_root(startup_root)
+                        ),
+                        preflight=preflight,
+                    )
+
+            self.assertEqual("NS_CONFIG_ERROR", context.exception.code)
+            self.assertEqual(
+                "runtime.transport.listen_port",
+                context.exception.details["field"],
+            )
+            self.assertNotIsInstance(
+                context.exception,
+                NsRuntimeStartupSecurityError,
+            )
+            self.assertFalse(startup_root.exists())
+            self.assertEqual([], installed_policies)
+
+    def test_main_missing_websockets_has_no_directory_or_policy_side_effect(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            config_path = _write_config(temporary_root, {})
+            startup_root = temporary_root / "runtime-root"
+            preflight, installed_policies = _controlled_preflight(
+                dependency_available=False,
+            )
+
+            with (
+                mock.patch(
+                    "ns_common.config.get_default_config_path",
+                    return_value=config_path,
+                ) as default_path,
+                mock.patch(
+                    "ns_common.config.codec.ensure_runtime_dirs",
+                    side_effect=AssertionError(
+                        "explicit startup config loading must not prepare dirs",
+                    ),
+                ),
+                mock.patch(
+                    "ns_runtime.service.RuntimeService",
+                    side_effect=AssertionError(
+                        "service must not be constructed",
+                    ),
+                ),
+            ):
+                with self.assertRaises(NsDependencyError) as context:
+                    main(
+                        environment="local",
+                        startup_directories=(
+                            RuntimeStartupDirectories.for_root(startup_root)
+                        ),
+                        preflight=preflight,
+                    )
+
+            default_path.assert_called_once_with("local")
+            self.assertEqual("NS_DEPENDENCY_ERROR", context.exception.code)
+            self.assertEqual(
+                "websockets",
+                context.exception.details["dependency"],
+            )
+            self.assertFalse(startup_root.exists())
+            self.assertEqual([], installed_policies)
+
+    def test_main_tls_failure_has_no_directory_or_policy_side_effect(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            config_path = _write_config(
+                temporary_root,
+                {
+                    "runtime": {
+                        "transport": {
+                            "websocket_tcp": {
+                                "tls_enabled": True,
+                            },
+                        },
+                    },
+                },
+            )
+            startup_root = temporary_root / "runtime-root"
+            preflight, installed_policies = _controlled_preflight(
+                tls_available=False,
+            )
+
+            with mock.patch(
+                "ns_runtime.service.RuntimeService",
+                side_effect=AssertionError("service must not be constructed"),
+            ):
+                with self.assertRaises(
+                    NsRuntimeStartupSecurityError,
+                ) as context:
+                    main(
+                        environment="local",
+                        config_path=config_path,
+                        startup_directories=(
+                            RuntimeStartupDirectories.for_root(startup_root)
+                        ),
+                        preflight=preflight,
+                    )
+
+            self.assertEqual(
+                "server_tls_capability_unavailable",
+                context.exception.details["reason"],
+            )
+            self.assertFalse(startup_root.exists())
+            self.assertEqual([], installed_policies)
+
+    def test_main_unavailable_transport_has_no_directory_or_policy_side_effect(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            config_path = _write_config(
+                temporary_root,
+                {
+                    "runtime": {
+                        "transport": {
+                            "websocket_http3": {
+                                "enabled": True,
+                            },
+                        },
+                    },
+                },
+            )
+            startup_root = temporary_root / "runtime-root"
+            preflight, installed_policies = _controlled_preflight()
+
+            with mock.patch(
+                "ns_runtime.service.RuntimeService",
+                side_effect=AssertionError("service must not be constructed"),
+            ):
+                with self.assertRaises(
+                    NsRuntimeTransportDisabledError,
+                ) as context:
+                    main(
+                        environment="local",
+                        config_path=config_path,
+                        startup_directories=(
+                            RuntimeStartupDirectories.for_root(startup_root)
+                        ),
+                        preflight=preflight,
+                    )
+
+            self.assertEqual(
+                "RUNTIME_TRANSPORT_DISABLED",
+                context.exception.code,
+            )
+            self.assertFalse(startup_root.exists())
+            self.assertEqual([], installed_policies)
 
     def test_importing_component_has_no_process_side_effects(self) -> None:
         environment = os.environ.copy()

@@ -6,7 +6,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from os import PathLike
+
     from ns_runtime.service import RuntimeService
+    from ns_runtime.startup import (
+        RuntimeStartupDirectories,
+        RuntimeStartupPreflight,
+    )
 
 
 async def _run_service_once(service: RuntimeService) -> None:
@@ -16,7 +22,13 @@ async def _run_service_once(service: RuntimeService) -> None:
     await service.stop()
 
 
-def main() -> int:
+def main(
+    *,
+    environment: str | None = None,
+    config_path: str | PathLike[str] | None = None,
+    startup_directories: RuntimeStartupDirectories | None = None,
+    preflight: RuntimeStartupPreflight | None = None,
+) -> int:
     """Validate startup, run the no-listener service, and return its status.
 
     Imports stay local so importing :mod:`ns_runtime` or this entry module does
@@ -25,20 +37,28 @@ def main() -> int:
     remaining P02 work packages.
     """
 
-    import asyncio
     import logging
 
+    from ns_common.config import get_default_config_path
+    from ns_runtime.startup import RuntimeStartupPreflight
+
+    startup_preflight = preflight or RuntimeStartupPreflight()
+    resolved_environment = startup_preflight.resolve_environment(environment)
+    explicit_config_path = (
+        get_default_config_path(resolved_environment)
+        if config_path is None
+        else config_path
+    )
+    config = startup_preflight.load_config_snapshot(
+        explicit_config_path,
+        environment=resolved_environment,
+    )
+
     from ns_common.async_runtime import TaskSupervisor
-    from ns_common.config import NsConfig
     from ns_common.observability import InMemoryMetricsSink, InMemoryTraceSink
     from ns_common.time import SystemClock
     from ns_runtime.context import RuntimeContext
-    from ns_runtime.service import RuntimeService
-    from ns_runtime.startup import RuntimeStartupPreflight
 
-    preflight = RuntimeStartupPreflight()
-    environment = preflight.resolve_environment()
-    config = NsConfig.load(environment=environment)
     logger = logging.Logger("ns_runtime")
     logger.setLevel(config.runtime.logging.level.strip().upper())
     context = RuntimeContext(
@@ -54,7 +74,16 @@ def main() -> int:
         ),
     )
 
-    preflight.prepare(context, environment=environment)
+    startup_preflight.prepare(
+        context,
+        environment=resolved_environment,
+        directories=startup_directories,
+    )
+
+    import asyncio
+
+    from ns_runtime.service import RuntimeService
+
     service = RuntimeService(context=context)
     asyncio.run(_run_service_once(service))
 
