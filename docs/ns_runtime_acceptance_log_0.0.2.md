@@ -527,6 +527,20 @@
 - 已知限制：本阶段的“停止接入”仅指关闭进程本地 admission gate，TaskSupervisor shutdown 同时拒绝新任务。P04 创建首个 listener 后必须通过冻结的类型化 admission/drain hook 扩展关闭序列，并独立实现连接 draining、通知重连和 transport close；P10/P18 前不存在 delivery 转移或 owner handoff。本阶段不建立 Envelope、管理通道、StateStore、角色迁移或 loop lag collector。
 - 下一工作包：`P02-W07 建立 event loop lag 采样和 implementation 指标`，状态为 `IN_PROGRESS`；P02 阶段保持 `IN_PROGRESS`，当前执行游标已更新为 P02-W07。
 
+## P02-W07
+
+- 工作包：`P02-W07 event loop lag 采样和 implementation 指标`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T18:56:04+08:00`。
+- 修改文件：新增 `src/ns_runtime/event_loop_observability.py` 与 `tests/test_runtime_event_loop_observability.py`；更新 `src/ns_common/async_runtime.py`、`src/ns_runtime/context.py`、`src/ns_runtime/service.py`、`src/ns_runtime/main.py`、`tests/test_async_runtime.py`、`tests/test_runtime_main.py`、实施计划、acceptance log，并新增 [ADR-026](ns_runtime_architecture_decisions_0.0.2.md#adr-026)。设计边界、配置 schema/示例、OBS-1 指标名与 definitions、RuntimeContext 字段、startup preflight、shutdown 相位、backend 和 requirements 未修改。
+- `RLO-1` 契约：新增 runtime 私有 `RuntimeEventLoopMonitor` 与冻结 `RuntimeEventLoopSnapshot`。composition root 使用 RSP-1 preflight 的权威 `NsEventLoopSelection.selected` 注入实际 asyncio/uvloop 类型；RuntimeService 验证 monitor 与自身 context 身份相同，在 start hook 成功后启动，由同一 TaskSupervisor 监督，RSD-1 在 flush/close sinks 前取消。默认每 1 秒按 loop monotonic deadline 采样，长阻塞只记录一次并从实际观测时间建立下一 deadline，不追赶旧 tick；lag 窗口固定最多 1024 项，P95/P99 使用 nearest-rank。
+- snapshot 与指标：snapshot 覆盖 implementation、最新 lag、P95/P99、样本数、slow-threshold observation 总数、pending task、supervisor cancelled task、executor queue depth、probe failure 和 metric rejection。复用 OBS-1 已冻结的 8 个 `runtime_event_loop_*`/task/executor 标准名称与有限 attributes；implementation 只允许 asyncio/uvloop，pending 只使用 `component_type=runtime`，不引入 ID/tenant 等高基数标签。lag current 使用 histogram，P95/P99 与深度使用 gauge，slow/cancelled 使用累计 counter；`metrics_enabled=false` 时仍维护只读内部 snapshot 但不写 sink。
+- 失败与测量语义：普通 clock、metric 构造、sink record 或 probe 失败均 fail-soft，不终止 service、不复制异常文本或对象 repr。clock/sink 拒绝累计为 metric rejection；pending/executor 探针失败累计为 probe failure，对应 snapshot 值为 `None` 且省略该次失真 metric，绝不把未知伪装成零。executor 未创建时深度为合法 0；已有 executor 但本机队列无法安全读取时视为未知。slow callback total 的当前可移植定义为 scheduling lag 达到配置 `slow_callback_threshold_ms` 的 observation 数，不解析 asyncio 私有日志文本。
+- 测试结果：W07 monitor 专项 6/6；最终 monitor/main/service/shutdown 联合 `Ran 45, OK`。runtime 环境排除 DEP-1 不安装的 Django cache 后全量 `Ran 336, OK (skipped=1)`；backend 环境根目录全量 `Ran 347, OK (skipped=1)`，唯一跳过为 WSL 下 Windows 专用 event-loop policy。runtime 隔离环境还启动真实 `uvloop.Loop`，确认 implementation=`uvloop`、8 个标准指标齐全、monitor 由 shutdown 取消。两套 `pip check`、全树 `compileall` 与 `git diff --check` 通过。
+- 设计边界 review：首轮审查修复长阻塞后逐 tick 追赶导致指标突发；第二轮修复 clock 普通失败可终止 monitor；最终审查修复 probe 失败返回 0 导致未知状态伪装健康。源码扫描只命中 no-listener 与明确“不拥有 thread/exporter”的说明；没有新增 listener/socket/server、transport 指标/adapter/session、Envelope、StateStore、Redis/Valkey、DeliveryRecord、leader/fencing、HTTP 管理端口、exporter、后台线程、全局 context 或强一致写入。指标只进入异步 best-effort sink，设计边界文档未修改。
+- 已知限制：1 秒采样周期与 1024 项窗口是当前内部实现常量，尚无热更新合同；slow callback 是 lag-threshold observation，而不是对 asyncio 私有日志的解析。executor queue depth 受 Python loop 实现可观察接口限制，未知时明确省略。W08 只能只读现有启动结果与 snapshot，不得启动第二个 monitor、创建 HTTP 管理端口或宣称 transport/cluster/delivery 可用。
+- 下一工作包：`P02-W08 建立本地进程诊断命令，只读取启动配置和本地状态，不开 HTTP 管理端口`，状态为 `IN_PROGRESS`；P02 阶段保持 `IN_PROGRESS`，当前执行游标已更新为 P02-W08。按用户校准后的流程，每个 W 工作包 review 通过后均在同一 codex 分支提交并立即推送，不为工作包创建新分支；W07 提交后的首次推送同时补齐此前尚未推送的 W05/W06 本地提交。
+
 ## 新记录模板
 
 - 工作包：

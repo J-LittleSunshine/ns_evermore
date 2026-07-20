@@ -81,6 +81,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
 
     def test_main_wires_each_initial_role_to_explicit_safe_logger(self) -> None:
         captured_contexts: list[object] = []
+        captured_monitors: list[object] = []
 
         class CapturingService:
             def __init__(
@@ -88,9 +89,12 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                 *,
                 context: object,
                 shutdown_coordinator: object,
+                event_loop_monitor: object,
             ) -> None:
                 captured_contexts.append(context)
+                captured_monitors.append(event_loop_monitor)
                 self.shutdown_coordinator = shutdown_coordinator
+                self.event_loop_monitor = event_loop_monitor
 
             async def start(self) -> None:
                 return None
@@ -143,6 +147,14 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                         self.assertIsInstance(
                             context.logger,  # type: ignore[attr-defined]
                             NsLogger,
+                        )
+                        self.assertIs(
+                            context,
+                            captured_monitors[-1].context,  # type: ignore[attr-defined]
+                        )
+                        self.assertEqual(
+                            "asyncio",
+                            captured_monitors[-1].snapshot.implementation.value,  # type: ignore[attr-defined]
                         )
                         self.assertTrue((startup_root / "log").is_dir())
         finally:

@@ -41,8 +41,8 @@ def main(
 
     Imports stay local so importing :mod:`ns_runtime` or this entry module does
     not load configuration, install an event-loop policy, or create resources.
-    Signal-driven lifetime and resource shutdown orchestration are added by the
-    remaining P02 work packages.
+    The current process performs preflight, starts its supervised internal
+    observers, and exits through the same signal-aware shutdown coordinator.
     """
 
     import logging
@@ -96,7 +96,7 @@ def main(
         ),
     )
 
-    startup_preflight.prepare(
+    startup_result = startup_preflight.prepare(
         context,
         environment=resolved_environment,
         directories=effective_directories,
@@ -138,6 +138,7 @@ def main(
 
     import asyncio
 
+    from ns_runtime.event_loop_observability import RuntimeEventLoopMonitor
     from ns_runtime.service import RuntimeService
     from ns_runtime.shutdown import RuntimeShutdownCoordinator
 
@@ -145,9 +146,14 @@ def main(
         context=context,
         logger_close=logger.close,
     )
+    event_loop_monitor = RuntimeEventLoopMonitor(
+        context=context,
+        implementation=startup_result.event_loop.selected,
+    )
     service = RuntimeService(
         context=context,
         shutdown_coordinator=shutdown_coordinator,
+        event_loop_monitor=event_loop_monitor,
     )
     asyncio.run(_run_service_once(service))
 

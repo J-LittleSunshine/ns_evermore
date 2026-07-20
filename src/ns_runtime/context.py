@@ -110,8 +110,9 @@ class RuntimeContext:
     """Immutable wiring snapshot for one :class:`RuntimeService`.
 
     The context freezes dependency references, not the lifecycle state of the
-    referenced objects.  Creation, startup, flushing and shutdown remain the
-    responsibility of the process composition root and later lifecycle work.
+    referenced objects.  Creation and startup remain with the process
+    composition root; the injected shutdown coordinator flushes and closes
+    only the resources explicitly owned by that process.
     """
 
     config: NsConfig

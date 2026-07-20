@@ -314,6 +314,7 @@ class TaskSupervisorTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(("first", "second", "late"), report.cancellation_order)
         self.assertEqual(["first", "second", "late"], cancellation_events)
         self.assertEqual(("late", "first", "second"), report.cancelled_tasks)
+        self.assertEqual(3, supervisor.cancelled_task_count)
         self.assertEqual((), report.unfinished_tasks)
         self.assertEqual((), supervisor.pending_task_names)
         self.assertTrue(report.clean)

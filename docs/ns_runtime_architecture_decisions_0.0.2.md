@@ -269,3 +269,16 @@
 - 决策：P02 的 stop admission 仅为进程本地 gate，TaskSupervisor 进入 closing 后负责拒绝新任务。coordinator 明确不依赖 transport、Envelope、connection/session、DeliveryRecord、StateStore、role transition 或 management processor。P04 创建首个 listener 时必须先冻结类型化 admission/drain hook，再把 transport 停止新连接、已有连接 draining 与最终 close 插入既有相位边界；不得通过任意 callback bag、HTTP 管理端口或私有信号旁路扩展。delivery 转移、owner handoff 和跨节点 draining 继续分别服从 P10/P18 等后续合同。
 - 后果：当前进程对 SIGINT/SIGTERM 和显式停止具有一致、幂等、可观测且不泄密的资源释放路径；普通单资源失败不会跳过其他已注入资源。P02-W07 可以在同一显式 context 上增加 event-loop implementation/lag 观测，但不得让 collector 自行拥有信号或重复关闭 sinks。P04 及后续阶段扩展关闭序列时必须保持 RSD-1 的单 owner、同 context、固定相位、安全摘要和失败隔离规则。
 - 关联阶段/工作包：`P01-W05`、`P01-W13`、`P01-W15`、`P02-W02`、`P02-W03`、`P02-W06`、`P02-W07`、`P04`、`P10`、`P18`。
+
+## ADR-026
+
+- ADR 编号：`ADR-026`
+- 状态：`ACCEPTED`
+- 背景：OBS-1 已冻结 event-loop 的 8 个标准指标名称、有限 attribute schema 和 best-effort sink，RSP-1 已在启动前选择 asyncio/uvloop，RSD-1 也已统一任务与 sink 关闭顺序；但此前 runtime 没有实际采样器或内部 snapshot。若 monitor 根据 loop 类名重新猜实现、自己创建 exporter/thread/sink，或不受 TaskSupervisor 管理，会破坏显式接线和关闭顺序；若探针失败仍报告 0，则会把未知状态伪装为健康。
+- 决策：新增 `RLO-1` runtime 私有观测契约。RuntimeEventLoopMonitor 必须显式接收 RuntimeContext 和 RSP-1 的 `NsEventLoopImplementation` 选择结果，RuntimeService 必须验证双方 context 身份相同；不得读取全局配置、重新选择或替换 event-loop policy。monitor 在 service start hook 成功后启动唯一 supervised task，RSD-1 先关闭 TaskSupervisor 再 flush/close sinks，因此 monitor 不拥有独立 stop、signal、thread、executor、exporter 或网络端点。
+- 决策：默认采样周期为 1 秒，使用当前 loop 的 monotonic time 计算 scheduling lag；每次 wake 只形成一个样本，下一 deadline 从实际观测时间开始，长阻塞后不得逐个追赶旧 deadline。内存 lag 历史最多 1024 项，P95/P99 使用 nearest-rank，snapshot 为冻结值并同时包含最新 lag、样本数、slow observation、pending/cancelled task、executor queue、probe failure 与 metric rejection。实现常量不属于当前热更新合同，未来若配置化必须进入既有 event_loop/observability 组并按 apply mode 验收。
+- 决策：slow callback total 的可移植运行定义固定为 scheduling lag 大于等于 `runtime.event_loop.slow_callback_threshold_ms` 的 observation 累计数；monitor 同时把配置的 debug 和 slow-callback duration 应用到实际 loop，但不得解析 asyncio/uvloop 私有日志文本、安装额外日志 handler 或复制 callback repr。pending task 使用当前 loop 的公开 `all_tasks()` 并排除采样 task 本身；cancelled task 使用同一 TaskSupervisor 已观察的终态计数。executor 未创建时队列深度为 0；已有 executor 的本地队列无法安全探测时为未知。
+- 决策：必须复用 OBS-1 的 8 个权威标准 definition，不新增同义指标或高基数 attributes。implementation 以 value=1 gauge 加有限 implementation 标签；lag sample 为 histogram，P95/P99、pending 与 executor 为 gauge，slow/cancelled 为累计 counter。metrics disabled 时 monitor 仍维护内部 snapshot；普通 clock、record、sink 和 probe 异常不得终止 service或复制异常文本。clock/record/sink 失败累计 metric rejection；probe 失败累计 probe failure，对应值使用 `None` 并省略该次 metric，不得输出虚假 0。进程级异常仍按既有公共边界穿透。
+- 决策：event-loop 指标是异步可观测数据，不进入 DeliveryRecord、AckRecord、StateStore 或控制审计事务，也不构成 health、角色、transport 或发布性能权威。W08 本地诊断可以只读已经存在的 snapshot 与 startup 结果，但不得启动第二个 monitor、修改 loop 或开放 HTTP 管理端口。P20/P22 的 exporter、故障注入和基准验收必须消费同一 OBS-1/RLO-1 语义，不得改变 ACK/delivery 主链路。
+- 后果：标准 asyncio 与 uvloop 现在具有同一冻结 snapshot 和指标表面，且在 shutdown 时不会向已关闭 sink 写入；长暂停不会造成采样追赶风暴，观测失败也不会伪装正常。未来更精确的 loop-native callback/executor 数据只有在两个实现均完成兼容与失败语义验收后才能替换受限探针，指标名和低基数边界保持。
+- 关联阶段/工作包：`P01-W04`、`P01-W05`、`P01-W15`、`P02-W04`、`P02-W06`、`P02-W07`、`P02-W08`、`P20`、`P22`。

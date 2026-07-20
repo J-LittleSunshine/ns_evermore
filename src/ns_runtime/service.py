@@ -11,6 +11,10 @@ from typing import Mapping
 
 from ns_common.exceptions import NsStateError, NsValidationError
 from ns_runtime.context import RuntimeContext
+from ns_runtime.event_loop_observability import (
+    RuntimeEventLoopMonitor,
+    RuntimeEventLoopSnapshot,
+)
 from ns_runtime.roles import (
     RuntimeCapability,
     RuntimeRoleSnapshot,
@@ -72,6 +76,7 @@ class RuntimeService:
         *,
         context: RuntimeContext,
         shutdown_coordinator: RuntimeShutdownCoordinator | None = None,
+        event_loop_monitor: RuntimeEventLoopMonitor | None = None,
     ) -> None:
         if not isinstance(context, RuntimeContext):
             raise NsValidationError(
@@ -114,6 +119,32 @@ class RuntimeService:
             if shutdown_coordinator is None
             else shutdown_coordinator
         )
+        if event_loop_monitor is not None and not isinstance(
+            event_loop_monitor,
+            RuntimeEventLoopMonitor,
+        ):
+            raise NsValidationError(
+                "RuntimeService event-loop monitor is invalid.",
+                details={
+                    "component": "runtime_service",
+                    "dependency": "event_loop_monitor",
+                    "expected_type": "RuntimeEventLoopMonitor",
+                    "actual_type": type(event_loop_monitor).__name__,
+                },
+            )
+        if (
+            event_loop_monitor is not None
+            and event_loop_monitor.context is not context
+        ):
+            raise NsValidationError(
+                "RuntimeService event-loop monitor context is invalid.",
+                details={
+                    "component": "runtime_service",
+                    "dependency": "event_loop_monitor.context",
+                    "reason": "context_identity_mismatch",
+                },
+            )
+        self._event_loop_monitor = event_loop_monitor
         self._shutdown_report: RuntimeShutdownReport | None = None
         self._role_state = RuntimeRoleState(
             configured_role=context.config.runtime.cluster.role,
@@ -144,6 +175,12 @@ class RuntimeService:
     def shutdown_report(self) -> RuntimeShutdownReport | None:
         return self._shutdown_report
 
+    @property
+    def event_loop_snapshot(self) -> RuntimeEventLoopSnapshot | None:
+        if self._event_loop_monitor is None:
+            return None
+        return self._event_loop_monitor.snapshot
+
     def require_capability(self, capability: RuntimeCapability) -> None:
         """Reject capabilities that are intentionally unavailable in P02."""
 
@@ -157,6 +194,8 @@ class RuntimeService:
             self._transition(RuntimeServiceState.STARTING, operation="start")
             try:
                 await self._on_start()
+                if self._event_loop_monitor is not None:
+                    self._event_loop_monitor.start()
             except BaseException:
                 self._transition(RuntimeServiceState.FAILED, operation="start")
                 raise
