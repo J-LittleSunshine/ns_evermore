@@ -229,3 +229,16 @@
 - 决策：每个 `RuntimeService` 必须通过构造参数接收一个有效 `RuntimeContext`，并通过只读 `context` 属性保持同一对象身份；不提供无参 fallback 或隐式默认 context。W03 只建立接线关系，构造 context/service 时不得创建 task、client、listener 或 exporter，也不得启动、flush、关闭任何依赖。配置加载与启动前校验、composition root、信号和资源关闭顺序仍由后续 P02 工作包负责；只有未来 stop hook 按 `RSL-1` 成功完成资源清理后，service 才能进入 `STOPPED`。
 - 后果：深层 runtime 模块可以通过显式构造参数接收所需 context 或其中的具体依赖，不再需要全局服务定位。package facade 和 `main.py` 可以继续保持无启动副作用，直到 composition root 工作包显式接线。后续为 RuntimeContext 增加字段属于 `RTC-1` 变更，必须使用已冻结类型并重新运行 P02 与下游回归；不得借字段扩展提前宣称 transport、StateStore、角色、观测 collector 或关闭编排已经实现。
 - 关联阶段/工作包：`P02-W03`、`P02-FIX-02`、`P02-W04`、`P02-W06`、`P04` 至 `P08`。
+
+## ADR-023
+
+- ADR 编号：`ADR-023`
+- 状态：`ACCEPTED`
+- 背景：`NsConfig` 已冻结字段级与跨组校验，`NsEventLoopSelector` 已冻结平台和可选 uvloop 语义，但进程入口此前没有统一证明执行环境、配置、Python 依赖、目录、transport feature gate、生产 StateStore 限制和 TLS 前置条件均在 event-loop policy 与未来 listener 生效前通过。若这些检查散落到异步 service hook 或各 transport adapter，配置错误可能在部分资源已启动后才暴露，未来 P04 也无法证明 listener 之前存在唯一 fail-closed 边界。另一方面，当前尚无 transport adapter、StateStore 或生产证书合同，preflight 不能把“配置可接纳”伪装成对应能力已实现。
+- 决策：新增 `RSP-1` 同步启动边界。`RuntimeStartupPreflight` 必须接收已构造的显式 `RuntimeContext` 和可替换的 `RuntimeStartupDirectories`；`validate()` 执行同一组检查但不替换 event-loop policy，`prepare()` 只有在此前全部检查成功后才调用已冻结的 `NsEventLoopSelector.install()`。固定顺序为严格解析 local/dev/test/prod、验证完整不可变配置与 startup security、执行 transport 配置准入、检查固定 Python 依赖和本机服务端 TLS context 能力、创建并确认显式目录可访问，最后选择或安装 policy。任何失败都不得创建 listener、transport session、StateStore、HTTP client、exporter、task 或线程。
+- 决策：startup 环境不采用未知值静默回退；非法环境返回稳定 `RUNTIME_CONFIG_INVALID`。生产环境中任一启用入站 transport 必须配置 TLS，StateStore backend 只能为 Redis/Valkey；非生产明文继续受 `allow_plaintext_non_prod` 控制。上述安全违规统一为稳定 `RUNTIME_STARTUP_SECURITY_ERROR`，不复制 URL、路径、credential、底层异常文本或 cause。TLS 前置检查在本阶段只证明 Python 运行时能够创建服务端 TLS context；证书、私钥、CA、最小版本、cipher 与 reload 属于 P20，不得由本结果推断为已验证。
+- 决策：当前 transport 准入表只允许设计基线 `websocket_tcp`，并在其配置启用时检查 runtime 生产依赖 `websockets`；该准入只表示配置可进入后续 P04 实现，不表示 listener 或 adapter 已存在。`websocket_http3`、`webtransport_http3` 和 `quic_native` 在对应阶段前一旦启用即返回稳定 `RUNTIME_TRANSPORT_DISABLED`。Redis/Valkey Python driver 仍按 `DEP-1` 留在测试层，P08 冻结 StateStore 生产合同前 preflight 只执行生产 backend 配置限制，不探测、连接或宣称 StateStore 可用。
+- 决策：目录接线是冻结、显式路径集合，默认覆盖仓库 data/etc/log/tmp；SQLite 开发配置还准备其显式文件 parent。目录错误只公开稳定目录角色与失败类别，不公开真实路径或底层错误。preflight 结果冻结且只包含环境、event-loop 选择、是否安装 policy、配置化 transport/TLS adapter 名、StateStore backend、已检查固定依赖和已准备目录角色；它不是 capability registry、健康证明或资源 owner。
+- 决策：唯一 `main.py` 继续通过函数内延迟 import 保持 package 与入口模块冷导入无配置、policy 和资源副作用。实际调用 `main()` 时加载配置，构造最小显式 `RuntimeContext`，执行 `prepare()`，然后才通过新 policy 运行一次无监听 `RuntimeService` start/stop 生命周期。runtime 依赖缺失时进程稳定失败；按 `DEP-1` 不安装 runtime 包的 backend 环境只验证该 fail-closed 分支，不得为让 backend 回归成功而混装 runtime 生产依赖。P02-W06 将在相同 composition root 上增加信号等待和资源关闭，不得把 preflight 移入已运行的 loop 或 listener 之后。
+- 后果：P04 创建首个 listener 时必须以成功的 `RSP-1` preflight 为前置，并继续独立完成 adapter/conformance；P08、P20 分别补齐真实 StateStore 与完整 TLS 生产校验。W04 不改变 `CFG-1`、`RSL-1` 或 `RTC-1`，不向 context 增加未冻结依赖槽位，也不宣称角色、信号关闭、loop lag、IAM、WebSocket、Redis/Valkey 或 TLS 证书能力完成。
+- 关联阶段/工作包：`P02-W04`、`P02-W05`、`P02-W06`、`P04`、`P08`、`P20`。

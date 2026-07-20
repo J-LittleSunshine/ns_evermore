@@ -471,6 +471,20 @@
 - 已知限制：本 FIX 只修复 RuntimeContext 的模块导入与构造期类型验证边界。合法依赖仍由 composition root 在构造前显式创建并加载其公共类型；context 不负责导入、创建、启动或关闭依赖。本包不加载启动配置、不建立 composition root，也不实现 W04 的启动前校验及任何 transport、Envelope、StateStore、角色、信号、event-loop lag 或本地诊断能力。
 - 下一工作包：`P02-W04 启动时执行环境、依赖、目录、event loop、transport 配置、state store 生产限制和 TLS 前置校验`，状态保持 `NOT_STARTED`；P02 阶段保持 `IN_PROGRESS`，本 FIX 未实施 W04。
 
+## P02-W04
+
+- 工作包：`P02-W04 启动时执行环境、依赖、目录、event loop、transport 配置、state store 生产限制和 TLS 前置校验`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T15:05:49+08:00`。
+- 修改文件：新增 `src/ns_runtime/startup.py` 与 `tests/test_runtime_startup.py`；更新 `src/ns_runtime/main.py`、`tests/test_runtime_main.py`、实施计划、acceptance log，并新增 [ADR-023](ns_runtime_architecture_decisions_0.0.2.md#adr-023)。`src/ns_runtime/context.py`、`src/ns_runtime/service.py`、`src/ns_runtime/__init__.py`、`ns_common`、backend、配置模型与示例、五份 requirements 和设计边界文档均未修改。
+- `RSP-1` 公共契约：新增冻结、显式路径接线 `RuntimeStartupDirectories`，冻结安全结果 `RuntimeStartupPreflightResult`，以及同步 `RuntimeStartupPreflight.validate()/prepare()`。两条路径都严格解析 local/dev/test/prod，验证既有不可变配置与 startup security，阻断未实现 transport，检查固定 Python 依赖、本机服务端 TLS context 能力和显式目录；`validate()` 只选择、不替换 event-loop policy，`prepare()` 仅在此前检查全部成功后安装 policy。结果只包含环境、event-loop 选择、是否安装 policy、配置化 adapter、StateStore backend、固定依赖和目录角色，不包含 URL、真实路径、配置正文、credential、底层异常或资源对象。
+- 启动安全与能力门禁：生产明文 transport、关闭强制 TLS、生产 SQLite 和非生产禁止明文分别归一为稳定 `RUNTIME_STARTUP_SECURITY_ERROR`；无效环境使用 `RUNTIME_CONFIG_INVALID`；缺失 `websockets` 或目录不可访问使用稳定 `NS_DEPENDENCY_ERROR`，不保留 probe/OS 异常文本或 cause。当前只准入 `websocket_tcp` 配置并检查其 runtime 生产依赖，HTTP/3/WebTransport/QUIC 误启用返回 `RUNTIME_TRANSPORT_DISABLED`。Redis/Valkey 生产配置正向通过，SQLite 只允许非生产并准备显式 parent；本包不检查测试层 Redis/Valkey driver、不连接 store。TLS 只验证服务端 `SSLContext` 能力，未验证证书、私钥、CA、版本、cipher 或 reload。
+- 入口 composition root：`main.py` 通过函数内延迟 import 保持 `import ns_runtime` 与 `import ns_runtime.main` 不加载 `ns_common`、context/service/startup、uvloop 或 websockets，也不替换 policy。实际 `main()` 加载启动配置，创建显式 config/clock/logger/in-memory metrics/trace/TaskSupervisor context，执行 preflight，再以选定 policy 运行一次无监听 RuntimeService start/stop。runtime 环境依赖齐全时模块入口状态 0 且 stdout/stderr 为空；backend 环境按 `DEP-1` 不安装 `websockets`，同一入口稳定 fail-closed，测试不通过混装 runtime 包伪造成功。
+- 测试结果：runtime 环境 `tests.test_runtime_startup` 为 `Ran 14, OK`；W01 main、W02/FIX-01 service、W03/FIX-02 context 与 W04 startup 联合为 `Ran 51, OK`。testing/requirements/observability/time/config/config_package/async_runtime/http_client/exceptions/logger/security/retry/identifiers 加 P02 的 runtime 联合回归为 `Ran 307, OK (skipped=1)`；backend 环境根目录全量为 `Ran 318, OK (skipped=1)`。两项唯一跳过均为 WSL 下同一 Windows 专用 event-loop policy 用例。runtime 环境真实 `python -m ns_runtime.main` 成功，Linux auto 选择并安装 uvloop，随后新 loop 为真实 `uvloop.Loop`；backend 环境入口负向分支稳定返回缺失 `websockets`。
+- 静态与隔离检查：全树 `compileall`、runtime/backend 两套 `pip check`、示例 JSON、入口/package/context 冷导入、生产源码测试文件、仓库虚拟环境、五份 requirements 内容、配置/设计文档范围和 `git diff --check` 门禁通过。preflight 负向专项确认环境、配置、安全、feature gate、依赖、TLS 与目录失败均不安装 policy；probe 异常与真实目录不进入错误字符串、details、字典或 cause。新增生产代码没有 socket/listen/server、transport session、Envelope、StateStore、Redis/Valkey、HTTP client、exporter、signal、task/thread 或角色实现；测试只使用显式临时目录和注入 probe，完整回归中的既有端口工厂在获准的本地 loopback 权限下执行。
+- 已知限制：`websocket_tcp` 当前只是可接纳配置基线，不是已实现 adapter；P04 前无 listener、收发或 conformance。StateStore 仍为 F0，生产 Redis/Valkey 配置通过不代表 driver、连接、CAS/lease/fencing 或强一致能力可用；P08 冻结生产合同后再增加实际依赖与连通性检查。完整 TLS 材料与策略归 P20。main 当前只运行一次无监听自检生命周期后退出；角色状态、信号等待、资源关闭顺序、后台任务失败联动、event-loop lag/implementation snapshot 和本地诊断分别留给 P02-W05 至 W08。
+- 下一工作包：`P02-W05 初始角色状态支持 singleton、sub_node、standby_master、active_master 配置值；实际协调能力保持 feature disabled`，状态为 `NOT_STARTED`；P02 阶段保持 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
