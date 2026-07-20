@@ -11,6 +11,11 @@ from typing import Mapping
 
 from ns_common.exceptions import NsStateError, NsValidationError
 from ns_runtime.context import RuntimeContext
+from ns_runtime.roles import (
+    RuntimeCapability,
+    RuntimeRoleSnapshot,
+    RuntimeRoleState,
+)
 
 
 class RuntimeServiceState(str, Enum):
@@ -69,6 +74,10 @@ class RuntimeService:
                 },
             )
         self._context = context
+        self._role_state = RuntimeRoleState(
+            configured_role=context.config.runtime.cluster.role,
+            logger=context.logger,
+        )
         self._state = RuntimeServiceState.CREATED
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_binding_lock = Lock()
@@ -81,6 +90,15 @@ class RuntimeService:
     @property
     def context(self) -> RuntimeContext:
         return self._context
+
+    @property
+    def role(self) -> RuntimeRoleSnapshot:
+        return self._role_state.snapshot
+
+    def require_capability(self, capability: RuntimeCapability) -> None:
+        """Reject capabilities that are intentionally unavailable in P02."""
+
+        self._role_state.require_capability(capability)
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()

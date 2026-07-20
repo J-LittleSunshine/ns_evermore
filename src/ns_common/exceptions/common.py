@@ -41,6 +41,12 @@ class NsRuntimeDependencyUnavailableError(NsRuntimeError):
     default_message = "Runtime dependency is unavailable."
 
 
+class NsRuntimeFeatureDisabledError(NsRuntimeError):
+    code = "RUNTIME_FEATURE_DISABLED"
+    numeric_code = 200165
+    default_message = "Runtime feature is disabled."
+
+
 COMMON_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
     NsErrorDefinition.for_error_type(
         NsEvermoreError,
@@ -98,5 +104,12 @@ COMMON_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
         category=NsErrorCategory.DEPENDENCY,
         retryable=True,
         action="retry_runtime_dependency",
+    ),
+    NsErrorDefinition.for_error_type(
+        NsRuntimeFeatureDisabledError,
+        severity=NsErrorSeverity.ERROR,
+        category=NsErrorCategory.RUNTIME,
+        audit_required=True,
+        action="reject_disabled_feature",
     ),
 )

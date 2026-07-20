@@ -19,6 +19,7 @@ from .common import (
     NsDependencyError,
     NsHttpClientError,
     NsRuntimeDependencyUnavailableError,
+    NsRuntimeFeatureDisabledError,
     NsStateError,
     NsValidationError,
 )
@@ -159,6 +160,7 @@ __all__ = [
     "NsRuntimeEnvelopeSchemaError",
     "NsRuntimeError",
     "NsRuntimeFencingRejectedError",
+    "NsRuntimeFeatureDisabledError",
     "NsRuntimeIamDeniedError",
     "NsRuntimeIamTimeoutError",
     "NsRuntimeIamUnavailableError",

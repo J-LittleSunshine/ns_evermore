@@ -244,3 +244,15 @@
 - 决策：唯一 `main.py` 继续通过函数内延迟 import 保持 package 与入口模块冷导入无配置、policy 和资源副作用。实际冷调用 `main()` 时先进入 `_bootstrap`，按显式路径加载并归一化配置，构造最小显式 `RuntimeContext`，执行 `prepare()`，然后才导入、构造并通过新 policy 运行一次无监听 `RuntimeService` start/stop 生命周期。配置、transport、依赖或 TLS 失败均不得初始化 global `ns_config`、调用 `ensure_runtime_dirs()`、准备仓库或显式 preflight 目录、安装 policy 或构造 service。runtime 依赖缺失时进程稳定失败；按 `DEP-1` 不安装 runtime 包的 backend 环境只验证该 fail-closed 分支。P02-W06 不得把 preflight 移入已运行的 loop 或 listener 之后。
 - 后果：P04 创建首个 listener 时必须以成功的 `RSP-1` preflight 为前置，并继续独立完成 adapter/conformance；P08、P20 分别补齐真实 StateStore 与完整 TLS 生产校验。W04/FIX-03 不改变 `CFG-1` 的公共对象和显式加载合同、`RSL-1` 或 `RTC-1`，不向 context 增加未冻结依赖槽位，也不宣称角色、信号关闭、loop lag、IAM、WebSocket、Redis/Valkey 或 TLS 证书能力完成。composition root 当前注入普通 `logging.Logger`；W05 开始实际使用 runtime logger 前必须完成生产安全日志接线。
 - 关联阶段/工作包：`P02-W04`、`P02-FIX-03`、`P02-W05`、`P02-W06`、`P04`、`P08`、`P20`。
+
+## ADR-024
+
+- ADR 编号：`ADR-024`
+- 状态：`ACCEPTED`
+- 背景：设计允许 singleton、sub_node、standby_master、active_master 作为进程初始角色，同时要求角色状态机未来表达 transitioning/draining，并把 degraded/isolated/unavailable 保持为独立健康维度。但 P02 尚无 transport、StateStore、leader lease、fencing、delivery 或集群协调；若仅凭 active_master 配置值开放协调路径，或让未完成接口返回空成功，就会违反 active 权威双重条件与 `INV-015`。角色门禁开始产生审计后，composition root 也不能继续使用无 sanitizer 的普通 Logger，且不能为接日志恢复 RSP-1 已消除的 global config 和提前目录副作用。
+- 决策：新增 `RRS-1`。RuntimeRole 明确 singleton、sub_node、standby_master、active_master、transitioning、draining，RuntimeHealth 独立明确 healthy、degraded、isolated、unavailable。P02 只允许四个稳定角色作为配置初值并构造本地只读 RuntimeRoleState/RuntimeRoleSnapshot；不提供角色或健康 mutation/transition API。transitioning/draining 与健康枚举只冻结领域边界，不表示对应切换、drain 或隔离行为已实现。
+- 决策：P02 的 transport、cluster_coordination、delivery capability 固定为 false。唯一查询执行入口 `require_capability()` 必须记录固定的 event/component/capability/role/error_code/reason 审计字段并抛 `RUNTIME_FEATURE_DISABLED`，不得返回布尔成功、空结果或 stub success；日志写入普通失败也不得放行功能。错误 details 只含固定 component、capability、role 和 reason，不含 URL、node_id、配置正文、credential、对象 repr 或底层日志异常。
+- 决策：`RUNTIME_FEATURE_DISABLED` 作为 audit-required 的公共稳定叶子错误追加到 ERR-1，numeric code 200165，不复用 transport/delivery/cluster 领域错误伪装通用门禁，也不修改任何既有错误编号、继承、策略或 NACK 映射。P03 的 FeatureDisabledProcessor 和后续未启用能力应复用该错误，但仍须遵守各自 Envelope、processor 和强审计边界。
+- 决策：生产 runtime logger 只在 RSP-1 preflight 全部成功且显式目录已准备后创建。NsLogger 可接收显式配置 mapping 与显式 log root；显式模式不得读取 global `ns_config`，未提供显式参数时保留原兼容行为。main 的 preflight context 使用无 handler bootstrap Logger，成功后才以当前配置快照、runtime log level、Sanitizer 和 startup log_dir 构造 NsLogger，并复用同一 clock、sink、TaskSupervisor 和 dependency slots 创建最终 context。该两段接线不改变 RTC-1 的冻结身份规则，也不使 context 成为资源 owner。
+- 后果：active_master 仅是初始本地角色标签；在同时满足 backend 控制面授权、节点凭证、角色允许、Redis/Valkey leader lease 与有效 fencing_token 前，不得执行全局协调写入。P04/P10/P17/P08 分别实现 transport、delivery、集群角色权威和强一致/审计后，才能按契约有选择地启用对应 capability。P02-W06 负责 logger/sink/supervisor 等资源的关闭编排，不得把当前 main 的一次性自检误当作完整信号生命周期。
+- 关联阶段/工作包：`P02-W05`、`P02-W06`、`P03-W11`、`P04`、`P08`、`P10`、`P17`。

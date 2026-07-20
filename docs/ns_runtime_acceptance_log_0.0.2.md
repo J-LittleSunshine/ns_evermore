@@ -499,6 +499,20 @@
 - 已知限制：composition root 仍注入普通 `logging.Logger`。本 FIX 不扩大为 LOG-1 重构，但 W05 开始实际使用 runtime logger 前必须完成生产安全日志接线。main 仍只运行一次无监听自检生命周期；角色状态、信号关闭、loop lag 与本地诊断仍分别属于 W05 至 W08。
 - 下一工作包：`P02-W05 初始角色状态支持 singleton、sub_node、standby_master、active_master 配置值；实际协调能力保持 feature disabled`，状态保持 `NOT_STARTED`；`P02-W04` 与 `P02-FIX-03` 均为 `VERIFIED`，P02 阶段保持 `IN_PROGRESS`，当前执行游标为 `P02-W05`。
 
+## P02-W05
+
+- 工作包：`P02-W05 初始角色状态与未完成能力门禁`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T18:29:15+08:00`。
+- 修改文件：新增 `src/ns_runtime/roles.py` 与 `tests/test_runtime_roles.py`；更新 `src/ns_runtime/service.py`、`src/ns_runtime/main.py`、`src/ns_common/logger.py`、exceptions common/facade/registry、`tests/test_runtime_main.py`、`tests/test_logger.py`、`tests/test_exceptions.py`、实施计划、acceptance log，并新增 [ADR-024](ns_runtime_architecture_decisions_0.0.2.md#adr-024)。设计边界文档、配置模型/示例、RuntimeContext、startup preflight、RuntimeService 既有测试、backend 和五份 requirements 未修改。
+- `RRS-1` 契约：RuntimeService 构造时从冻结配置快照建立只读本地角色状态，`service.role` 返回冻结 `RuntimeRoleSnapshot`。singleton、sub_node、standby_master、active_master 四个配置值原样保留；transitioning/draining 作为未来角色过渡域登记，healthy/degraded/isolated/unavailable 作为独立健康域登记。本包不暴露角色或健康状态 mutation/transition API，不读取 active_master_url，不连接 master，也不执行选主、leader lease、fencing 或协调写入。
+- 未完成能力门禁：新增固定 `RuntimeCapability` 三项 transport、cluster_coordination、delivery，当前全部为 false。`require_capability()` 对每项先写固定结构化审计字段 event/component/capability/role/error_code/reason，再抛新登记的 `RUNTIME_FEATURE_DISABLED`；日志失败也不能把禁用功能变为成功。新错误 numeric code 为 200165、category 为 runtime、audit_required 为 true、action 为 reject_disabled_feature；错误注册表追加为 73 项、19 域/66 个 `RUNTIME_*` code 和 20 个独立场景，既有错误类/code/numeric_code/继承/构造/details/序列化与 13 个 NACK 映射均未改变。
+- LOG-1/RSP-1 接线：`NsLogger` 新增可选显式 `config` mapping 与 `log_dir`；提供时深拷贝显式日志配置并只写显式 root，不请求 global `ns_config`，未提供时保持原兼容行为。main 仍先用无 handler bootstrap logger 构造 preflight context；只有 preflight 全部成功并准备显式目录后，才用当前配置快照、runtime level、Sanitizer 和显式 log root 构造生产 NsLogger，再以同一 clock/sink/supervisor 创建最终 context。dependency/security/transport/TLS 失败前的 global config、目录、policy 和 service 零副作用边界保持。
+- 测试结果：角色/门禁、service、main、logger、exceptions 专项 `Ran 77, OK`；runtime 环境排除按 DEP-1 不安装的 Django cache 用例后全量 `Ran 324, OK (skipped=1)`；backend 环境根目录全量 `Ran 335, OK (skipped=1)`，包含 cache 11 项。唯一跳过为 WSL 下 Windows 专用 event-loop policy。显式 logger 独立解释器确认 global `ns_config` 未初始化、日志只写临时显式 root、token/payload 原值零泄露；两套 `pip check`、全树 `compileall` 和 `git diff --check` 通过。
+- 设计边界 review：实现只新增本地初始角色快照、统一禁用门禁和安全日志接线；源码扫描确认没有 listener/socket/server、transport adapter/session、Envelope、StateStore、Redis/Valkey client、DeliveryRecord、leader election/lease/fencing、角色 mutation、signal handler、后台 task/thread、HTTP client/exporter 或管理旁路。active_master 配置值仍不代表 active authority；standby/sub_node/singleton 也不宣称拓扑或消息能力可用。测试全部位于根 `tests/`，仓库内未创建虚拟环境，设计边界无修改。
+- 已知限制：角色与健康状态当前只读且只表示进程启动快照；强一致角色切换、active 权威、审计持久化和恢复分别依赖后续 P17/P08 等阶段。能力门禁的日志审计在 P08 强一致审计路径前仍是 best-effort，但日志失败始终 fail-closed。main 仍只运行一次无监听生命周期，未等待信号，也未编排 sink/logger/supervisor/client 的关闭；这些属于 P02-W06。
+- 下一工作包：`P02-W06 SIGINT/SIGTERM 优雅关闭顺序与资源清理编排`，状态为 `NOT_STARTED`；P02 阶段保持 `IN_PROGRESS`，当前执行游标已更新为 P02-W06。
+
 ## 新记录模板
 
 - 工作包：

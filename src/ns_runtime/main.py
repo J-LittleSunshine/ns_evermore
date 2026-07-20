@@ -63,18 +63,23 @@ def main(
                 "startup_root and startup_directories are mutually exclusive",
             )
         startup_directories = RuntimeStartupDirectories.for_root(startup_root)
+    effective_directories = (
+        RuntimeStartupDirectories.repository_defaults()
+        if startup_directories is None
+        else startup_directories
+    )
 
     from ns_common.async_runtime import TaskSupervisor
     from ns_common.observability import InMemoryMetricsSink, InMemoryTraceSink
     from ns_common.time import SystemClock
     from ns_runtime.context import RuntimeContext
 
-    logger = logging.Logger("ns_runtime")
-    logger.setLevel(config.runtime.logging.level.strip().upper())
+    bootstrap_logger = logging.Logger("ns_runtime.bootstrap")
+    bootstrap_logger.setLevel(config.runtime.logging.level.strip().upper())
     context = RuntimeContext(
         config=config,
         clock=SystemClock(),
-        logger=logger,
+        logger=bootstrap_logger,
         metrics=InMemoryMetricsSink(),
         traces=InMemoryTraceSink(),
         task_supervisor=TaskSupervisor(
@@ -87,7 +92,41 @@ def main(
     startup_preflight.prepare(
         context,
         environment=resolved_environment,
-        directories=startup_directories,
+        directories=effective_directories,
+    )
+
+    from dataclasses import asdict
+
+    from ns_common.logger import NsLogger
+    from ns_common.security import Sanitizer
+
+    logger_config = asdict(config.log)
+    runtime_log_level = config.runtime.logging.level.strip().upper()
+    logger_config.update({
+        "level": runtime_log_level,
+        "file_level": runtime_log_level,
+        "console_level": runtime_log_level,
+    })
+    if config.runtime.logging.structured:
+        logger_config.update({
+            "format_type": "json",
+            "console_format_type": "json",
+            "file_format_type": "json",
+        })
+    logger = NsLogger(
+        "ns_runtime",
+        sanitizer=Sanitizer(),
+        config=logger_config,
+        log_dir=effective_directories.log_dir,
+    )
+    context = RuntimeContext(
+        config=config,
+        clock=context.clock,
+        logger=logger,
+        metrics=context.metrics,
+        traces=context.traces,
+        task_supervisor=context.task_supervisor,
+        dependencies=context.dependencies,
     )
 
     import asyncio

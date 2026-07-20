@@ -18,6 +18,7 @@ from ns_common.exceptions import (
     NsRuntimeStartupSecurityError,
     NsRuntimeTransportDisabledError,
 )
+from ns_common.logger import NsLogger, close_ns_loggers
 from ns_runtime.main import main
 from ns_runtime.startup import (
     RuntimeStartupDirectories,
@@ -77,6 +78,69 @@ def _controlled_preflight(
 
 
 class NsRuntimeMainTestCase(unittest.TestCase):
+
+    def test_main_wires_each_initial_role_to_explicit_safe_logger(self) -> None:
+        captured_contexts: list[object] = []
+
+        class CapturingService:
+            def __init__(self, *, context: object) -> None:
+                captured_contexts.append(context)
+
+            async def start(self) -> None:
+                return None
+
+            async def stop(self) -> None:
+                return None
+
+        try:
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                temporary_root = Path(temporary_directory)
+                for role in (
+                    "singleton",
+                    "sub_node",
+                    "standby_master",
+                    "active_master",
+                ):
+                    with self.subTest(role=role):
+                        cluster: dict[str, object] = {"role": role}
+                        if role == "sub_node":
+                            cluster["active_master_url"] = (
+                                "https://master.example.test"
+                            )
+                        config_path = _write_config(
+                            temporary_root,
+                            {"runtime": {"cluster": cluster}},
+                            filename=f"{role}.json",
+                        )
+                        startup_root = temporary_root / role
+                        preflight, _ = _controlled_preflight()
+
+                        with mock.patch(
+                            "ns_runtime.service.RuntimeService",
+                            CapturingService,
+                        ):
+                            self.assertEqual(
+                                0,
+                                main(
+                                    environment="test",
+                                    config_path=config_path,
+                                    startup_root=startup_root,
+                                    preflight=preflight,
+                                ),
+                            )
+
+                        context = captured_contexts[-1]
+                        self.assertEqual(
+                            role,
+                            context.config.runtime.cluster.role,  # type: ignore[attr-defined]
+                        )
+                        self.assertIsInstance(
+                            context.logger,  # type: ignore[attr-defined]
+                            NsLogger,
+                        )
+                        self.assertTrue((startup_root / "log").is_dir())
+        finally:
+            close_ns_loggers()
 
     def test_main_succeeds_with_runtime_dependencies_or_fails_closed(self) -> None:
         if importlib.util.find_spec("websockets") is None:

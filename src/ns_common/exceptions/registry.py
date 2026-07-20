@@ -35,6 +35,12 @@ ALL_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
 
 RUNTIME_ERROR_COVERAGE_MATRIX: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
+        "runtime",
+        (
+            "RUNTIME_FEATURE_DISABLED",
+        ),
+    ),
+    (
         "protocol",
         (
             "RUNTIME_PROTOCOL_ERROR",
