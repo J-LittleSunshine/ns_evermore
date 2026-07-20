@@ -383,7 +383,14 @@ BUILTIN_MESSAGE_CONTRACTS: tuple[MessageTypeContract, ...] = (
     _contract("hold.result", "hold", required_groups=("payload",)),
     _contract("status.query", "status", required_groups=("payload",)),
     _contract("status.result", "status", required_groups=("payload",)),
-    _contract("runtime.error", "runtime.error", required_groups=("payload",)),
+    _contract(
+        "runtime.error", "runtime.error", required_groups=("payload",),
+        payload_required=(
+            "error_code", "numeric_code", "message", "severity", "category",
+            "retryable", "disconnect_required", "audit_required", "action", "detail",
+        ),
+        payload_optional=("message_id", "delivery_id"),
+    ),
 )
 
 BUILTIN_MESSAGE_REGISTRY = MessageTypeRegistry(BUILTIN_MESSAGE_CONTRACTS)

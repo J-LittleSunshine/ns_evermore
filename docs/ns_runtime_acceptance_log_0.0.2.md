@@ -673,6 +673,18 @@
 - 已知限制：P03 只返回结构化 audit requirement，不提前实现 P07/P08 审计 sink 或持久化；默认 registry 为空，因此没有任何 extension capability 默认可用。
 - 下一工作包：`P03-W09 标准错误 Envelope`，状态为 `IN_PROGRESS`。
 
+## P03-W09
+
+- 工作包：`P03-W09 标准错误 Envelope`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T22:30:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/protocol/error_envelope.py` 与 `tests/test_runtime_protocol_error_envelope.py`；收紧 runtime.error 专属 schema，更新 protocol facade、实施计划、acceptance log 与 ADR-028。
+- 公共契约变化：新增显式 Sanitizer 的 `ErrorEnvelopeBuilder`/`ErrorEnvelopeContext`；标准 payload 完整映射 ERR-1 policy metadata，runtime.error schema 精确限制字段集合。未知普通异常安全映射 `NS_RUNTIME_ERROR`，进程级异常穿透。
+- 测试结果：error Envelope/registry/ERR-1 联合 `Ran 36, OK`；`git diff --check` 通过。
+- 安全/隔离检查：恶意自定义 error 的 str/repr 从未调用；自定义 message、details 内 token/credential/payload 均未进入输出。安全 error 的 severity/disconnect/audit 保持 ERR-1，错误 Envelope 通过自身注册 schema。没有日志原异常、cause、auth_context、功能 ACK、transport/session/IAM/StateStore 或业务执行。
+- 已知限制：P03 只构造错误 Envelope，不负责 transport 写回、连接关闭、审计持久化或重试动作；这些 policy flags 仍只是 ERR-1 提示，后续层必须结合上下文裁决。
+- 下一工作包：`P03-W10 canonical serialization`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：

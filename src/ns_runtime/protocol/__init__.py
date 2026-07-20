@@ -22,6 +22,7 @@ from .extensions import (
     ExtensionValidationResult,
     UnknownExtensionPolicy,
 )
+from .error_envelope import ErrorEnvelopeBuilder, ErrorEnvelopeContext
 
 from .models import (
     AuthContextGroup,
@@ -69,6 +70,7 @@ __all__ = (
     "BUILTIN_MESSAGE_REGISTRY", "CURRENT_PROTOCOL_SCHEMA_KEY", "CallbackGroup",
     "DEFAULT_JSON_LIMITS", "DeliveryGroup", "ENVELOPE_GROUP_NAMES",
     "EMPTY_EXTENSION_REGISTRY", "Envelope", "EnvelopeSchemaValidator",
+    "ErrorEnvelopeBuilder", "ErrorEnvelopeContext",
     "ExtensionNamespaceContract", "ExtensionNamespaceRegistry", "ExtensionObjectSchema",
     "ExtensionValidationResult", "ExtensionsGroup", "InboundEnvelope",
     "InlinePayloadSchema", "MessageGroup", "MessageTypeContract", "MessageTypeRegistry",
