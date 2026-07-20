@@ -625,6 +625,18 @@
 - 已知限制：W04 只建立声明式字段边界；内置类型到 schema 的完整映射由 W06/W07 注册表冻结，实际业务语义与状态变化仍由后续 processor 阶段实现。
 - 下一工作包：`P03-W05 协议版本兼容矩阵`，状态为 `IN_PROGRESS`。
 
+## P03-W05
+
+- 工作包：`P03-W05 协议版本模型、兼容矩阵与 schema 选择`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T21:15:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/protocol/versioning.py` 与 `tests/test_runtime_protocol_versioning.py`；更新 protocol facade、实施计划、acceptance log 与 ADR-028。
+- 公共契约变化：冻结 `ProtocolVersion`、`ProtocolCompatibilityMatrix`、`NegotiatedProtocol` 与当前 `JSON_V1_PROTOCOL_MATRIX`。major 严格，minor/patch 只向显式支持版本降级并同时选择 schema key；当前仅启用 protocol 1.0 schema。
+- 测试结果：version/schema/codec/models 专项 `Ran 25, OK`；compileall 与 `git diff --check` 通过。
+- 安全/隔离检查：覆盖不支持 major、非法 minimum、无兼容区间、minor/patch 选择与攻击者版本文本不回显；超长版本组件在 int 转换前拒绝。没有握手/session 状态、capability 协商、transport、processor、StateStore、ACK 或业务成功路径。
+- 已知限制：P03 只提供纯协商策略；P05 才能在 connection.hello 中执行协商并把结果写入 session context。当前矩阵没有宣称 1.1+ 兼容。
+- 下一工作包：`P03-W06 内置 message type 全量注册表`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
