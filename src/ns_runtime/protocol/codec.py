@@ -192,14 +192,12 @@ def _scan_depth(text: str, max_depth: int) -> None:
 
 def _validate_resources(value: Any, *, limits: JsonResourceLimits) -> None:
     nodes = 0
-    stack: list[tuple[Any, int]] = [(value, 1)]
+    stack: list[tuple[Any, int]] = [(value, 0)]
     while stack:
         current, depth = stack.pop()
         nodes += 1
         if nodes > limits.max_nodes:
             raise _limit_error("max_nodes_exceeded")
-        if depth > limits.max_depth:
-            raise _limit_error("max_depth_exceeded")
         if isinstance(current, str):
             if len(current) > limits.max_string_chars:
                 raise _limit_error("max_string_chars_exceeded")
@@ -212,16 +210,22 @@ def _validate_resources(value: Any, *, limits: JsonResourceLimits) -> None:
             if not math.isfinite(current) or abs(current) > limits.max_float_abs:
                 raise _limit_error("float_range_exceeded")
         elif isinstance(current, list):
+            container_depth = depth + 1
+            if container_depth > limits.max_depth:
+                raise _limit_error("max_depth_exceeded")
             if len(current) > limits.max_array_items:
                 raise _limit_error("max_array_items_exceeded")
-            stack.extend((item, depth + 1) for item in current)
+            stack.extend((item, container_depth) for item in current)
         elif isinstance(current, dict):
+            container_depth = depth + 1
+            if container_depth > limits.max_depth:
+                raise _limit_error("max_depth_exceeded")
             if len(current) > limits.max_object_items:
                 raise _limit_error("max_object_items_exceeded")
             for key, item in current.items():
                 if len(key) > limits.max_string_chars:
                     raise _limit_error("max_string_chars_exceeded")
-                stack.append((item, depth + 1))
+                stack.append((item, container_depth))
         else:
             raise _parse_error("unsupported_json_value")
 

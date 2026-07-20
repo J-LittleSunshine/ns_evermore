@@ -15,6 +15,8 @@ from ns_runtime.protocol import (
     MessageGroup,
     PayloadGroup,
     ProtocolGroup,
+    DeliveryGroup,
+    RouteGroup,
     SourceGroup,
     TargetGroup,
     TraceGroup,
@@ -112,6 +114,30 @@ class RuntimeProtocolModelTestCase(unittest.TestCase):
             envelope_from_mapping(raw)
         self.assertNotIn(secret, str(context.exception))
         self.assertNotIn("value", context.exception.details)
+
+        raw = _minimal_envelope()
+        raw[1] = "non-string-key"  # type: ignore[index]
+        with self.assertRaises(NsRuntimeEnvelopeSchemaError):
+            envelope_from_mapping(raw)
+
+    def test_required_integer_and_array_types_fail_with_schema_errors(self) -> None:
+        invalid_constructors = (
+            lambda: ProtocolGroup(major=None, minor=0, patch=0),  # type: ignore[arg-type]
+            lambda: DeliveryGroup(delivery_id="delivery_1", attempt=None),  # type: ignore[arg-type]
+            lambda: RouteGroup(
+                root_runtime_id="runtime_1", current_runtime_id="runtime_1",
+                hop=None, max_hops=2,  # type: ignore[arg-type]
+            ),
+            lambda: TargetGroup(kind="capability", capabilities="admin"),  # type: ignore[arg-type]
+            lambda: RouteGroup(
+                root_runtime_id="runtime_1", current_runtime_id="runtime_1",
+                hop=0, max_hops=2, route_segment="runtime_1",  # type: ignore[arg-type]
+            ),
+        )
+        for constructor in invalid_constructors:
+            with self.subTest(constructor=constructor):
+                with self.assertRaises(NsRuntimeEnvelopeSchemaError):
+                    constructor()
 
     def test_inbound_model_cannot_contain_runtime_authority_groups(self) -> None:
         for forged_group, error_type in (

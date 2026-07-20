@@ -51,6 +51,12 @@ class RuntimeProtocolCodecTestCase(unittest.TestCase):
         self.assertEqual("max_depth_exceeded", context.exception.details["reason"])
         self.assertEqual("[[]]", codec.decode_document("[[]]").__repr__())
 
+        one_level = JsonV1Codec(limits=JsonResourceLimits(max_depth=1))
+        self.assertEqual([1], one_level.decode_document("[1]"))
+        self.assertEqual({"a": 1}, one_level.decode_document('{"a":1}'))
+        with self.assertRaises(NsRuntimeEnvelopeSchemaError):
+            one_level.decode_document("[[]]")
+
     def test_string_array_object_node_and_number_limits(self) -> None:
         cases = (
             (JsonResourceLimits(max_string_chars=3), '"four"', "max_string_chars_exceeded"),

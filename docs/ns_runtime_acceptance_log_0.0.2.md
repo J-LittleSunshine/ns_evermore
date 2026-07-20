@@ -709,6 +709,16 @@
 - 已知限制：审计当前沿用显式 Logger 的 best-effort 边界；P07/P08 必须消费同一注册 metadata 建立强流水线/审计，不能把 logger success 当审计持久化证明。
 - 下一工作包：P03 阶段出口验收；完成全部专项与联合/全量回归后才可把游标移至 `P04-W01 NOT_STARTED`。
 
+## P03-FIX-01
+
+- 工作包：`P03-FIX-01 阶段出口严格类型与深度口径校准`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T23:20:00+08:00`。
+- 修改文件：更新 `src/ns_runtime/protocol/models.py`、`codec.py`、models/codec tests、实施计划、acceptance log 与 ADR-028。
+- 契约校准：必填 protocol/route/delivery 整数不再通过 optional 检查接受 None；capabilities/route_segment 明确要求 array，未知 direct mapping key 固定拒绝。JSON depth 统一表示 object/array nesting，容器标量不额外增加一层。
+- 测试与边界：补充 None、字符串伪数组、非字符串 unknown key 和 depth=1 边界；P03 专项增至 `Ran 49, OK`。校准只收紧 W01/W03，不新增 transport/session/IAM/StateStore/processor success 或任何后续能力。
+- 下一工作包：继续 P03 阶段出口全量回归。
+
 ## 新记录模板
 
 - 工作包：

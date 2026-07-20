@@ -45,6 +45,11 @@ def _optional_non_negative_integer(
         raise _schema_error(group, field, "non_negative_integer_required")
 
 
+def _require_non_negative_integer(group: str, field: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise _schema_error(group, field, "non_negative_integer_required")
+
+
 def _freeze_json(value: Any, *, group: str, field: str) -> JSONValue:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
@@ -79,8 +84,7 @@ class StrictGroup:
             raise _schema_error(cls.GROUP_NAME, cls.GROUP_NAME, "non_empty_object_required")
         field_definitions = fields(cls)
         allowed = {definition.name for definition in field_definitions}
-        unknown = sorted(key for key in value if key not in allowed)
-        if unknown:
+        if any(key not in allowed for key in value):
             raise _schema_error(cls.GROUP_NAME, "$unknown", "unknown_field")
         missing = [
             definition.name
@@ -118,7 +122,7 @@ class ProtocolGroup(StrictGroup):
 
     def __post_init__(self) -> None:
         for name in ("major", "minor", "patch"):
-            _optional_non_negative_integer(self.GROUP_NAME, name, getattr(self, name))
+            _require_non_negative_integer(self.GROUP_NAME, name, getattr(self, name))
         _optional_string(self.GROUP_NAME, "min_version", self.min_version)
 
 
@@ -179,6 +183,8 @@ class TargetGroup(StrictGroup):
         ):
             _optional_string(self.GROUP_NAME, name, getattr(self, name))
         if self.capabilities is not None:
+            if not isinstance(self.capabilities, (list, tuple)):
+                raise _schema_error(self.GROUP_NAME, "capabilities", "array_required")
             normalized = tuple(self.capabilities)
             if not normalized:
                 raise _schema_error(self.GROUP_NAME, "capabilities", "non_empty_array_required")
@@ -205,10 +211,12 @@ class RouteGroup(StrictGroup):
         for name in ("previous_runtime_id", "next_runtime_id", "routing_plan_id"):
             _optional_string(self.GROUP_NAME, name, getattr(self, name))
         for name in ("hop", "max_hops"):
-            _optional_non_negative_integer(self.GROUP_NAME, name, getattr(self, name))
+            _require_non_negative_integer(self.GROUP_NAME, name, getattr(self, name))
         if self.hop > self.max_hops:
             raise _schema_error(self.GROUP_NAME, "hop", "hop_exceeds_max_hops")
         if self.route_segment is not None:
+            if not isinstance(self.route_segment, (list, tuple)):
+                raise _schema_error(self.GROUP_NAME, "route_segment", "array_required")
             normalized = tuple(self.route_segment)
             if not normalized:
                 raise _schema_error(self.GROUP_NAME, "route_segment", "non_empty_array_required")
@@ -232,7 +240,8 @@ class DeliveryGroup(StrictGroup):
         _require_string(self.GROUP_NAME, "delivery_id", self.delivery_id)
         for name in ("summary_id", "root_delivery_id", "parent_delivery_id"):
             _optional_string(self.GROUP_NAME, name, getattr(self, name))
-        for name in ("attempt", "ack_timeout_ms", "replay_epoch"):
+        _require_non_negative_integer(self.GROUP_NAME, "attempt", self.attempt)
+        for name in ("ack_timeout_ms", "replay_epoch"):
             _optional_non_negative_integer(self.GROUP_NAME, name, getattr(self, name))
 
 
@@ -427,8 +436,7 @@ ENVELOPE_GROUP_NAMES: tuple[str, ...] = tuple(_ENVELOPE_GROUP_TYPES)
 def envelope_from_mapping(value: object) -> Envelope:
     if not isinstance(value, Mapping) or not value:
         raise _schema_error("envelope", "envelope", "non_empty_object_required")
-    unknown = sorted(key for key in value if key not in _ENVELOPE_GROUP_TYPES)
-    if unknown:
+    if any(key not in _ENVELOPE_GROUP_TYPES for key in value):
         raise _schema_error("envelope", "$unknown", "unknown_field")
     for required in ("protocol", "message"):
         if required not in value:
