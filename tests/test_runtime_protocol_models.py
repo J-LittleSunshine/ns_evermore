@@ -3,17 +3,26 @@ from __future__ import annotations
 
 import unittest
 
-from ns_common.exceptions import NsRuntimeEnvelopeSchemaError
+from ns_common.exceptions import (
+    NsRuntimeAuthContextForgedError,
+    NsRuntimeEnvelopeSchemaError,
+    NsRuntimeSourceForgedError,
+)
 from ns_runtime.protocol import (
     ENVELOPE_GROUP_NAMES,
     ExtensionsGroup,
+    InboundEnvelope,
     MessageGroup,
     PayloadGroup,
     ProtocolGroup,
     SourceGroup,
     TargetGroup,
     TraceGroup,
+    AuthContextGroup,
+    RuntimeAuthority,
     envelope_from_mapping,
+    inbound_envelope_from_mapping,
+    normalize_inbound,
 )
 
 
@@ -101,6 +110,71 @@ class RuntimeProtocolModelTestCase(unittest.TestCase):
             envelope_from_mapping(raw)
         self.assertNotIn(secret, str(context.exception))
         self.assertNotIn("value", context.exception.details)
+
+    def test_inbound_model_cannot_contain_runtime_authority_groups(self) -> None:
+        for forged_group, error_type in (
+            ("source", NsRuntimeSourceForgedError),
+            ("auth_context", NsRuntimeAuthContextForgedError),
+        ):
+            with self.subTest(group=forged_group):
+                raw = _minimal_envelope()
+                raw[forged_group] = {"credential": "must-not-echo"}
+                with self.assertRaises(error_type) as context:
+                    inbound_envelope_from_mapping(raw)
+                self.assertNotIn("must-not-echo", str(context.exception))
+                self.assertTrue(context.exception.details["reason"] == "runtime_authority_only")
+
+    def test_normalization_injects_only_explicit_runtime_authority(self) -> None:
+        inbound = inbound_envelope_from_mapping(_minimal_envelope())
+        self.assertIsInstance(inbound, InboundEnvelope)
+        self.assertFalse(hasattr(inbound, "source"))
+        self.assertFalse(hasattr(inbound, "auth_context"))
+
+        source = SourceGroup(
+            runtime_id="runtime_1",
+            connection_id="connection_1",
+            identity_digest="sha256:identity",
+            tenant_id="tenant_1",
+            component_type="client",
+            capabilities_digest="sha256:capabilities",
+        )
+        auth_context = AuthContextGroup(
+            permission_snapshot_ref="tenant_1:snapshot_1",
+            permission_digest="sha256:permissions",
+            iam_mode="online",
+            issued_at="2026-07-20T12:00:00Z",
+            expires_at="2026-07-20T13:00:00Z",
+        )
+        normalized = normalize_inbound(
+            inbound,
+            authority=RuntimeAuthority(source=source, auth_context=auth_context),
+        )
+        self.assertIs(source, normalized.source)
+        self.assertIs(auth_context, normalized.auth_context)
+
+    def test_sender_capability_request_never_becomes_authority(self) -> None:
+        raw = _minimal_envelope()
+        raw["target"] = {
+            "kind": "capability",
+            "capabilities": ["cluster.admin"],
+        }
+        inbound = inbound_envelope_from_mapping(raw)
+        authority = RuntimeAuthority(
+            source=SourceGroup(
+                runtime_id="runtime_1", connection_id="connection_1",
+                identity_digest="sha256:i", tenant_id="tenant_1",
+                component_type="client", capabilities_digest="sha256:read_only",
+            ),
+            auth_context=AuthContextGroup(
+                permission_snapshot_ref="tenant_1:snapshot_1",
+                permission_digest="sha256:read_only", iam_mode="online",
+                issued_at="2026-07-20T12:00:00Z", expires_at="2026-07-20T13:00:00Z",
+            ),
+        )
+        normalized = normalize_inbound(inbound, authority=authority)
+        self.assertEqual(("cluster.admin",), normalized.target.capabilities)
+        self.assertEqual("sha256:read_only", normalized.source.capabilities_digest)
+        self.assertEqual("sha256:read_only", normalized.auth_context.permission_digest)
 
 
 if __name__ == "__main__":

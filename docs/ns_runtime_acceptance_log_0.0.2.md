@@ -589,6 +589,18 @@
 - 已知限制：尚未建立 inbound raw/normalized 分离、资源限制、message 专属 schema、版本矩阵、类型注册表、extension 策略、错误 Envelope、canonical serialization 或 processor；这些均保持未启用。
 - 下一工作包：`P03-W02 inbound raw 与 normalized model 分离`，状态为 `IN_PROGRESS`；P03 保持 `IN_PROGRESS`。
 
+## P03-W02
+
+- 工作包：`P03-W02 inbound raw 与 normalized model 分离`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T20:30:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/protocol/inbound.py`；更新 protocol facade、模型测试、实施计划、acceptance log 与 ADR-028。
+- 公共契约变化：`InboundEnvelope` 不含 source/auth_context；入站 mapping 在基础 schema 前对二者分别返回既有 `RUNTIME_SOURCE_FORGED`/`RUNTIME_AUTH_CONTEXT_FORGED`。`normalize_inbound()` 只接受显式 `RuntimeAuthority` 并生成权威 Envelope，sender target capability 仍只是请求条件。
+- 测试结果：protocol 模型/入站与 ERR-1 联合 `Ran 34, OK`；compileall、`git diff --check` 通过。
+- 安全/隔离检查：伪造字段原值不进入异常；目标 capability 请求不会覆盖 source capabilities digest 或 auth permission digest。review 确认没有 token 验证、session 状态、IAM 调用、tenant 授权、transport、route/delivery 执行、ACK、管理旁路或 success 响应，P01/P02 契约不变。
+- 已知限制：`RuntimeAuthority` 只定义注入类型边界，真实性与 tenant/capability 一致性必须由 P05/P06 权威连接上下文建立；P03 不提前实现这些能力。
+- 下一工作包：`P03-W03 JSON 资源限制`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：

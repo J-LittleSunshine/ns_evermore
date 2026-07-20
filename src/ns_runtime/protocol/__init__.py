@@ -1,6 +1,13 @@
 # -*- coding: utf-8 -*-
 """Runtime Envelope protocol contracts."""
 
+from .inbound import (
+    InboundEnvelope,
+    RuntimeAuthority,
+    inbound_envelope_from_mapping,
+    normalize_inbound,
+)
+
 from .models import (
     AuthContextGroup,
     CallbackGroup,
@@ -21,7 +28,8 @@ from .models import (
 
 __all__ = (
     "AuthContextGroup", "CallbackGroup", "DeliveryGroup", "ENVELOPE_GROUP_NAMES",
-    "Envelope", "ExtensionsGroup", "MessageGroup", "PayloadGroup", "ProtocolGroup",
+    "Envelope", "ExtensionsGroup", "InboundEnvelope", "MessageGroup", "PayloadGroup", "ProtocolGroup",
     "RouteGroup", "SourceGroup", "StreamGroup", "TargetGroup", "TraceGroup",
-    "envelope_from_mapping",
+    "RuntimeAuthority", "envelope_from_mapping", "inbound_envelope_from_mapping",
+    "normalize_inbound",
 )
