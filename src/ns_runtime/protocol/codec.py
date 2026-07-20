@@ -226,9 +226,22 @@ def _validate_resources(value: Any, *, limits: JsonResourceLimits) -> None:
             raise _parse_error("unsupported_json_value")
 
 
+def validate_json_resources(
+    value: Any,
+    *,
+    limits: JsonResourceLimits = DEFAULT_JSON_LIMITS,
+) -> None:
+    """Apply the same structural limits to an already-normalized JSON value."""
+
+    if not isinstance(limits, JsonResourceLimits):
+        raise TypeError("limits must be JsonResourceLimits")
+    _validate_resources(value, limits=limits)
+
+
 __all__ = (
     "DEFAULT_JSON_LIMITS",
     "JsonResourceLimits",
     "JsonV1Codec",
     "WIRE_CODEC_JSON_V1",
+    "validate_json_resources",
 )

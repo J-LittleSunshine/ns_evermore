@@ -6,6 +6,13 @@ from .codec import (
     JsonResourceLimits,
     JsonV1Codec,
     WIRE_CODEC_JSON_V1,
+    validate_json_resources,
+)
+from .canonical import (
+    CANONICAL_CHECKSUM_ALGORITHM,
+    CANONICAL_SERIALIZATION,
+    canonical_checksum,
+    canonical_serialize,
 )
 
 from .inbound import (
@@ -68,7 +75,8 @@ from .versioning import (
 __all__ = (
     "AuthContextGroup", "BUILTIN_MESSAGE_CONTRACTS", "BUILTIN_MESSAGE_FAMILIES",
     "BUILTIN_MESSAGE_REGISTRY", "CURRENT_PROTOCOL_SCHEMA_KEY", "CallbackGroup",
-    "DEFAULT_JSON_LIMITS", "DeliveryGroup", "ENVELOPE_GROUP_NAMES",
+    "CANONICAL_CHECKSUM_ALGORITHM", "CANONICAL_SERIALIZATION", "DEFAULT_JSON_LIMITS",
+    "DeliveryGroup", "ENVELOPE_GROUP_NAMES",
     "EMPTY_EXTENSION_REGISTRY", "Envelope", "EnvelopeSchemaValidator",
     "ErrorEnvelopeBuilder", "ErrorEnvelopeContext",
     "ExtensionNamespaceContract", "ExtensionNamespaceRegistry", "ExtensionObjectSchema",
@@ -81,6 +89,6 @@ __all__ = (
     "ProtocolCompatibilityMatrix", "ProtocolVersion", "ProtocolVersionSupport",
     "RuntimeAuthority", "WIRE_CODEC_JSON_V1",
     "UnknownExtensionPolicy",
-    "envelope_from_mapping", "inbound_envelope_from_mapping",
-    "normalize_inbound",
+    "canonical_checksum", "canonical_serialize", "envelope_from_mapping",
+    "inbound_envelope_from_mapping", "normalize_inbound", "validate_json_resources",
 )

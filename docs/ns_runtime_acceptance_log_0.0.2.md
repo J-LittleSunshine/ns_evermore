@@ -685,6 +685,18 @@
 - 已知限制：P03 只构造错误 Envelope，不负责 transport 写回、连接关闭、审计持久化或重试动作；这些 policy flags 仍只是 ERR-1 提示，后续层必须结合上下文裁决。
 - 下一工作包：`P03-W10 canonical serialization`，状态为 `IN_PROGRESS`。
 
+## P03-W10
+
+- 工作包：`P03-W10 canonical serialization`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T22:45:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/protocol/canonical.py` 与 `tests/test_runtime_protocol_canonical.py`；公开复用 codec resource validator，更新 protocol facade、实施计划、acceptance log 与 ADR-028。
+- 公共契约变化：冻结 `json.v1.canonical` 为递归 key 排序、UTF-8、紧凑、strict number 的确定性 bytes；checksum 固定 SHA-256 前缀格式，并继续受 W03 所有资源上限约束。
+- 测试结果：canonical/codec/error 专项初轮 14/14，补充 round-trip 后专项继续通过；`git diff --check` 通过。
+- 安全/隔离检查：outbound NaN/Infinity 与超限文档稳定拒绝；输入 mapping 变更不影响冻结 Envelope；canonical decode/rebuild 稳定。实现不记录或审计 raw bytes，不调用 logger/StateStore，不执行 processor/ACK/transport；调用方仍受 SEC-1 禁止记录完整 payload 的边界。
+- 已知限制：格式是本项目冻结的 deterministic JSON，不宣称外部 RFC 8785/JCS 互操作；未来若需要跨语言签名规范必须新增版本/ADR，不能静默改变当前 checksum bytes。
+- 下一工作包：`P03-W11 FeatureDisabledProcessor`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
