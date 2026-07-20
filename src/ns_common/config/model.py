@@ -21,6 +21,10 @@ from .validation import (
 )
 
 
+_NS_CONFIG_UNSET = object()
+_NS_CONFIG_LOCK = RLock()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NsConfig:
     backend: NsBackendConfig = field(default_factory=NsBackendConfig)
@@ -139,5 +143,15 @@ class NsConfig:
         """Compatibility view of the stable runtime subgroup order."""
         return runtime_config_groups(runtime)
 
+def __getattr__(name: str) -> Any:
+    """Lazily initialize the legacy global config on explicit access only."""
 
-ns_config = NsConfig.load()
+    if name != "ns_config":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    with _NS_CONFIG_LOCK:
+        current = globals().get("ns_config", _NS_CONFIG_UNSET)
+        if current is _NS_CONFIG_UNSET:
+            current = NsConfig.load()
+            globals()["ns_config"] = current
+        return current

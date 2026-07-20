@@ -22,10 +22,7 @@ from ns_common.cache.serializers import (
     dumps_cache_value,
     loads_cache_value,
 )
-from ns_common.config import (
-    NsCacheConfig,
-    ns_config,
-)
+from ns_common.config import NsCacheConfig
 from ns_common.exceptions import (
     NsRuntimeError,
     NsValidationError,
@@ -45,6 +42,12 @@ _CLIENT_LOCK = RLock()
 _CLIENTS: dict[str, "CacheClient"] = {}
 _ASYNC_CLIENTS: dict[str, "AsyncCacheClient"] = {}
 
+
+def _get_global_cache_config() -> NsCacheConfig:
+    from ns_common.config import ns_config
+
+    return ns_config.cache
+
 def resolve_sqlite_cache_path(cache_config: NsCacheConfig) -> Path:
     path = Path(cache_config.sqlite_path)
 
@@ -55,7 +58,7 @@ def resolve_sqlite_cache_path(cache_config: NsCacheConfig) -> Path:
 
 
 def build_cache_backend(cache_config: NsCacheConfig | None = None) -> BaseCacheBackend:
-    config = cache_config or ns_config.cache
+    config = cache_config or _get_global_cache_config()
 
     if config.backend == "sqlite":
         return SQLiteCacheBackend(
@@ -85,7 +88,7 @@ def get_cache_backend() -> BaseCacheBackend:
 
     with _BACKEND_LOCK:
         if _BACKEND is None:
-            backend = build_cache_backend(ns_config.cache)
+            backend = build_cache_backend(_get_global_cache_config())
             backend.initialize()
             _BACKEND = backend
 
@@ -133,7 +136,7 @@ def get_cache_client(*, namespace: str) -> "CacheClient":
             client = CacheClient(
                 namespace=normalized_namespace,
                 backend=get_cache_backend(),
-                cache_config=ns_config.cache,
+                cache_config=_get_global_cache_config(),
             )
             _CLIENTS[normalized_namespace] = client
 

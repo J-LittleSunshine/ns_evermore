@@ -43,7 +43,6 @@ from ns_common.config import (
     NsRuntimeWireCodecConfig,
     NsRuntimeWorkerConfig,
     NS_CONFIG_SOURCE_PRIORITY,
-    ns_config
 )
 from ns_common.async_runtime import (
     NsEventLoopFallbackWarning,
@@ -237,6 +236,18 @@ from ns_common.testing import (
 
 if TYPE_CHECKING:
     pass
+
+
+def __getattr__(name: str):
+    """Resolve the legacy global config only when callers explicitly request it."""
+
+    if name != "ns_config":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    from ns_common.config import ns_config as global_config
+
+    globals()["ns_config"] = global_config
+    return global_config
 
 __all__ = [
     "__version__",

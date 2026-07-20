@@ -26,6 +26,7 @@ def main(
     *,
     environment: str | None = None,
     config_path: str | PathLike[str] | None = None,
+    startup_root: str | PathLike[str] | None = None,
     startup_directories: RuntimeStartupDirectories | None = None,
     preflight: RuntimeStartupPreflight | None = None,
 ) -> int:
@@ -39,8 +40,11 @@ def main(
 
     import logging
 
-    from ns_common.config import get_default_config_path
-    from ns_runtime.startup import RuntimeStartupPreflight
+    from ns_runtime._bootstrap import get_default_config_path
+    from ns_runtime.startup import (
+        RuntimeStartupDirectories,
+        RuntimeStartupPreflight,
+    )
 
     startup_preflight = preflight or RuntimeStartupPreflight()
     resolved_environment = startup_preflight.resolve_environment(environment)
@@ -53,6 +57,12 @@ def main(
         explicit_config_path,
         environment=resolved_environment,
     )
+    if startup_root is not None:
+        if startup_directories is not None:
+            raise ValueError(
+                "startup_root and startup_directories are mutually exclusive",
+            )
+        startup_directories = RuntimeStartupDirectories.for_root(startup_root)
 
     from ns_common.async_runtime import TaskSupervisor
     from ns_common.observability import InMemoryMetricsSink, InMemoryTraceSink

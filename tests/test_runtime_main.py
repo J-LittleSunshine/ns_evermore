@@ -304,7 +304,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
 
             with (
                 mock.patch(
-                    "ns_common.config.get_default_config_path",
+                    "ns_runtime._bootstrap.get_default_config_path",
                     return_value=config_path,
                 ) as default_path,
                 mock.patch(
@@ -469,7 +469,8 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                     "before = asyncio.get_event_loop_policy(); "
                     "import ns_runtime.main; "
                     "after = asyncio.get_event_loop_policy(); "
-                    "forbidden = {'ns_common', 'ns_runtime.context', "
+                    "forbidden = {'ns_common', 'ns_runtime._bootstrap', "
+                    "'ns_runtime.context', "
                     "'ns_runtime.service', 'ns_runtime.startup', 'uvloop', "
                     "'websockets'}; "
                     "valid = (before is after and not forbidden.intersection("

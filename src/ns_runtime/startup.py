@@ -22,8 +22,13 @@ from ns_common.async_runtime import (
     NsEventLoopSelection,
     NsEventLoopSelector,
 )
-from ns_common.config import NsConfig
-from ns_common.exceptions import (
+from ns_runtime._bootstrap import (
+    DATA_DIR,
+    ETC_DIR,
+    LOG_DIR,
+    ROOT_DIR,
+    TMP_DIR,
+    NsConfig,
     NsConfigError,
     NsDependencyError,
     NsRuntimeConfigInvalidError,
@@ -31,7 +36,6 @@ from ns_common.exceptions import (
     NsRuntimeTransportDisabledError,
     NsValidationError,
 )
-from ns_common.paths import DATA_DIR, ETC_DIR, LOG_DIR, ROOT_DIR, TMP_DIR
 from ns_runtime.context import RuntimeContext
 
 

@@ -15,7 +15,6 @@ from ns_common.cache.clients import (
     _TTL_UNSET,
     get_cache_client,
 )
-from ns_common.config import ns_config
 from ns_common.exceptions import NsStateError
 
 if TYPE_CHECKING:
@@ -24,6 +23,8 @@ if TYPE_CHECKING:
 
 class NsDjangoCacheBackend(BaseCache):
     def __init__(self, location: str, params: dict[str, Any]) -> None:
+        from ns_common.config import ns_config
+
         super().__init__(params)
 
         self._location = location

@@ -22,7 +22,6 @@ from typing import (
     TYPE_CHECKING
 )
 
-from ns_common.config import ns_config
 from ns_common.paths import LOG_DIR
 from ns_common.security import (
     REDACTED,
@@ -561,6 +560,8 @@ class NsLogger(logging.Logger):
             self._configure()
 
     def _configure(self) -> None:
+        from ns_common.config import ns_config
+
         config: dict[str, Any] = asdict(ns_config.log)
 
         utc_enabled: bool = bool(config.get("utc", False))

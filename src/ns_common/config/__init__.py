@@ -61,7 +61,7 @@ from .metadata import (
     NsConfigGroupMetadata,
     NsConfigSource,
 )
-from .model import NsConfig, ns_config
+from .model import NsConfig
 from .primitives import FrozenDict
 from .resolver import NsConfigResolver
 
@@ -137,3 +137,16 @@ __all__ = [
     "types",
     "urlparse",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Preserve the legacy global config without eager bootstrap effects."""
+
+    if name != "ns_config":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    from . import model
+
+    global_config = model.ns_config
+    globals()["ns_config"] = global_config
+    return global_config

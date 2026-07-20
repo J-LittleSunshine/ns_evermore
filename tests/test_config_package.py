@@ -226,6 +226,51 @@ class NsConfigPackageStructureTestCase(unittest.TestCase):
             self.assertTrue(hasattr(ns_common, symbol_name), symbol_name)
             self.assertIs(getattr(ns_common, symbol_name), getattr(config_facade, symbol_name))
 
+    def test_global_config_is_lazy_and_facades_preserve_identity(self) -> None:
+        source = """
+import ns_common
+import ns_common.config as config_facade
+import ns_common.config.codec as codec
+import ns_common.config.model as model
+
+assert "ns_config" not in vars(model)
+assert "ns_config" not in vars(config_facade)
+assert "ns_config" not in vars(ns_common)
+
+ensure_calls = []
+codec.ensure_runtime_dirs = lambda: ensure_calls.append("ensure_runtime_dirs")
+
+global_config = config_facade.ns_config
+assert isinstance(global_config, model.NsConfig)
+assert model.ns_config is global_config
+assert ns_common.ns_config is global_config
+assert ensure_calls == ["ensure_runtime_dirs"]
+
+explicit_legacy_load = model.NsConfig.load()
+assert isinstance(explicit_legacy_load, model.NsConfig)
+assert explicit_legacy_load is not global_config
+assert ensure_calls == ["ensure_runtime_dirs", "ensure_runtime_dirs"]
+"""
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        with tempfile.TemporaryDirectory(
+            prefix="ns-config-lazy-global-",
+        ) as temporary_directory:
+            completed = subprocess.run(
+                [sys.executable, "-c", source],
+                cwd=temporary_directory,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("", completed.stdout)
+        self.assertEqual("", completed.stderr)
+
     def test_all_submodules_import_in_fresh_interpreter(self) -> None:
         source = "import importlib; " + "; ".join(
             f"importlib.import_module({module_name!r})"
