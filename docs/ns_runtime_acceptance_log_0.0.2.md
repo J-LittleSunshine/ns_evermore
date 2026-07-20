@@ -637,6 +637,18 @@
 - 已知限制：P03 只提供纯协商策略；P05 才能在 connection.hello 中执行协商并把结果写入 session context。当前矩阵没有宣称 1.1+ 兼容。
 - 下一工作包：`P03-W06 内置 message type 全量注册表`，状态为 `IN_PROGRESS`。
 
+## P03-W06
+
+- 工作包：`P03-W06 内置 message type 全量注册表`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T21:35:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/protocol/registry.py` 与 `tests/test_runtime_protocol_registry.py`；更新 protocol facade、实施计划、acceptance log 与 ADR-028。
+- 公共契约变化：显式冻结 50 个 protocol 1.0 内置 message types 和 13 个必需类型族；`MessageTypeRegistry` 提供不可变 exact lookup 与 version-selected schema lookup，未知 type/schema 使用既有稳定 unsupported error。
+- 测试结果：registry/schema/version 专项 `Ran 15, OK`；`git diff --check` 通过。
+- 安全/隔离检查：独立冻结 expected type tuple 验证无缺项/重复，每项具备 current schema；未知攻击者 type/schema 不回显。注册无 decorator、动态扫描、回调、实例构造副作用、裸 JSON 命令或执行路径；ACK/管理/集群等只登记名字和 schema，全部仍未实现。
+- 已知限制：W06 尚未给注册项补齐权限、processor、审计、feature flag、reliability 与响应元数据；W07 完成前 registry 不能用于最终 dispatch 决策。
+- 下一工作包：`P03-W07 注册元数据完整性`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：

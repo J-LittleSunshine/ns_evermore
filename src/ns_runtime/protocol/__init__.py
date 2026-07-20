@@ -37,6 +37,14 @@ from .schema import (
     InlinePayloadSchema,
     MessageTypeSchema,
 )
+from .registry import (
+    BUILTIN_MESSAGE_CONTRACTS,
+    BUILTIN_MESSAGE_FAMILIES,
+    BUILTIN_MESSAGE_REGISTRY,
+    CURRENT_PROTOCOL_SCHEMA_KEY,
+    MessageTypeContract,
+    MessageTypeRegistry,
+)
 from .versioning import (
     JSON_V1_PROTOCOL_MATRIX,
     NegotiatedProtocol,
@@ -46,9 +54,12 @@ from .versioning import (
 )
 
 __all__ = (
-    "AuthContextGroup", "CallbackGroup", "DEFAULT_JSON_LIMITS", "DeliveryGroup", "ENVELOPE_GROUP_NAMES",
+    "AuthContextGroup", "BUILTIN_MESSAGE_CONTRACTS", "BUILTIN_MESSAGE_FAMILIES",
+    "BUILTIN_MESSAGE_REGISTRY", "CURRENT_PROTOCOL_SCHEMA_KEY", "CallbackGroup",
+    "DEFAULT_JSON_LIMITS", "DeliveryGroup", "ENVELOPE_GROUP_NAMES",
     "Envelope", "EnvelopeSchemaValidator", "ExtensionsGroup", "InboundEnvelope",
-    "InlinePayloadSchema", "MessageGroup", "MessageTypeSchema", "PayloadGroup", "ProtocolGroup",
+    "InlinePayloadSchema", "MessageGroup", "MessageTypeContract", "MessageTypeRegistry",
+    "MessageTypeSchema", "PayloadGroup", "ProtocolGroup",
     "RouteGroup", "SourceGroup", "StreamGroup", "TargetGroup", "TraceGroup",
     "JSON_V1_PROTOCOL_MATRIX", "JsonResourceLimits", "JsonV1Codec", "NegotiatedProtocol",
     "ProtocolCompatibilityMatrix", "ProtocolVersion", "ProtocolVersionSupport",
