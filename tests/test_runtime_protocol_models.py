@@ -18,6 +18,7 @@ from ns_runtime.protocol import (
     DeliveryGroup,
     RouteGroup,
     SourceGroup,
+    StreamGroup,
     TargetGroup,
     TraceGroup,
     AuthContextGroup,
@@ -138,6 +139,47 @@ class RuntimeProtocolModelTestCase(unittest.TestCase):
             with self.subTest(constructor=constructor):
                 with self.assertRaises(NsRuntimeEnvelopeSchemaError):
                     constructor()
+
+    def test_stream_arrays_require_exact_container_and_integer_types(self) -> None:
+        invalid_streams = (
+            {"missing_sequences": [None]},
+            {"missing_sequences": [True]},
+            {"missing_sequences": [1.0]},
+            {"missing_sequences": ["1"]},
+            {"missing_sequences": "123"},
+            {"received_sequences": {"1": 2}},
+            {"received_sequences": range(2)},
+            {"ack_ranges": [[None, 1]]},
+            {"ack_ranges": [[1, None]]},
+            {"ack_ranges": [[False, 1]]},
+            {"ack_ranges": [[0, 1.0]]},
+            {"ack_ranges": [[0, "1"]]},
+            {"ack_ranges": "12"},
+            {"ack_ranges": {"0": [0, 1]}},
+            {"ack_ranges": ["12"]},
+            {"ack_ranges": [[2, 1]]},
+        )
+        for overrides in invalid_streams:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(NsRuntimeEnvelopeSchemaError) as direct:
+                    StreamGroup(stream_id="stream_1", **overrides)  # type: ignore[arg-type]
+                self.assertEqual("stream", direct.exception.details["group"])
+
+                raw = _minimal_envelope()
+                raw["stream"] = {"stream_id": "stream_1", **overrides}
+                with self.assertRaises(NsRuntimeEnvelopeSchemaError) as mapped:
+                    envelope_from_mapping(raw)
+                self.assertEqual("stream", mapped.exception.details["group"])
+
+        stream = StreamGroup(
+            stream_id="stream_1",
+            missing_sequences=[0, 2],
+            received_sequences=(1, 3),
+            ack_ranges=[[0, 1], (3, 4)],
+        )
+        self.assertEqual((0, 2), stream.missing_sequences)
+        self.assertEqual((1, 3), stream.received_sequences)
+        self.assertEqual(((0, 1), (3, 4)), stream.ack_ranges)
 
     def test_inbound_model_cannot_contain_runtime_authority_groups(self) -> None:
         for forged_group, error_type in (

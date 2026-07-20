@@ -76,6 +76,35 @@ class RuntimeProtocolExtensionsTestCase(unittest.TestCase):
         self.assertEqual(1, ignored.ignored_count)
         self.assertTrue(ignored.audit_required)
 
+    def test_invalid_wire_namespaces_fail_before_unknown_policy(self) -> None:
+        invalid_namespaces = (
+            "INVALID NAMESPACE",
+            "com",
+            ".example",
+            "com.",
+            "Com.Example",
+            "com.example!",
+        )
+        for policy in UnknownExtensionPolicy:
+            registry = ExtensionNamespaceRegistry(unknown_policy=policy)
+            for namespace in invalid_namespaces:
+                with self.subTest(policy=policy.value, namespace=namespace):
+                    extensions = ExtensionsGroup.from_mapping({namespace: {"x": 1}})
+                    with self.assertRaises(NsRuntimeEnvelopeSchemaError) as context:
+                        registry.validate(
+                            extensions,
+                            authorized_capabilities=frozenset(),
+                        )
+                    self.assertEqual(
+                        {
+                            "group": "extensions",
+                            "field": "$namespace",
+                            "reason": "invalid_namespace",
+                        },
+                        context.exception.details,
+                    )
+                    self.assertNotIn(namespace, str(context.exception))
+
     def test_disabled_unauthorized_and_schema_failures_are_distinct(self) -> None:
         cases = (
             (

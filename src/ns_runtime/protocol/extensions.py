@@ -141,6 +141,8 @@ class ExtensionNamespaceRegistry:
         accepted: dict[str, Mapping[str, JSONValue]] = {}
         ignored_count = 0
         for namespace, value in extensions.namespaces.items():
+            if _NAMESPACE_PATTERN.fullmatch(namespace) is None:
+                raise _extension_error("invalid_namespace")
             contract = self._by_namespace.get(namespace)
             if contract is None:
                 if self._unknown_policy is UnknownExtensionPolicy.IGNORE_AND_AUDIT:

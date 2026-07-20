@@ -264,18 +264,26 @@ class StreamGroup(StrictGroup):
         for name in ("missing_sequences", "received_sequences"):
             value = getattr(self, name)
             if value is not None:
+                if not isinstance(value, (list, tuple)):
+                    raise _schema_error(self.GROUP_NAME, name, "array_required")
                 normalized = tuple(value)
                 for item in normalized:
-                    _optional_non_negative_integer(self.GROUP_NAME, name, item)
+                    _require_non_negative_integer(self.GROUP_NAME, name, item)
                 object.__setattr__(self, name, normalized)
         if self.ack_ranges is not None:
+            if not isinstance(self.ack_ranges, (list, tuple)):
+                raise _schema_error(
+                    self.GROUP_NAME,
+                    "ack_ranges",
+                    "array_required",
+                )
             normalized_ranges: list[tuple[int, int]] = []
             for item in self.ack_ranges:
                 if not isinstance(item, (list, tuple)) or len(item) != 2:
                     raise _schema_error(self.GROUP_NAME, "ack_ranges", "integer_pair_required")
                 start, end = item
-                _optional_non_negative_integer(self.GROUP_NAME, "ack_ranges", start)
-                _optional_non_negative_integer(self.GROUP_NAME, "ack_ranges", end)
+                _require_non_negative_integer(self.GROUP_NAME, "ack_ranges", start)
+                _require_non_negative_integer(self.GROUP_NAME, "ack_ranges", end)
                 if start > end:
                     raise _schema_error(self.GROUP_NAME, "ack_ranges", "invalid_range")
                 normalized_ranges.append((start, end))

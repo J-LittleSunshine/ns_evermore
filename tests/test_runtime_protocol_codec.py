@@ -92,6 +92,33 @@ class RuntimeProtocolCodecTestCase(unittest.TestCase):
         self.assertEqual("invalid_json_document", context.exception.details["reason"])
         self.assertNotIn("secret", str(context.exception))
 
+    def test_decode_inbound_rejects_invalid_stream_array_types_stably(self) -> None:
+        invalid_streams = (
+            {"missing_sequences": [None]},
+            {"missing_sequences": [True]},
+            {"missing_sequences": [1.0]},
+            {"missing_sequences": ["1"]},
+            {"missing_sequences": "123"},
+            {"received_sequences": {"1": 2}},
+            {"ack_ranges": [[None, 1]]},
+            {"ack_ranges": [[1, None]]},
+            {"ack_ranges": [[False, 1]]},
+            {"ack_ranges": [[0, 1.0]]},
+            {"ack_ranges": [[0, "1"]]},
+            {"ack_ranges": "12"},
+            {"ack_ranges": {"0": [0, 1]}},
+            {"ack_ranges": ["12"]},
+            {"ack_ranges": [[2, 1]]},
+        )
+        codec = JsonV1Codec()
+        for overrides in invalid_streams:
+            with self.subTest(overrides=overrides):
+                document = _document()
+                document["stream"] = {"stream_id": "stream_1", **overrides}
+                with self.assertRaises(NsRuntimeEnvelopeSchemaError) as context:
+                    codec.decode_inbound(json.dumps(document))
+                self.assertEqual("stream", context.exception.details["group"])
+
 
 if __name__ == "__main__":
     unittest.main()

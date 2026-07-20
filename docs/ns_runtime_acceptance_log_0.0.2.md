@@ -731,6 +731,18 @@
 - 已知限制：仅 runtime.error 构造 enabled；49 个其余内置类型均稳定 feature disabled。extension 默认 registry 为空，audit ignore 只产生待 P07 消费的结构化要求；canonical 是项目 deterministic JSON 而非外部 JCS 声明；P04/P05/P06/P07/P08 及 delivery/cluster 能力均未实现。
 - 执行游标：当前阶段 `P04 Transport 抽象与 WebSocket/TCP Adapter`；当前工作包 `P04-W01`；状态 `NOT_STARTED`；最近已验证阶段 `P03 Envelope 协议层与类型注册表`。按停止条件不开始 P04，等待外部 review。
 
+## P03-FIX-02
+
+- 工作包：`P03-FIX-02 StreamGroup 严格数组与 extension namespace wire 语法边界`。
+- 状态：`VERIFIED`；P03 已重新达到 `VERIFIED/F2`，P04-W01 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-20T23:38:07+08:00`。
+- 修改文件：更新 `src/ns_runtime/protocol/models.py`、`extensions.py`、models/codec/extensions tests、实施计划、acceptance log 与 ADR-028；设计边界文档未修改。
+- 公共契约校准：missing_sequences/received_sequences/ack_ranges 顶层严格限制为 list/tuple；sequence 元素和 range 两端使用 required non-negative integer，range 项严格为长度 2 的 list/tuple 且 start <= end；合法模型继续冻结为 tuple，wire 输出仍为 JSON array。extension registry 对每个 wire namespace 先执行冻结 dotted-lowercase 语法校验，再 lookup/执行 unknown policy；非法语法固定 `group=extensions, field=$namespace, reason=invalid_namespace` 且不回显输入。
+- 测试结果：直接构造、`envelope_from_mapping`、`JsonV1Codec.decode_inbound` 的指定负向及 bool/float/str/其他 iterable 补充边界全部稳定返回 `NsRuntimeEnvelopeSchemaError`；P03 专项 `Ran 52, OK`；runtime 环境排除 DEP-1 不安装的 Django cache 后 P01+P02+P03 联合 `Ran 401, OK (skipped=1)`；backend 根目录全量 `Ran 412, OK (skipped=1)`。唯一 skip 为 WSL 下 Windows 专用 event-loop policy；runtime/backend 两套全树 `compileall`、两套 `pip check`、`git diff --check` 全部通过。
+- 安全/隔离检查：非法 namespace 在 REJECT 与 IGNORE_AND_AUDIT 下都先 fail-closed，错误 details 只有固定字段；合法未知 `com.attacker.secret` 在 IGNORE_AND_AUDIT 下仍只增加 ignored_count/audit_required。源码 review 未发现原生 TypeError/ValueError 泄露、输入回显、裸 JSON 管理命令、伪 ACK、stub success，未修改 P01/P02 冻结契约，也未新增 transport/session/IAM/pipeline/StateStore/delivery/cluster 能力。
+- 已知限制：extension ignore 仍只产生待 P07 消费的结构化审计要求；49 个未实现内置 message type 继续由 FeatureDisabledProcessor 稳定拒绝，仅 runtime.error 构造 enabled。
+- 下一工作包：执行游标恢复为 `P04-W01 NOT_STARTED`；按本次暂停要求不开始 P04，等待外部 review。
+
 ## 新记录模板
 
 - 工作包：
