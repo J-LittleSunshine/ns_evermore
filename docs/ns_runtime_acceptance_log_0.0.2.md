@@ -697,6 +697,18 @@
 - 已知限制：格式是本项目冻结的 deterministic JSON，不宣称外部 RFC 8785/JCS 互操作；未来若需要跨语言签名规范必须新增版本/ADR，不能静默改变当前 checksum bytes。
 - 下一工作包：`P03-W11 FeatureDisabledProcessor`，状态为 `IN_PROGRESS`。
 
+## P03-W11
+
+- 工作包：`P03-W11 FeatureDisabledProcessor`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T23:00:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/protocol/processors.py` 与 `tests/test_runtime_protocol_processors.py`；更新 protocol facade、实施计划、acceptance log 与 ADR-028。
+- 公共契约变化：49 个 disabled 内置类型的 processor key 全部映射到同一 `FeatureDisabledProcessor`；正确请求只返回 `RUNTIME_FEATURE_DISABLED` 标准 runtime.error Envelope，并写固定 best-effort audit fields。enabled 的 runtime.error 输出合同不注册为业务 processor。
+- 测试结果：processor/error/P02 role gate 联合 `Ran 13, OK`；W11 后 P03 阶段出口全量结果将在 P03 记录追加。
+- 安全/隔离检查：代表性 task.dispatch、delivery.ack、runtime.control.switch_master 均只返回 feature disabled，token/credential/payload 不进入错误或日志；logger 普通失败仍拒绝，contract mismatch 不作为 fallback dispatch。没有调用回调、ACK 状态、transport/session/IAM/StateStore/delivery/cluster/管理功能或 stub success，P01/P02 `RUNTIME_FEATURE_DISABLED` 语义保持。
+- 已知限制：审计当前沿用显式 Logger 的 best-effort 边界；P07/P08 必须消费同一注册 metadata 建立强流水线/审计，不能把 logger success 当审计持久化证明。
+- 下一工作包：P03 阶段出口验收；完成全部专项与联合/全量回归后才可把游标移至 `P04-W01 NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

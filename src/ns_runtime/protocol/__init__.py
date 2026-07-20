@@ -64,6 +64,10 @@ from .registry import (
     MessageTypeContract,
     MessageTypeRegistry,
 )
+from .processors import (
+    FeatureDisabledProcessor,
+    build_feature_disabled_processors,
+)
 from .versioning import (
     JSON_V1_PROTOCOL_MATRIX,
     NegotiatedProtocol,
@@ -79,6 +83,7 @@ __all__ = (
     "DeliveryGroup", "ENVELOPE_GROUP_NAMES",
     "EMPTY_EXTENSION_REGISTRY", "Envelope", "EnvelopeSchemaValidator",
     "ErrorEnvelopeBuilder", "ErrorEnvelopeContext",
+    "FeatureDisabledProcessor",
     "ExtensionNamespaceContract", "ExtensionNamespaceRegistry", "ExtensionObjectSchema",
     "ExtensionValidationResult", "ExtensionsGroup", "InboundEnvelope",
     "InlinePayloadSchema", "MessageGroup", "MessageTypeContract", "MessageTypeRegistry",
@@ -89,6 +94,7 @@ __all__ = (
     "ProtocolCompatibilityMatrix", "ProtocolVersion", "ProtocolVersionSupport",
     "RuntimeAuthority", "WIRE_CODEC_JSON_V1",
     "UnknownExtensionPolicy",
-    "canonical_checksum", "canonical_serialize", "envelope_from_mapping",
+    "build_feature_disabled_processors", "canonical_checksum", "canonical_serialize",
+    "envelope_from_mapping",
     "inbound_envelope_from_mapping", "normalize_inbound", "validate_json_resources",
 )
