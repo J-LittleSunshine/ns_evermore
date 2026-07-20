@@ -649,6 +649,18 @@
 - 已知限制：W06 尚未给注册项补齐权限、processor、审计、feature flag、reliability 与响应元数据；W07 完成前 registry 不能用于最终 dispatch 决策。
 - 下一工作包：`P03-W07 注册元数据完整性`，状态为 `IN_PROGRESS`。
 
+## P03-W07
+
+- 工作包：`P03-W07 注册元数据完整性`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-20T21:50:00+08:00`。
+- 修改文件：扩展 `src/ns_runtime/protocol/registry.py`、protocol facade 与 registry tests；更新实施计划、acceptance log 与 ADR-028。
+- 公共契约变化：全部 50 个注册项现具备 schema、强类型 category/default reliability/audit level、权限 tuple、processor key、feature flag/enabled 与 response types；registry 统一执行 category/reliability 基础校验。仅 `runtime.error` 协议构造能力 enabled，其余 49 项明确 disabled。
+- 测试结果：registry 专项 6/6；前序 registry/schema/version 联合已通过，`git diff --check` 通过。
+- 安全/隔离检查：response type 全部回指已注册类型，元数据与 mapping 不可变；权限声明不执行 IAM，processor key 不解析 callback。review 确认无 transport/session/StateStore/delivery/cluster 行为、ACK 快速通道、裸管理命令或 stub success，P01/P02 错误及能力门禁未修改。
+- 已知限制：注册的 capability 与 audit level 只是 P06/P07 将消费的静态声明；P03 不宣称权限已校验或审计已持久化。disabled 行为由 W11 统一 processor 固化。
+- 下一工作包：`P03-W08 extension namespace 注册与 schema 边界`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：

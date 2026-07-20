@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from types import MappingProxyType
 from typing import Iterable, Mapping
 
 from ns_common.exceptions import NsRuntimeUnsupportedMessageTypeError
 
 from .schema import InlinePayloadSchema, MessageTypeSchema
+from .schema import EnvelopeSchemaValidator
 
 
 CURRENT_PROTOCOL_SCHEMA_KEY = "json.v1/protocol-1.0"
@@ -31,17 +33,62 @@ BUILTIN_MESSAGE_FAMILIES: tuple[str, ...] = (
 )
 
 
+class MessageCategory(str, Enum):
+    CONNECTION = "connection"
+    TASK = "task"
+    DELIVERY = "delivery"
+    STREAM = "stream"
+    CONTROL = "control"
+    CLUSTER = "cluster"
+    CONFIG = "config"
+    MANAGEMENT = "management"
+    ERROR = "error"
+
+
+class MessageReliability(str, Enum):
+    BEST_EFFORT = "best_effort"
+    RELIABLE = "reliable"
+
+
+class MessageAuditLevel(str, Enum):
+    NONE = "none"
+    STANDARD = "standard"
+    SECURITY = "security"
+
+
 @dataclass(frozen=True, slots=True)
 class MessageTypeContract:
     message_type: str
     family: str
     schemas: Mapping[str, MessageTypeSchema]
+    category: MessageCategory
+    default_reliability: MessageReliability
+    required_capabilities: tuple[str, ...]
+    processor_key: str
+    audit_level: MessageAuditLevel
+    feature_flag: str
+    feature_enabled: bool
+    response_types: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.message_type, str) or not self.message_type:
             raise ValueError("message_type must be a non-empty string")
         if self.family not in BUILTIN_MESSAGE_FAMILIES:
             raise ValueError("family must be a registered built-in family")
+        if not isinstance(self.category, MessageCategory):
+            raise TypeError("category must be MessageCategory")
+        if not isinstance(self.default_reliability, MessageReliability):
+            raise TypeError("default_reliability must be MessageReliability")
+        _validate_string_tuple(self.required_capabilities, "required_capabilities")
+        _validate_string_tuple(self.response_types, "response_types")
+        for name in ("processor_key", "feature_flag"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{name} must be a non-empty string")
+        if not isinstance(self.audit_level, MessageAuditLevel):
+            raise TypeError("audit_level must be MessageAuditLevel")
+        if type(self.feature_enabled) is not bool:
+            raise TypeError("feature_enabled must be a boolean")
         if not isinstance(self.schemas, Mapping) or not self.schemas:
             raise ValueError("schemas must be a non-empty mapping")
         frozen: dict[str, MessageTypeSchema] = {}
@@ -62,6 +109,21 @@ class MessageTypeContract:
                 details={"component": "message_registry", "reason": "schema_not_registered"},
             )
         return schema
+
+    def metadata_dict(self) -> dict[str, object]:
+        return {
+            "message_type": self.message_type,
+            "family": self.family,
+            "schema_keys": tuple(self.schemas),
+            "category": self.category.value,
+            "default_reliability": self.default_reliability.value,
+            "required_capabilities": self.required_capabilities,
+            "processor_key": self.processor_key,
+            "audit_level": self.audit_level.value,
+            "feature_flag": self.feature_flag,
+            "feature_enabled": self.feature_enabled,
+            "response_types": self.response_types,
+        }
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -99,6 +161,41 @@ class MessageTypeRegistry:
     def schema_for(self, message_type: str, schema_key: str) -> MessageTypeSchema:
         return self.require(message_type).schema_for(schema_key)
 
+    def validate_envelope(self, envelope: object, schema_key: str):
+        from .models import Envelope
+
+        if not isinstance(envelope, Envelope):
+            raise TypeError("envelope must be Envelope")
+        contract = self.require(envelope.message.type)
+        if envelope.message.category != contract.category.value:
+            from ns_common.exceptions import NsRuntimeEnvelopeSchemaError
+
+            raise NsRuntimeEnvelopeSchemaError(
+                "Runtime message category does not match its registration.",
+                details={
+                    "group": "message",
+                    "field": "category",
+                    "reason": "registered_category_mismatch",
+                },
+            )
+        if envelope.message.reliability not in {
+            reliability.value for reliability in MessageReliability
+        }:
+            from ns_common.exceptions import NsRuntimeEnvelopeSchemaError
+
+            raise NsRuntimeEnvelopeSchemaError(
+                "Runtime message reliability is invalid.",
+                details={
+                    "group": "message",
+                    "field": "reliability",
+                    "reason": "unsupported_reliability",
+                },
+            )
+        return EnvelopeSchemaValidator().validate(
+            envelope,
+            message_schema=contract.schema_for(schema_key),
+        )
+
 
 def _contract(
     message_type: str,
@@ -127,7 +224,108 @@ def _contract(
         message_type=message_type,
         family=family,
         schemas={CURRENT_PROTOCOL_SCHEMA_KEY: schema},
+        category=_CATEGORY_BY_FAMILY[family],
+        default_reliability=_default_reliability(message_type, family),
+        required_capabilities=_required_capabilities(message_type, family),
+        processor_key=message_type,
+        audit_level=_audit_level(message_type, family),
+        feature_flag=_FEATURE_FLAG_BY_FAMILY[family],
+        feature_enabled=message_type == "runtime.error",
+        response_types=_RESPONSE_TYPES.get(message_type, ()),
     )
+
+
+_CATEGORY_BY_FAMILY: Mapping[str, MessageCategory] = MappingProxyType({
+    "connection": MessageCategory.CONNECTION,
+    "task": MessageCategory.TASK,
+    "delivery": MessageCategory.DELIVERY,
+    "stream": MessageCategory.STREAM,
+    "runtime.control": MessageCategory.CONTROL,
+    "cluster.event": MessageCategory.CLUSTER,
+    "config": MessageCategory.CONFIG,
+    "dead_letter": MessageCategory.MANAGEMENT,
+    "replay": MessageCategory.MANAGEMENT,
+    "cancel": MessageCategory.MANAGEMENT,
+    "hold": MessageCategory.MANAGEMENT,
+    "status": MessageCategory.MANAGEMENT,
+    "runtime.error": MessageCategory.ERROR,
+})
+
+_FEATURE_FLAG_BY_FAMILY: Mapping[str, str] = MappingProxyType({
+    family: (
+        "protocol.error_envelope"
+        if family == "runtime.error"
+        else f"message_family.{family}"
+    )
+    for family in BUILTIN_MESSAGE_FAMILIES
+})
+
+_RESPONSE_TYPES: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    "connection.hello": ("connection.accepted", "connection.rejected"),
+    "connection.reauth": ("connection.reauth_accepted", "connection.reauth_rejected"),
+    "connection.heartbeat": ("connection.heartbeat_ack",),
+    "task.dispatch": ("delivery.accepted", "delivery.rejected", "delivery.duplicate"),
+    "runtime.control.health": ("status.result", "runtime.error"),
+    "dead_letter.query": ("dead_letter.result", "runtime.error"),
+    "dead_letter.cleanup": ("dead_letter.cleanup_result", "runtime.error"),
+    "replay.request": ("replay.result", "runtime.error"),
+    "cancel.request": ("cancel.result", "runtime.error"),
+    "hold.request": ("hold.result", "runtime.error"),
+    "hold.release": ("hold.result", "runtime.error"),
+    "status.query": ("status.result", "runtime.error"),
+    "config.update": ("config.updated", "config.rejected", "runtime.error"),
+})
+
+
+def _default_reliability(message_type: str, family: str) -> MessageReliability:
+    if message_type in {
+        "connection.hello", "connection.accepted", "connection.rejected",
+        "connection.reauth", "connection.reauth_accepted", "connection.reauth_rejected",
+        "connection.heartbeat", "connection.heartbeat_ack", "runtime.control.health",
+        "runtime.error",
+    }:
+        return MessageReliability.BEST_EFFORT
+    return MessageReliability.RELIABLE
+
+
+def _required_capabilities(message_type: str, family: str) -> tuple[str, ...]:
+    if message_type == "connection.hello":
+        return ()
+    if family == "connection":
+        return ("runtime.connection",)
+    if family == "task":
+        return ("runtime.task.send",)
+    if family == "delivery":
+        return ("runtime.delivery.respond",)
+    if family == "stream":
+        return ("runtime.stream.send",)
+    if family == "cluster.event":
+        return ("runtime.cluster.event",)
+    if family == "runtime.error":
+        return ()
+    return ("runtime.management",)
+
+
+def _audit_level(message_type: str, family: str) -> MessageAuditLevel:
+    if message_type in {"connection.heartbeat", "connection.heartbeat_ack"}:
+        return MessageAuditLevel.NONE
+    if message_type in {"connection.hello", "connection.reauth", "connection.rejected"}:
+        return MessageAuditLevel.SECURITY
+    if family in {
+        "runtime.control", "cluster.event", "config", "dead_letter",
+        "replay", "cancel", "hold",
+    }:
+        return MessageAuditLevel.SECURITY
+    return MessageAuditLevel.STANDARD
+
+
+def _validate_string_tuple(value: tuple[str, ...], field_name: str) -> None:
+    if not isinstance(value, tuple) or any(
+        not isinstance(item, str) or not item for item in value
+    ):
+        raise TypeError(f"{field_name} must be a tuple of non-empty strings")
+    if len(set(value)) != len(value):
+        raise ValueError(f"{field_name} must not contain duplicates")
 
 
 BUILTIN_MESSAGE_CONTRACTS: tuple[MessageTypeContract, ...] = (
@@ -196,6 +394,9 @@ __all__ = (
     "BUILTIN_MESSAGE_FAMILIES",
     "BUILTIN_MESSAGE_REGISTRY",
     "CURRENT_PROTOCOL_SCHEMA_KEY",
+    "MessageAuditLevel",
+    "MessageCategory",
+    "MessageReliability",
     "MessageTypeContract",
     "MessageTypeRegistry",
 )

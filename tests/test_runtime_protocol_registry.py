@@ -9,6 +9,10 @@ from ns_runtime.protocol import (
     BUILTIN_MESSAGE_FAMILIES,
     BUILTIN_MESSAGE_REGISTRY,
     CURRENT_PROTOCOL_SCHEMA_KEY,
+    MessageAuditLevel,
+    MessageCategory,
+    MessageReliability,
+    envelope_from_mapping,
 )
 
 
@@ -72,6 +76,54 @@ class RuntimeProtocolRegistryTestCase(unittest.TestCase):
             BUILTIN_MESSAGE_REGISTRY.schema_for("task.dispatch", "secret-schema")
         self.assertEqual("schema_not_registered", schema.exception.details["reason"])
         self.assertNotIn("secret-schema", str(schema.exception))
+
+    def test_every_registration_has_complete_typed_dispatch_metadata(self) -> None:
+        for contract in BUILTIN_MESSAGE_CONTRACTS:
+            with self.subTest(message_type=contract.message_type):
+                self.assertIsInstance(contract.category, MessageCategory)
+                self.assertIsInstance(contract.default_reliability, MessageReliability)
+                self.assertIsInstance(contract.required_capabilities, tuple)
+                self.assertTrue(contract.processor_key)
+                self.assertIsInstance(contract.audit_level, MessageAuditLevel)
+                self.assertTrue(contract.feature_flag)
+                self.assertIs(type(contract.feature_enabled), bool)
+                self.assertIsInstance(contract.response_types, tuple)
+                for response_type in contract.response_types:
+                    self.assertIsNotNone(BUILTIN_MESSAGE_REGISTRY.get(response_type))
+        self.assertEqual(
+            {"runtime.error"},
+            {
+                contract.message_type
+                for contract in BUILTIN_MESSAGE_CONTRACTS
+                if contract.feature_enabled
+            },
+        )
+
+    def test_registry_validation_enforces_category_and_reliability(self) -> None:
+        def make(category: str, reliability: str):
+            return envelope_from_mapping({
+                "protocol": {"major": 1, "minor": 0, "patch": 0},
+                "message": {
+                    "message_id": "message_1", "type": "connection.heartbeat",
+                    "category": category, "priority": 0,
+                    "created_at": "2026-07-20T12:00:00Z",
+                    "reliability": reliability,
+                },
+            })
+
+        self.assertIsNotNone(BUILTIN_MESSAGE_REGISTRY.validate_envelope(
+            make("connection", "best_effort"), CURRENT_PROTOCOL_SCHEMA_KEY,
+        ))
+        for category, reliability, reason in (
+            ("task", "best_effort", "registered_category_mismatch"),
+            ("connection", "magic", "unsupported_reliability"),
+        ):
+            with self.subTest(reason=reason):
+                with self.assertRaises(Exception) as context:
+                    BUILTIN_MESSAGE_REGISTRY.validate_envelope(
+                        make(category, reliability), CURRENT_PROTOCOL_SCHEMA_KEY,
+                    )
+                self.assertEqual(reason, context.exception.details["reason"])
 
 
 if __name__ == "__main__":
