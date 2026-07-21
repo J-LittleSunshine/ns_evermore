@@ -839,6 +839,18 @@
 - 已知限制：未来 adapter 名称只是 reserved registration，不表示可用；启用仍在 RSP-1 preflight 和 registry 双层 fail-closed。W09 将把所有 adapter 可复用的测试合同冻结为 TC-1。
 - 下一工作包：`P04-W09 transport conformance suite`，状态为 `IN_PROGRESS`。
 
+## P04-W09
+
+- 工作包：`P04-W09 reusable transport conformance / TC-1`。
+- 状态：`VERIFIED`；`TC-1` 首次冻结为 `VERIFIED`。
+- 完成时间：`2026-07-21T10:49:00+08:00`。
+- 修改文件：新增 production `src/ns_runtime/transport/conformance.py` 的 22-case 闭集、测试侧 `tests/transport_conformance.py` 公共 mixin/harness 与 `tests/test_runtime_transport_conformance.py` websocket 实例，更新 facade、实施计划、TC-1 登记和执行游标。
+- 公共契约变化：TC-1 精确覆盖 capability、start/close、TLS/plaintext、text/binary/UTF-8/size、read/write queue、backpressure、keepalive、abnormal/remote close、concurrent/cancel/idempotent、shutdown order、disabled dependencies、error/safe diagnostics 和 send-not-ACK。未来 adapter 必须复用公共 harness，并为 raw frame/transport 特有项提供专项证据。
+- 测试结果：公共 conformance mixin 6 项全部通过；与 W01-W08 adapter 专项合并为 transport conformance `Ran 38, OK`（warnings-as-errors）。真实 loopback、可控慢 I/O 与 fresh-process dependency tests 均包含在内；compileall 与 `git diff --check` 通过。
+- 安全/隔离检查：公共并发 send 明确只返回 None 且 supervisor 中无 ack/delivery task，session 无 ack/DeliveryRecord API；shutdown case 验证 stop_admission 后旧 session 可受控处理、再 drain/close。没有业务 callback 或 stub success。
+- 已知限制：TC-1 的低基数 metrics evidence 由 W10 完成后追加阶段记录，不改变现有 22-case 身份；P05 connection.hello/IAM/Envelope business conformance 仍未开始且不属于 P04 transport adapter 自身。
+- 下一工作包：`P04-W10 transport metrics and lifecycle integration`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：

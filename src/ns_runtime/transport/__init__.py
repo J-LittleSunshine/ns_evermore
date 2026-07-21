@@ -2,6 +2,7 @@
 """Transport-independent runtime adapter contracts."""
 
 from .contracts import TransportAdapter, TransportSession
+from .conformance import TRANSPORT_CONFORMANCE_CASES, TransportConformanceCase
 from .errors import NormalizedTransportFailure, normalize_transport_exception
 from .identity import (
     TransportDiagnosticSummary,
@@ -45,6 +46,7 @@ __all__ = (
     "TransportClose",
     "TransportCloseInitiator",
     "TransportCloseReason",
+    "TransportConformanceCase",
     "TransportError",
     "TransportErrorKind",
     "TransportDiagnosticSummary",
@@ -56,6 +58,7 @@ __all__ = (
     "TransportSession",
     "TransportSessionState",
     "TRANSPORT_ADAPTER_NAMES",
+    "TRANSPORT_CONFORMANCE_CASES",
     "WEBSOCKET_TCP_CAPABILITIES",
     "WEBSOCKET_TCP_TRANSPORT_TYPE",
     "WebSocketTcpAdapter",
