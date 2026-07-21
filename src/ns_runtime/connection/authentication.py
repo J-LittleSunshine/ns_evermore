@@ -24,6 +24,7 @@ from .iam import (
     HandshakeIamRequest,
 )
 from .session import HandshakeSessionNegotiator, NegotiatedSession
+from .rejected import ConnectionHandshakeRejector, ConnectionRejectionReason
 from .state import LogicalConnectionCloseReason, LogicalConnectionState
 
 
@@ -58,6 +59,7 @@ class ConnectionHandshakeAuthenticator:
         task_sequence: int,
         timeout_seconds: float,
         session_negotiator: HandshakeSessionNegotiator | None = None,
+        handshake_rejector: ConnectionHandshakeRejector | None = None,
     ) -> None:
         if not isinstance(hello_receiver, ConnectionHelloReceiver):
             _invalid("hello_receiver")
@@ -86,6 +88,11 @@ class ConnectionHandshakeAuthenticator:
             HandshakeSessionNegotiator,
         ):
             _invalid("session_negotiator")
+        if handshake_rejector is not None and not isinstance(
+            handshake_rejector,
+            ConnectionHandshakeRejector,
+        ):
+            _invalid("handshake_rejector")
         started_at = clock.monotonic()
         deadline = started_at + float(timeout_seconds)
         if not math.isfinite(started_at) or not math.isfinite(deadline):
@@ -98,6 +105,8 @@ class ConnectionHandshakeAuthenticator:
         self._task_sequence = task_sequence
         self._deadline = deadline
         self._session_negotiator = session_negotiator
+        self._handshake_rejector = handshake_rejector
+        self._response_protocol = None
         self._claim_lock = asyncio.Lock()
         self._claimed = False
 
@@ -137,10 +146,11 @@ class ConnectionHandshakeAuthenticator:
             ):
                 if deadline_task.done():
                     deadline_task.result()
+                await _cancel_and_join(operation_task)
+                await self._reject_if_safe(ConnectionRejectionReason.IAM_UNAVAILABLE)
                 await self._terminate_isolated(
                     LogicalConnectionCloseReason.TIMEOUT_CLOSED,
                 )
-                await _cancel_and_join(operation_task)
                 raise NsRuntimeIamTimeoutError(
                     details={
                         "component": "logical_connection",
@@ -188,6 +198,7 @@ class ConnectionHandshakeAuthenticator:
         inbound = await self._hello_receiver.receive()
         try:
             parsed = self._claim_parser.parse(inbound)
+            self._response_protocol = inbound.protocol
         except Exception:
             await self._terminate_isolated(
                 LogicalConnectionCloseReason.PROTOCOL_FAILED,
@@ -205,12 +216,20 @@ class ConnectionHandshakeAuthenticator:
                 authority = await self._iam_adapter.authenticate(request)
             except asyncio.CancelledError:
                 raise
-            except (NsRuntimeIamDeniedError, NsRuntimeIamTimeoutError):
+            except NsRuntimeIamDeniedError:
+                await self._reject_if_safe(ConnectionRejectionReason.IAM_DENIED)
+                await self._terminate_isolated(
+                    LogicalConnectionCloseReason.AUTH_FAILED,
+                )
+                raise
+            except NsRuntimeIamTimeoutError:
+                await self._reject_if_safe(ConnectionRejectionReason.IAM_UNAVAILABLE)
                 await self._terminate_isolated(
                     LogicalConnectionCloseReason.AUTH_FAILED,
                 )
                 raise
             except Exception:
+                await self._reject_if_safe(ConnectionRejectionReason.IAM_UNAVAILABLE)
                 await self._terminate_isolated(
                     LogicalConnectionCloseReason.AUTH_FAILED,
                 )
@@ -223,6 +242,7 @@ class ConnectionHandshakeAuthenticator:
                 ) from None
 
             if type(authority) is not HandshakeIamAuthority:
+                await self._reject_if_safe(ConnectionRejectionReason.INTERNAL_FAILURE)
                 await self._terminate_isolated(
                     LogicalConnectionCloseReason.AUTH_FAILED,
                 )
@@ -237,6 +257,7 @@ class ConnectionHandshakeAuthenticator:
             try:
                 self._validate_authority(detached, claims=parsed.claims)
             except NsRuntimeIamDeniedError:
+                await self._reject_if_safe(ConnectionRejectionReason.AUTHORITY_INVALID)
                 await self._terminate_isolated(
                     LogicalConnectionCloseReason.AUTH_FAILED,
                 )
@@ -250,7 +271,8 @@ class ConnectionHandshakeAuthenticator:
                         claims=parsed.claims,
                         authority=detached,
                     )
-                except Exception:
+                except Exception as error:
+                    await self._reject_if_safe(_negotiation_rejection_reason(error))
                     await self._terminate_isolated(
                         LogicalConnectionCloseReason.PROTOCOL_FAILED,
                     )
@@ -293,6 +315,35 @@ class ConnectionHandshakeAuthenticator:
             await self._hello_receiver.terminate(reason)
         except Exception:
             pass
+
+    async def _reject_if_safe(self, reason: ConnectionRejectionReason) -> bool:
+        rejector = self._handshake_rejector
+        protocol = self._response_protocol
+        if rejector is None or protocol is None:
+            return False
+        return await rejector.send(protocol=protocol, reason=reason)
+
+
+def _negotiation_rejection_reason(error: Exception) -> ConnectionRejectionReason:
+    details = getattr(error, "details", {})
+    reason = details.get("reason") if isinstance(details, dict) else None
+    operation = details.get("operation") if isinstance(details, dict) else None
+    if operation == "capability_negotiation" or reason in {
+        "requested_capability_not_authorized",
+        "capability_not_registered",
+        "capability_protocol_incompatible",
+        "capability_transport_incompatible",
+    }:
+        return ConnectionRejectionReason.CAPABILITY_INCOMPATIBLE
+    if reason in {
+        "minimum_major_mismatch",
+        "minimum_exceeds_requested",
+        "compatible_version_not_found",
+    }:
+        return ConnectionRejectionReason.MINIMUM_VERSION_INCOMPATIBLE
+    if reason in {"major_not_supported", "requested_version_required"}:
+        return ConnectionRejectionReason.PROTOCOL_INCOMPATIBLE
+    return ConnectionRejectionReason.INTERNAL_FAILURE
 
 
 async def _cancel_and_join(task: asyncio.Task[object] | None) -> None:

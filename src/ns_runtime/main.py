@@ -180,6 +180,18 @@ def main(
         TransportRuntimeService,
         WebSocketTcpAdapterOptions,
     )
+    from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
+    from ns_runtime.connection import (
+        AcceptedHeartbeatPolicy,
+        ConnectionAcceptedEnvelopeBuilder,
+        ConnectionLifecycleManager,
+        ConnectionLifecyclePolicy,
+        ConnectionLifecycleProcessorRegistryFactory,
+        FailClosedHandshakeIamAdapter,
+        LocalConnectionIndex,
+    )
+    from ns_runtime.protocol import ErrorEnvelopeBuilder, JsonV1Codec
+    from ns_runtime.roles import RuntimeRole
 
     transport_metrics = TransportMetricsRecorder(
         clock=context.clock,
@@ -217,6 +229,51 @@ def main(
         context=build_context,
     )
     transport_manager = TransportManager(adapters)
+    identifier_factory = IdentifierFactory()
+    runtime_id = identifier_factory.generate(NsIdentifierKind.RUNTIME_ID)
+    logical_connection_manager = ConnectionLifecycleManager(
+        transport_manager=transport_manager,
+        connection_index=LocalConnectionIndex(),
+        clock=context.clock,
+        task_supervisor=context.task_supervisor,
+        identifier_factory=identifier_factory,
+        iam_adapter=FailClosedHandshakeIamAdapter(),
+        accepted_builder=ConnectionAcceptedEnvelopeBuilder(
+            clock=context.clock,
+            identifier_factory=identifier_factory,
+            runtime_id=runtime_id,
+            role=RuntimeRole(config.runtime.cluster.role),
+            heartbeat_policy=AcceptedHeartbeatPolicy(
+                interval_seconds=config.runtime.cluster.heartbeat_interval_seconds,
+                timeout_seconds=max(
+                    config.runtime.cluster.heartbeat_interval_seconds + 1,
+                    config.runtime.protocol.handshake_timeout_seconds,
+                ),
+            ),
+        ),
+        error_builder=ErrorEnvelopeBuilder(sanitizer=Sanitizer()),
+        logger=logger,
+        runtime_id=runtime_id,
+        policy=ConnectionLifecyclePolicy(
+            handshake_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
+            rejected_send_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
+            native_heartbeat_interval_seconds=(
+                config.runtime.cluster.heartbeat_interval_seconds
+            ),
+            envelope_heartbeat_timeout_seconds=max(
+                config.runtime.cluster.heartbeat_interval_seconds + 1,
+                config.runtime.protocol.handshake_timeout_seconds,
+            ),
+            drain_timeout_seconds=config.runtime.worker.shutdown_timeout_seconds,
+            reconnect_grace_seconds=30,
+            reauth_lead_seconds=min(
+                30,
+                config.runtime.iam.permission_snapshot_ttl_seconds,
+            ),
+        ),
+        codec=JsonV1Codec(),
+        processor_registry_factory=ConnectionLifecycleProcessorRegistryFactory(),
+    )
     event_loop_monitor = RuntimeEventLoopMonitor(
         context=context,
         implementation=startup_result.event_loop.selected,
@@ -226,6 +283,7 @@ def main(
         transport_manager=transport_manager,
         logger_close=logger.close,
         event_loop_monitor=event_loop_monitor,
+        logical_connection_owner=logical_connection_manager,
     )
     asyncio.run(_run_service_once(service))
 

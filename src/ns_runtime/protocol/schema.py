@@ -10,6 +10,7 @@ from typing import Mapping
 from ns_common.exceptions import NsRuntimeEnvelopeSchemaError
 
 from .models import ENVELOPE_GROUP_NAMES, Envelope, PayloadGroup
+from .extensions import ExtensionNamespaceRegistry
 
 
 def _schema_error(group: str, field: str, reason: str) -> NsRuntimeEnvelopeSchemaError:
@@ -52,6 +53,7 @@ class MessageTypeSchema:
     required_groups: tuple[str, ...] = ()
     forbidden_groups: tuple[str, ...] = ()
     inline_payload: InlinePayloadSchema | None = None
+    extension_registry: ExtensionNamespaceRegistry | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.message_type, str) or not self.message_type:
@@ -67,6 +69,11 @@ class MessageTypeSchema:
             raise TypeError("inline_payload must be InlinePayloadSchema")
         if self.inline_payload is not None and "payload" not in self.required_groups:
             raise ValueError("inline payload schema requires the payload group")
+        if self.extension_registry is not None and not isinstance(
+            self.extension_registry,
+            ExtensionNamespaceRegistry,
+        ):
+            raise TypeError("extension_registry must be ExtensionNamespaceRegistry")
 
 
 class EnvelopeSchemaValidator:
@@ -118,6 +125,11 @@ class EnvelopeSchemaValidator:
                 raise _schema_error(group, group, "group_not_allowed")
         if schema.inline_payload is not None:
             _validate_inline_payload(envelope.payload, schema.inline_payload)
+        if schema.extension_registry is not None:
+            schema.extension_registry.validate(
+                envelope.extensions,
+                authorized_capabilities=frozenset(),
+            )
 
 
 def _validate_inline_payload(

@@ -69,12 +69,19 @@ class RuntimeProtocolFeatureDisabledProcessorTestCase(unittest.IsolatedAsyncioTe
             if not contract.feature_enabled
         }
         self.assertEqual(disabled, set(self.processors))
-        self.assertEqual(49, len(self.processors))
+        self.assertEqual(40, len(self.processors))
         self.assertTrue(all(
             isinstance(processor, FeatureDisabledProcessor)
             for processor in self.processors.values()
         ))
         self.assertNotIn("runtime.error", self.processors)
+        for message_type in (
+            "connection.hello", "connection.accepted", "connection.rejected",
+            "connection.reauth", "connection.reauth_accepted",
+            "connection.reauth_rejected", "connection.heartbeat",
+            "connection.heartbeat_ack", "connection.drain",
+        ):
+            self.assertNotIn(message_type, self.processors)
 
     async def test_task_ack_and_management_requests_only_return_stable_error(self) -> None:
         cases = (

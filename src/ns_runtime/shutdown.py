@@ -15,7 +15,10 @@ from typing import Callable
 from ns_common.async_runtime import NsTaskShutdownReport
 from ns_common.exceptions import NsValidationError
 from ns_runtime.context import RuntimeContext
-from ns_runtime._transport_lifecycle_contract import TransportLifecycleOwner
+from ns_runtime._transport_lifecycle_contract import (
+    LogicalConnectionLifecycleOwner,
+    TransportLifecycleOwner,
+)
 
 
 class RuntimeShutdownReason(str, Enum):
@@ -29,6 +32,8 @@ class RuntimeShutdownReason(str, Enum):
 
 class RuntimeShutdownPhase(str, Enum):
     STOP_ADMISSION = "stop_admission"
+    STOP_LOGICAL_ADMISSION = "stop_logical_admission"
+    DRAIN_LOGICAL_CONNECTIONS = "drain_logical_connections"
     DRAIN_TRANSPORT = "drain_transport"
     CLOSE_TRANSPORT = "close_transport"
     CANCEL_TASKS = "cancel_tasks"
@@ -147,6 +152,7 @@ class RuntimeShutdownCoordinator:
         context: RuntimeContext,
         logger_close: Callable[[], None] | None = None,
         transport_owner: TransportLifecycleOwner | None = None,
+        logical_connection_owner: LogicalConnectionLifecycleOwner | None = None,
     ) -> None:
         if not isinstance(context, RuntimeContext):
             raise NsValidationError(
@@ -181,9 +187,23 @@ class RuntimeShutdownCoordinator:
                     "actual_type": type(transport_owner).__name__,
                 },
             )
+        if logical_connection_owner is not None and not isinstance(
+            logical_connection_owner,
+            LogicalConnectionLifecycleOwner,
+        ):
+            raise NsValidationError(
+                "Runtime shutdown logical connection owner is invalid.",
+                details={
+                    "component": "runtime_shutdown",
+                    "dependency": "logical_connection_owner",
+                    "expected_type": "LogicalConnectionLifecycleOwner",
+                    "actual_type": type(logical_connection_owner).__name__,
+                },
+            )
         self._context = context
         self._logger_close = logger_close
         self._transport_owner = transport_owner
+        self._logical_connection_owner = logical_connection_owner
         self._admission_open = True
         self._requested = asyncio.Event()
         self._reason: RuntimeShutdownReason | None = None
@@ -231,6 +251,15 @@ class RuntimeShutdownCoordinator:
                     resource="transport_owner",
                     error_type=type(error).__name__,
                 ))
+        if self._logical_connection_owner is not None:
+            try:
+                self._logical_connection_owner.stop_admission_now()
+            except Exception as error:
+                self._admission_failures.append(RuntimeShutdownFailure(
+                    phase=RuntimeShutdownPhase.STOP_LOGICAL_ADMISSION,
+                    resource="logical_connection_owner",
+                    error_type=type(error).__name__,
+                ))
         self._requested.set()
         return True
 
@@ -264,6 +293,24 @@ class RuntimeShutdownCoordinator:
                     self._transport_owner.stop_admission,
                     phase=RuntimeShutdownPhase.STOP_ADMISSION,
                     resource="transport_owner",
+                    failures=failures,
+                )
+
+            phases.append(RuntimeShutdownPhase.STOP_LOGICAL_ADMISSION)
+            if self._logical_connection_owner is not None:
+                await self._attempt_async(
+                    self._logical_connection_owner.stop_admission,
+                    phase=RuntimeShutdownPhase.STOP_LOGICAL_ADMISSION,
+                    resource="logical_connection_owner",
+                    failures=failures,
+                )
+
+            phases.append(RuntimeShutdownPhase.DRAIN_LOGICAL_CONNECTIONS)
+            if self._logical_connection_owner is not None:
+                await self._attempt_async(
+                    self._logical_connection_owner.drain,
+                    phase=RuntimeShutdownPhase.DRAIN_LOGICAL_CONNECTIONS,
+                    resource="logical_connection_owner",
                     failures=failures,
                 )
 

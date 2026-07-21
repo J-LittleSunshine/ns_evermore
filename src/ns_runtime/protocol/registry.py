@@ -12,9 +12,25 @@ from ns_common.exceptions import NsRuntimeUnsupportedMessageTypeError
 
 from .schema import InlinePayloadSchema, MessageTypeSchema
 from .schema import EnvelopeSchemaValidator
+from .extensions import (
+    ExtensionNamespaceContract,
+    ExtensionNamespaceRegistry,
+    ExtensionObjectSchema,
+)
 
 
 CURRENT_PROTOCOL_SCHEMA_KEY = "json.v1/protocol-1.0"
+CONNECTION_HELLO_RESUME_NAMESPACE = "ns.connection_resume"
+CONNECTION_HELLO_EXTENSION_REGISTRY = ExtensionNamespaceRegistry((
+    ExtensionNamespaceContract(
+        namespace=CONNECTION_HELLO_RESUME_NAMESPACE,
+        schema=ExtensionObjectSchema(
+            required_fields=("connection_id", "connection_epoch"),
+            optional_fields=("session_id",),
+        ),
+        enabled=True,
+    ),
+))
 
 BUILTIN_MESSAGE_FAMILIES: tuple[str, ...] = (
     "connection",
@@ -56,6 +72,12 @@ class MessageAuditLevel(str, Enum):
     SECURITY = "security"
 
 
+class MessageDirection(str, Enum):
+    INBOUND = "inbound"
+    OUTBOUND = "outbound"
+    BIDIRECTIONAL = "bidirectional"
+
+
 @dataclass(frozen=True, slots=True)
 class MessageTypeContract:
     message_type: str
@@ -66,6 +88,7 @@ class MessageTypeContract:
     required_capabilities: tuple[str, ...]
     processor_key: str
     audit_level: MessageAuditLevel
+    direction: MessageDirection
     feature_flag: str
     feature_enabled: bool
     response_types: tuple[str, ...]
@@ -87,6 +110,8 @@ class MessageTypeContract:
                 raise ValueError(f"{name} must be a non-empty string")
         if not isinstance(self.audit_level, MessageAuditLevel):
             raise TypeError("audit_level must be MessageAuditLevel")
+        if not isinstance(self.direction, MessageDirection):
+            raise TypeError("direction must be MessageDirection")
         if type(self.feature_enabled) is not bool:
             raise TypeError("feature_enabled must be a boolean")
         if not isinstance(self.schemas, Mapping) or not self.schemas:
@@ -120,6 +145,7 @@ class MessageTypeContract:
             "required_capabilities": self.required_capabilities,
             "processor_key": self.processor_key,
             "audit_level": self.audit_level.value,
+            "direction": self.direction.value,
             "feature_flag": self.feature_flag,
             "feature_enabled": self.feature_enabled,
             "response_types": self.response_types,
@@ -205,6 +231,7 @@ def _contract(
     forbidden_groups: tuple[str, ...] = (),
     payload_required: tuple[str, ...] | None = None,
     payload_optional: tuple[str, ...] = (),
+    extension_registry: ExtensionNamespaceRegistry | None = None,
 ) -> MessageTypeContract:
     inline_payload = (
         None
@@ -219,6 +246,7 @@ def _contract(
         required_groups=required_groups,
         forbidden_groups=forbidden_groups,
         inline_payload=inline_payload,
+        extension_registry=extension_registry,
     )
     return MessageTypeContract(
         message_type=message_type,
@@ -229,8 +257,12 @@ def _contract(
         required_capabilities=_required_capabilities(message_type, family),
         processor_key=message_type,
         audit_level=_audit_level(message_type, family),
+        direction=_DIRECTION_BY_TYPE.get(
+            message_type,
+            MessageDirection.BIDIRECTIONAL,
+        ),
         feature_flag=_FEATURE_FLAG_BY_FAMILY[family],
-        feature_enabled=message_type == "runtime.error",
+        feature_enabled=message_type in _ENABLED_MESSAGE_TYPES,
         response_types=_RESPONSE_TYPES.get(message_type, ()),
     )
 
@@ -276,6 +308,34 @@ _RESPONSE_TYPES: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "config.update": ("config.updated", "config.rejected", "runtime.error"),
 })
 
+_P05_CONNECTION_MESSAGE_TYPES = frozenset({
+    "connection.hello",
+    "connection.accepted",
+    "connection.rejected",
+    "connection.reauth",
+    "connection.reauth_accepted",
+    "connection.reauth_rejected",
+    "connection.heartbeat",
+    "connection.heartbeat_ack",
+    "connection.drain",
+})
+_ENABLED_MESSAGE_TYPES = frozenset({
+    *_P05_CONNECTION_MESSAGE_TYPES,
+    "runtime.error",
+})
+_DIRECTION_BY_TYPE: Mapping[str, MessageDirection] = MappingProxyType({
+    "connection.hello": MessageDirection.INBOUND,
+    "connection.accepted": MessageDirection.OUTBOUND,
+    "connection.rejected": MessageDirection.OUTBOUND,
+    "connection.reauth": MessageDirection.INBOUND,
+    "connection.reauth_accepted": MessageDirection.OUTBOUND,
+    "connection.reauth_rejected": MessageDirection.OUTBOUND,
+    "connection.heartbeat": MessageDirection.INBOUND,
+    "connection.heartbeat_ack": MessageDirection.OUTBOUND,
+    "connection.drain": MessageDirection.INBOUND,
+    "runtime.error": MessageDirection.OUTBOUND,
+})
+
 
 def _default_reliability(message_type: str, family: str) -> MessageReliability:
     if message_type in {
@@ -289,7 +349,7 @@ def _default_reliability(message_type: str, family: str) -> MessageReliability:
 
 
 def _required_capabilities(message_type: str, family: str) -> tuple[str, ...]:
-    if message_type == "connection.hello":
+    if message_type in _P05_CONNECTION_MESSAGE_TYPES:
         return ()
     if family == "connection":
         return ("runtime.connection",)
@@ -331,21 +391,48 @@ def _validate_string_tuple(value: tuple[str, ...], field_name: str) -> None:
 BUILTIN_MESSAGE_CONTRACTS: tuple[MessageTypeContract, ...] = (
     _contract(
         "connection.hello", "connection", required_groups=("payload",),
-        forbidden_groups=("delivery", "stream", "route"),
+        forbidden_groups=(
+            "source", "target", "route", "delivery", "stream",
+            "auth_context", "callback", "trace",
+        ),
         payload_required=("token", "component_type", "requested_version"),
         payload_optional=("min_version", "requested_capabilities"),
+        extension_registry=CONNECTION_HELLO_EXTENSION_REGISTRY,
     ),
-    _contract("connection.accepted", "connection", required_groups=("payload",)),
-    _contract("connection.rejected", "connection", required_groups=("payload",)),
+    _contract(
+        "connection.accepted", "connection", required_groups=("payload",),
+        forbidden_groups=(
+            "source", "target", "route", "delivery", "stream",
+            "auth_context", "callback", "trace", "extensions",
+        ),
+        payload_required=(
+            "connection_id", "session_id", "protocol_version", "heartbeat",
+            "session_expires_at", "server_time", "runtime_id", "role",
+        ),
+    ),
+    _contract(
+        "connection.rejected", "connection", required_groups=("payload",),
+        forbidden_groups=(
+            "source", "target", "route", "delivery", "stream",
+            "auth_context", "callback", "trace", "extensions",
+        ),
+        payload_required=("reason", "server_time", "retryable"),
+    ),
     _contract(
         "connection.reauth", "connection", required_groups=("payload",),
-        forbidden_groups=("target", "route", "delivery", "stream", "callback", "extensions"),
+        forbidden_groups=(
+            "source", "target", "route", "delivery", "stream",
+            "auth_context", "callback", "trace", "extensions",
+        ),
         payload_required=("token",),
         payload_optional=("requested_capabilities",),
     ),
     _contract(
         "connection.reauth_accepted", "connection", required_groups=("payload",),
-        forbidden_groups=("target", "route", "delivery", "stream", "callback", "extensions"),
+        forbidden_groups=(
+            "source", "target", "route", "delivery", "stream",
+            "auth_context", "callback", "trace", "extensions",
+        ),
         payload_required=(
             "session_id", "connection_epoch", "session_expires_at",
             "server_time", "capabilities_changed",
@@ -353,12 +440,41 @@ BUILTIN_MESSAGE_CONTRACTS: tuple[MessageTypeContract, ...] = (
     ),
     _contract(
         "connection.reauth_rejected", "connection", required_groups=("payload",),
-        forbidden_groups=("target", "route", "delivery", "stream", "callback", "extensions"),
+        forbidden_groups=(
+            "source", "target", "route", "delivery", "stream",
+            "auth_context", "callback", "trace", "extensions",
+        ),
         payload_required=("reason", "server_time", "connection_closing"),
     ),
-    _contract("connection.heartbeat", "connection"),
-    _contract("connection.heartbeat_ack", "connection"),
-    _contract("connection.drain", "connection"),
+    _contract(
+        "connection.heartbeat", "connection", required_groups=("payload",),
+        forbidden_groups=(
+            "source", "target", "route", "delivery", "stream",
+            "auth_context", "callback", "trace", "extensions",
+        ),
+        payload_required=(
+            "connection_id", "session_id", "connection_epoch", "sequence",
+            "sent_at",
+        ),
+    ),
+    _contract(
+        "connection.heartbeat_ack", "connection", required_groups=("payload",),
+        forbidden_groups=(
+            "source", "target", "route", "delivery", "stream",
+            "auth_context", "callback", "trace", "extensions",
+        ),
+        payload_required=(
+            "connection_id", "session_id", "connection_epoch", "sequence",
+            "server_time",
+        ),
+    ),
+    _contract(
+        "connection.drain", "connection",
+        forbidden_groups=(
+            "source", "target", "route", "delivery", "stream",
+            "auth_context", "payload", "callback", "trace", "extensions",
+        ),
+    ),
     _contract("task.dispatch", "task", required_groups=("target", "payload")),
     _contract("task.result", "task", required_groups=("target", "payload")),
     _contract("task.callback", "task", required_groups=("target", "payload")),
@@ -417,8 +533,11 @@ __all__ = (
     "BUILTIN_MESSAGE_FAMILIES",
     "BUILTIN_MESSAGE_REGISTRY",
     "CURRENT_PROTOCOL_SCHEMA_KEY",
+    "CONNECTION_HELLO_EXTENSION_REGISTRY",
+    "CONNECTION_HELLO_RESUME_NAMESPACE",
     "MessageAuditLevel",
     "MessageCategory",
+    "MessageDirection",
     "MessageReliability",
     "MessageTypeContract",
     "MessageTypeRegistry",

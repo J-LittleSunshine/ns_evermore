@@ -177,29 +177,36 @@ class ConnectionHeartbeatService:
             )
 
     async def handle_text(self, text: str) -> EnvelopeHeartbeatOutcome:
-        try:
-            inbound = self._codec.decode_inbound(text)
-            if inbound.message.type != "connection.heartbeat":
-                raise _heartbeat_error("heartbeat_message_required")
-            shape = Envelope(
-                protocol=inbound.protocol,
-                message=inbound.message,
-                target=inbound.target,
-                route=inbound.route,
-                delivery=inbound.delivery,
-                stream=inbound.stream,
-                payload=inbound.payload,
-                callback=inbound.callback,
-                trace=inbound.trace,
-                extensions=inbound.extensions,
-            )
-            self._registry.validate_envelope(
-                shape,
-                self._context.protocol_schema_key,
-            )
-            payload = _parse_heartbeat_payload(inbound.payload)
-        except Exception:
-            raise
+        inbound = self._codec.decode_inbound(text)
+        shape = Envelope(
+            protocol=inbound.protocol,
+            message=inbound.message,
+            target=inbound.target,
+            route=inbound.route,
+            delivery=inbound.delivery,
+            stream=inbound.stream,
+            payload=inbound.payload,
+            callback=inbound.callback,
+            trace=inbound.trace,
+            extensions=inbound.extensions,
+        )
+        validated = self._registry.validate_envelope(
+            shape,
+            self._context.protocol_schema_key,
+        )
+        return await self.process_envelope(validated)
+
+    async def process_envelope(
+        self,
+        envelope: Envelope,
+    ) -> EnvelopeHeartbeatOutcome:
+        """Execute one already P03-validated heartbeat Envelope."""
+
+        if not isinstance(envelope, Envelope):
+            _invalid("envelope")
+        if envelope.message.type != "connection.heartbeat":
+            raise _heartbeat_error("heartbeat_message_required")
+        payload = _parse_heartbeat_payload(envelope.payload)
 
         async with self._lifecycle_lock:
             if self._terminal_reason is not None:
@@ -249,6 +256,32 @@ class ConnectionHeartbeatService:
             if self._terminal_reason is None:
                 await self._terminate_unlocked(LogicalConnectionCloseReason.SHUTDOWN)
         await self._cancel_background_tasks()
+
+    async def detach_for_reconnect(self) -> None:
+        """Stop transport-bound heartbeat tasks without closing logical state."""
+
+        async with self._lifecycle_lock:
+            self._running = False
+        await self._cancel_background_tasks()
+
+    async def replace_session_context(self, session_context: SessionContext) -> None:
+        """Adopt a successfully published same-session reauth authority."""
+
+        if not isinstance(session_context, SessionContext):
+            _invalid("session_context")
+        async with self._lifecycle_lock:
+            if (
+                session_context.connection_id != self._context.connection_id
+                or session_context.session_id != self._context.session_id
+                or session_context.connection_epoch != self._context.connection_epoch
+            ):
+                _state_error("heartbeat_context_identity_changed")
+            entry = await self._index.lookup_connection(
+                session_context.connection_id,
+            )
+            if entry is None or entry.session_context != session_context:
+                _state_error("heartbeat_context_not_published")
+            self._context = session_context
 
     async def snapshot(self) -> HeartbeatSnapshot:
         async with self._lifecycle_lock:

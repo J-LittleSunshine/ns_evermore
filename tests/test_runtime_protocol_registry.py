@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import unittest
 
-from ns_common.exceptions import NsRuntimeUnsupportedMessageTypeError
+from ns_common.exceptions import (
+    NsRuntimeEnvelopeSchemaError,
+    NsRuntimeUnsupportedMessageTypeError,
+)
 from ns_runtime.protocol import (
     BUILTIN_MESSAGE_CONTRACTS,
     BUILTIN_MESSAGE_FAMILIES,
@@ -11,6 +14,7 @@ from ns_runtime.protocol import (
     CURRENT_PROTOCOL_SCHEMA_KEY,
     MessageAuditLevel,
     MessageCategory,
+    MessageDirection,
     MessageReliability,
     envelope_from_mapping,
 )
@@ -85,13 +89,19 @@ class RuntimeProtocolRegistryTestCase(unittest.TestCase):
                 self.assertIsInstance(contract.required_capabilities, tuple)
                 self.assertTrue(contract.processor_key)
                 self.assertIsInstance(contract.audit_level, MessageAuditLevel)
+                self.assertIsInstance(contract.direction, MessageDirection)
                 self.assertTrue(contract.feature_flag)
                 self.assertIs(type(contract.feature_enabled), bool)
                 self.assertIsInstance(contract.response_types, tuple)
                 for response_type in contract.response_types:
                     self.assertIsNotNone(BUILTIN_MESSAGE_REGISTRY.get(response_type))
         self.assertEqual(
-            {"runtime.error"},
+            {
+                "connection.hello", "connection.accepted", "connection.rejected",
+                "connection.reauth", "connection.reauth_accepted",
+                "connection.reauth_rejected", "connection.heartbeat",
+                "connection.heartbeat_ack", "connection.drain", "runtime.error",
+            },
             {
                 contract.message_type
                 for contract in BUILTIN_MESSAGE_CONTRACTS
@@ -109,6 +119,16 @@ class RuntimeProtocolRegistryTestCase(unittest.TestCase):
                     "created_at": "2026-07-20T12:00:00Z",
                     "reliability": reliability,
                 },
+                "payload": {
+                    "mode": "inline",
+                    "inline": {
+                        "connection_id": "connection_1",
+                        "session_id": "session_1",
+                        "connection_epoch": 0,
+                        "sequence": 1,
+                        "sent_at": "2026-07-20T12:00:00Z",
+                    },
+                },
             })
 
         self.assertIsNotNone(BUILTIN_MESSAGE_REGISTRY.validate_envelope(
@@ -122,6 +142,145 @@ class RuntimeProtocolRegistryTestCase(unittest.TestCase):
                 with self.assertRaises(Exception) as context:
                     BUILTIN_MESSAGE_REGISTRY.validate_envelope(
                         make(category, reliability), CURRENT_PROTOCOL_SCHEMA_KEY,
+                    )
+                self.assertEqual(reason, context.exception.details["reason"])
+
+    def test_p05_directions_and_lifecycle_capabilities_are_explicit(self) -> None:
+        inbound = {"connection.hello", "connection.reauth", "connection.heartbeat", "connection.drain"}
+        outbound = {
+            "connection.accepted", "connection.rejected",
+            "connection.reauth_accepted", "connection.reauth_rejected",
+            "connection.heartbeat_ack",
+        }
+        for message_type in inbound:
+            contract = BUILTIN_MESSAGE_REGISTRY.require(message_type)
+            self.assertIs(MessageDirection.INBOUND, contract.direction)
+            self.assertEqual((), contract.required_capabilities)
+        for message_type in outbound:
+            contract = BUILTIN_MESSAGE_REGISTRY.require(message_type)
+            self.assertIs(MessageDirection.OUTBOUND, contract.direction)
+            self.assertEqual((), contract.required_capabilities)
+
+    def test_p05_exact_schema_rejects_illegal_groups_and_payload_fields(self) -> None:
+        base = {
+            "protocol": {"major": 1, "minor": 0, "patch": 0},
+            "message": {
+                "message_id": "message_1",
+                "category": "connection",
+                "priority": 0,
+                "created_at": "2026-07-21T00:00:00Z",
+                "reliability": "best_effort",
+            },
+        }
+        cases = (
+            (
+                "connection.hello",
+                {
+                    "payload": {
+                        "mode": "inline",
+                        "inline": {
+                            "token": "opaque",
+                            "component_type": "client",
+                            "requested_version": "1.0.0",
+                        },
+                    },
+                    "target": {"kind": "runtime", "runtime_id": "runtime_1"},
+                },
+                "group_not_allowed",
+            ),
+            (
+                "connection.hello",
+                {
+                    "payload": {
+                        "mode": "inline",
+                        "inline": {
+                            "token": "opaque",
+                            "component_type": "client",
+                            "requested_version": "1.0.0",
+                        },
+                    },
+                    "extensions": {
+                        "attacker.resume": {"connection_id": "connection_1"},
+                    },
+                },
+                "namespace_not_registered",
+            ),
+            (
+                "connection.hello",
+                {
+                    "payload": {
+                        "mode": "inline",
+                        "inline": {
+                            "token": "opaque",
+                            "component_type": "client",
+                            "requested_version": "1.0.0",
+                        },
+                    },
+                    "extensions": {
+                        "ns.connection_resume": {
+                            "connection_id": "connection_1",
+                            "connection_epoch": 0,
+                            "credential": "attacker",
+                        },
+                    },
+                },
+                "extension_field_not_allowed",
+            ),
+            (
+                "connection.heartbeat",
+                {
+                    "payload": {
+                        "mode": "inline",
+                        "inline": {
+                            "connection_id": "connection_1",
+                            "session_id": "session_1",
+                            "connection_epoch": 0,
+                            "sequence": 1,
+                        },
+                    },
+                },
+                "message_field_missing",
+            ),
+            (
+                "connection.heartbeat",
+                {
+                    "payload": {
+                        "mode": "inline",
+                        "inline": {
+                            "connection_id": "connection_1",
+                            "session_id": "session_1",
+                            "connection_epoch": 0,
+                            "sequence": 1,
+                            "sent_at": "2026-07-21T00:00:00Z",
+                            "target": "attacker",
+                        },
+                    },
+                },
+                "message_field_not_allowed",
+            ),
+            (
+                "connection.drain",
+                {"payload": {"mode": "inline", "inline": {"force": True}}},
+                "group_not_allowed",
+            ),
+            (
+                "connection.drain",
+                {"target": {"kind": "runtime", "runtime_id": "runtime_1"}},
+                "group_not_allowed",
+            ),
+        )
+        for message_type, groups, reason in cases:
+            with self.subTest(message_type=message_type, reason=reason):
+                value = {
+                    **base,
+                    "message": {**base["message"], "type": message_type},
+                    **groups,
+                }
+                envelope = envelope_from_mapping(value)
+                with self.assertRaises(NsRuntimeEnvelopeSchemaError) as context:
+                    BUILTIN_MESSAGE_REGISTRY.validate_envelope(
+                        envelope,
+                        CURRENT_PROTOCOL_SCHEMA_KEY,
                     )
                 self.assertEqual(reason, context.exception.details["reason"])
 

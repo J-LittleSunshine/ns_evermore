@@ -21,5 +21,16 @@ class TransportLifecycleOwner(Protocol):
         """Idempotently close all adapters and listeners."""
 
 
-__all__ = ("TransportLifecycleOwner",)
+@runtime_checkable
+class LogicalConnectionLifecycleOwner(Protocol):
+    def stop_admission_now(self) -> None:
+        """Synchronously prevent new logical accept/read ownership."""
 
+    async def stop_admission(self) -> None:
+        """Stop and join supervised logical accept loops."""
+
+    async def drain(self) -> None:
+        """Boundedly drain/close logical connections and lifecycle tasks."""
+
+
+__all__ = ("LogicalConnectionLifecycleOwner", "TransportLifecycleOwner")

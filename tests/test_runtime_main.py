@@ -91,6 +91,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                 transport_manager: object,
                 logger_close: object,
                 event_loop_monitor: object,
+                logical_connection_owner: object,
             ) -> None:
                 from ns_runtime.shutdown import RuntimeShutdownCoordinator
 
@@ -100,6 +101,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                     context=context,  # type: ignore[arg-type]
                     logger_close=logger_close,  # type: ignore[arg-type]
                     transport_owner=transport_manager,  # type: ignore[arg-type]
+                    logical_connection_owner=logical_connection_owner,  # type: ignore[arg-type]
                 )
                 self.event_loop_monitor = event_loop_monitor
 

@@ -10,25 +10,16 @@ from typing import Mapping
 from ns_common.exceptions import NsRuntimeEnvelopeSchemaError, NsValidationError
 from ns_common.identifiers import NsIdentifierKind, validate_identifier
 from ns_runtime.protocol import (
-    ExtensionNamespaceContract,
     ExtensionNamespaceRegistry,
-    ExtensionObjectSchema,
+    CONNECTION_HELLO_EXTENSION_REGISTRY,
+    CONNECTION_HELLO_RESUME_NAMESPACE,
     InboundEnvelope,
     ProtocolVersion,
 )
 
 
-HELLO_RESUME_NAMESPACE = "ns.connection_resume"
-HELLO_EXTENSION_REGISTRY = ExtensionNamespaceRegistry((
-    ExtensionNamespaceContract(
-        namespace=HELLO_RESUME_NAMESPACE,
-        schema=ExtensionObjectSchema(
-            required_fields=("connection_id", "connection_epoch"),
-            optional_fields=("session_id",),
-        ),
-        enabled=True,
-    ),
-))
+HELLO_RESUME_NAMESPACE = CONNECTION_HELLO_RESUME_NAMESPACE
+HELLO_EXTENSION_REGISTRY = CONNECTION_HELLO_EXTENSION_REGISTRY
 
 _CAPABILITY_PATTERN = re.compile(
     r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+"

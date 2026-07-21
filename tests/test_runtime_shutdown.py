@@ -82,6 +82,37 @@ class _ListHandler(logging.Handler):
         self.records.append(record)
 
 
+class _RecordingTransportLifecycleOwner:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def stop_admission_now(self) -> None:
+        self.events.append("transport:stop-now")
+
+    async def stop_admission(self) -> None:
+        self.events.append("transport:stop")
+
+    async def drain(self) -> None:
+        self.events.append("transport:drain")
+
+    async def close(self) -> None:
+        self.events.append("transport:close")
+
+
+class _RecordingLogicalLifecycleOwner:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def stop_admission_now(self) -> None:
+        self.events.append("logical:stop-now")
+
+    async def stop_admission(self) -> None:
+        self.events.append("logical:stop")
+
+    async def drain(self) -> None:
+        self.events.append("logical:drain")
+
+
 def _context(
     *,
     logger: logging.Logger,
@@ -106,6 +137,42 @@ def _context(
 
 
 class RuntimeShutdownCoordinatorTestCase(unittest.IsolatedAsyncioTestCase):
+
+    async def test_p05_logical_owner_precedes_transport_drain_and_supervisor(self) -> None:
+        events: list[str] = []
+        supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
+        context = _context(
+            logger=logging.Logger("runtime-p05-shutdown-order"),
+            supervisor=supervisor,
+            metrics=InMemoryMetricsSink(),
+            traces=InMemoryTraceSink(),
+        )
+        coordinator = RuntimeShutdownCoordinator(
+            context=context,
+            transport_owner=_RecordingTransportLifecycleOwner(events),
+            logical_connection_owner=_RecordingLogicalLifecycleOwner(events),
+        )
+
+        coordinator.request_shutdown(RuntimeShutdownReason.SERVICE_STOP)
+        report = await coordinator.shutdown()
+
+        self.assertTrue(report.clean)
+        self.assertEqual(
+            [
+                "transport:stop-now",
+                "logical:stop-now",
+                "transport:stop",
+                "logical:stop",
+                "logical:drain",
+                "transport:drain",
+                "transport:close",
+            ],
+            events,
+        )
+        self.assertLess(
+            report.phases.index(RuntimeShutdownPhase.DRAIN_LOGICAL_CONNECTIONS),
+            report.phases.index(RuntimeShutdownPhase.DRAIN_TRANSPORT),
+        )
 
     async def test_shutdown_order_summary_and_repetition_are_deterministic(
         self,

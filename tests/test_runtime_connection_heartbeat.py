@@ -7,7 +7,11 @@ import unittest
 from uuid import UUID
 
 from ns_common.async_runtime import TaskSupervisor
-from ns_common.exceptions import NsRuntimeProtocolViolationError, NsStateError
+from ns_common.exceptions import (
+    NsRuntimeEnvelopeSchemaError,
+    NsRuntimeProtocolViolationError,
+    NsStateError,
+)
 from ns_common.identifiers import IdentifierFactory
 from ns_common.time import ControlledClock
 from ns_runtime.connection import (
@@ -196,12 +200,17 @@ class ConnectionHeartbeatTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, self.clock.pending_sleep_count)
 
     async def test_malformed_or_non_heartbeat_never_reaches_lifecycle_handler(self) -> None:
-        with self.assertRaises(NsRuntimeProtocolViolationError):
+        with self.assertRaises(NsRuntimeEnvelopeSchemaError) as wrong_type:
             await self.service.handle_text(_heartbeat(sequence=1, message_type="connection.drain"))
+        self.assertEqual("group_not_allowed", wrong_type.exception.details["reason"])
         malformed = json.loads(_heartbeat(sequence=1))
         malformed["payload"]["inline"]["unexpected"] = "attacker"
-        with self.assertRaises(NsRuntimeProtocolViolationError):
+        with self.assertRaises(NsRuntimeEnvelopeSchemaError) as malformed_error:
             await self.service.handle_text(json.dumps(malformed))
+        self.assertEqual(
+            "message_field_not_allowed",
+            malformed_error.exception.details["reason"],
+        )
         self.assertEqual([], self.transport.sent)
 
 

@@ -17,6 +17,7 @@ from ns_runtime.context import RuntimeContext
 from ns_runtime.event_loop_observability import RuntimeEventLoopMonitor
 from ns_runtime.service import RuntimeService
 from ns_runtime.shutdown import RuntimeShutdownCoordinator
+from ns_runtime._transport_lifecycle_contract import LogicalConnectionLifecycleOwner
 
 from .contracts import TransportAdapter
 
@@ -123,7 +124,7 @@ class TransportManager:
 
 
 class TransportRuntimeService(RuntimeService):
-    """RuntimeService specialization that starts the P04 transport manager."""
+    """RuntimeService specialization for P04 transport and optional P05 owner."""
 
     def __init__(
         self,
@@ -132,14 +133,22 @@ class TransportRuntimeService(RuntimeService):
         transport_manager: TransportManager,
         logger_close: Callable[[], None] | None = None,
         event_loop_monitor: RuntimeEventLoopMonitor | None = None,
+        logical_connection_owner: LogicalConnectionLifecycleOwner | None = None,
     ) -> None:
         if not isinstance(transport_manager, TransportManager):
             _invalid("transport_manager")
         self._transport_manager = transport_manager
+        if logical_connection_owner is not None and not isinstance(
+            logical_connection_owner,
+            LogicalConnectionLifecycleOwner,
+        ):
+            _invalid("logical_connection_owner")
+        self._logical_connection_owner = logical_connection_owner
         coordinator = RuntimeShutdownCoordinator(
             context=context,
             logger_close=logger_close,
             transport_owner=transport_manager,
+            logical_connection_owner=logical_connection_owner,
         )
         super().__init__(
             context=context,
@@ -151,8 +160,21 @@ class TransportRuntimeService(RuntimeService):
     def transport_manager(self) -> TransportManager:
         return self._transport_manager
 
+    @property
+    def logical_connection_owner(self) -> LogicalConnectionLifecycleOwner | None:
+        return self._logical_connection_owner
+
     async def _on_start(self) -> None:
         await self._transport_manager.start()
+        if self._logical_connection_owner is not None:
+            try:
+                await self._logical_connection_owner.start()  # type: ignore[attr-defined]
+            except BaseException:
+                try:
+                    await self._transport_manager.close()
+                except Exception:
+                    pass
+                raise
 
 
 def _lifecycle_error(operation: str) -> NsRuntimeTransportError:
@@ -178,4 +200,3 @@ __all__ = (
     "TransportManagerState",
     "TransportRuntimeService",
 )
-

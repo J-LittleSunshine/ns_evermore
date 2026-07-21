@@ -172,8 +172,6 @@ class ConnectionReauthEnvelopeHandler:
 
     def parse(self, text: str) -> ParsedReauth:
         inbound = self._codec.decode_inbound(text)
-        if inbound.message.type != "connection.reauth":
-            raise _protocol_error("connection_reauth_required")
         shape = Envelope(
             protocol=inbound.protocol,
             message=inbound.message,
@@ -186,14 +184,26 @@ class ConnectionReauthEnvelopeHandler:
             trace=inbound.trace,
             extensions=inbound.extensions,
         )
-        self._registry.validate_envelope(shape, self._context.protocol_schema_key)
+        validated = self._registry.validate_envelope(
+            shape,
+            self._context.protocol_schema_key,
+        )
+        return self.parse_envelope(validated)
+
+    def parse_envelope(self, envelope: Envelope) -> ParsedReauth:
+        """Parse one already P03-validated reauth Envelope."""
+
+        if not isinstance(envelope, Envelope):
+            _invalid("envelope")
+        if envelope.message.type != "connection.reauth":
+            raise _protocol_error("connection_reauth_required")
         if (
-            inbound.protocol.major != self._context.protocol_version.major
-            or inbound.protocol.minor != self._context.protocol_version.minor
-            or inbound.protocol.patch != self._context.protocol_version.patch
+            envelope.protocol.major != self._context.protocol_version.major
+            or envelope.protocol.minor != self._context.protocol_version.minor
+            or envelope.protocol.patch != self._context.protocol_version.patch
         ):
             raise _protocol_error("reauth_protocol_mismatch")
-        payload_group = inbound.payload
+        payload_group = envelope.payload
         if (
             payload_group is None
             or payload_group.mode != "inline"

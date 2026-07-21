@@ -1069,6 +1069,26 @@
 - 已知限制：safe snapshot是单进程异步observational view，不是P08持久状态或集群权威；coherent只表示读取窗口内local index mutation sequence稳定。typed audit只表达strong-required handoff，deterministic test sink不持久、不证明exactly-once；P07/P08仍须实现processor final audit和durable强一致存储。P06真实IAM client/backend合同未开始，ordinary production connection继续fail-closed。
 - 下一工作包：`P06-B01 runtime IAM principal contract`，状态保持 `NOT_STARTED`；本目标在P05阶段出口停止，不开始P06。
 
+## P05-FIX-01
+
+- 工作包：`P05 logical ingress、processor、protocol activation 与 handshake rejection 校准`。
+- 状态：`VERIFIED`；P05 阶段出口恢复为 `VERIFIED/F3`，`SC-1 VERIFIED`；P06-B01/P06-R01 保持 `NOT_STARTED`。
+- 开始时间：`2026-07-21`。
+- 完成时间：`2026-07-21T18:59:32+08:00`。
+- 触发原因：P05-W01至W14领域组件已经实现，但 P03 canonical registry 仍将 connection lifecycle contracts 标为 feature disabled；heartbeat/drain/reauth wire validation 和 executable entry 仍散落在 connection handlers，P04 transport listener 尚未通过明确 logical owner 接入 P05 accept/read loop，合法 hello 的安全 rejected response 也未形成统一 canonical builder。
+- 历史边界：P03 acceptance 当时记录的 connection feature disabled 是真实历史事实，不回写或改写；本 FIX 只追加 P05 正式激活对应 contracts 的后续阶段事实。P05-W01至W14实现不回滚，P06/P07/P08及 delivery/routing/cluster 边界不启动。
+- 修改文件：更新 P03 protocol registry/schema/facade 与 P05 hello/authentication/heartbeat/reauth facade；新增 `connection/processors.py`、`connection/rejected.py`、`connection/lifecycle.py`；将 logical owner 接入 `main.py`、transport lifecycle、RSD-1 shutdown；新增 processor/rejected/真实 composition 测试并校准 protocol/main/shutdown/heartbeat 测试；更新 implementation plan、acceptance log、ADR-028 与 ADR-030。
+- canonical feature/disabled matrix：同一 `BUILTIN_MESSAGE_REGISTRY` 正式 enabled `connection.hello/accepted/rejected/reauth/reauth_accepted/reauth_rejected/heartbeat/heartbeat_ack/drain`，并以 direction 明确 inbound/outbound；上述 9 项不再进入 `build_feature_disabled_processors()`，disabled 数量由49降至40。P06+、task、delivery、stream、control、cluster等未实现类型继续统一fail-closed；heartbeat、self drain、reauth的required capabilities为空，不与authenticated-session lifecycle规则冲突。
+- exact schema：hello仅允许token/component_type/requested_version、可选min_version/requested_capabilities与exact `ns.connection_resume`；heartbeat精确要求connection_id/session_id/connection_epoch/sequence/sent_at，ack以server_time替代sent_at；drain禁止target/payload/route/delivery/stream/callback与extensions；accepted/rejected/reauth request/response均冻结既有字段白名单。missing/extra payload、非法hello group/extension和带target/payload drain均在`registry.validate_envelope()`失败，领域service不再拥有第二wire schema authority。
+- processor合同：不可变`ConnectionLifecycleProcessorRegistry`只按canonical `processor_key`一一调度heartbeat/drain/reauth；processor接收P03 validated Envelope，执行current session/epoch/state/security hard check后调用明确service并构造canonical response。Handler仅保留兼容包装，不是composition执行入口；transport callback没有direct-action bypass，未建立P07 generic pipeline、permission/rate-limit/routing/final audit、DeliveryRecord或ACK状态。
+- rejected规则：统一builder只发送reason/server_time/retryable低基数字段。合法hello的protocol/minimum/capability、IAM、authority拒绝在transport和response protocol安全时通过既有Clock/TaskSupervisor有界best-effort先发`connection.rejected`再close；protocol incompatible真实loopback证明客户端先收到rejected再关闭。malformed hello或不安全transport直接close；send失败不覆盖原failure、不发布binding/index/ACTIVE，payload不含token/identity/tenant/capability/IAM/permission/peer/transport ID/异常文本。
+- composition与lifecycle：`ConnectionLifecycleManager`显式拥有per-adapter supervised accept loop及ACTIVE read loop，依赖TransportManager、LocalConnectionIndex、Clock、既有TaskSupervisor、IdentifierFactory、IAM、P03 registry/codec、processor factory与policy。initial/resume链完成hello-first、IAM、negotiation、SC-1、binding/index、accepted、ACTIVE；read链完成P03 validation、current session/epoch gate、processor dispatch，disabled类型返回标准runtime.error。RSD-1顺序已校准为stop transport admission、stop logical admission/read、drain/close logical、drain/close transport、TaskSupervisor与下游资源，不新增owner/loop/signal/coordinator/listener。
+- IAM与loopback：production composition默认且显式构造`FailClosedHandshakeIamAdapter`；测试必须显式注入`DeterministicTestIamAdapter`，没有token字符串推断或allow-all。真实`WebSocketTcpAdapter` plaintext覆盖hello/accepted/ACTIVE/heartbeat_ack/disabled error/drain/close；TLS覆盖hello/accepted/ACTIVE并以canonical drain完成安全关闭。production hello收到固定IAM denied rejected且从未ACTIVE。
+- resume/epoch/reauth：真实loopback覆盖普通断线立即non-target、30秒grace、resume hello、IAM重验、新session与epoch+1、accepted/ACTIVE、旧epoch runtime.error并close；reauth成功保持logical session并原子替换authority/index，拒绝返回`connection.reauth_rejected`后fail-close。取消/失败清理candidate transport、mapping/index与supervised heartbeat/expiry/read/grace任务，无双active或stale session。
+- 测试结果：P03 `Ran 54, OK`；P04 `Ran 59, OK`；P05 `Ran 163, OK`；P03+P04+P05联合`Ran 276, OK`；runtime环境按DEP-1排除未安装Django的`test_cache`后P01-P05全量`Ran 626, OK (skipped=1)`；backend根目录全量`Ran 637, OK (skipped=39)`。runtime/backend `pip check`、`compileall -q src tests`、`git diff --check`通过；TLS专项在warnings/tracemalloc模式正常关闭且无unclosed transport warning。
+- 安全/隔离检查：canonical rejected/schema/processor路径不读取或记录token、payload、IAM raw或底层异常文本；源码边界扫描未新增backend IAM HTTP/RPC client、permission cache、P07 generic processor pipeline、StateStore、RoutingPlan、DeliveryRecord、Ack/Nack/Defer、retry/dead-letter或cluster coordination。P06仍为`NOT_STARTED`。
+- 已知限制：P05 processor只处理connection lifecycle，不是P07通用pipeline；production IAM在P06前必然拒绝ordinary connection；P05 local index/snapshot/audit不是P08 durable或cluster authority。`P06-B01/P06-R01`继续暂停且`NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：
