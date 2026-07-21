@@ -973,6 +973,18 @@
 - 已知限制：W06 只提供本地索引 owner；W07 accepted 成功后才允许首次 active，W09/W10/W11 分别驱动 drain/grace/resume 的 eligibility 变化。索引不具有跨进程/集群权威，SC-1 继续为 `IN_PROGRESS`。
 - 下一工作包：`P05-W07 connection.accepted activation boundary`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
 
+## P05-W07
+
+- 工作包：`P05-W07 connection.accepted activation boundary`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W08；P06 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T14:32:10+08:00`。
+- 修改文件：新增 `connection/accepted.py` 与 facade 导出，新增 `tests/test_runtime_connection_accepted.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增 frozen `AcceptedHeartbeatPolicy`、P03-based `ConnectionAcceptedEnvelopeBuilder` 和 one-shot `ConnectionAdmissionActivator`。accepted payload 精确白名单为 connection_id/session_id/protocol_version/heartbeat/session_expires_at/server_time/runtime_id/role，heartbeat 仅 interval/timeout；使用 SC-1 negotiated schema/codec、P01 message ID、Clock UTC、P03 registry validation 与 canonical serialization。只有 transport send success 后才从 authenticated 进入 active/index target；send failure/cancel 关闭并清理，close failure 保留 closing 可重试 owner。
+- 测试结果：W07 专项 9 项，与 W06 联合 `Ran 20, OK`，覆盖 exact whitelist/registry、canonical negotiated codec、send-before-active、secret/authority/transport exclusion、hostile send failure、close retry、cancel rollback、one-shot/index fencing 和 heartbeat policy。P01-P04+P05-W01-W07 runtime 联合 `Ran 535, OK (skipped=1)`，唯一 skip 为 Windows event-loop policy；`compileall -q src tests` 与 `git diff --check` 通过。
+- 安全/隔离检查：serialized accepted 不含 token、identity、tenant、capability、permissions/ref/digest、transport/path/peer、server config 或 adapter response；Envelope 无 authority/delivery groups。第三方 send exception 不读取 str/repr/cause；cleanup failure不覆盖原 send/cancel，closed 不在真实 transport close 前发布。未调用 P03 feature-disabled processor，也未创建 ACK/DeliveryRecord/StateStore。
+- 已知限制：W07 仅完成 initial admission；W08 提供 heartbeat，W09-W13 完成 drain/grace/resume/reauth。当前 production ordinary connection 仍 fail-closed，SC-1 继续 `IN_PROGRESS`。
+- 下一工作包：`P05-W08 native and Envelope heartbeat`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

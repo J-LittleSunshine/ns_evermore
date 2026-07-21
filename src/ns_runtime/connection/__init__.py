@@ -3,6 +3,13 @@
 
 from __future__ import annotations
 
+from .accepted import (
+    ACCEPTED_HEARTBEAT_FIELDS,
+    ACCEPTED_PAYLOAD_FIELDS,
+    AcceptedHeartbeatPolicy,
+    ConnectionAcceptedEnvelopeBuilder,
+    ConnectionAdmissionActivator,
+)
 from .authentication import (
     AuthenticatedHello,
     ConnectionHandshakeAuthenticator,
@@ -56,11 +63,16 @@ from .state import (
 
 
 __all__ = (
+    "ACCEPTED_HEARTBEAT_FIELDS",
+    "ACCEPTED_PAYLOAD_FIELDS",
+    "AcceptedHeartbeatPolicy",
     "AuthenticatedHello",
     "CapabilityPolicy",
     "CapabilityRule",
     "ConnectionHelloReceiver",
     "ConnectionHandshakeAuthenticator",
+    "ConnectionAcceptedEnvelopeBuilder",
+    "ConnectionAdmissionActivator",
     "ConnectionIndexEntrySnapshot",
     "DeterministicTestIamAdapter",
     "FailClosedHandshakeIamAdapter",
