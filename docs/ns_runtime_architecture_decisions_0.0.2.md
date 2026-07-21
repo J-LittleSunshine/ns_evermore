@@ -318,3 +318,16 @@
 - 后果：后续 adapter 只能向统一 codec 提交完整应用消息边界，processor 只能接收完成 P03 normalization 的 Envelope；现阶段没有 listener、ACK 快速通道、裸 JSON 管理命令、业务 processor 或伪成功。修改分组字段或允许规则必须重跑 P03 及所有下游协议回归。
 - 阶段冻结：P03-W01 至 W11、P03-FIX-01 与 P03-FIX-02 已在 WSL/runtime/backend 联合回归后达到 `VERIFIED/F2`。`ENV-1` 只冻结协议入口、类型/registry/错误/serialization 与 disabled 行为；P04-W01 保持 `NOT_STARTED`，不得由本 ADR 推断 transport、session、IAM、StateStore、delivery 或 cluster 已开始。
 - 关联阶段/工作包：`P03-W01` 至 `P03-W11`、`P04`、`P05`、`P07`、`P10`、`P12`、`P16`、`P21`。
+
+## ADR-029
+
+- ADR 编号：`ADR-029`
+- 状态：`ACCEPTED`
+- 背景：P04 必须建立当前正式 WebSocket/TCP transport，同时保持 Envelope、logical connection、IAM、delivery 和 cluster 与底层库解耦。若把 WebSocket 对象交给上层、让 write completion 生成 runtime ACK、使用无界队列，或为 listener 新建 shutdown/signal/supervisor owner，会破坏 ENV-1、RSL-1、RTC-1、RSD-1 与后续阶段边界。
+- 决策：冻结 `TC-1`。`TransportAdapter`/`TransportSession` 只暴露完整 UTF-8 text message、send、native ping/pong、close、capabilities、transport-local identity 与安全诊断；session 在 P05 前只有 handshaking/closing/closed。WebSocket binary 固定拒绝，invalid UTF-8 与 oversize 由标准 close/error 收敛。`websocket_tcp` 只声明 reliable ordered messages、transport flow control、native keepalive；不声明 stream/datagram/multiplexing/path migration/per-stream flow control/0-RTT/resume。未来三个 adapter 只保留 unavailable registration，不加载依赖或创建 listener。
+- 决策：每个 session 独立拥有显式有界 read/write application queue，reader/writer task 由既有 TaskSupervisor 创建。read full 关闭 session，write full 立即返回 flow-control error；send/ping/close/drain 均有 deadline，queued send 取消不写底层，并发 send 保序，close 幂等。transport send success 只完成局部 send future，绝不创建 AckRecord/DeliveryRecord、取消业务 retry 或调用 processor。
+- 决策：transport_connection/session/stream/path ID 与 P05 logical identity 严格分离。高基数 ID 只保存在 repr=false 的本地类型化对象；peer/local address 在 adapter 边界立即转为有界 SHA-256 摘要。第三方异常统一映射到现有 `RUNTIME_TRANSPORT_*` 与固定低基数 reason，不复制 message/repr/cause；普通资源和 metrics sink 失败 fail-soft，BaseException 原对象穿透。
+- 决策：复用 OBS-1 十个标准 transport metric name。常规 attributes 只允许有限 transport_type，以及按具体指标允许的 component_type/tenant_scope classification、close_reason、error_code；禁止 connection/session/transport/path/message/tenant ID、peer、URL、payload 或异常文本。指标不进入 ACK、DeliveryRecord 或强一致事务。
+- 决策：P04 只以一个类型化 `TransportLifecycleOwner` 兼容扩展既有 RSD-1。首次 shutdown request 同步关闭本地与 listener admission gate，随后固定执行 stop admission、drain sessions/I/O、close adapters/listeners，再继续既有 supervisor/sink/client/logger 相位；不创建第二 coordinator、signal owner、TaskSupervisor 或 event loop。`TransportRuntimeService` 仅在 RSP-1 成功后启动 manager。完整生产证书材料仍属 P20；启用 TLS 但 composition root 未显式收到 server SSLContext 时必须 fail-closed。
+- 后果：P04 可以真实建立 TLS 或受控非生产明文 loopback WebSocket，把完整 text message 交给上层；上层仍不得接受业务消息，P05 handshake 完成前 session 不进入 active。后续 adapter 必须复用 22-case TC-1 和公共 harness；修改任何冻结接口、capability、queue/error/metric/lifecycle 语义必须重跑 P04 及全部下游阶段。
+- 关联阶段/工作包：`P04-W01` 至 `P04-W10`、`P05`、`P11`、`P20`、`P21`、`P22`。

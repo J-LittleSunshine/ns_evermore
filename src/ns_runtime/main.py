@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     from os import PathLike
+    from ssl import SSLContext
 
     from ns_runtime.service import RuntimeService
     from ns_runtime.startup import (
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 
 
 async def _run_service_once(service: RuntimeService) -> None:
-    """Run the current no-listener service through one clean lifecycle."""
+    """Run one listener self-check through the production shutdown path."""
 
     from ns_runtime.shutdown import RuntimeShutdownReason
 
@@ -36,13 +37,15 @@ def main(
     startup_root: str | PathLike[str] | None = None,
     startup_directories: RuntimeStartupDirectories | None = None,
     preflight: RuntimeStartupPreflight | None = None,
+    transport_ssl_context: SSLContext | None = None,
 ) -> int:
-    """Validate startup, run the no-listener service, and return its status.
+    """Validate startup, run the configured transport service, and return status.
 
     Imports stay local so importing :mod:`ns_runtime` or this entry module does
     not load configuration, install an event-loop policy, or create resources.
     The current process performs preflight, starts its supervised internal
-    observers, and exits through the same signal-aware shutdown coordinator.
+    observers and listener, then exits through the same signal-aware shutdown
+    coordinator. Long-running signal wait remains outside this startup self-check.
     """
 
     import logging
@@ -102,6 +105,21 @@ def main(
         directories=effective_directories,
     )
 
+    from ns_common.exceptions import NsRuntimeStartupSecurityError
+
+    transport_config = config.runtime.transport
+    websocket_config = transport_config.websocket_tcp
+    if websocket_config.enabled and websocket_config.tls_enabled and transport_ssl_context is None:
+        raise NsRuntimeStartupSecurityError(
+            "Runtime TLS transport material is unavailable.",
+            details={
+                "component": "runtime_transport",
+                "field": "transport_ssl_context",
+                "environment": resolved_environment,
+                "reason": "tls_material_unavailable",
+            },
+        )
+
     from dataclasses import asdict
 
     from ns_common.logger import NsLogger
@@ -139,20 +157,60 @@ def main(
     import asyncio
 
     from ns_runtime.event_loop_observability import RuntimeEventLoopMonitor
-    from ns_runtime.service import RuntimeService
-    from ns_runtime.shutdown import RuntimeShutdownCoordinator
-
-    shutdown_coordinator = RuntimeShutdownCoordinator(
-        context=context,
-        logger_close=logger.close,
+    from ns_runtime.transport import (
+        TransportAdapterBuildContext,
+        TransportAdapterRegistry,
+        TransportIdentityFactory,
+        TransportManager,
+        TransportMetricsRecorder,
+        TransportRuntimeService,
+        WebSocketTcpAdapterOptions,
     )
+
+    transport_metrics = TransportMetricsRecorder(
+        clock=context.clock,
+        sink=context.metrics,
+    )
+    build_context = TransportAdapterBuildContext(
+        websocket_tcp_options=WebSocketTcpAdapterOptions(
+            host=transport_config.listen_host,
+            port=transport_config.listen_port,
+            clock=context.clock,
+            ssl_context=transport_ssl_context,
+            environment=resolved_environment,
+            allow_plaintext_non_prod=(
+                config.runtime.security.allow_plaintext_non_prod
+                and not websocket_config.tls_enabled
+            ),
+            allowed_origins=websocket_config.allowed_origins,
+            max_message_bytes=config.runtime.protocol.max_envelope_bytes,
+            accept_queue_capacity=transport_config.write_queue_capacity,
+            read_queue_capacity=transport_config.write_queue_capacity,
+            write_queue_capacity=transport_config.write_queue_capacity,
+            send_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
+            ping_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
+            close_timeout_seconds=config.runtime.worker.shutdown_timeout_seconds,
+            adapter_shutdown_timeout_seconds=(
+                config.runtime.worker.shutdown_timeout_seconds
+            ),
+        ),
+        task_supervisor=context.task_supervisor,
+        identity_factory=TransportIdentityFactory(),
+        metrics=transport_metrics,
+    )
+    adapters = TransportAdapterRegistry.default().create_enabled(
+        startup_result.enabled_transport_adapters,
+        context=build_context,
+    )
+    transport_manager = TransportManager(adapters)
     event_loop_monitor = RuntimeEventLoopMonitor(
         context=context,
         implementation=startup_result.event_loop.selected,
     )
-    service = RuntimeService(
+    service = TransportRuntimeService(
         context=context,
-        shutdown_coordinator=shutdown_coordinator,
+        transport_manager=transport_manager,
+        logger_close=logger.close,
         event_loop_monitor=event_loop_monitor,
     )
     asyncio.run(_run_service_once(service))

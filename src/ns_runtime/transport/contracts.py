@@ -83,6 +83,10 @@ class TransportAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def stop_admission_now(self) -> None:
+        """Synchronously close the local admission gate."""
+
+    @abstractmethod
     async def start(self) -> None:
         """Start the listener after startup preflight has succeeded."""
 

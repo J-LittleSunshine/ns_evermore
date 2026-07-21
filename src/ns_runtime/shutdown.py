@@ -15,6 +15,7 @@ from typing import Callable
 from ns_common.async_runtime import NsTaskShutdownReport
 from ns_common.exceptions import NsValidationError
 from ns_runtime.context import RuntimeContext
+from ns_runtime._transport_lifecycle_contract import TransportLifecycleOwner
 
 
 class RuntimeShutdownReason(str, Enum):
@@ -28,6 +29,8 @@ class RuntimeShutdownReason(str, Enum):
 
 class RuntimeShutdownPhase(str, Enum):
     STOP_ADMISSION = "stop_admission"
+    DRAIN_TRANSPORT = "drain_transport"
+    CLOSE_TRANSPORT = "close_transport"
     CANCEL_TASKS = "cancel_tasks"
     FLUSH_SINKS = "flush_sinks"
     CLOSE_SINKS = "close_sinks"
@@ -134,9 +137,8 @@ class RuntimeSignalRegistration:
 class RuntimeShutdownCoordinator:
     """Stop local admission and release explicitly injected dependencies.
 
-    The coordinator is intentionally unaware of transport and protocol types.
-    Future listeners must expose a typed admission stop hook before being added
-    to this sequence; P02 only closes the local process admission gate.
+    P04 extends the P02 local gate with one optional typed transport lifecycle
+    owner. The coordinator never imports or branches on a concrete adapter.
     """
 
     def __init__(
@@ -144,6 +146,7 @@ class RuntimeShutdownCoordinator:
         *,
         context: RuntimeContext,
         logger_close: Callable[[], None] | None = None,
+        transport_owner: TransportLifecycleOwner | None = None,
     ) -> None:
         if not isinstance(context, RuntimeContext):
             raise NsValidationError(
@@ -165,13 +168,28 @@ class RuntimeShutdownCoordinator:
                     "actual_type": type(logger_close).__name__,
                 },
             )
+        if transport_owner is not None and not isinstance(
+            transport_owner,
+            TransportLifecycleOwner,
+        ):
+            raise NsValidationError(
+                "Runtime shutdown transport owner is invalid.",
+                details={
+                    "component": "runtime_shutdown",
+                    "dependency": "transport_owner",
+                    "expected_type": "TransportLifecycleOwner",
+                    "actual_type": type(transport_owner).__name__,
+                },
+            )
         self._context = context
         self._logger_close = logger_close
+        self._transport_owner = transport_owner
         self._admission_open = True
         self._requested = asyncio.Event()
         self._reason: RuntimeShutdownReason | None = None
         self._shutdown_lock = asyncio.Lock()
         self._report: RuntimeShutdownReport | None = None
+        self._admission_failures: list[RuntimeShutdownFailure] = []
 
     @property
     def admission_open(self) -> bool:
@@ -204,6 +222,15 @@ class RuntimeShutdownCoordinator:
             return False
         self._reason = reason
         self._admission_open = False
+        if self._transport_owner is not None:
+            try:
+                self._transport_owner.stop_admission_now()
+            except Exception as error:
+                self._admission_failures.append(RuntimeShutdownFailure(
+                    phase=RuntimeShutdownPhase.STOP_ADMISSION,
+                    resource="transport_owner",
+                    error_type=type(error).__name__,
+                ))
         self._requested.set()
         return True
 
@@ -228,7 +255,35 @@ class RuntimeShutdownCoordinator:
             phases: list[RuntimeShutdownPhase] = [
                 RuntimeShutdownPhase.STOP_ADMISSION,
             ]
-            failures: list[RuntimeShutdownFailure] = []
+            failures: list[RuntimeShutdownFailure] = list(
+                self._admission_failures,
+            )
+
+            if self._transport_owner is not None:
+                await self._attempt_async(
+                    self._transport_owner.stop_admission,
+                    phase=RuntimeShutdownPhase.STOP_ADMISSION,
+                    resource="transport_owner",
+                    failures=failures,
+                )
+
+            phases.append(RuntimeShutdownPhase.DRAIN_TRANSPORT)
+            if self._transport_owner is not None:
+                await self._attempt_async(
+                    self._transport_owner.drain,
+                    phase=RuntimeShutdownPhase.DRAIN_TRANSPORT,
+                    resource="transport_owner",
+                    failures=failures,
+                )
+
+            phases.append(RuntimeShutdownPhase.CLOSE_TRANSPORT)
+            if self._transport_owner is not None:
+                await self._attempt_async(
+                    self._transport_owner.close,
+                    phase=RuntimeShutdownPhase.CLOSE_TRANSPORT,
+                    resource="transport_owner",
+                    failures=failures,
+                )
 
             phases.append(RuntimeShutdownPhase.CANCEL_TASKS)
             task_report = await self._shutdown_tasks(failures)

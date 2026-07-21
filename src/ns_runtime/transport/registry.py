@@ -17,6 +17,7 @@ from ns_common.exceptions import (
 from .contracts import TransportAdapter
 from .identity import TransportIdentityFactory
 from .models import TransportCapabilities
+from .metrics import TransportMetricsRecorder
 from .websocket_tcp import (
     WEBSOCKET_TCP_CAPABILITIES,
     WEBSOCKET_TCP_TRANSPORT_TYPE,
@@ -38,6 +39,7 @@ class TransportAdapterBuildContext:
     websocket_tcp_options: WebSocketTcpAdapterOptions
     task_supervisor: TaskSupervisor
     identity_factory: TransportIdentityFactory
+    metrics: TransportMetricsRecorder
 
     def __post_init__(self) -> None:
         if not isinstance(self.websocket_tcp_options, WebSocketTcpAdapterOptions):
@@ -46,6 +48,8 @@ class TransportAdapterBuildContext:
             _invalid("task_supervisor")
         if not isinstance(self.identity_factory, TransportIdentityFactory):
             _invalid("identity_factory")
+        if not isinstance(self.metrics, TransportMetricsRecorder):
+            _invalid("metrics")
 
 
 AdapterFactory = Callable[[TransportAdapterBuildContext], TransportAdapter]
@@ -178,6 +182,7 @@ def _build_websocket_tcp(context: TransportAdapterBuildContext) -> TransportAdap
         options=context.websocket_tcp_options,
         task_supervisor=context.task_supervisor,
         identity_factory=context.identity_factory,
+        metrics=context.metrics,
     )
 
 
@@ -194,4 +199,3 @@ __all__ = (
     "TransportAdapterRegistration",
     "TransportAdapterRegistry",
 )
-

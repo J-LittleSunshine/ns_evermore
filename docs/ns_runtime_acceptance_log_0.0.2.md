@@ -851,6 +851,18 @@
 - 已知限制：TC-1 的低基数 metrics evidence 由 W10 完成后追加阶段记录，不改变现有 22-case 身份；P05 connection.hello/IAM/Envelope business conformance 仍未开始且不属于 P04 transport adapter 自身。
 - 下一工作包：`P04-W10 transport metrics and lifecycle integration`，状态为 `IN_PROGRESS`。
 
+## P04-W10
+
+- 工作包：`P04-W10 transport metrics and runtime lifecycle integration`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-21T10:53:00+08:00`。
+- 修改文件：新增 `transport/metrics.py`、`lifecycle_contracts.py`、`lifecycle.py`、冷导入安全的 `_transport_lifecycle_contract.py`、metrics/lifecycle tests；扩展 OBS-1 有限 close/error attributes、WebSocket instrumentation、registry build context、RSD-1 coordinator phases、main composition root 和相关 tests；更新实施计划与 ADR-029。
+- 公共契约变化：既有 10 个 runtime transport 指标全部实际记录，close_reason/error_code 为显式有限闭集且禁止任何 ID/peer/path/message/tenant/exception attribute。`TransportRuntimeService` 复用同一 RuntimeService/context/coordinator/TaskSupervisor/event loop；首次 request 同步 stop admission，异步顺序固定 stop_admission → drain session/I/O → close adapters/listeners → cancel tasks → sinks/clients/logger。main 仅在 RSP-1 成功后构造 registry/manager/listener；TLS 配置无显式 SSLContext 时 fail-closed，完整材料仍属 P20。
+- 测试结果：10 指标闭集、属性基数、sink raise/reject fail-soft；真实 adapter+service 建连/文本/metrics/drain；精确 shutdown order、普通 adapter failure 隔离、BaseException 身份、partial-start cleanup、service/main/RSD/OBS 回归通过。W10 专项与关联回归 `Ran 109, OK`；另行冷导入确认 `ns_runtime.service` 不加载 transport package，compileall 与 `git diff --check` 通过。
+- 安全/隔离检查：首次发现 service/shutdown/transport facade 冷导入环后，将最小 lifecycle Protocol 下沉内部引导模块并重跑 41 项 P02 context/service/shutdown 回归，问题已消除。metrics 不含 connection/session/transport/path/message/tenant ID、peer 或异常文本；普通 sink/adapter failure 不破坏后续相位，BaseException 原对象穿透。没有第二 lifecycle/signal/supervisor/loop owner，也没有 P05+ 业务能力。
+- 已知限制：CFG-1 没有 P20 证书材料字段，composition root 对启用 TLS 但未显式注入 server SSLContext 的情形稳定 fail-closed；真实 TLS loopback 已通过 adapter API。main 仍执行一次 listener self-check 后走统一 shutdown，不承担长期 daemon wait 策略。read queue capacity 暂由现有 write_queue_capacity 显式派生，未修改冻结 CFG-1。
+- 下一工作包：P04 阶段出口联合与全量验证，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：

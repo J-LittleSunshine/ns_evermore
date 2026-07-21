@@ -21,6 +21,13 @@ from .models import (
     TransportMessage,
     TransportSessionState,
 )
+from .metrics import TransportMetricsRecorder
+from .lifecycle import (
+    TransportManager,
+    TransportManagerState,
+    TransportRuntimeService,
+)
+from .lifecycle_contracts import TransportLifecycleOwner
 from .registry import (
     TRANSPORT_ADAPTER_NAMES,
     TransportAdapterBuildContext,
@@ -53,10 +60,15 @@ __all__ = (
     "TransportIdentity",
     "TransportIdentityFactory",
     "TransportMessage",
+    "TransportLifecycleOwner",
+    "TransportManager",
+    "TransportManagerState",
+    "TransportMetricsRecorder",
     "NormalizedTransportFailure",
     "TransportPathSnapshot",
     "TransportSession",
     "TransportSessionState",
+    "TransportRuntimeService",
     "TRANSPORT_ADAPTER_NAMES",
     "TRANSPORT_CONFORMANCE_CASES",
     "WEBSOCKET_TCP_CAPABILITIES",

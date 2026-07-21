@@ -88,12 +88,19 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                 self,
                 *,
                 context: object,
-                shutdown_coordinator: object,
+                transport_manager: object,
+                logger_close: object,
                 event_loop_monitor: object,
             ) -> None:
+                from ns_runtime.shutdown import RuntimeShutdownCoordinator
+
                 captured_contexts.append(context)
                 captured_monitors.append(event_loop_monitor)
-                self.shutdown_coordinator = shutdown_coordinator
+                self.shutdown_coordinator = RuntimeShutdownCoordinator(
+                    context=context,  # type: ignore[arg-type]
+                    logger_close=logger_close,  # type: ignore[arg-type]
+                    transport_owner=transport_manager,  # type: ignore[arg-type]
+                )
                 self.event_loop_monitor = event_loop_monitor
 
             async def start(self) -> None:
@@ -126,7 +133,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                         preflight, _ = _controlled_preflight()
 
                         with mock.patch(
-                            "ns_runtime.service.RuntimeService",
+                            "ns_runtime.transport.TransportRuntimeService",
                             CapturingService,
                         ):
                             self.assertEqual(

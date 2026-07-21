@@ -31,6 +31,7 @@ from .identity import (
     TransportIdentity,
     TransportIdentityFactory,
 )
+from .metrics import TransportMetricsRecorder
 from .models import (
     TransportClose,
     TransportCloseInitiator,
@@ -140,6 +141,8 @@ class _PendingWrite:
     completion: asyncio.Future[None] = field(repr=False)
     started: bool = False
     cancelled: bool = False
+    enqueued_at: float = 0.0
+    backpressured: bool = False
 
 
 class WebSocketTcpSession(TransportSession):
@@ -153,11 +156,13 @@ class WebSocketTcpSession(TransportSession):
         task_supervisor: TaskSupervisor,
         task_suffix: int,
         identity: TransportIdentity,
+        metrics: TransportMetricsRecorder,
     ) -> None:
         self._connection = connection
         self._options = options
         self._task_supervisor = task_supervisor
         self._identity = identity
+        self._metrics = metrics
         self._state = TransportSessionState.HANDSHAKING
         self._close_info: TransportClose | None = None
         self._close_lock = asyncio.Lock()
@@ -223,6 +228,7 @@ class WebSocketTcpSession(TransportSession):
             while True:
                 if not self._read_queue.empty():
                     message = self._read_queue.get_nowait()
+                    self._metrics.read_queue_depth(self._read_queue.qsize())
                     if self._read_queue.empty() and self._read_failure_reason is None:
                         self._read_ready.clear()
                     return message
@@ -247,6 +253,7 @@ class WebSocketTcpSession(TransportSession):
                 details={"component": "transport", "field": "message.text"},
             )
         if len(text.encode("utf-8")) > self._options.max_message_bytes:
+            self._metrics.send_error("RUNTIME_TRANSPORT_SEND_FAILED")
             raise NsRuntimeTransportSendFailedError(
                 "Runtime transport message exceeds the configured boundary.",
                 details={
@@ -266,10 +273,20 @@ class WebSocketTcpSession(TransportSession):
                 },
             )
         loop = asyncio.get_running_loop()
-        pending = _PendingWrite(text=text, completion=loop.create_future())
+        pending = _PendingWrite(
+            text=text,
+            completion=loop.create_future(),
+            enqueued_at=self._options.clock.monotonic(),
+            backpressured=(
+                self._active_write is not None
+                or not self._write_queue.empty()
+            ),
+        )
         try:
             self._write_queue.put_nowait(pending)
         except asyncio.QueueFull:
+            self._metrics.send_error("RUNTIME_TRANSPORT_FLOW_CONTROL_BLOCKED")
+            self._metrics.backpressure(0.0)
             raise NsRuntimeTransportFlowControlBlockedError(
                 "Runtime transport write queue is full.",
                 details={
@@ -279,11 +296,17 @@ class WebSocketTcpSession(TransportSession):
                     "transport_type": WEBSOCKET_TCP_TRANSPORT_TYPE,
                 },
             ) from None
+        self._metrics.write_queue_depth(self._write_queue.qsize())
         try:
             await asyncio.wait_for(
                 asyncio.shield(pending.completion),
                 timeout=self._options.send_timeout_seconds,
             )
+            if pending.backpressured:
+                self._metrics.backpressure(max(
+                    0.0,
+                    (self._options.clock.monotonic() - pending.enqueued_at) * 1000.0,
+                ))
         except asyncio.CancelledError:
             pending.cancelled = True
             pending.completion.cancel()
@@ -291,6 +314,7 @@ class WebSocketTcpSession(TransportSession):
         except asyncio.TimeoutError:
             pending.cancelled = True
             pending.completion.cancel()
+            self._metrics.send_error("RUNTIME_TRANSPORT_SEND_FAILED")
             raise NsRuntimeTransportSendFailedError(
                 "Runtime transport send timed out.",
                 details={
@@ -332,6 +356,7 @@ class WebSocketTcpSession(TransportSession):
                 try:
                     self._read_queue.put_nowait(message)
                 except asyncio.QueueFull:
+                    self._metrics.receive_error("RUNTIME_TRANSPORT_RECEIVE_FAILED")
                     self._set_read_failure("read_queue_full")
                     await self._close_with(
                         reason=TransportCloseReason.READ_QUEUE_FULL,
@@ -340,6 +365,8 @@ class WebSocketTcpSession(TransportSession):
                         protocol_code=1013,
                     )
                     return
+                self._metrics.bytes_received(byte_size)
+                self._metrics.read_queue_depth(self._read_queue.qsize())
                 self._read_ready.set()
         except asyncio.CancelledError:
             raise
@@ -351,6 +378,7 @@ class WebSocketTcpSession(TransportSession):
             )
             reason = str(failure.error.details["reason"])
             self._set_read_failure(reason)
+            self._metrics.receive_error(failure.error.code)
             await self._mark_remote_closed(
                 clean=reason == "remote_closed",
             )
@@ -359,6 +387,7 @@ class WebSocketTcpSession(TransportSession):
         try:
             while self._state is TransportSessionState.HANDSHAKING:
                 pending = await self._write_queue.get()
+                self._metrics.write_queue_depth(self._write_queue.qsize())
                 if pending.cancelled:
                     continue
                 pending.started = True
@@ -379,6 +408,7 @@ class WebSocketTcpSession(TransportSession):
                     )
                     if not pending.completion.done():
                         pending.completion.set_exception(failure.exception)
+                    self._metrics.send_error(failure.error.code)
                     await self._close_with(
                         reason=TransportCloseReason.SEND_TIMEOUT,
                         initiator=TransportCloseInitiator.ADAPTER,
@@ -393,6 +423,7 @@ class WebSocketTcpSession(TransportSession):
                     )
                     if not pending.completion.done():
                         pending.completion.set_exception(failure.exception)
+                    self._metrics.send_error(failure.error.code)
                     await self._close_with(
                         reason=TransportCloseReason.SEND_FAILED,
                         initiator=TransportCloseInitiator.ADAPTER,
@@ -402,6 +433,7 @@ class WebSocketTcpSession(TransportSession):
                     return
                 if not pending.completion.done():
                     pending.completion.set_result(None)
+                self._metrics.bytes_sent(len(pending.text.encode("utf-8")))
                 self._active_write = None
         except asyncio.CancelledError:
             raise
@@ -549,6 +581,7 @@ class WebSocketTcpSession(TransportSession):
             self._state = TransportSessionState.CLOSED
             self._close_info = close_info
             self._closed.set()
+            self._metrics.connection_closed(close_info.reason)
             if io_tasks:
                 try:
                     await asyncio.wait_for(
@@ -584,6 +617,7 @@ class WebSocketTcpAdapter(TransportAdapter):
         options: WebSocketTcpAdapterOptions,
         task_supervisor: TaskSupervisor,
         identity_factory: TransportIdentityFactory,
+        metrics: TransportMetricsRecorder,
     ) -> None:
         if not isinstance(options, WebSocketTcpAdapterOptions):
             raise NsValidationError(
@@ -600,9 +634,15 @@ class WebSocketTcpAdapter(TransportAdapter):
                 "WebSocket TCP identity factory is invalid.",
                 details={"component": "transport", "field": "identity_factory"},
             )
+        if not isinstance(metrics, TransportMetricsRecorder):
+            raise NsValidationError(
+                "WebSocket TCP transport metrics recorder is invalid.",
+                details={"component": "transport", "field": "metrics"},
+            )
         self._options = options
         self._task_supervisor = task_supervisor
         self._identity_factory = identity_factory
+        self._metrics = metrics
         self._server: Any | None = None
         self._accept_queue: asyncio.Queue[WebSocketTcpSession] = asyncio.Queue(
             maxsize=options.accept_queue_capacity,
@@ -676,6 +716,9 @@ class WebSocketTcpAdapter(TransportAdapter):
         return await self._accept_queue.get()
 
     async def stop_admission(self) -> None:
+        self.stop_admission_now()
+
+    def stop_admission_now(self) -> None:
         self._accepting = False
         if self._server is not None:
             self._server.close(close_connections=False)
@@ -728,6 +771,7 @@ class WebSocketTcpAdapter(TransportAdapter):
                 pass
             return
         self._session_sequence += 1
+        handshake_started = self._options.clock.monotonic()
         try:
             local_address = connection.local_address
         except Exception:
@@ -746,6 +790,7 @@ class WebSocketTcpAdapter(TransportAdapter):
                 peer_address=peer_address,
                 validated_at=self._options.clock.utc_now(),
             ),
+            metrics=self._metrics,
         )
         self._sessions.add(session)
         try:
@@ -759,6 +804,11 @@ class WebSocketTcpAdapter(TransportAdapter):
             )
             self._sessions.discard(session)
             return
+        self._metrics.connection_opened()
+        self._metrics.handshake_completed(max(
+            0.0,
+            (self._options.clock.monotonic() - handshake_started) * 1000.0,
+        ))
         try:
             await session.wait_closed()
         finally:

@@ -671,6 +671,37 @@ _TENANT_SCOPE_ATTRIBUTE = NsMetricAttributeDefinition(
     value_type=NsMetricAttributeValueType.STRING,
     allowed_values=frozenset(item.value for item in NsMetricTenantScope),
 )
+_TRANSPORT_CLOSE_REASON_ATTRIBUTE = NsMetricAttributeDefinition(
+    key="close_reason",
+    value_type=NsMetricAttributeValueType.STRING,
+    allowed_values=frozenset({
+        "adapter_shutdown",
+        "keepalive_failed",
+        "listener_failed",
+        "message_too_large",
+        "normal",
+        "protocol_error",
+        "read_queue_full",
+        "receive_failed",
+        "remote_closed",
+        "send_failed",
+        "send_timeout",
+        "tls_failed",
+        "write_queue_full",
+    }),
+)
+_TRANSPORT_ERROR_CODE_ATTRIBUTE = NsMetricAttributeDefinition(
+    key="error_code",
+    value_type=NsMetricAttributeValueType.STRING,
+    allowed_values=frozenset({
+        "RUNTIME_TRANSPORT_ERROR",
+        "RUNTIME_TRANSPORT_FLOW_CONTROL_BLOCKED",
+        "RUNTIME_TRANSPORT_HANDSHAKE_FAILED",
+        "RUNTIME_TRANSPORT_RECEIVE_FAILED",
+        "RUNTIME_TRANSPORT_SEND_FAILED",
+        "RUNTIME_TRANSPORT_STREAM_RESET",
+    }),
+)
 
 
 def _build_runtime_standard_metric_definitions(
@@ -707,6 +738,27 @@ def _build_runtime_standard_metric_definitions(
         allowed_attributes={
             "component_type": _TRANSPORT_COMPONENT_ATTRIBUTE,
             "tenant_scope": _TENANT_SCOPE_ATTRIBUTE,
+            "transport_type": _TRANSPORT_TYPE_ATTRIBUTE,
+        },
+    )
+    definitions["runtime_transport_receive_errors_total"] = NsMetricDefinition(
+        name="runtime_transport_receive_errors_total",
+        allowed_attributes={
+            "error_code": _TRANSPORT_ERROR_CODE_ATTRIBUTE,
+            "transport_type": _TRANSPORT_TYPE_ATTRIBUTE,
+        },
+    )
+    definitions["runtime_transport_send_errors_total"] = NsMetricDefinition(
+        name="runtime_transport_send_errors_total",
+        allowed_attributes={
+            "error_code": _TRANSPORT_ERROR_CODE_ATTRIBUTE,
+            "transport_type": _TRANSPORT_TYPE_ATTRIBUTE,
+        },
+    )
+    definitions["runtime_transport_close_total"] = NsMetricDefinition(
+        name="runtime_transport_close_total",
+        allowed_attributes={
+            "close_reason": _TRANSPORT_CLOSE_REASON_ATTRIBUTE,
             "transport_type": _TRANSPORT_TYPE_ATTRIBUTE,
         },
     )

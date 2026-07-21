@@ -5,11 +5,13 @@ import unittest
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.time import SystemClock
+from ns_common.observability import InMemoryMetricsSink
 from ns_runtime.transport import (
     TRANSPORT_CONFORMANCE_CASES,
     TransportCapability,
     TransportConformanceCase,
     TransportIdentityFactory,
+    TransportMetricsRecorder,
     WebSocketTcpAdapter,
     WebSocketTcpAdapterOptions,
 )
@@ -34,11 +36,12 @@ class WebSocketTcpConformanceTestCase(
 
         supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
         self.addAsyncCleanup(supervisor.shutdown)
+        clock = SystemClock()
         adapter = WebSocketTcpAdapter(
             options=WebSocketTcpAdapterOptions(
                 host="127.0.0.1",
                 port=0,
-                clock=SystemClock(),
+                clock=clock,
                 environment="test",
                 allow_plaintext_non_prod=True,
                 close_timeout_seconds=1,
@@ -46,6 +49,10 @@ class WebSocketTcpConformanceTestCase(
             ),
             task_supervisor=supervisor,
             identity_factory=TransportIdentityFactory(),
+            metrics=TransportMetricsRecorder(
+                clock=clock,
+                sink=InMemoryMetricsSink(),
+            ),
         )
         await adapter.start()
         self.addAsyncCleanup(adapter.close)
@@ -76,4 +83,3 @@ class WebSocketTcpConformanceTestCase(
             len(TRANSPORT_CONFORMANCE_CASES),
             len({item.value for item in TRANSPORT_CONFORMANCE_CASES}),
         )
-

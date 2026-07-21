@@ -16,9 +16,11 @@ from ns_common.exceptions import (
     NsRuntimeTransportReceiveFailedError,
 )
 from ns_common.time import SystemClock
+from ns_common.observability import InMemoryMetricsSink
 from ns_runtime.transport import (
     TransportCloseReason,
     TransportIdentityFactory,
+    TransportMetricsRecorder,
     TransportSessionState,
     WebSocketTcpAdapter,
     WebSocketTcpAdapterOptions,
@@ -85,6 +87,10 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             options=options,
             task_supervisor=supervisor,
             identity_factory=TransportIdentityFactory(),
+            metrics=TransportMetricsRecorder(
+                clock=options.clock,
+                sink=InMemoryMetricsSink(),
+            ),
         )
 
     async def test_plaintext_loopback_text_send_receive_ping_and_idempotent_close(

@@ -12,11 +12,13 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.time import SystemClock
+from ns_common.observability import InMemoryMetricsSink
 from ns_runtime.transport import (
     TRANSPORT_ADAPTER_NAMES,
     TransportAdapterBuildContext,
     TransportAdapterRegistry,
     TransportIdentityFactory,
+    TransportMetricsRecorder,
     WebSocketTcpAdapterOptions,
 )
 
@@ -25,16 +27,21 @@ class TransportAdapterRegistryTestCase(unittest.IsolatedAsyncioTestCase):
     def _context(self) -> TransportAdapterBuildContext:
         supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
         self.addAsyncCleanup(supervisor.shutdown)
+        clock = SystemClock()
         return TransportAdapterBuildContext(
             websocket_tcp_options=WebSocketTcpAdapterOptions(
                 host="127.0.0.1",
                 port=0,
-                clock=SystemClock(),
+                clock=clock,
                 environment="test",
                 allow_plaintext_non_prod=True,
             ),
             task_supervisor=supervisor,
             identity_factory=TransportIdentityFactory(),
+            metrics=TransportMetricsRecorder(
+                clock=clock,
+                sink=InMemoryMetricsSink(),
+            ),
         )
 
     async def test_default_registry_reserves_all_names_but_only_websocket_is_available(
@@ -101,4 +108,3 @@ for dependency in ('websockets', 'aioquic', 'webtransport'):
             text=True,
         )
         self.assertEqual(0, completed.returncode, completed.stderr)
-

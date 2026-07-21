@@ -13,9 +13,11 @@ from ns_common.exceptions import (
     NsStateError,
 )
 from ns_common.time import SystemClock
+from ns_common.observability import InMemoryMetricsSink
 from ns_runtime.transport import (
     TransportCloseReason,
     TransportIdentityFactory,
+    TransportMetricsRecorder,
     WebSocketTcpAdapterOptions,
     WebSocketTcpSession,
 )
@@ -59,12 +61,13 @@ class TransportBackpressureTestCase(unittest.IsolatedAsyncioTestCase):
     ) -> WebSocketTcpSession:
         supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
         self.addAsyncCleanup(supervisor.shutdown)
+        clock = SystemClock()
         session = WebSocketTcpSession(
             connection=connection,
             options=WebSocketTcpAdapterOptions(
                 host="127.0.0.1",
                 port=0,
-                clock=SystemClock(),
+                clock=clock,
                 environment="test",
                 allow_plaintext_non_prod=True,
                 read_queue_capacity=read_capacity,
@@ -77,7 +80,11 @@ class TransportBackpressureTestCase(unittest.IsolatedAsyncioTestCase):
             identity=TransportIdentityFactory().create(
                 local_address=("127.0.0.1", 8765),
                 peer_address=("127.0.0.1", 54321),
-                validated_at=SystemClock().utc_now(),
+                validated_at=clock.utc_now(),
+            ),
+            metrics=TransportMetricsRecorder(
+                clock=clock,
+                sink=InMemoryMetricsSink(),
             ),
         )
         self.addAsyncCleanup(session.close)
