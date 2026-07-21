@@ -949,6 +949,18 @@
 - 已知限制：SC-1 当前只冻结 SessionContext 与协商边界，logical/transport/path 绑定、索引、accepted、active、heartbeat、grace/resume、reauth、snapshot/audit 仍由 W05-W14 完成；普通生产连接仍由 P05 fail-closed adapter 拒绝。
 - 下一工作包：`P05-W05 logical connection/transport session/network path mapping`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
 
+## P05-W05
+
+- 工作包：`P05-W05 logical connection/transport session/network path mapping`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W06；P06 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T14:23:24+08:00`。
+- 修改文件：新增 `connection/binding.py` 与 facade 导出，新增 `tests/test_runtime_connection_binding.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增 P01-backed `LogicalSessionIdentityFactory`、冻结 `NetworkPathBinding`/`TransportSessionBinding`/`LogicalTransportMappingSnapshot` 和单 owner `LogicalConnectionTransportMap`。logical model 只复制 P04 frozen identity/capability/path value，不持有 TransportSession/WebSocket；path update、detach、transport replace 全部由实例锁原子化并有固定 fencing reason。path update 不改变 logical epoch；transport replace 保持 connection_id、强制新 session_id 与恰好下一 epoch。
+- 测试结果：W05 专项 10 项与 W04 联合 `Ran 20, OK`，覆盖三层 identity、无 transport object、path migration/unsupported/identity substitution、explicit replace、connection/epoch fencing、detach、concurrent replace、peer digest 非 authority 和 P01 ID factory。P01-P04+P05-W01-W05 runtime 联合 `Ran 515, OK (skipped=1)`，唯一 skip 为 Windows event-loop policy；`compileall -q src tests` 与 `git diff --check` 通过。
+- 安全/隔离检查：mapping repr 隐藏全部 logical/transport/path ID、identity/tenant 和 address digest；peer/local 只接收 P04 有界摘要且不参与 IAM/authority。源码不导入 WebSocket driver/global config/client/service locator、processor、DeliveryRecord/AckRecord/StateStore，不修改 P03/P04 frozen contract，也未实现 resume authentication 或 active routing。
+- 已知限制：W05 只建立 structural mapping 与 replacement fencing；W06 才建立单进程索引，W10/W11 才驱动 disconnect/resume lifecycle 和 IAM revalidation。SC-1 继续为 `IN_PROGRESS`。
+- 下一工作包：`P05-W06 local atomic connection indexes`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

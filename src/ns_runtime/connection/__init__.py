@@ -7,6 +7,13 @@ from .authentication import (
     AuthenticatedHello,
     ConnectionHandshakeAuthenticator,
 )
+from .binding import (
+    LogicalConnectionTransportMap,
+    LogicalSessionIdentityFactory,
+    LogicalTransportMappingSnapshot,
+    NetworkPathBinding,
+    TransportSessionBinding,
+)
 from .handshake import ConnectionHelloReceiver
 from .hello import (
     HELLO_EXTENSION_REGISTRY,
@@ -64,7 +71,11 @@ __all__ = (
     "LogicalConnectionState",
     "LogicalConnectionStateMachine",
     "LogicalConnectionStateSnapshot",
+    "LogicalConnectionTransportMap",
     "LogicalSessionIdentity",
+    "LogicalSessionIdentityFactory",
+    "LogicalTransportMappingSnapshot",
+    "NetworkPathBinding",
     "NegotiatedSession",
     "P05_CAPABILITY_POLICY",
     "ParsedHello",
@@ -72,4 +83,5 @@ __all__ = (
     "SessionContext",
     "TestIamAction",
     "TestIamOutcome",
+    "TransportSessionBinding",
 )
