@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -17,6 +16,12 @@ from ns_common.exceptions import NsRuntimeIamDeniedError, NsStateError, NsValida
 from ns_common.time import Clock
 from ns_runtime.transport import TransportSession
 
+from .audit import (
+    ConnectionAuditKind,
+    ConnectionAuditOutcome,
+    ConnectionLifecycleAuditBoundary,
+    logical_id_summary,
+)
 from .grace import ReconnectGracePhase, ReconnectGraceService
 from .index import LocalConnectionIndex
 from .session import SessionContext
@@ -175,6 +180,7 @@ class NonResumableConnectionGuard:
         connection_index: LocalConnectionIndex,
         clock: Clock,
         audit_sink: ConnectionSecurityAuditSink,
+        lifecycle_audit: ConnectionLifecycleAuditBoundary | None = None,
         transport_session: TransportSession | None = None,
         grace_service: ReconnectGraceService | None = None,
     ) -> None:
@@ -186,6 +192,11 @@ class NonResumableConnectionGuard:
             _invalid("clock")
         if not isinstance(audit_sink, ConnectionSecurityAuditSink):
             _invalid("audit_sink")
+        if lifecycle_audit is not None and not isinstance(
+            lifecycle_audit,
+            ConnectionLifecycleAuditBoundary,
+        ):
+            _invalid("lifecycle_audit")
         if transport_session is not None and not isinstance(
             transport_session,
             TransportSession,
@@ -202,6 +213,7 @@ class NonResumableConnectionGuard:
         self._index = connection_index
         self._clock = clock
         self._audit_sink = audit_sink
+        self._lifecycle_audit = lifecycle_audit
         self._transport = transport_session
         self._grace = grace_service
         self._lock = asyncio.Lock()
@@ -238,6 +250,11 @@ class NonResumableConnectionGuard:
             except asyncio.CancelledError as error:
                 cancelled = error
             await self._emit_audit_unlocked(decision)
+            try:
+                await self._emit_lifecycle_audit_unlocked(decision)
+            except asyncio.CancelledError as error:
+                if cancelled is None:
+                    cancelled = error
             if cancelled is not None:
                 raise cancelled
             return await self._snapshot_unlocked()
@@ -321,7 +338,7 @@ class NonResumableConnectionGuard:
             classification=decision.kind,
             close_reason=decision.close_reason,
             public_error=decision.public_error,
-            connection_summary=_digest(self._context.connection_id),
+            connection_summary=logical_id_summary(self._context.connection_id),
             component_type=self._context.component_type,
             connection_epoch=self._context.connection_epoch,
             occurred_at=self._clock.utc_now(),
@@ -333,6 +350,25 @@ class NonResumableConnectionGuard:
             return
         self._audit_succeeded = True
 
+    async def _emit_lifecycle_audit_unlocked(
+        self,
+        decision: NonResumableCloseDecision,
+    ) -> None:
+        if self._lifecycle_audit is None:
+            return
+        if decision.kind is NonResumableCloseKind.KICK:
+            kind = ConnectionAuditKind.KICK
+        elif decision.kind is NonResumableCloseKind.POLICY_NON_RECOVERABLE:
+            kind = ConnectionAuditKind.NON_RESUMABLE_CLOSE
+        else:
+            kind = ConnectionAuditKind.SECURITY_CLOSE
+        await self._lifecycle_audit.emit(
+            kind=kind,
+            outcome=ConnectionAuditOutcome.ENFORCED,
+            connection_epoch=self._context.connection_epoch,
+            close_reason=decision.close_reason,
+        )
+
     async def _snapshot_unlocked(self) -> NonResumableConnectionSnapshot:
         entry = await self._index.lookup_connection(self._context.connection_id)
         state = entry.state if entry is not None else LogicalConnectionState.CLOSED
@@ -343,10 +379,6 @@ class NonResumableConnectionGuard:
             audit_attempted=self._audit_attempted,
             audit_succeeded=self._audit_succeeded,
         )
-
-
-def _digest(value: str) -> str:
-    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
 def _invalid(field_name: str) -> None:

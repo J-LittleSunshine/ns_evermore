@@ -21,6 +21,11 @@ from ns_runtime.protocol import BUILTIN_MESSAGE_REGISTRY, MessageTypeRegistry
 from ns_runtime.transport import TransportSession
 
 from .accepted import ConnectionAcceptedEnvelopeBuilder
+from .audit import (
+    ConnectionAuditKind,
+    ConnectionAuditOutcome,
+    ConnectionLifecycleAuditBoundary,
+)
 from .binding import LogicalConnectionTransportMap, LogicalSessionIdentityFactory
 from .grace import ReconnectGraceService
 from .hello import ParsedHello
@@ -139,6 +144,7 @@ class ConnectionResumeCoordinator:
         task_supervisor: TaskSupervisor,
         task_sequence: int,
         timeout_seconds: float,
+        audit_boundary: ConnectionLifecycleAuditBoundary | None = None,
         capability_policy: CapabilityPolicy = P05_CAPABILITY_POLICY,
     ) -> None:
         dependencies = (
@@ -157,6 +163,11 @@ class ConnectionResumeCoordinator:
         for value, expected, name in dependencies:
             if not isinstance(value, expected):
                 _invalid(name)
+        if audit_boundary is not None and not isinstance(
+            audit_boundary,
+            ConnectionLifecycleAuditBoundary,
+        ):
+            _invalid("audit_boundary")
         if (
             isinstance(task_sequence, bool)
             or not isinstance(task_sequence, int)
@@ -186,6 +197,7 @@ class ConnectionResumeCoordinator:
         self._task_sequence = task_sequence
         self._deadline = deadline
         self._capability_policy = capability_policy
+        self._audit = audit_boundary
         self._claim_lock = asyncio.Lock()
         self._claimed = False
         self._grace_claimed = False
@@ -222,6 +234,13 @@ class ConnectionResumeCoordinator:
                     deadline_task.result()
                 await _cancel_and_join(operation_task)
                 await self._fail_if_claimed(LogicalConnectionCloseReason.TIMEOUT_CLOSED)
+                await self._emit_audit(
+                    ConnectionAuditOutcome.REJECTED,
+                    connection_epoch=self._current.connection_epoch,
+                    close_reason=await self._audit_close_reason(
+                        LogicalConnectionCloseReason.TIMEOUT_CLOSED,
+                    ),
+                )
                 raise NsRuntimeIamTimeoutError(
                     details={
                         "component": "logical_connection",
@@ -235,8 +254,22 @@ class ConnectionResumeCoordinator:
                 await self._fail_if_claimed(
                     LogicalConnectionCloseReason.INTERNAL_ERROR,
                 )
+                await self._emit_audit(
+                    ConnectionAuditOutcome.REJECTED,
+                    connection_epoch=self._current.connection_epoch,
+                    close_reason=await self._audit_close_reason(
+                        LogicalConnectionCloseReason.INTERNAL_ERROR,
+                    ),
+                )
                 raise outcome.error from None
             if not isinstance(outcome, ResumedConnection):
+                await self._emit_audit(
+                    ConnectionAuditOutcome.REJECTED,
+                    connection_epoch=self._current.connection_epoch,
+                    close_reason=await self._audit_close_reason(
+                        LogicalConnectionCloseReason.INTERNAL_ERROR,
+                    ),
+                )
                 raise NsRuntimeIamUnavailableError(
                     details={
                         "component": "logical_connection",
@@ -244,11 +277,22 @@ class ConnectionResumeCoordinator:
                         "reason": "invalid_resume_result",
                     },
                 )
+            await self._emit_audit(
+                ConnectionAuditOutcome.SUCCEEDED,
+                connection_epoch=outcome.session.context.connection_epoch,
+            )
             return outcome
         except asyncio.CancelledError:
             await _cancel_and_join(operation_task)
             await self._fail_if_claimed(LogicalConnectionCloseReason.SHUTDOWN)
             await _cancel_and_join(deadline_task)
+            await self._emit_audit(
+                ConnectionAuditOutcome.CANCELLED,
+                connection_epoch=self._current.connection_epoch,
+                close_reason=await self._audit_close_reason(
+                    LogicalConnectionCloseReason.SHUTDOWN,
+                ),
+            )
             raise
         except Exception:
             await _cancel_and_join(operation_task)
@@ -430,6 +474,31 @@ class ConnectionResumeCoordinator:
         if not self._grace_claimed:
             return
         await self._grace.terminate(reason)
+
+    async def _emit_audit(
+        self,
+        outcome: ConnectionAuditOutcome,
+        *,
+        connection_epoch: int,
+        close_reason: LogicalConnectionCloseReason | None = None,
+    ) -> None:
+        if self._audit is None:
+            return
+        await self._audit.emit(
+            kind=ConnectionAuditKind.RESUME,
+            outcome=outcome,
+            connection_epoch=connection_epoch,
+            close_reason=close_reason,
+        )
+
+    async def _audit_close_reason(
+        self,
+        fallback: LogicalConnectionCloseReason,
+    ) -> LogicalConnectionCloseReason | None:
+        if not self._grace_claimed:
+            return None
+        snapshot = await self._grace.snapshot()
+        return snapshot.terminal_reason or fallback
 
 
 def _resume_denied(reason: str) -> NsRuntimeIamDeniedError:

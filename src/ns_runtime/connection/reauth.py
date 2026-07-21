@@ -34,6 +34,11 @@ from ns_runtime.protocol import (
 from ns_runtime.transport import TransportSession
 
 from .accepted import _iso_utc
+from .audit import (
+    ConnectionAuditKind,
+    ConnectionAuditOutcome,
+    ConnectionLifecycleAuditBoundary,
+)
 from .hello import HandshakeCredential, PendingHelloClaims
 from .iam import HandshakeIamAdapter, HandshakeIamAuthority, HandshakeIamRequest
 from .index import LocalConnectionIndex
@@ -505,6 +510,7 @@ class ConnectionReauthCoordinator:
         task_sequence: int,
         timeout_seconds: float,
         expiry_controller: SessionExpiryController | None = None,
+        audit_boundary: ConnectionLifecycleAuditBoundary | None = None,
         capability_policy: CapabilityPolicy = P05_CAPABILITY_POLICY,
     ) -> None:
         dependencies = (
@@ -525,6 +531,11 @@ class ConnectionReauthCoordinator:
             SessionExpiryController,
         ):
             _invalid("expiry_controller")
+        if audit_boundary is not None and not isinstance(
+            audit_boundary,
+            ConnectionLifecycleAuditBoundary,
+        ):
+            _invalid("audit_boundary")
         if (
             isinstance(task_sequence, bool)
             or not isinstance(task_sequence, int)
@@ -551,6 +562,7 @@ class ConnectionReauthCoordinator:
         self._task_sequence = task_sequence
         self._deadline = deadline
         self._expiry = expiry_controller
+        self._audit = audit_boundary
         self._capability_policy = capability_policy
         self._lock = asyncio.Lock()
         self._claimed = False
@@ -782,14 +794,28 @@ class ConnectionReauthCoordinator:
             return
         self._terminal_handled = True
         await self._mark_closing(LogicalConnectionCloseReason.AUTH_FAILED)
+        cancelled: asyncio.CancelledError | None = None
         try:
             text = self._responses.rejected(self._current, reason=reason)
             await self._transport.send(text)
-        except asyncio.CancelledError:
-            raise
+        except asyncio.CancelledError as error:
+            cancelled = error
         except Exception:
             pass
         await self._close(LogicalConnectionCloseReason.AUTH_FAILED)
+        if self._audit is not None:
+            try:
+                await self._audit.emit(
+                    kind=ConnectionAuditKind.REAUTH_REJECTION,
+                    outcome=ConnectionAuditOutcome.REJECTED,
+                    connection_epoch=self._current.connection_epoch,
+                    close_reason=LogicalConnectionCloseReason.AUTH_FAILED,
+                )
+            except asyncio.CancelledError as error:
+                if cancelled is None:
+                    cancelled = error
+        if cancelled is not None:
+            raise cancelled
 
     async def _close(self, reason: LogicalConnectionCloseReason) -> None:
         await self._mark_closing(reason)

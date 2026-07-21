@@ -1057,6 +1057,18 @@
 - 已知限制：W13复用显式offline test IAM或production fail-closed adapter，不实现后台凭证续期或P06网络IAM。W14仍需聚合最终async safe session snapshot与resume/kick/security close/reauth rejection强审计接口；当前W12 sink不代表durable audit，SC-1继续 `IN_PROGRESS`。
 - 下一工作包：`P05-W14 async safe session snapshot and audit aggregation`，状态为 `IN_PROGRESS`；P06保持 `NOT_STARTED`。
 
+## P05-W14
+
+- 工作包：`P05-W14 async safe session snapshot and audit aggregation`。
+- 状态：`VERIFIED`；P05-W01至W14全部 `VERIFIED`，P05阶段出口为 `VERIFIED/F3`，`SC-1 VERIFIED`；P06-B01/P06-R01及其余P06工作包保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T17:50:28+08:00`。
+- 修改文件：新增 `connection/audit.py`、`connection/snapshot.py` 与 facade 导出；将typed lifecycle audit显式接入resume、reauth rejection和non-resumable guard；新增 `tests/test_runtime_connection_snapshot_audit.py`；更新 implementation plan、acceptance log 与 ADR-030并冻结P05/SC-1。
+- 公共契约变化：新增五项有限 `ConnectionCapabilityClass`、frozen `SafeConnectionSnapshot`与async `SafeConnectionSnapshotReader`；reader只输出logical ID摘要、state/close/target、component/epoch/protocol、有限capability classification及heartbeat/grace/drain/reauth/security safe view，并以index mutation sequence进行最多三次有界coherence retry。新增五项`ConnectionAuditKind`、fixed outcome/strong-required marker、frozen typed event/snapshot、显式sink/test sink和`ConnectionLifecycleAuditBoundary`；strong-required只预留P07/P08合同，不声明durability。
+- 测试结果：W14专项10项，覆盖exact frozen字段、嵌套lifecycle view、drain/security终态、敏感字段零泄漏、并发authority mutation coherence retry、hostile snapshot source failure、resume success/rejection audit、reauth rejection、kick/security/policy映射、audit failure隔离及ordinary heartbeat零audit。P05 connection联合 `Ran 151, OK`；P01-P05 runtime联合 `Ran 611, OK (skipped=1)`；backend根目录全量 `Ran 622, OK (skipped=32)`；两套`pip check`、`compileall -q src tests`和`git diff --check`通过。
+- 安全/隔离检查：snapshot/event字段白名单和repr扫描均不含raw connection/session ID、identity、tenant、完整capability、permission ref/digest/mapping、token/Authorization/credential、Envelope/payload/auth_context、transport/path/peer、WebSocket或异常文本。reader/sink普通失败不读取str/repr；无global sink、StateStore/Redis/cache、HTTP/backend client、processor/DeliveryRecord/AckRecord、thread/new loop/new supervisor。heartbeat服务未注入audit boundary且事件为零。
+- 已知限制：safe snapshot是单进程异步observational view，不是P08持久状态或集群权威；coherent只表示读取窗口内local index mutation sequence稳定。typed audit只表达strong-required handoff，deterministic test sink不持久、不证明exactly-once；P07/P08仍须实现processor final audit和durable强一致存储。P06真实IAM client/backend合同未开始，ordinary production connection继续fail-closed。
+- 下一工作包：`P06-B01 runtime IAM principal contract`，状态保持 `NOT_STARTED`；本目标在P05阶段出口停止，不开始P06。
+
 ## 新记录模板
 
 - 工作包：

@@ -10,6 +10,16 @@ from .accepted import (
     ConnectionAcceptedEnvelopeBuilder,
     ConnectionAdmissionActivator,
 )
+from .audit import (
+    ConnectionAuditConsistency,
+    ConnectionAuditKind,
+    ConnectionAuditOutcome,
+    ConnectionLifecycleAuditBoundary,
+    ConnectionLifecycleAuditEvent,
+    ConnectionLifecycleAuditSink,
+    ConnectionLifecycleAuditSnapshot,
+    DeterministicTestConnectionAuditSink,
+)
 from .authentication import (
     AuthenticatedHello,
     ConnectionHandshakeAuthenticator,
@@ -109,6 +119,11 @@ from .security import (
     NonResumableConnectionSnapshot,
     NonResumablePublicError,
 )
+from .snapshot import (
+    ConnectionCapabilityClass,
+    SafeConnectionSnapshot,
+    SafeConnectionSnapshotReader,
+)
 from .state import (
     LogicalConnectionCloseReason,
     LogicalConnectionState,
@@ -124,6 +139,10 @@ __all__ = (
     "AuthenticatedHello",
     "CapabilityPolicy",
     "CapabilityRule",
+    "ConnectionAuditConsistency",
+    "ConnectionAuditKind",
+    "ConnectionAuditOutcome",
+    "ConnectionCapabilityClass",
     "ConnectionHelloReceiver",
     "ConnectionHandshakeAuthenticator",
     "ConnectionHeartbeatService",
@@ -133,12 +152,17 @@ __all__ = (
     "ConnectionDrainEnvelopeHandler",
     "ConnectionEpochGate",
     "ConnectionIndexEntrySnapshot",
+    "ConnectionLifecycleAuditBoundary",
+    "ConnectionLifecycleAuditEvent",
+    "ConnectionLifecycleAuditSink",
+    "ConnectionLifecycleAuditSnapshot",
     "ConnectionResumeCoordinator",
     "ConnectionReauthCoordinator",
     "ConnectionReauthEnvelopeHandler",
     "ConnectionSecurityAuditEvent",
     "ConnectionSecurityAuditSink",
     "DeterministicTestIamAdapter",
+    "DeterministicTestConnectionAuditSink",
     "DeterministicTestSecurityAuditSink",
     "DRAIN_ALLOWED_MESSAGE_TYPES",
     "DrainPolicy",
@@ -194,6 +218,8 @@ __all__ = (
     "ReauthRejectionReason",
     "ReauthenticatedSession",
     "ResumedConnection",
+    "SafeConnectionSnapshot",
+    "SafeConnectionSnapshotReader",
     "SessionContext",
     "SessionExpiryController",
     "SessionExpiryPolicy",
