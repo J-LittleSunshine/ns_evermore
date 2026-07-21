@@ -961,6 +961,18 @@
 - 已知限制：W05 只建立 structural mapping 与 replacement fencing；W06 才建立单进程索引，W10/W11 才驱动 disconnect/resume lifecycle 和 IAM revalidation。SC-1 继续为 `IN_PROGRESS`。
 - 下一工作包：`P05-W06 local atomic connection indexes`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
 
+## P05-W06
+
+- 工作包：`P05-W06 local atomic connection indexes`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W07；P06 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T14:28:06+08:00`。
+- 修改文件：新增 `connection/index.py` 与 facade 导出，新增 `tests/test_runtime_connection_index.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增单进程 `LocalConnectionIndex`、冻结 `ConnectionIndexEntrySnapshot`/`LocalConnectionIndexSnapshot`。owner 锁内管理 connection/session/identity/tenant/component/capability/active-target 七类索引；每次 mutation 从 candidate entries 完整重建并在验证后一次 commit。duplicate connection/session 稳定拒绝，identity 多连接明确支持；state transition 与 target eligibility 同 owner 更新，closed 清除全部引用，session/authority context replacement 原子重建 secondary indexes。
+- 测试结果：W06 专项 11 项，W04-W06 联合 `Ran 31, OK`，覆盖全索引查询、identity 多连接、duplicate/concurrent add、active/drain eligibility、grace-style suspend/restore、inactive restore rejection、closed cleanup、session/authority replace 和 deep immutable snapshot。P01-P04+P05-W01-W06 runtime 联合 `Ran 526, OK (skipped=1)`，唯一 skip 为 Windows event-loop policy；`compileall -q src tests` 与 `git diff --check` 通过。
+- 安全/隔离检查：所有公开集合 frozen 且 repr 隐藏 connection/session/identity/tenant/capability；没有 transport/path/peer、token、Envelope、permission mapping、第三方对象或 exception text。索引只存在显式实例，不是 global registry，不导入 StateStore/Redis/cache client/service locator、processor 或 delivery 类型。
+- 已知限制：W06 只提供本地索引 owner；W07 accepted 成功后才允许首次 active，W09/W10/W11 分别驱动 drain/grace/resume 的 eligibility 变化。索引不具有跨进程/集群权威，SC-1 继续为 `IN_PROGRESS`。
+- 下一工作包：`P05-W07 connection.accepted activation boundary`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

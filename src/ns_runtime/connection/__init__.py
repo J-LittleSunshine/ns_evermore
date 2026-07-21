@@ -33,6 +33,11 @@ from .iam import (
     TestIamAction,
     TestIamOutcome,
 )
+from .index import (
+    ConnectionIndexEntrySnapshot,
+    LocalConnectionIndex,
+    LocalConnectionIndexSnapshot,
+)
 from .session import (
     CapabilityPolicy,
     CapabilityRule,
@@ -56,6 +61,7 @@ __all__ = (
     "CapabilityRule",
     "ConnectionHelloReceiver",
     "ConnectionHandshakeAuthenticator",
+    "ConnectionIndexEntrySnapshot",
     "DeterministicTestIamAdapter",
     "FailClosedHandshakeIamAdapter",
     "HELLO_EXTENSION_REGISTRY",
@@ -75,6 +81,8 @@ __all__ = (
     "LogicalSessionIdentity",
     "LogicalSessionIdentityFactory",
     "LogicalTransportMappingSnapshot",
+    "LocalConnectionIndex",
+    "LocalConnectionIndexSnapshot",
     "NetworkPathBinding",
     "NegotiatedSession",
     "P05_CAPABILITY_POLICY",
