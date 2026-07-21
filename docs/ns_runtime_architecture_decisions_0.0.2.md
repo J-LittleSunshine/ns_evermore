@@ -334,3 +334,14 @@
 - 后果：P04 可以真实建立 TLS 或受控非生产明文 loopback WebSocket，把完整 text message 交给上层；上层仍不得接受业务消息，P05 handshake 完成前 session 不进入 active。后续 adapter 必须复用 22-case TC-1 和公共 harness；修改任何冻结接口、capability、queue/error/metric/lifecycle 语义必须重跑 P04 及全部下游阶段。
 - 阶段冻结：`P04-W01` 至 `P04-W10`、`P04-FIX-01` 与 `P04-FIX-02` 已在真实 TLS/明文 loopback、terminal outcome/竞态/取消专项、P03+P04 联合矩阵及 runtime/backend 全量回归后达到 `VERIFIED/F2`。冻结范围仅为 transport adapter、底层 session/message boundary、queue/error/registry/metrics/lifecycle 合同；`P05-W01` 保持 `NOT_STARTED`，不得由本 ADR 推断 logical connection、handshake、IAM、processor、StateStore、delivery 或 cluster 已开始。
 - 关联阶段/工作包：`P04-W01` 至 `P04-W10`、`P05`、`P11`、`P20`、`P21`、`P22`。
+
+## ADR-030
+
+- ADR 编号：`ADR-030`
+- 状态：`ACCEPTED`（P05 增量冻结；阶段出口前继续追加）
+- 背景：P05 必须在不改变 P04 transport session 三态、也不提前创建 IAM backend、processor pipeline、StateStore 或 delivery 状态的前提下建立 runtime logical connection。并发 hello、close、drain、disconnect 和后续 resume 若通过散落赋值更新状态，会产生双 active、draining 回退或提前发布 closed。
+- 决策（P05-W01）：logical connection 独立使用 `accepted -> handshaking -> authenticated -> active -> draining -> closing -> closed` 七态显式矩阵，绝不复用 `TransportSessionState`。每次迁移由单实例 `asyncio.Lock` 串行化；非法、重复或越级迁移使用固定 current/requested/allowed 分类稳定拒绝且不修改 state、reason 或 sequence。`draining` 只能进入 `closing`，`closed` 为终态。进入 `closing` 必须选择 `LogicalConnectionCloseReason` 闭集之一，reason 只允许固定低基数字段且在 `closed` 保留；任意非 closing 迁移禁止注入 reason。
+- 决策（P05-W01）：状态 snapshot 为 frozen、slots、kw_only 的值对象，只含 state、可选 close classification 和本地 transition sequence；不含 logical/transport ID、地址、token、Envelope、异常、callback 或资源 owner。状态机不持有 transport、TaskSupervisor、Clock、signal、sink、client 或全局 context，不创建 task、thread、loop、queue、processor、DeliveryRecord 或 StateStore mutation。
+- 后果：并发重复认证最多一个进入 authenticated；active 上的 drain/close 按锁顺序线性化，close 可从 draining 继续完成且无法恢复 active；handshake completion 被先到 close fencing 后稳定拒绝。W02 起必须复用该状态机建立 hello-first/deadline，不得把 transport `HANDSHAKING` 当作 logical 状态或引入第二 lifecycle owner。
+- 阶段状态：`P05-W01 VERIFIED`；SC-1、握手、IAM 测试 adapter、协商、索引、accepted、heartbeat、grace/resume、reauth 与 snapshot/audit 尚未冻结，P06 保持 `NOT_STARTED`。
+- 关联阶段/工作包：`P05-W01` 至 `P05-W14`、`P06`、`P07`、`P09`、`P11`、`P12`、`P16`、`P21`。

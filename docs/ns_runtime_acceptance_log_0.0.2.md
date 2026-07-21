@@ -901,6 +901,18 @@
 - 已知限制：完整生产证书材料仍属 P20；FIX-02 只冻结底层 transport terminal outcome 与可重试清理，不开放 handshaking 之后的业务状态。
 - 下一工作包：执行游标恢复到 `P05-W01 连接状态机`，状态保持 `NOT_STARTED`；本 FIX 未开始 P05。
 
+## P05-W01
+
+- 工作包：`P05-W01 logical connection state machine`。
+- 状态：`VERIFIED`；P05 阶段进入 `IN_PROGRESS/F1`，下一游标为 P05-W02。
+- 完成时间：`2026-07-21T13:49:48+08:00`。
+- 修改文件：新增 `src/ns_runtime/connection/state.py` 与 connection facade，新增 `tests/test_runtime_connection_state.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：建立与 P04 `TransportSessionState` 完全分离的 logical connection 七态矩阵 accepted/handshaking/authenticated/active/draining/closing/closed；每次迁移由实例级 asyncio lock 原子串行化。closing 强制选择 13 项固定低基数 close reason，closed 为终态并保留 reason，snapshot 为 frozen/slots/kw_only 且仅含 state、reason、transition sequence。
+- 测试结果：W01 专项 `Ran 9, OK`；排除按 DEP-1 不安装 Django 的 `tests.test_cache` 后，P01-P04+P05-W01 runtime 联合 `Ran 469, OK (skipped=1)`，唯一 skip 为 Windows event-loop policy。`compileall -q src tests` 通过。
+- 安全/隔离检查：非法/重复/越级迁移不修改任何状态；并发 duplicate hello、hello/close、active/drain/close 均只有线性化结果，不产生双 active，draining 不回退，closed 不可迁移。connection package 不引用 transport ID/WebSocket、token/Envelope/payload、global config/client/context、TaskSupervisor、processor、DeliveryRecord、AckRecord 或 StateStore；不创建 task、thread、loop、queue 或第二生命周期 owner。
+- 已知限制：W01 只冻结状态机和关闭分类；尚未绑定 transport、生成 logical ID、读取 Envelope 或建立 handshake deadline。SC-1、IAM、active/index、heartbeat、grace/resume、reauth 和 audit 仍按 W02-W14 保持未完成，生产 ordinary connection 继续 fail-closed。
+- 下一工作包：`P05-W02 hello-first 与 handshake deadline`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：
