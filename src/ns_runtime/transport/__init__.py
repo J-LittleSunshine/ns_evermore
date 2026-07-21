@@ -20,6 +20,12 @@ from .models import (
     TransportMessage,
     TransportSessionState,
 )
+from .registry import (
+    TRANSPORT_ADAPTER_NAMES,
+    TransportAdapterBuildContext,
+    TransportAdapterRegistration,
+    TransportAdapterRegistry,
+)
 from .websocket_tcp import (
     WEBSOCKET_TCP_CAPABILITIES,
     WEBSOCKET_TCP_TRANSPORT_TYPE,
@@ -31,6 +37,9 @@ from .websocket_tcp import (
 
 __all__ = (
     "TransportAdapter",
+    "TransportAdapterBuildContext",
+    "TransportAdapterRegistration",
+    "TransportAdapterRegistry",
     "TransportCapabilities",
     "TransportCapability",
     "TransportClose",
@@ -46,6 +55,7 @@ __all__ = (
     "TransportPathSnapshot",
     "TransportSession",
     "TransportSessionState",
+    "TRANSPORT_ADAPTER_NAMES",
     "WEBSOCKET_TCP_CAPABILITIES",
     "WEBSOCKET_TCP_TRANSPORT_TYPE",
     "WebSocketTcpAdapter",

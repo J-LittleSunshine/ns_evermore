@@ -827,6 +827,18 @@
 - 已知限制：错误 code 复用 ERR-1 已冻结 transport 域，不新增或重编号 P01 错误；更细分类由 P04 TransportErrorKind 与低基数 reason 表达。W08 将冻结 adapter registry 和禁用依赖隔离。
 - 下一工作包：`P04-W08 adapter registry`，状态为 `IN_PROGRESS`。
 
+## P04-W08
+
+- 工作包：`P04-W08 explicit adapter registry`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-21T10:44:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/transport/registry.py` 与 `tests/test_runtime_transport_registry.py`，更新 facade、实施计划和执行游标。
+- 公共契约变化：不可变 registry 精确登记 `websocket_tcp`、`websocket_http3`、`webtransport_http3`、`quic_native`；仅 websocket_tcp 为 available 且具有 factory/capabilities。未来三项为 `available=False`、空 capabilities、factory=None；`create_enabled` 只构造显式启用 adapter，不启动 listener，禁用/未知项稳定 `RUNTIME_TRANSPORT_DISABLED`。
+- 测试结果：登记闭集/不可变性、唯一可用 adapter、构造不监听、禁用与 duplicate 负向、fresh-process 依赖隔离通过；registry/contracts/requirements/startup/bootstrap 联合 `Ran 38, OK`，compileall 与 `git diff --check` 通过。
+- 安全/隔离检查：fresh process 证明 registry import/disabled lookup 不加载 websockets/aioquic/webtransport；依赖清单仍只有正式 websockets 16，无 QUIC/WebTransport 包。registry 不拥有 start/close、signal、loop、TaskSupervisor 或 listener 生命周期。
+- 已知限制：未来 adapter 名称只是 reserved registration，不表示可用；启用仍在 RSP-1 preflight 和 registry 双层 fail-closed。W09 将把所有 adapter 可复用的测试合同冻结为 TC-1。
+- 下一工作包：`P04-W09 transport conformance suite`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
