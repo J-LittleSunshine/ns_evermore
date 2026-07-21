@@ -925,6 +925,18 @@
 - 已知限制：W02 成功只返回待 W03 消费的 InboundEnvelope，logical state 保持 handshaking；尚未读取 token 声明、认证、协商、构造 SessionContext、发送 accepted 或进入 active。生产 ordinary connection 仍 fail-closed。
 - 下一工作包：`P05-W03 controlled hello parsing and test IAM boundary`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
 
+## P05-W03
+
+- 工作包：`P05-W03 controlled hello parsing and test IAM boundary`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W04；P06-B01/P06-R01 仍为 `NOT_STARTED`。
+- 完成时间：`2026-07-21T14:10:22+08:00`。
+- 修改文件：新增 `connection/hello.py`、`connection/iam.py`、`connection/authentication.py` 与 facade 导出，扩展 hello receiver 的受控终止接口，新增 `tests/test_runtime_connection_authentication.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增单次、repr-redacted `HandshakeCredential`，冻结 `PendingHelloClaims`/`HelloResumeRequest`，使用 P03 extension registry 精确登记 `ns.connection_resume` 而不修改 ENV-1 hello payload schema；新增显式 `HandshakeIamAdapter`、frozen/deep-copied `HandshakeIamAuthority`、offline deterministic test adapter 与 production fail-closed adapter。`ConnectionHandshakeAuthenticator` 以同一显式 Clock/TaskSupervisor 总 deadline 覆盖 receive、parse 和 IAM，并只在 authority 有效且 component_type 一致后进入 authenticated。
+- 测试结果：W01-W03 connection 专项 `Ran 35, OK`；W03 13 项覆盖 allow、prod fail-closed、deny、total timeout、cancel、expired、inconsistent identity、resume typed refs、protocol mismatch、unknown extension、hostile adapter、one-shot 和 outcome 闭集。P01-P04+P05-W01-W03 runtime 联合 `Ran 495, OK (skipped=1)`，唯一 skip 为 Windows event-loop policy；`compileall -q src tests` 与 `git diff --check` 通过。
+- 安全/隔离检查：token 只存在 P03 inbound payload、受控 parser local 与 single-use credential；adapter take 后立即删除局部引用，coordinator finally clear，普通 operation failure 在 supervised task返回前清除 traceback/context/cause。所有 request/parsed/result sensitive fields 均 repr=false 或固定 redacted repr；authority exact typed 后 detached copy，permissions 深度冻结。源码不导入 HTTP/global config/client/service locator/logger/metrics/audit、WebSocket、processor、DeliveryRecord/AckRecord/StateStore；test adapter不联网、不按 token 猜 authority，production adapter仅拒绝。
+- 已知限制：P05 authority 只是 P06 前的注入合同和测试实现，不调用 backend IAM、不缓存、不提供权限失效。AuthenticatedHello 仍是握手临时结果；W04 才协商协议/capability并冻结 SC-1，W05以后才建立 logical/transport/path 映射和索引。
+- 下一工作包：`P05-W04 protocol/capability negotiation and SessionContext`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

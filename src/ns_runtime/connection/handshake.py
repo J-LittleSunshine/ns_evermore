@@ -84,6 +84,15 @@ class ConnectionHelloReceiver:
         self._claim_lock = asyncio.Lock()
         self._claimed = False
 
+    @property
+    def state_machine(self) -> LogicalConnectionStateMachine:
+        return self._state_machine
+
+    async def terminate(self, reason: LogicalConnectionCloseReason) -> None:
+        if not isinstance(reason, LogicalConnectionCloseReason):
+            _invalid("close_reason")
+        await self._terminate(reason)
+
     async def receive(self) -> InboundEnvelope:
         if not await self._claim_once():
             await self._terminate_isolated(
