@@ -31,6 +31,7 @@ from ns_runtime.protocol import (
 from ns_runtime.transport import TransportSession
 
 from .accepted import _iso_utc
+from .drain import ConnectionDrainService
 from .index import LocalConnectionIndex
 from .session import SessionContext
 from .state import LogicalConnectionCloseReason, LogicalConnectionState
@@ -101,6 +102,7 @@ class ConnectionHeartbeatService:
         policy: HeartbeatPolicy,
         codec: JsonV1Codec,
         registry: MessageTypeRegistry = BUILTIN_MESSAGE_REGISTRY,
+        drain_service: ConnectionDrainService | None = None,
     ) -> None:
         if not isinstance(session_context, SessionContext):
             _invalid("session_context")
@@ -126,6 +128,11 @@ class ConnectionHeartbeatService:
             _invalid("codec")
         if not isinstance(registry, MessageTypeRegistry):
             _invalid("registry")
+        if drain_service is not None and not isinstance(
+            drain_service,
+            ConnectionDrainService,
+        ):
+            _invalid("drain_service")
         if session_context.wire_codec != WIRE_CODEC_JSON_V1:
             _invalid("session_codec")
         self._context = session_context
@@ -138,6 +145,7 @@ class ConnectionHeartbeatService:
         self._policy = policy
         self._codec = codec
         self._registry = registry
+        self._drain = drain_service
         self._lifecycle_lock = asyncio.Lock()
         self._start_lock = asyncio.Lock()
         self._started = False
@@ -391,6 +399,10 @@ class ConnectionHeartbeatService:
     ) -> None:
         if self._terminal_reason is None:
             self._terminal_reason = reason
+        if self._drain is not None:
+            self._terminal_reason = await self._drain.observe_external_terminal(
+                self._terminal_reason,
+            )
         self._running = False
         self._cancel_other_tasks_now()
         entry = await self._index.lookup_connection(self._context.connection_id)
@@ -406,12 +418,20 @@ class ConnectionHeartbeatService:
         try:
             await self._transport.close()
         except Exception:
+            if self._drain is not None:
+                await self._drain.finalize_external_terminal(
+                    self._terminal_reason,
+                )
             return
         entry = await self._index.lookup_connection(self._context.connection_id)
         if entry is not None and entry.state is LogicalConnectionState.CLOSING:
             await self._index.transition(
                 self._context.connection_id,
                 LogicalConnectionState.CLOSED,
+            )
+        if self._drain is not None:
+            await self._drain.finalize_external_terminal(
+                self._terminal_reason,
             )
 
     def _cancel_other_tasks_now(self) -> None:

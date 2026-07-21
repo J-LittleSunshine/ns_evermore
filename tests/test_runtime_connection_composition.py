@@ -182,6 +182,7 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
             await client.send(_hello())
             accepted = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
             self.assertEqual("connection.accepted", accepted["message"]["type"])
+            self.assertEqual(0, manager.pending_candidate_cleanup_count)
             context = accepted["payload"]["inline"]
             await client.send(_heartbeat(context, sequence=1))
             ack = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
@@ -287,6 +288,7 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
                     await asyncio.wait_for(client.wait_closed(), timeout=2)
                 await _wait_until(lambda: not manager._admission_tasks)
                 self.assertEqual(0, manager.active_connection_count)
+                self.assertEqual(0, manager.pending_candidate_cleanup_count)
                 self.assertEqual({}, dict((await manager.connection_index.snapshot()).by_connection_id))
                 self.assertFalse(any(
                     name.startswith(("logical-handshake-", "logical-iam-", "logical-admission-"))
@@ -496,7 +498,9 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
             self.assertEqual("connection.rejected", rejected["message"]["type"])
             self.assertEqual("iam_denied", rejected["payload"]["inline"]["reason"])
             await asyncio.wait_for(client.wait_closed(), timeout=2)
+        await _wait_until(lambda: not prod_manager._admission_tasks)
         self.assertEqual(0, prod_manager.active_connection_count)
+        self.assertEqual(0, prod_manager.pending_candidate_cleanup_count)
         self.assertEqual((), self.supervisor.failures)
 
     async def test_reauth_rejection_is_sent_then_connection_closes(self) -> None:
@@ -524,6 +528,126 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
             self.assertEqual("auth_denied", rejected["payload"]["inline"]["reason"])
             await asyncio.wait_for(client.wait_closed(), timeout=2)
         await _wait_until(lambda: manager.active_connection_count == 0)
+
+    async def test_draining_reauth_denial_converges_first_reason_and_tasks(self) -> None:
+        from websockets.asyncio.client import connect
+
+        authority = _authority(self.clock)
+        iam = DeterministicTestIamAdapter(
+            (
+                TestIamOutcome(action=TestIamAction.ALLOW, authority=authority),
+                TestIamOutcome(action=TestIamAction.DENY),
+            ),
+            clock=self.clock,
+        )
+        adapter, manager = await self._start(iam)
+        async with connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        ) as client:
+            await client.send(_hello())
+            accepted = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
+            connection_id = accepted["payload"]["inline"]["connection_id"]
+            owner = manager._owners[connection_id]
+            assert owner.drain is not None
+            drain = owner.drain
+            await client.send(_drain())
+            await _wait_until_async(
+                lambda: _connection_state(manager, connection_id),
+                expected=LogicalConnectionState.DRAINING,
+            )
+            await client.send(_reauth())
+            rejected = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
+            self.assertEqual("connection.reauth_rejected", rejected["message"]["type"])
+            await asyncio.wait_for(client.wait_closed(), timeout=2)
+
+        await drain.wait_closed()
+        await _wait_until(lambda: manager.active_connection_count == 0)
+        snapshot = await drain.snapshot()
+        self.assertIs(LogicalConnectionCloseReason.AUTH_FAILED, snapshot.terminal_reason)
+        self.assertIs(
+            LogicalConnectionCloseReason.AUTH_FAILED,
+            owner.state_machine.close_reason,
+        )
+        self.assertFalse(snapshot.timeout_pending)
+        self.assertIsNone(await manager.connection_index.lookup_connection(connection_id))
+        await _wait_until(lambda: not any(
+            name.startswith("logical-drain-")
+            for name in self.supervisor.pending_task_names
+        ))
+
+    async def test_draining_reauth_close_failure_keeps_auth_reason_for_retry(self) -> None:
+        from websockets.asyncio.client import connect
+
+        authority = _authority(self.clock)
+        iam = DeterministicTestIamAdapter(
+            (
+                TestIamOutcome(action=TestIamAction.ALLOW, authority=authority),
+                TestIamOutcome(action=TestIamAction.DENY),
+            ),
+            clock=self.clock,
+        )
+        adapter, manager = await self._start(iam)
+        async with connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        ) as client:
+            await client.send(_hello())
+            accepted = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
+            connection_id = accepted["payload"]["inline"]["connection_id"]
+            owner = manager._owners[connection_id]
+            assert owner.transport is not None
+            assert owner.drain is not None
+            drain = owner.drain
+            original_close = owner.transport.close
+            close_calls = 0
+
+            async def fail_once():
+                nonlocal close_calls
+                close_calls += 1
+                if close_calls == 1:
+                    raise RuntimeError("external close failure")
+                return await original_close()
+
+            owner.transport.close = fail_once  # type: ignore[method-assign]
+            await client.send(_drain())
+            await _wait_until_async(
+                lambda: _connection_state(manager, connection_id),
+                expected=LogicalConnectionState.DRAINING,
+            )
+            await client.send(_reauth())
+            rejected = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
+            self.assertEqual("connection.reauth_rejected", rejected["message"]["type"])
+            await _wait_until_async(
+                lambda: _connection_state(manager, connection_id),
+                expected=LogicalConnectionState.CLOSING,
+            )
+            snapshot = await drain.snapshot()
+            self.assertIs(LogicalConnectionCloseReason.AUTH_FAILED, snapshot.terminal_reason)
+            self.assertIs(
+                LogicalConnectionCloseReason.AUTH_FAILED,
+                owner.state_machine.close_reason,
+            )
+            self.assertFalse(snapshot.timeout_pending)
+            self.assertIn(connection_id, manager._owners)
+            self.assertIsNotNone(owner.drain_cleanup_task)
+            assert owner.drain_cleanup_task is not None
+            self.assertFalse(owner.drain_cleanup_task.done())
+
+            self.assertTrue(await manager.retry_cleanup(connection_id))
+            await asyncio.wait_for(client.wait_closed(), timeout=2)
+
+        await drain.wait_closed()
+        self.assertEqual(2, close_calls)
+        self.assertIs(
+            LogicalConnectionCloseReason.AUTH_FAILED,
+            (await drain.snapshot()).terminal_reason,
+        )
+        await _wait_until(lambda: manager.active_connection_count == 0)
+        await _wait_until(lambda: not any(
+            name.startswith("logical-drain-")
+            for name in self.supervisor.pending_task_names
+        ))
 
 
 def _authority(clock: SystemClock) -> HandshakeIamAuthority:

@@ -16,7 +16,9 @@ from ns_common.identifiers import IdentifierFactory
 from ns_common.time import ControlledClock
 from ns_runtime.connection import (
     HEARTBEAT_ACK_PAYLOAD_FIELDS,
+    ConnectionDrainService,
     ConnectionHeartbeatService,
+    DrainPolicy,
     EnvelopeHeartbeatOutcome,
     HeartbeatPolicy,
     LocalConnectionIndex,
@@ -162,6 +164,50 @@ class ConnectionHeartbeatTestCase(unittest.IsolatedAsyncioTestCase):
         await _wait_until(lambda: not self.supervisor.pending_task_names)
         self.assertEqual(0, self.clock.pending_sleep_count)
 
+    async def test_draining_heartbeat_timeout_cancels_drain_terminal(self) -> None:
+        drain = ConnectionDrainService(
+            connection_id=CONNECTION_ID,
+            connection_index=self.index,
+            transport_session=self.transport,
+            clock=self.clock,
+            task_supervisor=self.supervisor,
+            task_sequence=82,
+            policy=DrainPolicy(timeout_seconds=30),
+        )
+        service = _service(
+            context=self.context,
+            index=self.index,
+            transport=self.transport,
+            clock=self.clock,
+            supervisor=self.supervisor,
+            drain_service=drain,
+        )
+        await service.start()
+        await drain.begin()
+        await _wait_until(lambda: self.clock.pending_sleep_count == 3)
+
+        self.clock.advance(5)
+        await _wait_until(lambda: self.machine.state is LogicalConnectionState.CLOSED)
+        await drain.wait_closed()
+
+        snapshot = await drain.snapshot()
+        self.assertIs(LogicalConnectionCloseReason.TIMEOUT_CLOSED, snapshot.terminal_reason)
+        self.assertFalse(snapshot.timeout_pending)
+        self.clock.advance(30)
+        await asyncio.sleep(0)
+        self.assertIs(
+            LogicalConnectionCloseReason.TIMEOUT_CLOSED,
+            (await drain.snapshot()).terminal_reason,
+        )
+        self.assertIs(
+            LogicalConnectionCloseReason.TIMEOUT_CLOSED,
+            self.machine.close_reason,
+        )
+        self.assertFalse(any(
+            name.startswith("logical-drain-")
+            for name in self.supervisor.pending_task_names
+        ))
+
     async def test_native_ping_failure_uses_transport_close_classification(self) -> None:
         self.transport.ping_failure = RuntimeError("native-ping-secret")
         await self.service.start()
@@ -221,6 +267,7 @@ def _service(
     transport,
     clock,
     supervisor,
+    drain_service=None,
 ) -> ConnectionHeartbeatService:
     return ConnectionHeartbeatService(
         session_context=context,
@@ -237,6 +284,7 @@ def _service(
             envelope_timeout_seconds=5,
         ),
         codec=JsonV1Codec(),
+        drain_service=drain_service,
     )
 
 

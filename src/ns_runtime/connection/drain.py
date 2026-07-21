@@ -249,6 +249,53 @@ class ConnectionDrainService:
 
         await self._closed_event.wait()
 
+    async def observe_external_terminal(
+        self,
+        reason: LogicalConnectionCloseReason,
+    ) -> LogicalConnectionCloseReason:
+        """Synchronize a DRAINING terminal owner before it closes transport."""
+
+        if not isinstance(reason, LogicalConnectionCloseReason):
+            _invalid("close_reason")
+        async with self._lock:
+            entry = await self._index.lookup_connection(self._connection_id)
+            if self._started_at is None and (
+                entry is None
+                or entry.state is not LogicalConnectionState.DRAINING
+            ):
+                return reason
+            if self._terminal_reason is None:
+                self._terminal_reason = reason
+            self._cancel_timeout_now()
+            if entry is None:
+                self._closed_event.set()
+                return self._terminal_reason
+            if entry.state is LogicalConnectionState.DRAINING:
+                await self._index.transition(
+                    self._connection_id,
+                    LogicalConnectionState.CLOSING,
+                    close_reason=self._terminal_reason,
+                )
+            return self._terminal_reason
+
+    async def finalize_external_terminal(
+        self,
+        reason: LogicalConnectionCloseReason,
+    ) -> bool:
+        """Publish drain completion only after an external owner truly closed."""
+
+        if not isinstance(reason, LogicalConnectionCloseReason):
+            _invalid("close_reason")
+        async with self._lock:
+            if self._terminal_reason is None:
+                return True
+            self._cancel_timeout_now()
+            entry = await self._index.lookup_connection(self._connection_id)
+            if entry is not None:
+                return False
+            self._closed_event.set()
+            return True
+
     async def snapshot(self) -> DrainSnapshot:
         async with self._lock:
             return await self._snapshot_unlocked()
@@ -308,6 +355,7 @@ class ConnectionDrainService:
 
     def _cancel_timeout_now(self) -> None:
         task = self._timeout_task
+        self._timeout_task = None
         if (
             task is not None
             and task is not asyncio.current_task()

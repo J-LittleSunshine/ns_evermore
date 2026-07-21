@@ -292,6 +292,33 @@ class ConnectionResumeTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await self.index.lookup_connection(CONNECTION_ID)).active_target_eligible)
         self.assertEqual("waiting", (await self.grace.snapshot()).phase.value)
 
+    async def test_pre_publish_failure_delegates_candidate_close_once(self) -> None:
+        terminal_reasons: list[LogicalConnectionCloseReason] = []
+
+        async def retain_candidate(
+            reason: LogicalConnectionCloseReason,
+        ) -> bool:
+            terminal_reasons.append(reason)
+            return False
+
+        adapter = DeterministicTestIamAdapter(
+            (TestIamOutcome(action=TestIamAction.DENY),),
+            clock=self.clock,
+        )
+        coordinator = self._coordinator(
+            adapter,
+            candidate_terminator=retain_candidate,
+        )
+
+        with self.assertRaises(NsRuntimeIamDeniedError):
+            await coordinator.resume(_parsed())
+
+        self.assertEqual(
+            [LogicalConnectionCloseReason.AUTH_FAILED],
+            terminal_reasons,
+        )
+        self.assertEqual(0, self.new_transport.close_calls)
+
     async def test_resume_result_and_errors_do_not_retain_token_or_old_transport(self) -> None:
         parsed = _parsed(token="resume-super-secret")
         result = await self._coordinator(_adapter(self.clock)).resume(parsed)
@@ -314,6 +341,7 @@ class ConnectionResumeTestCase(unittest.IsolatedAsyncioTestCase):
         session_uuid: UUID = UUID("123e4567-e89b-42d3-a456-426614174111"),
         task_sequence: int = 111,
         timeout_seconds: float = 10,
+        candidate_terminator=None,
     ) -> ConnectionResumeCoordinator:
         return ConnectionResumeCoordinator(
             current_context=self.current,
@@ -330,6 +358,7 @@ class ConnectionResumeTestCase(unittest.IsolatedAsyncioTestCase):
             task_supervisor=self.supervisor,
             task_sequence=task_sequence,
             timeout_seconds=timeout_seconds,
+            candidate_terminator=candidate_terminator,
         )
 
     async def _reset_after_terminal_if_needed(self) -> None:

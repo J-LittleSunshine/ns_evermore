@@ -19,9 +19,11 @@ from ns_common.exceptions import (
 from ns_common.identifiers import IdentifierFactory
 from ns_common.time import ControlledClock
 from ns_runtime.connection import (
+    ConnectionDrainService,
     ConnectionReauthCoordinator,
     ConnectionReauthEnvelopeHandler,
     DeterministicTestIamAdapter,
+    DrainPolicy,
     LocalConnectionIndex,
     LogicalConnectionCloseReason,
     LogicalConnectionState,
@@ -391,6 +393,51 @@ class SessionExpiryControllerTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.controller.retry_cleanup())
         self.assertIsNone(await self.index.lookup_connection(CONNECTION_ID))
         self.assertEqual(2, self.transport.close_calls)
+
+    async def test_draining_expiry_converges_auth_failed_without_stale_deadline(self) -> None:
+        drain = ConnectionDrainService(
+            connection_id=CONNECTION_ID,
+            connection_index=self.index,
+            transport_session=self.transport,
+            clock=self.clock,
+            task_supervisor=self.supervisor,
+            task_sequence=134,
+            policy=DrainPolicy(timeout_seconds=600),
+        )
+        controller = SessionExpiryController(
+            session_context=self.current,
+            connection_index=self.index,
+            transport_session=self.transport,
+            clock=self.clock,
+            task_supervisor=self.supervisor,
+            task_sequence=135,
+            policy=SessionExpiryPolicy(reauth_lead_seconds=60),
+            drain_service=drain,
+        )
+        await controller.start()
+        await drain.begin()
+        await _wait_until(lambda: self.clock.pending_sleep_count == 2)
+
+        self.clock.advance(240)
+        await asyncio.sleep(0)
+        self.clock.advance(60)
+        await _wait_until(lambda: self.machine.state is LogicalConnectionState.CLOSED)
+        await drain.wait_closed()
+
+        snapshot = await drain.snapshot()
+        self.assertIs(LogicalConnectionCloseReason.AUTH_FAILED, snapshot.terminal_reason)
+        self.assertFalse(snapshot.timeout_pending)
+        self.clock.advance(600)
+        await asyncio.sleep(0)
+        self.assertIs(
+            LogicalConnectionCloseReason.AUTH_FAILED,
+            (await drain.snapshot()).terminal_reason,
+        )
+        self.assertIs(LogicalConnectionCloseReason.AUTH_FAILED, self.machine.close_reason)
+        self.assertFalse(any(
+            name.startswith("logical-drain-")
+            for name in self.supervisor.pending_task_names
+        ))
 
 
 @dataclasses.dataclass

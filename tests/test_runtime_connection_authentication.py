@@ -173,6 +173,125 @@ class ConnectionHandshakeAuthenticationTestCase(unittest.IsolatedAsyncioTestCase
             for name in self.supervisor.pending_task_names
         ))
 
+    async def test_pre_index_semantic_failure_retains_retry_owner(self) -> None:
+        transport = _CompositionTransport()
+        transport.close_failures_remaining = 1
+        manager = _manager(
+            clock=self.clock,
+            supervisor=self.supervisor,
+            iam_adapter=FailClosedHandshakeIamAdapter(),
+        )
+        await transport.messages.put(_hello(component_type="unsupported"))
+
+        await manager._admit(transport, sequence=72)
+
+        self.assertEqual(1, manager.pending_candidate_cleanup_count)
+        candidate = manager._candidate_cleanup_owners[72]
+        snapshot = await candidate.state_machine.snapshot()
+        self.assertIs(LogicalConnectionState.CLOSING, snapshot.state)
+        self.assertIs(LogicalConnectionCloseReason.PROTOCOL_FAILED, snapshot.close_reason)
+        self.assertEqual(1, transport.close_calls)
+        self.assertEqual({}, dict((await manager.connection_index.snapshot()).by_connection_id))
+        self.assertTrue(await manager.retry_pending_candidate_cleanup())
+        self.assertEqual(2, transport.close_calls)
+        self.assertIs(LogicalConnectionState.CLOSED, candidate.state_machine.state)
+        self.assertEqual(0, manager.pending_candidate_cleanup_count)
+
+    async def test_pre_index_malformed_failure_retains_retry_owner(self) -> None:
+        transport = _CompositionTransport()
+        transport.close_failures_remaining = 1
+        manager = _manager(
+            clock=self.clock,
+            supervisor=self.supervisor,
+            iam_adapter=FailClosedHandshakeIamAdapter(),
+        )
+        malformed = json.loads(_hello())
+        del malformed["payload"]["inline"]["token"]
+        await transport.messages.put(json.dumps(malformed, separators=(",", ":")))
+
+        await manager._admit(transport, sequence=76)
+
+        candidate = manager._candidate_cleanup_owners[76]
+        self.assertIs(LogicalConnectionState.CLOSING, candidate.state_machine.state)
+        self.assertIs(LogicalConnectionCloseReason.PROTOCOL_FAILED, candidate.terminal_reason)
+        self.assertEqual(1, transport.close_calls)
+        self.assertEqual({}, dict((await manager.connection_index.snapshot()).by_connection_id))
+        self.assertTrue(await manager.retry_pending_candidate_cleanup())
+        self.assertIs(LogicalConnectionState.CLOSED, candidate.state_machine.state)
+        self.assertEqual(0, manager.pending_candidate_cleanup_count)
+
+    async def test_unknown_resume_candidate_close_failure_is_retryable(self) -> None:
+        transport = _CompositionTransport()
+        transport.close_failures_remaining = 1
+        manager = _manager(
+            clock=self.clock,
+            supervisor=self.supervisor,
+            iam_adapter=FailClosedHandshakeIamAdapter(),
+        )
+        await transport.messages.put(_hello(resume=True))
+
+        await manager._admit(transport, sequence=73)
+
+        candidate = manager._candidate_cleanup_owners[73]
+        self.assertIs(LogicalConnectionState.CLOSING, candidate.state_machine.state)
+        self.assertIs(LogicalConnectionCloseReason.REJECTED, candidate.terminal_reason)
+        self.assertEqual(1, transport.close_calls)
+        self.assertEqual({}, dict((await manager.connection_index.snapshot()).by_connection_id))
+        await manager.drain()
+        self.assertEqual(2, transport.close_calls)
+        self.assertIs(LogicalConnectionState.CLOSED, candidate.state_machine.state)
+        self.assertEqual(0, manager.pending_candidate_cleanup_count)
+
+    async def test_iam_denied_candidate_close_failure_is_retryable(self) -> None:
+        transport = _CompositionTransport()
+        transport.close_failures_remaining = 1
+        iam = DeterministicTestIamAdapter(
+            (TestIamOutcome(action=TestIamAction.DENY),),
+            clock=self.clock,
+        )
+        manager = _manager(
+            clock=self.clock,
+            supervisor=self.supervisor,
+            iam_adapter=iam,
+        )
+        await transport.messages.put(_hello())
+
+        await manager._admit(transport, sequence=74)
+
+        candidate = manager._candidate_cleanup_owners[74]
+        self.assertIs(LogicalConnectionState.CLOSING, candidate.state_machine.state)
+        self.assertIs(LogicalConnectionCloseReason.AUTH_FAILED, candidate.terminal_reason)
+        self.assertEqual(1, transport.close_calls)
+        self.assertEqual(0, manager.active_connection_count)
+        self.assertEqual({}, dict((await manager.connection_index.snapshot()).by_connection_id))
+        self.assertTrue(await manager.retry_pending_candidate_cleanup())
+        self.assertIs(LogicalConnectionState.CLOSED, candidate.state_machine.state)
+        self.assertEqual(0, manager.pending_candidate_cleanup_count)
+
+    async def test_candidate_close_cancellation_preserves_object_and_owner(self) -> None:
+        transport = _CompositionTransport()
+        cancelled = asyncio.CancelledError("candidate close cancelled")
+        transport.close_failures_remaining = 1
+        transport.close_failure = cancelled  # type: ignore[assignment]
+        manager = _manager(
+            clock=self.clock,
+            supervisor=self.supervisor,
+            iam_adapter=FailClosedHandshakeIamAdapter(),
+        )
+        await transport.messages.put(_hello(component_type="unsupported"))
+
+        with self.assertRaises(asyncio.CancelledError) as raised:
+            await manager._admit(transport, sequence=75)
+
+        self.assertIs(cancelled, raised.exception)
+        candidate = manager._candidate_cleanup_owners[75]
+        self.assertIs(LogicalConnectionState.CLOSING, candidate.state_machine.state)
+        self.assertEqual(1, manager.pending_candidate_cleanup_count)
+        self.assertEqual({}, dict((await manager.connection_index.snapshot()).by_connection_id))
+        self.assertTrue(await manager.retry_pending_candidate_cleanup())
+        self.assertIs(LogicalConnectionState.CLOSED, candidate.state_machine.state)
+        self.assertEqual(0, manager.pending_candidate_cleanup_count)
+
     async def test_configured_cancellation_preserves_cancelled_error(self) -> None:
         adapter = DeterministicTestIamAdapter(
             (TestIamOutcome(action=TestIamAction.CANCEL),),

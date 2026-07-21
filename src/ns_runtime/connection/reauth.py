@@ -39,6 +39,7 @@ from .audit import (
     ConnectionAuditOutcome,
     ConnectionLifecycleAuditBoundary,
 )
+from .drain import ConnectionDrainService
 from .hello import HandshakeCredential, PendingHelloClaims
 from .iam import HandshakeIamAdapter, HandshakeIamAuthority, HandshakeIamRequest
 from .index import LocalConnectionIndex
@@ -348,6 +349,7 @@ class SessionExpiryController:
         task_supervisor: TaskSupervisor,
         task_sequence: int,
         policy: SessionExpiryPolicy,
+        drain_service: ConnectionDrainService | None = None,
     ) -> None:
         dependencies = (
             (session_context, SessionContext, "session_context"),
@@ -360,6 +362,11 @@ class SessionExpiryController:
         for value, expected, name in dependencies:
             if not isinstance(value, expected):
                 _invalid(name)
+        if drain_service is not None and not isinstance(
+            drain_service,
+            ConnectionDrainService,
+        ):
+            _invalid("drain_service")
         if (
             isinstance(task_sequence, bool)
             or not isinstance(task_sequence, int)
@@ -373,6 +380,7 @@ class SessionExpiryController:
         self._supervisor = task_supervisor
         self._task_sequence = task_sequence
         self._policy = policy
+        self._drain = drain_service
         self._lock = asyncio.Lock()
         self._generation = 0
         self._started = False
@@ -476,21 +484,28 @@ class SessionExpiryController:
             raise
 
     async def _close_expired(self) -> bool:
+        reason = LogicalConnectionCloseReason.AUTH_FAILED
+        if self._drain is not None:
+            reason = await self._drain.observe_external_terminal(reason)
         entry = await self._index.lookup_connection(self._context.connection_id)
         if entry is None:
+            if self._drain is not None:
+                await self._drain.finalize_external_terminal(reason)
             return True
         if entry is not None and entry.state is not LogicalConnectionState.CLOSING:
             try:
                 await self._index.transition(
                     self._context.connection_id,
                     LogicalConnectionState.CLOSING,
-                    close_reason=LogicalConnectionCloseReason.AUTH_FAILED,
+                    close_reason=reason,
                 )
             except NsStateError:
                 return False
         try:
             await self._transport.close()
         except Exception:
+            if self._drain is not None:
+                await self._drain.finalize_external_terminal(reason)
             return False
         entry = await self._index.lookup_connection(self._context.connection_id)
         if entry is not None and entry.state is LogicalConnectionState.CLOSING:
@@ -498,6 +513,8 @@ class SessionExpiryController:
                 self._context.connection_id,
                 LogicalConnectionState.CLOSED,
             )
+        if self._drain is not None:
+            await self._drain.finalize_external_terminal(reason)
         return True
 
     def _cancel_now(self) -> None:
@@ -520,6 +537,7 @@ class ConnectionReauthCoordinator:
         task_sequence: int,
         timeout_seconds: float,
         expiry_controller: SessionExpiryController | None = None,
+        drain_service: ConnectionDrainService | None = None,
         audit_boundary: ConnectionLifecycleAuditBoundary | None = None,
         capability_policy: CapabilityPolicy = P05_CAPABILITY_POLICY,
     ) -> None:
@@ -541,6 +559,11 @@ class ConnectionReauthCoordinator:
             SessionExpiryController,
         ):
             _invalid("expiry_controller")
+        if drain_service is not None and not isinstance(
+            drain_service,
+            ConnectionDrainService,
+        ):
+            _invalid("drain_service")
         if audit_boundary is not None and not isinstance(
             audit_boundary,
             ConnectionLifecycleAuditBoundary,
@@ -572,11 +595,13 @@ class ConnectionReauthCoordinator:
         self._task_sequence = task_sequence
         self._deadline = deadline
         self._expiry = expiry_controller
+        self._drain = drain_service
         self._audit = audit_boundary
         self._capability_policy = capability_policy
         self._lock = asyncio.Lock()
         self._claimed = False
         self._terminal_handled = False
+        self._terminal_close_reason: LogicalConnectionCloseReason | None = None
 
     async def reauthenticate(self, parsed: ParsedReauth) -> ReauthenticatedSession:
         if not isinstance(parsed, ParsedReauth):
@@ -803,7 +828,9 @@ class ConnectionReauthCoordinator:
         if self._terminal_handled:
             return
         self._terminal_handled = True
-        await self._mark_closing(LogicalConnectionCloseReason.AUTH_FAILED)
+        close_reason = await self._mark_closing(
+            LogicalConnectionCloseReason.AUTH_FAILED,
+        )
         cancelled: asyncio.CancelledError | None = None
         try:
             text = self._responses.rejected(self._current, reason=reason)
@@ -819,7 +846,7 @@ class ConnectionReauthCoordinator:
                     kind=ConnectionAuditKind.REAUTH_REJECTION,
                     outcome=ConnectionAuditOutcome.REJECTED,
                     connection_epoch=self._current.connection_epoch,
-                    close_reason=LogicalConnectionCloseReason.AUTH_FAILED,
+                    close_reason=close_reason,
                 )
             except asyncio.CancelledError as error:
                 if cancelled is None:
@@ -828,10 +855,12 @@ class ConnectionReauthCoordinator:
             raise cancelled
 
     async def _close(self, reason: LogicalConnectionCloseReason) -> None:
-        await self._mark_closing(reason)
+        reason = await self._mark_closing(reason)
         try:
             await self._transport.close()
         except Exception:
+            if self._drain is not None:
+                await self._drain.finalize_external_terminal(reason)
             return
         entry = await self._index.lookup_connection(self._current.connection_id)
         if entry is not None and entry.state is LogicalConnectionState.CLOSING:
@@ -839,8 +868,18 @@ class ConnectionReauthCoordinator:
                 self._current.connection_id,
                 LogicalConnectionState.CLOSED,
             )
+        if self._drain is not None:
+            await self._drain.finalize_external_terminal(reason)
 
-    async def _mark_closing(self, reason: LogicalConnectionCloseReason) -> None:
+    async def _mark_closing(
+        self,
+        reason: LogicalConnectionCloseReason,
+    ) -> LogicalConnectionCloseReason:
+        if self._drain is not None:
+            reason = await self._drain.observe_external_terminal(reason)
+        if self._terminal_close_reason is None:
+            self._terminal_close_reason = reason
+        reason = self._terminal_close_reason
         entry = await self._index.lookup_connection(self._current.connection_id)
         if entry is not None and entry.state is not LogicalConnectionState.CLOSING:
             try:
@@ -851,6 +890,7 @@ class ConnectionReauthCoordinator:
                 )
             except NsStateError:
                 pass
+        return reason
 
 
 def _reauth_denied(reason: str) -> NsRuntimeIamDeniedError:

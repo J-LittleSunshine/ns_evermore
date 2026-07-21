@@ -188,9 +188,14 @@ class ConnectionHelloReceiver:
         except Exception:
             await _cancel_and_join(receive_task)
             await _cancel_and_join(deadline_task)
-            await self._terminate_isolated(
-                LogicalConnectionCloseReason.INTERNAL_ERROR,
-            )
+            snapshot = await self._state_machine.snapshot()
+            if snapshot.state not in {
+                LogicalConnectionState.CLOSING,
+                LogicalConnectionState.CLOSED,
+            }:
+                await self._terminate_isolated(
+                    LogicalConnectionCloseReason.INTERNAL_ERROR,
+                )
             raise
 
     async def _claim_once(self) -> bool:

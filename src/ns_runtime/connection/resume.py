@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import math
 from dataclasses import dataclass, field
+from typing import Awaitable, Callable
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import (
@@ -144,6 +145,9 @@ class ConnectionResumeCoordinator:
         task_supervisor: TaskSupervisor,
         task_sequence: int,
         timeout_seconds: float,
+        candidate_terminator: (
+            Callable[[LogicalConnectionCloseReason], Awaitable[bool]] | None
+        ) = None,
         audit_boundary: ConnectionLifecycleAuditBoundary | None = None,
         capability_policy: CapabilityPolicy = P05_CAPABILITY_POLICY,
     ) -> None:
@@ -168,6 +172,8 @@ class ConnectionResumeCoordinator:
             ConnectionLifecycleAuditBoundary,
         ):
             _invalid("audit_boundary")
+        if candidate_terminator is not None and not callable(candidate_terminator):
+            _invalid("candidate_terminator")
         if (
             isinstance(task_sequence, bool)
             or not isinstance(task_sequence, int)
@@ -198,6 +204,8 @@ class ConnectionResumeCoordinator:
         self._deadline = deadline
         self._capability_policy = capability_policy
         self._audit = audit_boundary
+        self._candidate_terminator = candidate_terminator
+        self._candidate_terminal_requested = False
         self._claim_lock = asyncio.Lock()
         self._claimed = False
         self._grace_claimed = False
@@ -467,10 +475,15 @@ class ConnectionResumeCoordinator:
                     )
                 except Exception:
                     pass
-        try:
-            await self._new_transport.close()
-        except Exception:
-            pass
+        if self._candidate_terminator is not None:
+            if not self._candidate_terminal_requested:
+                self._candidate_terminal_requested = True
+                await self._candidate_terminator(reason)
+        else:
+            try:
+                await self._new_transport.close()
+            except Exception:
+                pass
         if not self._grace_claimed:
             return
         await self._grace.terminate(reason)

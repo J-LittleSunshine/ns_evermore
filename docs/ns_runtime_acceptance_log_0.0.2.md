@@ -1107,6 +1107,23 @@
 - 已知限制：P05 processor仍仅处理connection lifecycle；production ordinary hello在P06前继续fail-closed；local index/snapshot/audit不宣称durable或cluster authority。
 - 下一工作包：`P06-B01/P06-R01`继续暂停且为`NOT_STARTED`，等待新的显式恢复指令。
 
+## P05-FIX-03
+
+- 工作包：`pre-index candidate cleanup ownership + draining terminal convergence`。
+- 状态：`VERIFIED`；P05 阶段出口恢复为 `VERIFIED/F3`，`SC-1 VERIFIED`；P06-B01/P06-R01 保持 `NOT_STARTED`。
+- 开始时间：`2026-07-21`。
+- 完成时间：`2026-07-21`。
+- 触发原因：P05-FIX-02 保留了 indexed close retry ownership，但 semantic/pre-index/IAM rejection/unknown resume candidate 的 close ordinary failure仍可能随 admission task结束而丢失 owner；同时heartbeat、reauth、expiry等DRAINING外部终态尚未同步DrainService first-reason、deadline与completion watcher。
+- 历史边界：不改写P05-FIX-01/P05-FIX-02本地验收记录，不回滚single handshake budget、IAM typed outcome、persistent drain、registry/schema/processor/composition；不启动P06+能力。
+- 修改文件：更新`connection/lifecycle.py`、`handshake.py`、`resume.py`建立manager-owned pre-index candidate cleanup；更新`drain.py`、`heartbeat.py`、`reauth.py`统一external terminal observation/finalization；扩展authentication/handshake/composition/heartbeat/reauth测试；更新implementation plan、acceptance log与ADR-030。
+- candidate cleanup owner：每次admission在receive前按manager-local递增sequence登记`_CandidateCleanupOwner`，仅持有candidate transport、logical state machine、fixed terminal reason与cleanup lock，不进入LocalConnectionIndex、不创建mapping/ACTIVE、不暴露transport ID/peer/token。receiver terminal完成后manager核对CLOSED并释放；首次close普通失败保留CLOSING record，CancelledError原对象穿透并同样保留；`retry_pending_candidate_cleanup()`与manager drain再次真实close，成功后才CLOSED并删除record。resume coordinator通过显式注入terminator把candidate close交回同一manager owner，避免内部固定次数retry。
+- draining terminal convergence：`ConnectionDrainService.observe_external_terminal()`在外部owner关闭前以单锁冻结first reason、同步DRAINING->CLOSING并取消deadline；`finalize_external_terminal()`只在index已由真实close清除后设置completion signal。heartbeat timeout/native/send terminal、reauth rejection、session expiry和manager protocol/shutdown均复用该边界；close failure/cancel时reason保留且watcher继续持有cleanup，retry成功后立即收敛。后续DRAIN_TIMEOUT/SHUTDOWN不能覆盖DrainSnapshot、state machine或index已发布的首因。
+- 新增测试：fake transport覆盖semantic parse、malformed receiver、IAM deny、unknown resume的首次close failure，以及candidate close cancellation原对象与retry/drain释放；resume pre-publish failure验证显式candidate terminator只调用一次且不做固定retry；真实WebSocket覆盖DRAINING+reauth deny的AUTH_FAILED close、close首次失败后owner/watcher保留与retry；ControlledClock覆盖DRAINING+heartbeat timeout和DRAINING+session expiry，均验证deadline取消、首因不被推进时钟后的DRAIN_TIMEOUT覆盖、无`logical-drain-*` stale task。成功admission、production fail-closed与semantic real loopback另断言candidate collection归零。
+- 回归结果：P03 `Ran 54, OK`；P04 `Ran 59, OK`；P05 `Ran 179, OK`；P03+P04+P05联合`Ran 292, OK`；runtime环境按DEP-1排除未安装Django的`test_cache`后P01-P05全量`Ran 642, OK (skipped=1)`；backend根目录全量`Ran 653, OK (skipped=46)`，新增2个真实WebSocket交叉用例在backend环境按可选transport依赖边界skip、已在runtime环境真实执行通过。runtime/backend `pip check`、两套`compileall -q src tests`、`git diff --check`通过；TLS专项在ResourceWarning/tracemalloc模式正常关闭。
+- 安全/隔离检查：9项P05 lifecycle contract继续enabled，余40项disabled；single HandshakeDeadlineBudget、IAM typed outcome与traceback清理、expected rejected cleanliness、persistent drain、exact P03 schema、lightweight processor、canonical rejected、production fail-closed IAM、SC-1、resume epoch+1/old epoch fencing均未回退。源码边界扫描未新增P06 client/cache、P07 generic pipeline、P08 StateStore、RoutingPlan、DeliveryRecord、ACK/NACK/Defer state或cluster。
+- 已知限制：candidate collection仅为单进程pre-index transport cleanup ownership，不是正式connection index、durable state或cluster authority；P05 processor仍仅处理connection lifecycle。
+- 下一工作包：`P06-B01/P06-R01`继续暂停且为`NOT_STARTED`，等待新的显式恢复指令。
+
 ## 新记录模板
 
 - 工作包：

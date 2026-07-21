@@ -188,11 +188,11 @@ class ConnectionHelloReceiverTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(NsRuntimeProtocolViolationError) as context:
             await self.receiver.receive()
         self.assertEqual("hello_required_first", context.exception.details["reason"])
-        self.assertEqual(2, self.transport.close_calls)
-        self.assertIs(LogicalConnectionState.CLOSED, self.machine.state)
+        self.assertEqual(1, self.transport.close_calls)
+        self.assertIs(LogicalConnectionState.CLOSING, self.machine.state)
         self.assertNotIn("close-secret", repr(await self.machine.snapshot()))
-        with self.assertRaises(NsRuntimeProtocolViolationError):
-            await self.receiver.receive()
+        await self.receiver.terminate(LogicalConnectionCloseReason.PROTOCOL_FAILED)
+        self.assertEqual(2, self.transport.close_calls)
         self.assertIs(LogicalConnectionState.CLOSED, self.machine.state)
 
     async def test_deadline_uses_controlled_clock_and_leaves_no_task(self) -> None:
