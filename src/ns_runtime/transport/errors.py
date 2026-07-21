@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import ssl
 from dataclasses import dataclass
+from functools import lru_cache
 
 from ns_common.exceptions import (
     NsRuntimeTransportError,
@@ -141,15 +142,40 @@ class _WebSocketExceptionClasses:
     payload_too_big: type[Exception]
 
 
+class _UnavailableConnectionClosed(Exception):
+    pass
+
+
+class _UnavailableConnectionClosedOK(Exception):
+    pass
+
+
+class _UnavailableInvalidHandshake(Exception):
+    pass
+
+
+class _UnavailablePayloadTooBig(Exception):
+    pass
+
+
+@lru_cache(maxsize=1)
 def _websocket_exception_classes() -> _WebSocketExceptionClasses:
     # P04-W08 verifies this lazy import never occurs for disabled adapters or
     # transport facade inspection.
-    from websockets.exceptions import (
-        ConnectionClosed,
-        ConnectionClosedOK,
-        InvalidHandshake,
-        PayloadTooBig,
-    )
+    try:
+        from websockets.exceptions import (
+            ConnectionClosed,
+            ConnectionClosedOK,
+            InvalidHandshake,
+            PayloadTooBig,
+        )
+    except ImportError:
+        return _WebSocketExceptionClasses(
+            connection_closed=_UnavailableConnectionClosed,
+            connection_closed_ok=_UnavailableConnectionClosedOK,
+            invalid_handshake=_UnavailableInvalidHandshake,
+            payload_too_big=_UnavailablePayloadTooBig,
+        )
 
     return _WebSocketExceptionClasses(
         connection_closed=ConnectionClosed,

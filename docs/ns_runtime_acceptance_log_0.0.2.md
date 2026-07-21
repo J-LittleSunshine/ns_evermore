@@ -863,6 +863,17 @@
 - 已知限制：CFG-1 没有 P20 证书材料字段，composition root 对启用 TLS 但未显式注入 server SSLContext 的情形稳定 fail-closed；真实 TLS loopback 已通过 adapter API。main 仍执行一次 listener self-check 后走统一 shutdown，不承担长期 daemon wait 策略。read queue capacity 暂由现有 write_queue_capacity 显式派生，未修改冻结 CFG-1。
 - 下一工作包：P04 阶段出口联合与全量验证，状态为 `IN_PROGRESS`。
 
+## P04-FIX-01
+
+- 工作包：`P04-FIX-01 missing websocket dependency error-normalization isolation`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-21T10:58:00+08:00`。
+- 触发原因：阶段出口 backend 根目录全量在 `normalize_transport_exception(_HostileError)` 发现无条件导入 `websockets.exceptions`，导致按 DEP-1 不安装 runtime driver 的环境出现 ModuleNotFoundError，违反 W08 disabled dependency isolation。
+- 修复：第三方 exception class resolver 改为单次 lazy cache；ImportError 时返回四个互不匹配的内部 sentinel exception type，普通未知异常继续映射 `RUNTIME_TRANSPORT_RECEIVE_FAILED/read_failed`，不会伪装 ConnectionClosed/handshake/oversize。启用依赖环境仍使用真实 websockets 类型；BaseException 语义不变。
+- 测试结果：backend errors/contracts/registry `Ran 15, OK (skipped=1)`，skip 仅为确需 websockets 的第三方 class matrix；runtime errors/websocket/registry `Ran 17, OK`。fresh-process registry 继续证明未加载 websockets/aioquic/webtransport。
+- 安全/隔离检查：fallback 不捕获或保存原异常，不调用 str/repr，不把 ImportError 文本或模块路径复制到错误；sentinel 永不作为 adapter success 或 capability。无新 dependency、listener、global registry 或 stub success。
+- 下一工作包：恢复 P04 阶段出口 backend 全量与全部验证。
+
 ## 新记录模板
 
 - 工作包：

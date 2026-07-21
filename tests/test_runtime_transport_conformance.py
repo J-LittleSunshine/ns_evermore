@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import importlib.util
 import unittest
 
 from ns_common.async_runtime import TaskSupervisor
@@ -21,6 +22,10 @@ from tests.transport_conformance import (
 )
 
 
+@unittest.skipUnless(
+    importlib.util.find_spec("websockets") is not None,
+    "runtime transport dependency isn't installed",
+)
 class WebSocketTcpConformanceTestCase(
     TransportConformanceSuiteMixin,
     unittest.IsolatedAsyncioTestCase,

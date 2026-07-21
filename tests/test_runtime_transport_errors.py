@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import ssl
 import unittest
 
@@ -24,6 +25,10 @@ class _ProcessExit(BaseException):
 
 
 class TransportErrorNormalizationTestCase(unittest.TestCase):
+    @unittest.skipUnless(
+        importlib.util.find_spec("websockets") is not None,
+        "runtime transport dependency isn't installed",
+    )
     def test_library_failures_map_to_stable_safe_transport_errors(self) -> None:
         from websockets.exceptions import (
             ConnectionClosedError,

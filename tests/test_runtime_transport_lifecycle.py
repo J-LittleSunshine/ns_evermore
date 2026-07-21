@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 import unittest
 
@@ -91,6 +92,10 @@ def _context(supervisor: TaskSupervisor) -> RuntimeContext:
 
 
 class TransportLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipUnless(
+        importlib.util.find_spec("websockets") is not None,
+        "runtime transport dependency isn't installed",
+    )
     async def test_real_adapter_service_lifecycle_delivers_then_drains(self) -> None:
         from websockets.asyncio.client import connect
 

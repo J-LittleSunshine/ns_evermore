@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import ssl
 import socket
 import subprocess
@@ -27,6 +28,10 @@ from ns_runtime.transport import (
 )
 
 
+@unittest.skipUnless(
+    importlib.util.find_spec("websockets") is not None,
+    "runtime transport dependency isn't installed",
+)
 class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls) -> None:

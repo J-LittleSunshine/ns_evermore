@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import unittest
 from typing import Any
 
@@ -50,6 +51,10 @@ class _ControlledConnection:
         self.close_code = code
 
 
+@unittest.skipUnless(
+    importlib.util.find_spec("websockets") is not None,
+    "runtime transport dependency isn't installed",
+)
 class TransportBackpressureTestCase(unittest.IsolatedAsyncioTestCase):
     def _session(
         self,
