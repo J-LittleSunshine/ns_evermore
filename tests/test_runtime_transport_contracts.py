@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import inspect
+import os
+import subprocess
+import sys
 import unittest
 from datetime import datetime, timezone
 
@@ -18,10 +21,54 @@ from ns_runtime.transport import (
     TransportMessage,
     TransportSession,
     TransportSessionState,
+    WEBSOCKET_TCP_CAPABILITIES,
+    WEBSOCKET_TCP_TRANSPORT_TYPE,
 )
 
 
 class TransportContractsTestCase(unittest.TestCase):
+    def test_websocket_tcp_declares_only_real_capabilities(self) -> None:
+        self.assertEqual("websocket_tcp", WEBSOCKET_TCP_TRANSPORT_TYPE)
+        self.assertEqual(
+            {
+                TransportCapability.RELIABLE_ORDERED_MESSAGES,
+                TransportCapability.TRANSPORT_FLOW_CONTROL,
+                TransportCapability.NATIVE_KEEPALIVE,
+            },
+            set(WEBSOCKET_TCP_CAPABILITIES.supported),
+        )
+        for unsupported in (
+            TransportCapability.RELIABLE_BIDIRECTIONAL_STREAMS,
+            TransportCapability.RELIABLE_UNIDIRECTIONAL_STREAMS,
+            TransportCapability.UNRELIABLE_DATAGRAMS,
+            TransportCapability.STREAM_MULTIPLEXING,
+            TransportCapability.CONNECTION_PATH_MIGRATION,
+            TransportCapability.PER_STREAM_FLOW_CONTROL,
+            TransportCapability.ZERO_RTT,
+            TransportCapability.TRANSPORT_RESUME,
+        ):
+            with self.subTest(capability=unsupported.value):
+                self.assertFalse(WEBSOCKET_TCP_CAPABILITIES.supports(unsupported))
+
+    def test_contract_facade_does_not_load_websockets_dependency(self) -> None:
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = "src"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; import ns_runtime.transport; "
+                "assert not any(name == 'websockets' or name.startswith('websockets.') "
+                "for name in sys.modules)",
+            ],
+            cwd=os.getcwd(),
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
     def test_contracts_are_abstract_and_do_not_expose_websocket_types(self) -> None:
         self.assertTrue(inspect.isabstract(TransportAdapter))
         self.assertTrue(inspect.isabstract(TransportSession))

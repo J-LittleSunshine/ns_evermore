@@ -13,6 +13,10 @@ from .models import (
     TransportMessage,
     TransportSessionState,
 )
+from .websocket_tcp import (
+    WEBSOCKET_TCP_CAPABILITIES,
+    WEBSOCKET_TCP_TRANSPORT_TYPE,
+)
 
 
 __all__ = (
@@ -27,5 +31,6 @@ __all__ = (
     "TransportMessage",
     "TransportSession",
     "TransportSessionState",
+    "WEBSOCKET_TCP_CAPABILITIES",
+    "WEBSOCKET_TCP_TRANSPORT_TYPE",
 )
-

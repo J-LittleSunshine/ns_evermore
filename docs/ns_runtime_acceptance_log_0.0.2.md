@@ -755,6 +755,18 @@
 - 已知限制：本包只冻结抽象与值对象，不创建 adapter/listener，不声明 websocket_tcp 能力，不执行收发；这些由 W02-W10 完成。
 - 下一工作包：`P04-W02 capability declaration`，状态为 `IN_PROGRESS`。
 
+## P04-W02
+
+- 工作包：`P04-W02 websocket_tcp capability declaration`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-21T10:15:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/transport/websocket_tcp.py` 的常量声明，更新 transport facade、contract tests、实施计划和执行游标。
+- 公共契约变化：`websocket_tcp` 权威声明且仅声明 `reliable_ordered_messages`、`transport_flow_control`、`native_keepalive`；stream/datagram/multiplexing/path migration/per-stream flow control/0-RTT/resume 均明确不支持。
+- 测试结果：W01+W02 transport contracts 专项 `Ran 7, OK`；`git diff --check` 通过。
+- 安全/隔离检查：fresh-process 冷导入证明 transport facade 与 capability 模块不加载 `websockets`；模块不创建 listener、event loop、task 或全局 adapter，不接受客户端自报 capability。
+- 已知限制：capability 是 adapter 固定事实但尚未有运行 listener；W03 将实现唯一正式 adapter 的正常路径。
+- 下一工作包：`P04-W03 websocket_tcp operational adapter`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
