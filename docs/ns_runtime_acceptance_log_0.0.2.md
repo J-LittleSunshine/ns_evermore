@@ -985,6 +985,18 @@
 - 已知限制：W07 仅完成 initial admission；W08 提供 heartbeat，W09-W13 完成 drain/grace/resume/reauth。当前 production ordinary connection 仍 fail-closed，SC-1 继续 `IN_PROGRESS`。
 - 下一工作包：`P05-W08 native and Envelope heartbeat`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
 
+## P05-W08
+
+- 工作包：`P05-W08 native and Envelope heartbeat`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W09；P06 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T14:37:46+08:00`。
+- 修改文件：新增 `connection/heartbeat.py` 与 facade 导出，新增 `tests/test_runtime_connection_heartbeat.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增 frozen `HeartbeatPolicy`/`HeartbeatSnapshot`、typed outcome 和 `ConnectionHeartbeatService`。native 与 Envelope watchdog 是两个既有 TaskSupervisor 拥有的 Clock loop；native 只 P04 ping，Envelope 只接受 P03 heartbeat lifecycle Envelope，精确校验 connection/session/epoch/sequence并 canonical send heartbeat_ack。duplicate 无 ack/无 liveness refresh，out-of-order/stale fencing拒绝，deadline同 tick timeout 优先；active/draining 允许 health，timeout/native/send/cancel/shutdown 收敛 terminal close并取消另一 loop。
+- 测试结果：W08 专项 11 项，与 W07 联合 `Ran 20, OK`，覆盖 exact lightweight ack、duplicate、out-of-order、session/epoch/connection fencing、draining health、native/envelope 分层、timeout task cleanup、native failure、deadline priority、shutdown idempotence 和 malformed/non-heartbeat。P01-P04+P05-W01-W08 runtime 联合 `Ran 546, OK (skipped=1)`，唯一 skip 为 Windows event-loop policy；`compileall -q src tests`、`git diff --check` 与 heartbeat delivery/pipeline boundary scan 通过。
+- 安全/隔离检查：heartbeat payload/ack 不含 token、authority、permission、tenant/identity、transport/path/peer 或 exception text；普通 heartbeat不调用 audit sink。源码不引用 processor、DeliveryRecord/AckRecord/StateStore/retry，不创建 thread/loop/supervisor/global service；task name只用本地 sequence且 terminal 后无 Clock waiter。
+- 已知限制：W08 不实现普通业务 read loop或 P07 pipeline；W09 drain 只会保留显式 lifecycle/control/health allowlist，W10/W11 才处理 disconnect/resume。SC-1 继续 `IN_PROGRESS`。
+- 下一工作包：`P05-W09 one-way bounded connection drain`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

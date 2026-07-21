@@ -31,6 +31,14 @@ from .hello import (
     ParsedHello,
     PendingHelloClaims,
 )
+from .heartbeat import (
+    HEARTBEAT_ACK_PAYLOAD_FIELDS,
+    HEARTBEAT_PAYLOAD_FIELDS,
+    ConnectionHeartbeatService,
+    EnvelopeHeartbeatOutcome,
+    HeartbeatPolicy,
+    HeartbeatSnapshot,
+)
 from .iam import (
     DeterministicTestIamAdapter,
     FailClosedHandshakeIamAdapter,
@@ -71,6 +79,7 @@ __all__ = (
     "CapabilityRule",
     "ConnectionHelloReceiver",
     "ConnectionHandshakeAuthenticator",
+    "ConnectionHeartbeatService",
     "ConnectionAcceptedEnvelopeBuilder",
     "ConnectionAdmissionActivator",
     "ConnectionIndexEntrySnapshot",
@@ -78,6 +87,8 @@ __all__ = (
     "FailClosedHandshakeIamAdapter",
     "HELLO_EXTENSION_REGISTRY",
     "HELLO_RESUME_NAMESPACE",
+    "HEARTBEAT_ACK_PAYLOAD_FIELDS",
+    "HEARTBEAT_PAYLOAD_FIELDS",
     "HandshakeCredential",
     "HandshakeIamAdapter",
     "HandshakeIamAuthority",
@@ -85,6 +96,8 @@ __all__ = (
     "HandshakeSessionNegotiator",
     "HelloClaimParser",
     "HelloResumeRequest",
+    "HeartbeatPolicy",
+    "HeartbeatSnapshot",
     "LogicalConnectionCloseReason",
     "LogicalConnectionState",
     "LogicalConnectionStateMachine",
@@ -101,6 +114,7 @@ __all__ = (
     "ParsedHello",
     "PendingHelloClaims",
     "SessionContext",
+    "EnvelopeHeartbeatOutcome",
     "TestIamAction",
     "TestIamOutcome",
     "TransportSessionBinding",
