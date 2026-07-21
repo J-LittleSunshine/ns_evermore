@@ -25,7 +25,11 @@ from ns_runtime.connection import (
     DeterministicTestIamAdapter,
     FailClosedHandshakeIamAdapter,
     HandshakeIamAuthority,
+    HandshakeIamAdapter,
+    HandshakeIamRequest,
     LocalConnectionIndex,
+    LogicalConnectionCloseReason,
+    LogicalConnectionState,
     TestIamAction,
     TestIamOutcome,
 )
@@ -102,6 +106,7 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
         iam_adapter,
         *,
         tls: bool = False,
+        drain_timeout_seconds: float = 2,
     ) -> tuple[WebSocketTcpAdapter, ConnectionLifecycleManager]:
         ssl_context = self._server_tls_context() if tls else None
         options = WebSocketTcpAdapterOptions(
@@ -153,7 +158,7 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
                 rejected_send_timeout_seconds=1,
                 native_heartbeat_interval_seconds=60,
                 envelope_heartbeat_timeout_seconds=120,
-                drain_timeout_seconds=2,
+                drain_timeout_seconds=drain_timeout_seconds,
                 reconnect_grace_seconds=30,
                 reauth_lead_seconds=30,
             ),
@@ -166,7 +171,7 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
         self._managers.append(manager)
         return adapter, manager
 
-    async def test_plaintext_real_adapter_hello_heartbeat_drain_close(self) -> None:
+    async def test_plaintext_drain_remains_open_for_lifecycle_messages(self) -> None:
         from websockets.asyncio.client import connect
 
         adapter, manager = await self._start(_test_iam(self.clock, 1))
@@ -190,6 +195,33 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
                 disabled["payload"]["inline"]["error_code"],
             )
             await client.send(_drain())
+            connection_id = context["connection_id"]
+            assert isinstance(connection_id, str)
+            await _wait_until_async(
+                lambda: _connection_state(manager, connection_id),
+                expected=LogicalConnectionState.DRAINING,
+            )
+            self.assertIsNone(client.close_code)
+            self.assertEqual((), await manager.connection_index.active_targets())
+            owner = manager._owners[connection_id]
+            assert owner.drain is not None
+            first_drain = await owner.drain.snapshot()
+            await client.send(_drain())
+            await client.send(_heartbeat(context, sequence=2))
+            draining_ack = json.loads(
+                await asyncio.wait_for(client.recv(), timeout=2),
+            )
+            self.assertEqual(
+                "connection.heartbeat_ack",
+                draining_ack["message"]["type"],
+            )
+            duplicate_drain = await owner.drain.snapshot()
+            self.assertEqual(
+                first_drain.deadline_monotonic,
+                duplicate_drain.deadline_monotonic,
+            )
+            self.assertIsNone(client.close_code)
+            await manager.drain()
             await asyncio.wait_for(client.wait_closed(), timeout=2)
         await _wait_until(lambda: manager.active_connection_count == 0)
         self.assertEqual((), await manager.connection_index.active_targets())
@@ -207,8 +239,169 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
             accepted = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
             self.assertEqual("connection.accepted", accepted["message"]["type"])
             self.assertEqual(1, len(await manager.connection_index.active_targets()))
-            await client.send(_drain())
+            await manager.drain()
             await asyncio.wait_for(client.wait_closed(), timeout=2)
+
+    async def test_drain_deadline_boundedly_closes_real_transport(self) -> None:
+        from websockets.asyncio.client import connect
+
+        adapter, manager = await self._start(
+            _test_iam(self.clock, 1),
+            drain_timeout_seconds=0.05,
+        )
+        async with connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        ) as client:
+            await client.send(_hello())
+            accepted = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
+            connection_id = accepted["payload"]["inline"]["connection_id"]
+            await client.send(_drain())
+            await _wait_until_async(
+                lambda: _connection_state(manager, connection_id),
+                expected=LogicalConnectionState.DRAINING,
+            )
+            await asyncio.wait_for(client.wait_closed(), timeout=2)
+        await _wait_until(lambda: manager.active_connection_count == 0)
+        self.assertIsNone(
+            await manager.connection_index.lookup_connection(connection_id),
+        )
+
+    async def test_semantic_hello_failures_close_without_composition_leaks(self) -> None:
+        from websockets.asyncio.client import connect
+
+        iam = _test_iam(self.clock, 1)
+        adapter, manager = await self._start(iam)
+        uri = f"ws://127.0.0.1:{adapter.bound_port}"
+        for case in (
+            "unsupported_component_type",
+            "requested_version_mismatch",
+            "minimum_version_mismatch",
+            "invalid_capability",
+            "duplicate_capability",
+            "invalid_resume_reference",
+        ):
+            with self.subTest(case=case):
+                async with connect(uri, proxy=None) as client:
+                    await client.send(_invalid_hello(case))
+                    await asyncio.wait_for(client.wait_closed(), timeout=2)
+                await _wait_until(lambda: not manager._admission_tasks)
+                self.assertEqual(0, manager.active_connection_count)
+                self.assertEqual({}, dict((await manager.connection_index.snapshot()).by_connection_id))
+                self.assertFalse(any(
+                    name.startswith(("logical-handshake-", "logical-iam-", "logical-admission-"))
+                    for name in self.supervisor.pending_task_names
+                ))
+        self.assertEqual(0, iam.call_count)
+
+    async def test_hostile_iam_failure_is_not_retained_by_supervisor(self) -> None:
+        from websockets.asyncio.client import connect
+
+        iam = _HostileBeforeTakeIamAdapter()
+        adapter, manager = await self._start(iam)
+        async with connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        ) as client:
+            await client.send(_hello())
+            rejected = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
+            self.assertEqual("connection.rejected", rejected["message"]["type"])
+            self.assertEqual("iam_unavailable", rejected["payload"]["inline"]["reason"])
+            await asyncio.wait_for(client.wait_closed(), timeout=2)
+        await _wait_until(lambda: not manager._admission_tasks)
+        self.assertIsNotNone(iam.request)
+        assert iam.request is not None
+        self.assertFalse(iam.request.credential.available)
+        self.assertEqual((), self.supervisor.failures)
+        await manager.drain()
+        await self._transport_managers[-1].close()
+        report = await self.supervisor.shutdown(timeout_seconds=2)
+        retained = repr(report) + repr(self.supervisor.failures) + repr(iam.request)
+        self.assertNotIn("opaque-test-token", retained)
+        self.assertFalse(any(name.startswith("logical-iam-") for name in report.failed_tasks))
+
+    async def test_close_failure_retains_owner_until_concurrent_shutdown_retry(self) -> None:
+        from websockets.asyncio.client import connect
+
+        adapter, manager = await self._start(_test_iam(self.clock, 1))
+        async with connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        ) as client:
+            await client.send(_hello())
+            accepted = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
+            connection_id = accepted["payload"]["inline"]["connection_id"]
+            owner = manager._owners[connection_id]
+            assert owner.transport is not None
+            original_close = owner.transport.close
+            first_started = asyncio.Event()
+            release_failure = asyncio.Event()
+            close_attempts = 0
+
+            async def fail_then_close():
+                nonlocal close_attempts
+                close_attempts += 1
+                if close_attempts == 1:
+                    first_started.set()
+                    await release_failure.wait()
+                    raise RuntimeError("close failure")
+                return await original_close()
+
+            owner.transport.close = fail_then_close  # type: ignore[method-assign]
+            first = asyncio.create_task(manager._close_owner(
+                owner,
+                LogicalConnectionCloseReason.SHUTDOWN,
+            ))
+            await first_started.wait()
+            concurrent_shutdown = asyncio.create_task(manager.drain())
+            release_failure.set()
+            self.assertFalse(await first)
+            entry = await manager.connection_index.lookup_connection(connection_id)
+            self.assertIsNotNone(entry)
+            assert entry is not None
+            self.assertIs(LogicalConnectionState.CLOSING, entry.state)
+            self.assertIn(connection_id, manager._owners)
+            await concurrent_shutdown
+            await asyncio.wait_for(client.wait_closed(), timeout=2)
+            self.assertEqual(2, close_attempts)
+            self.assertIsNone(await manager.connection_index.lookup_connection(connection_id))
+            self.assertNotIn(connection_id, manager._owners)
+
+    async def test_close_cancellation_retains_retryable_cleanup_owner(self) -> None:
+        from websockets.asyncio.client import connect
+
+        adapter, manager = await self._start(_test_iam(self.clock, 1))
+        async with connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        ) as client:
+            await client.send(_hello())
+            accepted = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
+            connection_id = accepted["payload"]["inline"]["connection_id"]
+            owner = manager._owners[connection_id]
+            assert owner.transport is not None
+            original_close = owner.transport.close
+            cancelled = asyncio.CancelledError("transport close cancelled")
+
+            async def cancelled_close():
+                raise cancelled
+
+            owner.transport.close = cancelled_close  # type: ignore[method-assign]
+            try:
+                with self.assertRaises(asyncio.CancelledError) as raised:
+                    await manager.drain()
+                self.assertIs(cancelled, raised.exception)
+                entry = await manager.connection_index.lookup_connection(connection_id)
+                self.assertIsNotNone(entry)
+                assert entry is not None
+                self.assertIs(LogicalConnectionState.CLOSING, entry.state)
+                self.assertIn(connection_id, manager._owners)
+            finally:
+                owner.transport.close = original_close  # type: ignore[method-assign]
+            self.assertTrue(await manager.retry_cleanup(connection_id))
+            await asyncio.wait_for(client.wait_closed(), timeout=2)
+            self.assertIsNone(await manager.connection_index.lookup_connection(connection_id))
+            self.assertNotIn(connection_id, manager._owners)
 
     async def test_protocol_incompatible_receives_rejected_then_close(self) -> None:
         from websockets.asyncio.client import connect
@@ -304,6 +497,7 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
             self.assertEqual("iam_denied", rejected["payload"]["inline"]["reason"])
             await asyncio.wait_for(client.wait_closed(), timeout=2)
         self.assertEqual(0, prod_manager.active_connection_count)
+        self.assertEqual((), self.supervisor.failures)
 
     async def test_reauth_rejection_is_sent_then_connection_closes(self) -> None:
         from websockets.asyncio.client import connect
@@ -361,6 +555,18 @@ def _test_iam(clock: SystemClock, count: int) -> DeterministicTestIamAdapter:
     )
 
 
+class _HostileBeforeTakeIamAdapter(HandshakeIamAdapter):
+    def __init__(self) -> None:
+        self.request: HandshakeIamRequest | None = None
+
+    async def authenticate(
+        self,
+        request: HandshakeIamRequest,
+    ) -> HandshakeIamAuthority:
+        self.request = request
+        raise RuntimeError("opaque-test-token")
+
+
 def _message(message_type: str, *, payload: dict[str, object] | None = None) -> dict[str, object]:
     value: dict[str, object] = {
         "protocol": {"major": 1, "minor": 0, "patch": 0},
@@ -403,6 +609,33 @@ def _hello(
                 "connection_epoch": 0,
             },
         }
+    return json.dumps(value, separators=(",", ":"))
+
+
+def _invalid_hello(case: str) -> str:
+    value = json.loads(_hello())
+    protocol = value["protocol"]
+    payload = value["payload"]["inline"]
+    if case == "unsupported_component_type":
+        payload["component_type"] = "unsupported"
+    elif case == "requested_version_mismatch":
+        payload["requested_version"] = "1.0.1"
+    elif case == "minimum_version_mismatch":
+        protocol["min_version"] = "1.0.1"
+    elif case == "invalid_capability":
+        payload["requested_capabilities"] = ["runtime.connection", "INVALID"]
+    elif case == "duplicate_capability":
+        payload["requested_capabilities"] = ["runtime.connection", "runtime.connection"]
+    elif case == "invalid_resume_reference":
+        value["extensions"] = {
+            "ns.connection_resume": {
+                "connection_id": "invalid",
+                "session_id": "invalid",
+                "connection_epoch": 0,
+            },
+        }
+    else:
+        raise AssertionError("unknown invalid hello case")
     return json.dumps(value, separators=(",", ":"))
 
 
@@ -456,6 +689,14 @@ def _disabled_task() -> str:
 
 async def _target_count(manager: ConnectionLifecycleManager) -> int:
     return len(await manager.connection_index.active_targets())
+
+
+async def _connection_state(
+    manager: ConnectionLifecycleManager,
+    connection_id: str,
+) -> LogicalConnectionState | None:
+    entry = await manager.connection_index.lookup_connection(connection_id)
+    return entry.state if entry is not None else None
 
 
 async def _wait_until_async(operation, *, expected: object) -> None:

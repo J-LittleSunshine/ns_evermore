@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import (
@@ -23,6 +22,7 @@ from ns_runtime.protocol import (
 )
 from ns_runtime.transport import TransportMessage, TransportSession
 
+from .deadline import HandshakeDeadlineBudget
 from .state import (
     LogicalConnectionCloseReason,
     LogicalConnectionState,
@@ -45,6 +45,7 @@ class ConnectionHelloReceiver:
         codec: JsonV1Codec,
         registry: MessageTypeRegistry = BUILTIN_MESSAGE_REGISTRY,
         schema_key: str = CURRENT_PROTOCOL_SCHEMA_KEY,
+        deadline_budget: HandshakeDeadlineBudget | None = None,
     ) -> None:
         if not isinstance(transport_session, TransportSession):
             _invalid("transport_session")
@@ -72,6 +73,11 @@ class ConnectionHelloReceiver:
             _invalid("registry")
         if not isinstance(schema_key, str) or not schema_key:
             _invalid("schema_key")
+        if deadline_budget is not None and (
+            not isinstance(deadline_budget, HandshakeDeadlineBudget)
+            or deadline_budget.clock is not clock
+        ):
+            _invalid("deadline_budget")
         self._transport_session = transport_session
         self._state_machine = state_machine
         self._clock = clock
@@ -81,6 +87,7 @@ class ConnectionHelloReceiver:
         self._codec = codec
         self._registry = registry
         self._schema_key = schema_key
+        self._deadline_budget = deadline_budget
         self._claim_lock = asyncio.Lock()
         self._claimed = False
 
@@ -104,24 +111,18 @@ class ConnectionHelloReceiver:
         receive_task: asyncio.Task[object] | None = None
         deadline_task: asyncio.Task[object] | None = None
         try:
-            started_at = self._clock.monotonic()
-            deadline = started_at + self._timeout_seconds
-            if not math.isfinite(started_at) or not math.isfinite(deadline):
-                raise NsStateError(
-                    "Logical connection handshake deadline is invalid.",
-                    details={
-                        "component": "logical_connection",
-                        "operation": "handshake",
-                        "reason": "invalid_clock_deadline",
-                    },
-                )
+            budget = self._deadline_budget or HandshakeDeadlineBudget.start(
+                clock=self._clock,
+                timeout_seconds=self._timeout_seconds,
+            )
+            remaining = budget.remaining_seconds()
             receive_task = self._task_supervisor.create_task(
                 self._transport_session.receive(),
                 name=f"logical-handshake-{self._task_sequence}-receive",
                 cancel_order=20,
             )
             deadline_task = self._task_supervisor.create_task(
-                self._clock.sleep(self._timeout_seconds),
+                self._clock.sleep(remaining),
                 name=f"logical-handshake-{self._task_sequence}-deadline",
                 cancel_order=10,
             )
@@ -130,7 +131,7 @@ class ConnectionHelloReceiver:
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
-            if deadline_task.done() or self._clock.monotonic() >= deadline:
+            if deadline_task.done() or budget.expired():
                 if deadline_task.done():
                     deadline_task.result()
                 await _cancel_and_join(receive_task)

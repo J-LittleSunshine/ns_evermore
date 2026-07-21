@@ -158,7 +158,10 @@ class ConnectionDrainProcessor(ConnectionLifecycleProcessor):
         self._validate_contract(envelope)
         await self._guard.check(
             envelope,
-            allowed_states=frozenset({LogicalConnectionState.ACTIVE}),
+            allowed_states=frozenset({
+                LogicalConnectionState.ACTIVE,
+                LogicalConnectionState.DRAINING,
+            }),
         )
         return await self._service.begin()
 

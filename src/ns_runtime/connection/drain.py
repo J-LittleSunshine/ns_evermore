@@ -179,6 +179,7 @@ class ConnectionDrainService:
         self._deadline: float | None = None
         self._terminal_reason: LogicalConnectionCloseReason | None = None
         self._timeout_task: asyncio.Task[object] | None = None
+        self._closed_event = asyncio.Event()
 
     async def begin(self) -> DrainSnapshot:
         async with self._lock:
@@ -226,6 +227,7 @@ class ConnectionDrainService:
         async with self._lock:
             entry = await self._index.lookup_connection(self._connection_id)
             if entry is None:
+                self._closed_event.set()
                 return True
             if entry.state is not LogicalConnectionState.CLOSING:
                 _state_error("closing_state_required")
@@ -239,7 +241,13 @@ class ConnectionDrainService:
                 self._connection_id,
                 LogicalConnectionState.CLOSED,
             )
+            self._closed_event.set()
             return True
+
+    async def wait_closed(self) -> None:
+        """Wait until transport close succeeded and the index published CLOSED."""
+
+        await self._closed_event.wait()
 
     async def snapshot(self) -> DrainSnapshot:
         async with self._lock:
@@ -268,6 +276,7 @@ class ConnectionDrainService:
         self._cancel_timeout_now()
         entry = await self._index.lookup_connection(self._connection_id)
         if entry is None:
+            self._closed_event.set()
             return True
         if entry.state is not LogicalConnectionState.CLOSING:
             try:
@@ -294,6 +303,7 @@ class ConnectionDrainService:
                 self._connection_id,
                 LogicalConnectionState.CLOSED,
             )
+        self._closed_event.set()
         return True
 
     def _cancel_timeout_now(self) -> None:

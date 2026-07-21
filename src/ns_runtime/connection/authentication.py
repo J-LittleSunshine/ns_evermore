@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 from dataclasses import dataclass, field
 
 from ns_common.async_runtime import TaskSupervisor
@@ -16,6 +15,7 @@ from ns_common.exceptions import (
 )
 from ns_common.time import Clock
 
+from .deadline import HandshakeDeadlineBudget
 from .handshake import ConnectionHelloReceiver
 from .hello import HelloClaimParser, PendingHelloClaims
 from .iam import (
@@ -60,6 +60,7 @@ class ConnectionHandshakeAuthenticator:
         timeout_seconds: float,
         session_negotiator: HandshakeSessionNegotiator | None = None,
         handshake_rejector: ConnectionHandshakeRejector | None = None,
+        deadline_budget: HandshakeDeadlineBudget | None = None,
     ) -> None:
         if not isinstance(hello_receiver, ConnectionHelloReceiver):
             _invalid("hello_receiver")
@@ -93,17 +94,21 @@ class ConnectionHandshakeAuthenticator:
             ConnectionHandshakeRejector,
         ):
             _invalid("handshake_rejector")
-        started_at = clock.monotonic()
-        deadline = started_at + float(timeout_seconds)
-        if not math.isfinite(started_at) or not math.isfinite(deadline):
-            _invalid("clock_deadline")
+        if deadline_budget is not None and (
+            not isinstance(deadline_budget, HandshakeDeadlineBudget)
+            or deadline_budget.clock is not clock
+        ):
+            _invalid("deadline_budget")
         self._hello_receiver = hello_receiver
         self._claim_parser = claim_parser
         self._iam_adapter = iam_adapter
         self._clock = clock
         self._task_supervisor = task_supervisor
         self._task_sequence = task_sequence
-        self._deadline = deadline
+        self._deadline_budget = deadline_budget or HandshakeDeadlineBudget.start(
+            clock=clock,
+            timeout_seconds=float(timeout_seconds),
+        )
         self._session_negotiator = session_negotiator
         self._handshake_rejector = handshake_rejector
         self._response_protocol = None
@@ -125,7 +130,7 @@ class ConnectionHandshakeAuthenticator:
         operation_task: asyncio.Task[object] | None = None
         deadline_task: asyncio.Task[object] | None = None
         try:
-            remaining = max(0.0, self._deadline - self._clock.monotonic())
+            remaining = self._deadline_budget.remaining_seconds()
             operation_task = self._task_supervisor.create_task(
                 self._execute_outcome(),
                 name=f"logical-handshake-{self._task_sequence}-authentication",
@@ -142,7 +147,7 @@ class ConnectionHandshakeAuthenticator:
             )
             if (
                 deadline_task.done()
-                or self._clock.monotonic() >= self._deadline
+                or self._deadline_budget.expired()
             ):
                 if deadline_task.done():
                     deadline_task.result()

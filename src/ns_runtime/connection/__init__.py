@@ -40,6 +40,7 @@ from .drain import (
     DrainingMessageDisposition,
     DrainingMessageGate,
 )
+from .deadline import HandshakeDeadlineBudget
 from .handshake import ConnectionHelloReceiver
 from .hello import (
     HELLO_EXTENSION_REGISTRY,
@@ -205,6 +206,7 @@ __all__ = (
     "HEARTBEAT_ACK_PAYLOAD_FIELDS",
     "HEARTBEAT_PAYLOAD_FIELDS",
     "HandshakeCredential",
+    "HandshakeDeadlineBudget",
     "HandshakeIamAdapter",
     "HandshakeIamAuthority",
     "HandshakeIamRequest",

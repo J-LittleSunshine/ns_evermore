@@ -4,10 +4,13 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import logging
 import unittest
 from datetime import datetime, timedelta, timezone
 
 from ns_common.async_runtime import TaskSupervisor
+from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
+from ns_common.security import Sanitizer
 from ns_common.exceptions import (
     NsRuntimeEnvelopeSchemaError,
     NsRuntimeIamDeniedError,
@@ -18,6 +21,11 @@ from ns_common.time import ControlledClock
 from ns_runtime.connection import (
     ConnectionHandshakeAuthenticator,
     ConnectionHelloReceiver,
+    ConnectionAcceptedEnvelopeBuilder,
+    ConnectionLifecycleManager,
+    ConnectionLifecyclePolicy,
+    ConnectionLifecycleProcessorRegistryFactory,
+    AcceptedHeartbeatPolicy,
     DeterministicTestIamAdapter,
     FailClosedHandshakeIamAdapter,
     HandshakeIamAdapter,
@@ -27,10 +35,19 @@ from ns_runtime.connection import (
     LogicalConnectionCloseReason,
     LogicalConnectionState,
     LogicalConnectionStateMachine,
+    LocalConnectionIndex,
     TestIamAction,
     TestIamOutcome,
 )
-from ns_runtime.protocol import JsonV1Codec
+from ns_runtime.protocol import ErrorEnvelopeBuilder, JsonV1Codec
+from ns_runtime.roles import RuntimeRole
+from ns_runtime.transport import (
+    TransportAdapter,
+    TransportCapabilities,
+    TransportManager,
+    TransportSession,
+    WEBSOCKET_TCP_CAPABILITIES,
+)
 
 from tests.test_runtime_connection_handshake import _FakeTransportSession
 
@@ -124,6 +141,37 @@ class ConnectionHandshakeAuthenticationTestCase(unittest.IsolatedAsyncioTestCase
         self.assertEqual((), self.supervisor.pending_task_names)
         self.assertEqual(0, self.clock.pending_sleep_count)
         self.assertIs(LogicalConnectionCloseReason.TIMEOUT_CLOSED, self.machine.close_reason)
+
+    async def test_composition_uses_one_deadline_after_hello_at_nine_point_five(self) -> None:
+        transport = _CompositionTransport()
+        adapter = DeterministicTestIamAdapter(
+            (TestIamOutcome(action=TestIamAction.TIMEOUT),),
+            clock=self.clock,
+            timeout_delay_seconds=100,
+        )
+        manager = _manager(
+            clock=self.clock,
+            supervisor=self.supervisor,
+            iam_adapter=adapter,
+        )
+        admission = asyncio.create_task(manager._admit(transport, sequence=71))
+        await _wait_until(lambda: transport.receive_calls == 1)
+        self.clock.advance(9.5)
+        await transport.messages.put(_hello())
+        await _wait_until(lambda: adapter.call_count == 1)
+        self.assertEqual(9.5, self.clock.monotonic())
+        self.clock.advance(0.5)
+        await admission
+        self.assertEqual(10.0, self.clock.monotonic())
+        self.assertEqual(1, adapter.consumed_credential_count)
+        self.assertEqual(1, transport.close_calls)
+        self.assertEqual(0, manager.active_connection_count)
+        self.assertEqual({}, dict((await manager.connection_index.snapshot()).by_connection_id))
+        self.assertEqual((), self.supervisor.failures)
+        self.assertFalse(any(
+            name.startswith(("logical-handshake-", "logical-iam-"))
+            for name in self.supervisor.pending_task_names
+        ))
 
     async def test_configured_cancellation_preserves_cancelled_error(self) -> None:
         adapter = DeterministicTestIamAdapter(
@@ -299,6 +347,87 @@ class _CapturingFailureAdapter(HandshakeIamAdapter):
         credential = request.credential.take()
         del credential
         raise _HostileIamError
+
+
+class _CompositionTransport(_FakeTransportSession):
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent: list[str] = []
+
+    async def send(self, text: str) -> None:
+        self.sent.append(text)
+
+
+class _NoopAdapter(TransportAdapter):
+    @property
+    def transport_type(self) -> str:
+        return "websocket_tcp"
+
+    @property
+    def capabilities(self) -> TransportCapabilities:
+        return WEBSOCKET_TCP_CAPABILITIES
+
+    @property
+    def accepting(self) -> bool:
+        return False
+
+    def stop_admission_now(self) -> None:
+        return None
+
+    async def start(self) -> None:
+        return None
+
+    async def accept(self) -> TransportSession:
+        await asyncio.Future()
+
+    async def stop_admission(self) -> None:
+        return None
+
+    async def drain(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+def _manager(
+    *,
+    clock: ControlledClock,
+    supervisor: TaskSupervisor,
+    iam_adapter: HandshakeIamAdapter,
+) -> ConnectionLifecycleManager:
+    identifier_factory = IdentifierFactory()
+    runtime_id = identifier_factory.generate(NsIdentifierKind.RUNTIME_ID)
+    return ConnectionLifecycleManager(
+        transport_manager=TransportManager((_NoopAdapter(),)),
+        connection_index=LocalConnectionIndex(),
+        clock=clock,
+        task_supervisor=supervisor,
+        identifier_factory=identifier_factory,
+        iam_adapter=iam_adapter,
+        accepted_builder=ConnectionAcceptedEnvelopeBuilder(
+            clock=clock,
+            identifier_factory=identifier_factory,
+            runtime_id=runtime_id,
+            role=RuntimeRole.SINGLETON,
+            heartbeat_policy=AcceptedHeartbeatPolicy(
+                interval_seconds=30,
+                timeout_seconds=120,
+            ),
+        ),
+        error_builder=ErrorEnvelopeBuilder(sanitizer=Sanitizer()),
+        logger=logging.Logger("p05-handshake-budget-test"),
+        runtime_id=runtime_id,
+        policy=ConnectionLifecyclePolicy(
+            handshake_timeout_seconds=10,
+            rejected_send_timeout_seconds=1,
+            native_heartbeat_interval_seconds=60,
+            envelope_heartbeat_timeout_seconds=120,
+            drain_timeout_seconds=30,
+        ),
+        codec=JsonV1Codec(),
+        processor_registry_factory=ConnectionLifecycleProcessorRegistryFactory(),
+    )
 
 
 async def _wait_until(predicate) -> None:

@@ -9,11 +9,13 @@ import logging
 import math
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import (
     NsRuntimeIamDeniedError,
     NsRuntimeIamTimeoutError,
+    NsRuntimeIamUnavailableError,
     NsRuntimeProtocolViolationError,
     NsStateError,
     NsValidationError,
@@ -42,6 +44,7 @@ from .binding import (
     LogicalSessionIdentityFactory,
 )
 from .drain import ConnectionDrainService, DrainPolicy
+from .deadline import HandshakeDeadlineBudget
 from .grace import ReconnectGracePolicy, ReconnectGraceService
 from .handshake import ConnectionHelloReceiver
 from .heartbeat import ConnectionHeartbeatService, HeartbeatPolicy
@@ -126,6 +129,21 @@ class _LogicalOwner:
     expiry: SessionExpiryController | None = field(default=None, repr=False)
     processors: ConnectionLifecycleProcessorRegistry | None = field(default=None, repr=False)
     read_task: asyncio.Task[object] | None = field(default=None, repr=False)
+    drain_cleanup_task: asyncio.Task[object] | None = field(default=None, repr=False)
+    cleanup_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+
+class _IamOutcomeKind(str, Enum):
+    SUCCEEDED = "succeeded"
+    DENIED = "denied"
+    TIMED_OUT = "timed_out"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _IamOutcome:
+    kind: _IamOutcomeKind
+    authority: HandshakeIamAuthority | None = field(default=None, repr=False)
 
 
 class ConnectionLifecycleManager:
@@ -261,7 +279,6 @@ class ConnectionLifecycleManager:
         owners = tuple(self._owners.values())
         for owner in owners:
             await self._close_owner(owner, LogicalConnectionCloseReason.SHUTDOWN)
-        self._owners.clear()
 
     async def _accept_loop(self, adapter: TransportAdapter) -> None:
         while self._admission_open:
@@ -286,6 +303,10 @@ class ConnectionLifecycleManager:
             self._track(task, self._admission_tasks)
 
     async def _admit(self, transport: TransportSession, *, sequence: int) -> None:
+        budget = HandshakeDeadlineBudget.start(
+            clock=self._clock,
+            timeout_seconds=float(self._policy.handshake_timeout_seconds),
+        )
         machine = LogicalConnectionStateMachine()
         receiver = ConnectionHelloReceiver(
             transport_session=transport,
@@ -297,17 +318,40 @@ class ConnectionLifecycleManager:
             codec=self._codec,
             registry=self._registry,
             schema_key=self._schema_key,
+            deadline_budget=budget,
         )
         try:
             inbound = await receiver.receive()
-            parsed = HelloClaimParser().parse(inbound)
-            protocol = inbound.protocol
-            del inbound
         except asyncio.CancelledError:
             await receiver.terminate(LogicalConnectionCloseReason.SHUTDOWN)
             raise
         except Exception:
             return
+        protocol = inbound.protocol
+        try:
+            parsed = HelloClaimParser().parse(inbound)
+            if budget.expired():
+                raise NsRuntimeIamTimeoutError(
+                    details={
+                        "component": "logical_connection",
+                        "operation": "handshake",
+                        "reason": "total_handshake_deadline",
+                    },
+                )
+        except asyncio.CancelledError:
+            await receiver.terminate(LogicalConnectionCloseReason.SHUTDOWN)
+            raise
+        except NsRuntimeIamTimeoutError:
+            await receiver.terminate(LogicalConnectionCloseReason.TIMEOUT_CLOSED)
+            return
+        except Exception:
+            try:
+                await receiver.terminate(LogicalConnectionCloseReason.PROTOCOL_FAILED)
+            except Exception:
+                pass
+            return
+        finally:
+            del inbound
 
         if parsed.claims.resume is not None:
             await self._resume(
@@ -315,7 +359,9 @@ class ConnectionLifecycleManager:
                 protocol=protocol,
                 transport=transport,
                 candidate_machine=machine,
+                receiver=receiver,
                 sequence=sequence,
+                budget=budget,
             )
             return
         await self._admit_new(
@@ -325,6 +371,7 @@ class ConnectionLifecycleManager:
             machine=machine,
             receiver=receiver,
             sequence=sequence,
+            budget=budget,
         )
 
     async def _admit_new(
@@ -336,6 +383,7 @@ class ConnectionLifecycleManager:
         machine: LogicalConnectionStateMachine,
         receiver: ConnectionHelloReceiver,
         sequence: int,
+        budget: HandshakeDeadlineBudget,
     ) -> None:
         rejector = self._rejector(transport, sequence=sequence)
         indexed_connection_id: str | None = None
@@ -345,7 +393,11 @@ class ConnectionLifecycleManager:
         )
         try:
             try:
-                authority = await self._bounded_iam(request, sequence=sequence)
+                authority = await self._bounded_iam(
+                    request,
+                    sequence=sequence,
+                    budget=budget,
+                )
             except NsRuntimeIamDeniedError:
                 await rejector.send(
                     protocol=protocol,
@@ -396,6 +448,14 @@ class ConnectionLifecycleManager:
                     claims=parsed.claims,
                     authority=detached,
                 )
+                self._require_handshake_budget(budget)
+            except NsRuntimeIamTimeoutError:
+                await rejector.send(
+                    protocol=protocol,
+                    reason=ConnectionRejectionReason.IAM_UNAVAILABLE,
+                )
+                await receiver.terminate(LogicalConnectionCloseReason.TIMEOUT_CLOSED)
+                return
             except Exception as error:
                 await rejector.send(
                     protocol=protocol,
@@ -413,12 +473,6 @@ class ConnectionLifecycleManager:
                 state_machine=machine,
             )
             indexed_connection_id = negotiated.context.connection_id
-            activator = ConnectionAdmissionActivator(
-                connection_index=self._index,
-                transport_session=transport,
-                envelope_builder=self._accepted_builder,
-            )
-            await activator.activate(negotiated.context)
             owner = _LogicalOwner(
                 context=negotiated.context,
                 state_machine=machine,
@@ -431,6 +485,12 @@ class ConnectionLifecycleManager:
                 ),
             )
             self._owners[negotiated.context.connection_id] = owner
+            activator = ConnectionAdmissionActivator(
+                connection_index=self._index,
+                transport_session=transport,
+                envelope_builder=self._accepted_builder,
+            )
+            await activator.activate(negotiated.context)
             await self._activate_owner(owner, sequence=sequence)
         except asyncio.CancelledError:
             if indexed_connection_id is not None:
@@ -459,7 +519,9 @@ class ConnectionLifecycleManager:
         protocol: ProtocolGroup,
         transport: TransportSession,
         candidate_machine: LogicalConnectionStateMachine,
+        receiver: ConnectionHelloReceiver,
         sequence: int,
+        budget: HandshakeDeadlineBudget,
     ) -> None:
         request = parsed.claims.resume
         assert request is not None
@@ -470,23 +532,26 @@ class ConnectionLifecycleManager:
                 reason=ConnectionRejectionReason.IAM_DENIED,
             )
             parsed.credential.clear()
-            await _close_isolated(transport)
+            try:
+                await receiver.terminate(LogicalConnectionCloseReason.REJECTED)
+            except Exception:
+                pass
             return
-        coordinator = ConnectionResumeCoordinator(
-            current_context=owner.context,
-            grace_service=owner.grace,
-            connection_index=self._index,
-            transport_mapping=owner.mapping,
-            new_transport_session=transport,
-            iam_adapter=self._iam,
-            logical_identity_factory=self._logical_identity_factory,
-            accepted_builder=self._accepted_builder,
-            clock=self._clock,
-            task_supervisor=self._supervisor,
-            task_sequence=sequence,
-            timeout_seconds=float(self._policy.handshake_timeout_seconds),
-        )
         try:
+            coordinator = ConnectionResumeCoordinator(
+                current_context=owner.context,
+                grace_service=owner.grace,
+                connection_index=self._index,
+                transport_mapping=owner.mapping,
+                new_transport_session=transport,
+                iam_adapter=self._iam,
+                logical_identity_factory=self._logical_identity_factory,
+                accepted_builder=self._accepted_builder,
+                clock=self._clock,
+                task_supervisor=self._supervisor,
+                task_sequence=sequence,
+                timeout_seconds=self._remaining_handshake_budget(budget),
+            )
             resumed = await coordinator.resume(parsed)
             if owner.expiry is not None:
                 await owner.expiry.stop()
@@ -504,6 +569,10 @@ class ConnectionLifecycleManager:
             except Exception:
                 pass
         except asyncio.CancelledError:
+            try:
+                await receiver.terminate(LogicalConnectionCloseReason.SHUTDOWN)
+            except Exception:
+                pass
             raise
         except Exception:
             if owner.transport is transport:
@@ -511,6 +580,12 @@ class ConnectionLifecycleManager:
                     owner,
                     LogicalConnectionCloseReason.INTERNAL_ERROR,
                 )
+            else:
+                try:
+                    await receiver.terminate(LogicalConnectionCloseReason.AUTH_FAILED)
+                except Exception:
+                    pass
+            parsed.credential.clear()
             return
 
     async def _activate_owner(self, owner: _LogicalOwner, *, sequence: int) -> None:
@@ -640,6 +715,8 @@ class ConnectionLifecycleManager:
                 if processors is None:
                     _protocol_error("processor_registry_unavailable")
                 result = await processors.dispatch(envelope)
+                if envelope.message.type == "connection.drain":
+                    self._ensure_drain_cleanup_task(owner)
                 if isinstance(result, ReauthenticatedSession):
                     owner.context = result.context
                     if owner.heartbeat is not None:
@@ -648,10 +725,6 @@ class ConnectionLifecycleManager:
                         owner,
                         sequence=self._next_sequence(),
                     )
-                if envelope.message.type == "connection.drain":
-                    assert owner.drain is not None
-                    await owner.drain.complete()
-                    return
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -673,6 +746,26 @@ class ConnectionLifecycleManager:
         finally:
             if await self._index.lookup_connection(owner.context.connection_id) is None:
                 self._owners.pop(owner.context.connection_id, None)
+
+    def _ensure_drain_cleanup_task(self, owner: _LogicalOwner) -> None:
+        task = owner.drain_cleanup_task
+        if task is not None and not task.done():
+            return
+        owner.drain_cleanup_task = self._supervisor.create_task(
+            self._watch_drain_cleanup(owner),
+            name=f"logical-drain-owner-{self._next_sequence()}",
+            cancel_order=16,
+        )
+
+    async def _watch_drain_cleanup(self, owner: _LogicalOwner) -> None:
+        drain = owner.drain
+        if drain is None:
+            return
+        await drain.wait_closed()
+        async with owner.cleanup_lock:
+            connection_id = owner.context.connection_id
+            if await self._index.lookup_connection(connection_id) is None:
+                self._owners.pop(connection_id, None)
 
     def _decode_and_validate(self, text: str, context: SessionContext) -> Envelope:
         inbound = self._codec.decode_inbound(text)
@@ -768,40 +861,55 @@ class ConnectionLifecycleManager:
         self,
         owner: _LogicalOwner,
         reason: LogicalConnectionCloseReason,
-    ) -> None:
-        if owner.heartbeat is not None:
-            try:
-                await owner.heartbeat.detach_for_reconnect()
-            except Exception:
-                pass
-        if owner.expiry is not None:
-            try:
-                await owner.expiry.stop()
-            except Exception:
-                pass
-        entry = await self._index.lookup_connection(owner.context.connection_id)
-        if entry is not None and entry.state is not LogicalConnectionState.CLOSING:
-            try:
+    ) -> bool:
+        connection_id = owner.context.connection_id
+        async with owner.cleanup_lock:
+            entry = await self._index.lookup_connection(connection_id)
+            if entry is None:
+                self._owners.pop(connection_id, None)
+                return True
+            if entry.state is not LogicalConnectionState.CLOSING:
                 await self._index.transition(
-                    owner.context.connection_id,
+                    connection_id,
                     LogicalConnectionState.CLOSING,
                     close_reason=reason,
                 )
-            except Exception:
-                pass
-        transport = owner.transport
-        if transport is not None:
-            await _close_isolated(transport)
-        entry = await self._index.lookup_connection(owner.context.connection_id)
-        if entry is not None and entry.state is LogicalConnectionState.CLOSING:
-            try:
-                await self._index.transition(
-                    owner.context.connection_id,
-                    LogicalConnectionState.CLOSED,
-                )
-            except Exception:
-                pass
-        self._owners.pop(owner.context.connection_id, None)
+            if owner.heartbeat is not None:
+                try:
+                    await owner.heartbeat.detach_for_reconnect()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
+            if owner.expiry is not None:
+                try:
+                    await owner.expiry.stop()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
+            if owner.drain is not None:
+                closed = await owner.drain.terminate(reason)
+            else:
+                transport = owner.transport
+                if transport is not None:
+                    try:
+                        await transport.close()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        return False
+                entry = await self._index.lookup_connection(connection_id)
+                if entry is not None and entry.state is LogicalConnectionState.CLOSING:
+                    await self._index.transition(
+                        connection_id,
+                        LogicalConnectionState.CLOSED,
+                    )
+                closed = True
+            if not closed:
+                return False
+            self._owners.pop(connection_id, None)
+            return True
 
     async def _close_indexed(
         self,
@@ -809,12 +917,11 @@ class ConnectionLifecycleManager:
         parsed_claim_connection_id: str | None,
         transport: TransportSession,
         reason: LogicalConnectionCloseReason,
-    ) -> None:
+    ) -> bool:
         if parsed_claim_connection_id is not None:
             owner = self._owners.get(parsed_claim_connection_id)
             if owner is not None:
-                await self._close_owner(owner, reason)
-                return
+                return await self._close_owner(owner, reason)
             entry = await self._index.lookup_connection(parsed_claim_connection_id)
             if entry is not None and entry.state is not LogicalConnectionState.CLOSING:
                 try:
@@ -825,7 +932,12 @@ class ConnectionLifecycleManager:
                     )
                 except Exception:
                     pass
-        await _close_isolated(transport)
+        try:
+            await transport.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
         if parsed_claim_connection_id is not None:
             entry = await self._index.lookup_connection(parsed_claim_connection_id)
             if entry is not None and entry.state is LogicalConnectionState.CLOSING:
@@ -835,27 +947,41 @@ class ConnectionLifecycleManager:
                         LogicalConnectionState.CLOSED,
                     )
                 except Exception:
-                    pass
+                    return False
+        return (
+            parsed_claim_connection_id is None
+            or await self._index.lookup_connection(parsed_claim_connection_id) is None
+        )
+
+    async def retry_cleanup(self, connection_id: str) -> bool:
+        if not isinstance(connection_id, str) or not connection_id:
+            _invalid("connection_id")
+        owner = self._owners.get(connection_id)
+        if owner is None:
+            return await self._index.lookup_connection(connection_id) is None
+        reason = owner.state_machine.close_reason or LogicalConnectionCloseReason.INTERNAL_ERROR
+        return await self._close_owner(owner, reason)
 
     async def _bounded_iam(
         self,
         request: HandshakeIamRequest,
         *,
         sequence: int,
+        budget: HandshakeDeadlineBudget,
     ) -> HandshakeIamAuthority:
         operation = self._supervisor.create_task(
-            self._iam.authenticate(request),
+            self._execute_iam_outcome(request),
             name=f"logical-iam-{sequence}-operation",
             cancel_order=20,
         )
         deadline = self._supervisor.create_task(
-            self._clock.sleep(float(self._policy.handshake_timeout_seconds)),
+            self._clock.sleep(budget.remaining_seconds()),
             name=f"logical-iam-{sequence}-deadline",
             cancel_order=10,
         )
         try:
             await asyncio.wait((operation, deadline), return_when=asyncio.FIRST_COMPLETED)
-            if deadline.done() or not operation.done():
+            if deadline.done() or not operation.done() or budget.expired():
                 await _cancel_tasks((operation,))
                 raise NsRuntimeIamTimeoutError(
                     details={
@@ -864,10 +990,78 @@ class ConnectionLifecycleManager:
                         "reason": "total_handshake_deadline",
                     },
                 )
-            result = operation.result()
-            return result
+            outcome = operation.result()
+            if not isinstance(outcome, _IamOutcome):
+                raise NsRuntimeIamUnavailableError(
+                    details={
+                        "component": "logical_connection",
+                        "operation": "handshake_authentication",
+                        "reason": "invalid_authentication_outcome",
+                    },
+                )
+            if outcome.kind is _IamOutcomeKind.DENIED:
+                raise NsRuntimeIamDeniedError(
+                    details={
+                        "component": "logical_connection",
+                        "operation": "handshake_authentication",
+                        "reason": "iam_denied",
+                    },
+                )
+            if outcome.kind is _IamOutcomeKind.TIMED_OUT:
+                raise NsRuntimeIamTimeoutError(
+                    details={
+                        "component": "logical_connection",
+                        "operation": "handshake_authentication",
+                        "reason": "iam_timeout",
+                    },
+                )
+            if outcome.kind is _IamOutcomeKind.UNAVAILABLE or outcome.authority is None:
+                raise NsRuntimeIamUnavailableError(
+                    details={
+                        "component": "logical_connection",
+                        "operation": "handshake_authentication",
+                        "reason": "adapter_failure",
+                    },
+                )
+            return outcome.authority
         finally:
             await _cancel_tasks((operation, deadline))
+
+    async def _execute_iam_outcome(self, request: HandshakeIamRequest) -> _IamOutcome:
+        try:
+            authority = await self._iam.authenticate(request)
+        except asyncio.CancelledError:
+            raise
+        except NsRuntimeIamDeniedError as error:
+            _clear_exception(error)
+            return _IamOutcome(kind=_IamOutcomeKind.DENIED)
+        except NsRuntimeIamTimeoutError as error:
+            _clear_exception(error)
+            return _IamOutcome(kind=_IamOutcomeKind.TIMED_OUT)
+        except Exception as error:
+            _clear_exception(error)
+            return _IamOutcome(kind=_IamOutcomeKind.UNAVAILABLE)
+        return _IamOutcome(
+            kind=_IamOutcomeKind.SUCCEEDED,
+            authority=authority,
+        )
+
+    @staticmethod
+    def _remaining_handshake_budget(budget: HandshakeDeadlineBudget) -> float:
+        remaining = budget.remaining_seconds()
+        if remaining <= 0:
+            raise NsRuntimeIamTimeoutError(
+                details={
+                    "component": "logical_connection",
+                    "operation": "handshake",
+                    "reason": "total_handshake_deadline",
+                },
+            )
+        return remaining
+
+    @classmethod
+    def _require_handshake_budget(cls, budget: HandshakeDeadlineBudget) -> None:
+        cls._remaining_handshake_budget(budget)
 
     def _rejector(
         self,
@@ -950,6 +1144,12 @@ def _is_transport_disconnect(error: Exception) -> bool:
 
 def _digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _clear_exception(error: Exception) -> None:
+    error.__traceback__ = None
+    error.__context__ = None
+    error.__cause__ = None
 
 
 async def _cancel_tasks(tasks: tuple[asyncio.Task[object] | None, ...]) -> None:

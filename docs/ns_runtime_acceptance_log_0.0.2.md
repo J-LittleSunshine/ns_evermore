@@ -1089,6 +1089,24 @@
 - 安全/隔离检查：canonical rejected/schema/processor路径不读取或记录token、payload、IAM raw或底层异常文本；源码边界扫描未新增backend IAM HTTP/RPC client、permission cache、P07 generic processor pipeline、StateStore、RoutingPlan、DeliveryRecord、Ack/Nack/Defer、retry/dead-letter或cluster coordination。P06仍为`NOT_STARTED`。
 - 已知限制：P05 processor只处理connection lifecycle，不是P07通用pipeline；production IAM在P06前必然拒绝ordinary connection；P05 local index/snapshot/audit不是P08 durable或cluster authority。`P06-B01/P06-R01`继续暂停且`NOT_STARTED`。
 
+## P05-FIX-02
+
+- 工作包：`logical composition lifecycle regression hardening`。
+- 状态：`VERIFIED`；P05 阶段出口恢复为 `VERIFIED/F3`，`SC-1 VERIFIED`；P06-B01/P06-R01 保持 `NOT_STARTED`。
+- 开始时间：`2026-07-21`。
+- 完成时间：`2026-07-21`。
+- 触发原因：P05-FIX-01 已完成的 registry/schema/processor/rejected/composition 边界保持不变；本 FIX 只校准 composition 暴露的 hello semantic parse cleanup、persistent drain、retryable close ownership、single total handshake deadline 与 IAM supervised outcome/credential traceback 安全。
+- 历史边界：不改写 P05-FIX-01 本地验收记录，不启动 P06 IAM HTTP/RPC、P07 generic pipeline、P08 StateStore、RoutingPlan、DeliveryRecord、ACK/NACK/Defer state 或 cluster。
+- 修改文件：新增 `connection/deadline.py` 并更新 connection facade、hello receiver、authenticator、drain service、lifecycle manager、processor/rejected best-effort task；扩展 authentication/composition/rejected 测试；更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：`HandshakeDeadlineBudget` 以一次 absolute monotonic deadline 贯穿 hello receive、semantic parse、IAM 与 negotiation。HelloClaimParser semantic failure 保持 credential finally clear，并通过同一 receiver 将 candidate logical state 收敛至 CLOSING，只有 bounded transport close 成功后才发布 CLOSED。`connection.drain` processor 只执行 ACTIVE->DRAINING，立即摘除 target但保留 read loop；heartbeat/reauth及当前允许 control 可继续进入，重复 drain 不重置 deadline，timeout或显式 manager/shutdown completion 才关闭。
+- cleanup ownership：manager close 先发布 CLOSING，再等待 P04 transport close；普通 failure 返回 false并保留 index/owner，CancelledError 原样穿透且同样保留，`retry_cleanup()` 或并发 shutdown 后续成功才发布 CLOSED并删除 index/owner。drain timeout 的 successful close 通过 supervised completion watcher通知唯一 manager owner回收；close失败时 watcher保持等待而不伪造 CLOSED。
+- IAM/sensitive outcome：composition 的 IAM supervised operation 捕获普通 deny/timeout/unavailable/hostile exception，清除 traceback/context/cause并返回无 credential 的 typed outcome；外层再映射固定错误，CancelledError保持原语义。canonical rejected best-effort send 同样把普通 send failure转为正常 bool outcome，避免 expected handshake rejection污染 TaskSupervisor failures或 shutdown report。
+- 新增测试：真实 WebSocket semantic hello matrix覆盖 unsupported component、requested/protocol mismatch、min mismatch、invalid/duplicate capability、invalid resume refs并断言无 transport/task/HANDSHAKING/index/mapping泄漏；真实 plaintext drain验证保持open、DRAINING/non-target、draining heartbeat ack、duplicate deadline不延长及deadline/显式shutdown有界完成；manager级覆盖 close ordinary failure、原 CancelledError穿透、retry cleanup和concurrent shutdown；ControlledClock证明T=10、hello在9.5、IAM需要超过0.5时总时长止于约10；hostile IAM在credential.take前抛错仍清凭证且supervisor/report无token与logical-iam failed task。
+- 回归结果：P03 `Ran 54, OK`；P04 `Ran 59, OK`；P05 `Ran 169, OK`；P03+P04+P05联合`Ran 282, OK`；runtime环境按DEP-1排除未安装Django的`test_cache`后P01-P05全量`Ran 632, OK (skipped=1)`；backend根目录全量`Ran 643, OK (skipped=44)`，其中新增5个真实WebSocket composition用例在backend环境按可选依赖边界skip、已在runtime环境真实执行通过。runtime/backend `pip check`、两套`compileall -q src tests`、`git diff --check`通过；TLS专项在ResourceWarning/tracemalloc模式正常关闭。
+- 安全/隔离检查：9项P05 connection contracts继续enabled且direction不变，余40项继续由disabled processor matrix fail-closed；P03 exact schema、lightweight processor、canonical rejected、FailClosedHandshakeIamAdapter、plaintext/TLS/resume epoch+1/old epoch fencing/reauth/SC-1均未回退。源码未新增P06 backend IAM client/permission cache、P07 generic pipeline、P08 StateStore、RoutingPlan、DeliveryRecord、ACK/NACK/Defer状态、retry/dead-letter或cluster。
+- 已知限制：P05 processor仍仅处理connection lifecycle；production ordinary hello在P06前继续fail-closed；local index/snapshot/audit不宣称durable或cluster authority。
+- 下一工作包：`P06-B01/P06-R01`继续暂停且为`NOT_STARTED`，等待新的显式恢复指令。
+
 ## 新记录模板
 
 - 工作包：

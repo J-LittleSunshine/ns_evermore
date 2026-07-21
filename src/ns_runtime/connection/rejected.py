@@ -174,11 +174,11 @@ class ConnectionHandshakeRejector:
             text = self._builder.serialize(protocol=protocol, reason=reason)
         except Exception:
             return False
-        send_task: asyncio.Task[object] | None = None
+        send_task: asyncio.Task[bool] | None = None
         deadline_task: asyncio.Task[object] | None = None
         try:
             send_task = self._supervisor.create_task(
-                self._transport.send(text),
+                _send_outcome(self._transport, text),
                 name=f"logical-rejected-{self._task_sequence}-send",
                 cancel_order=20,
             )
@@ -194,11 +194,7 @@ class ConnectionHandshakeRejector:
             if deadline_task.done() or not send_task.done():
                 await _cancel_and_join(send_task)
                 return False
-            try:
-                send_task.result()
-            except Exception:
-                return False
-            return True
+            return send_task.result()
         except Exception:
             return False
         finally:
@@ -213,6 +209,24 @@ async def _cancel_and_join(task: asyncio.Task[object] | None) -> None:
     if not task.done():
         task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+
+
+async def _send_outcome(
+    transport: TransportSession,
+    text: str,
+) -> bool:
+    """Keep an expected best-effort send failure out of supervisor failures."""
+
+    try:
+        await transport.send(text)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        error.__traceback__ = None
+        error.__context__ = None
+        error.__cause__ = None
+        return False
+    return True
 
 
 def _invalid(field_name: str) -> None:

@@ -94,6 +94,8 @@ class ConnectionRejectedEnvelopeTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(sent)
         self.assertEqual([], self.transport.sent)
         self.assertEqual((), self.supervisor.pending_task_names)
+        self.assertEqual((), self.supervisor.failures)
+        self.assertNotIn("must-not-escape", repr(self.supervisor.failures))
 
     async def test_send_timeout_is_bounded_by_clock_and_supervisor(self) -> None:
         self.transport.block_send = True
