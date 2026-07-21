@@ -464,6 +464,189 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
             await resumed_client.send(_heartbeat(current, sequence=2, epoch=1))
             ack = json.loads(await asyncio.wait_for(resumed_client.recv(), timeout=2))
             self.assertEqual("connection.heartbeat_ack", ack["message"]["type"])
+            owner = manager._owners[current["connection_id"]]
+            self.assertEqual(0, manager.pending_candidate_cleanup_count)
+            self.assertFalse(owner.resume_handoff_pending_activation)
+            self.assertIsNotNone(owner.heartbeat)
+            self.assertIsNotNone(owner.read_task)
+            assert owner.read_task is not None
+            self.assertFalse(owner.read_task.done())
+
+    async def test_resume_cancel_after_commit_fail_closes_logical_owner(self) -> None:
+        from websockets.asyncio.client import connect
+
+        adapter, manager = await self._start(_test_iam(self.clock, 2))
+        uri = f"ws://127.0.0.1:{adapter.bound_port}"
+        first = await connect(uri, proxy=None)
+        await first.send(_hello())
+        old = json.loads(await first.recv())["payload"]["inline"]
+        connection_id = old["connection_id"]
+        await first.close()
+        await _wait_until_async(lambda: _target_count(manager), expected=0)
+
+        owner = manager._owners[connection_id]
+        assert owner.expiry is not None
+        original_stop = owner.expiry.stop
+        stop_started = asyncio.Event()
+        stop_calls = 0
+
+        async def block_first_stop() -> None:
+            nonlocal stop_calls
+            stop_calls += 1
+            if stop_calls == 1:
+                stop_started.set()
+                await asyncio.Future()
+            await original_stop()
+
+        owner.expiry.stop = block_first_stop  # type: ignore[method-assign]
+        resumed_client = await connect(uri, proxy=None)
+        try:
+            await resumed_client.send(_hello(resume=old))
+            resumed = json.loads(
+                await asyncio.wait_for(resumed_client.recv(), timeout=2),
+            )["payload"]["inline"]
+            await asyncio.wait_for(stop_started.wait(), timeout=2)
+            self.assertEqual(connection_id, resumed["connection_id"])
+            entry = await manager.connection_index.lookup_connection(connection_id)
+            assert entry is not None
+            self.assertIs(LogicalConnectionState.ACTIVE, entry.state)
+            self.assertTrue(entry.active_target_eligible)
+            self.assertIsNotNone(owner.transport)
+            self.assertTrue(owner.resume_handoff_pending_activation)
+            self.assertEqual(0, manager.pending_candidate_cleanup_count)
+
+            admission = next(
+                task for task in manager._admission_tasks if not task.done()
+            )
+            admission.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await admission
+
+            await asyncio.wait_for(resumed_client.wait_closed(), timeout=2)
+            self.assertEqual(0, manager.pending_candidate_cleanup_count)
+            self.assertEqual((), await manager.connection_index.active_targets())
+            entry = await manager.connection_index.lookup_connection(connection_id)
+            self.assertTrue(
+                entry is None or entry.state is LogicalConnectionState.CLOSING,
+            )
+            if entry is None:
+                self.assertNotIn(connection_id, manager._owners)
+            else:
+                self.assertIn(connection_id, manager._owners)
+        finally:
+            if resumed_client.close_code is None:
+                await resumed_client.close()
+
+    async def test_resume_cancel_close_failure_keeps_only_logical_retry_owner(self) -> None:
+        from websockets.asyncio.client import connect
+
+        adapter, manager = await self._start(_test_iam(self.clock, 2))
+        uri = f"ws://127.0.0.1:{adapter.bound_port}"
+        first = await connect(uri, proxy=None)
+        await first.send(_hello())
+        old = json.loads(await first.recv())["payload"]["inline"]
+        connection_id = old["connection_id"]
+        await first.close()
+        await _wait_until_async(lambda: _target_count(manager), expected=0)
+
+        owner = manager._owners[connection_id]
+        assert owner.expiry is not None
+        original_stop = owner.expiry.stop
+        stop_started = asyncio.Event()
+        stop_calls = 0
+
+        async def block_first_stop() -> None:
+            nonlocal stop_calls
+            stop_calls += 1
+            if stop_calls == 1:
+                stop_started.set()
+                await asyncio.Future()
+            await original_stop()
+
+        owner.expiry.stop = block_first_stop  # type: ignore[method-assign]
+        resumed_client = await connect(uri, proxy=None)
+        await resumed_client.send(_hello(resume=old))
+        await asyncio.wait_for(resumed_client.recv(), timeout=2)
+        await asyncio.wait_for(stop_started.wait(), timeout=2)
+        assert owner.transport is not None
+        original_close = owner.transport.close
+        close_calls = 0
+
+        async def fail_once() -> None:
+            nonlocal close_calls
+            close_calls += 1
+            if close_calls == 1:
+                raise RuntimeError("post-resume close failed")
+            await original_close()
+
+        owner.transport.close = fail_once  # type: ignore[method-assign]
+        admission = next(
+            task for task in manager._admission_tasks if not task.done()
+        )
+        admission.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await admission
+
+        entry = await manager.connection_index.lookup_connection(connection_id)
+        assert entry is not None
+        self.assertIs(LogicalConnectionState.CLOSING, entry.state)
+        self.assertFalse(entry.active_target_eligible)
+        self.assertIn(connection_id, manager._owners)
+        self.assertEqual(0, manager.pending_candidate_cleanup_count)
+        self.assertEqual(1, close_calls)
+
+        self.assertTrue(await manager.retry_cleanup(connection_id))
+        await asyncio.wait_for(resumed_client.wait_closed(), timeout=2)
+        self.assertEqual(2, close_calls)
+        self.assertIsNone(await manager.connection_index.lookup_connection(connection_id))
+        self.assertNotIn(connection_id, manager._owners)
+        self.assertEqual(0, manager.pending_candidate_cleanup_count)
+
+    async def test_resume_activation_failure_fail_closes_logical_owner(self) -> None:
+        from websockets.asyncio.client import connect
+
+        adapter, manager = await self._start(_test_iam(self.clock, 2))
+        uri = f"ws://127.0.0.1:{adapter.bound_port}"
+        first = await connect(uri, proxy=None)
+        await first.send(_hello())
+        old = json.loads(await first.recv())["payload"]["inline"]
+        connection_id = old["connection_id"]
+        await first.close()
+        await _wait_until_async(lambda: _target_count(manager), expected=0)
+
+        activation_started = asyncio.Event()
+        original_activate = manager._activate_owner
+
+        async def fail_activation(owner, *, sequence: int) -> None:
+            await original_activate(owner, sequence=sequence)
+            activation_started.set()
+            raise RuntimeError("post-resume activation failed")
+
+        manager._activate_owner = fail_activation  # type: ignore[method-assign]
+        resumed_client = await connect(uri, proxy=None)
+        try:
+            await resumed_client.send(_hello(resume=old))
+            resumed = json.loads(
+                await asyncio.wait_for(resumed_client.recv(), timeout=2),
+            )["payload"]["inline"]
+            self.assertEqual(connection_id, resumed["connection_id"])
+            await asyncio.wait_for(activation_started.wait(), timeout=2)
+            await asyncio.wait_for(resumed_client.wait_closed(), timeout=2)
+            await _wait_until(lambda: not manager._admission_tasks)
+            self.assertEqual((), await manager.connection_index.active_targets())
+            self.assertIsNone(
+                await manager.connection_index.lookup_connection(connection_id),
+            )
+            self.assertNotIn(connection_id, manager._owners)
+            self.assertEqual(0, manager.pending_candidate_cleanup_count)
+            await _wait_until(lambda: not any(
+                name.startswith(("logical-read-", "logical-heartbeat-"))
+                for name in self.supervisor.pending_task_names
+            ))
+        finally:
+            manager._activate_owner = original_activate  # type: ignore[method-assign]
+            if resumed_client.close_code is None:
+                await resumed_client.close()
 
     async def test_old_epoch_is_rejected_after_resume(self) -> None:
         from websockets.asyncio.client import connect

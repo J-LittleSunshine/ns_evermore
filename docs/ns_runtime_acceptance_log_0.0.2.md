@@ -1124,6 +1124,22 @@
 - 已知限制：candidate collection仅为单进程pre-index transport cleanup ownership，不是正式connection index、durable state或cluster authority；P05 processor仍仅处理connection lifecycle。
 - 下一工作包：`P06-B01/P06-R01`继续暂停且为`NOT_STARTED`，等待新的显式恢复指令。
 
+## P05-FIX-04
+
+- 工作包：`resume post-commit ownership handoff cancellation hardening`。
+- 状态：`VERIFIED`；P05 阶段出口恢复为 `VERIFIED/F3`，`SC-1 VERIFIED`；P06-B01/P06-R01 保持 `NOT_STARTED`。
+- 开始/完成时间：`2026-07-21`。
+- 触发原因：resume coordinator 已经发布新 mapping、SessionContext/index、accepted、ACTIVE target并完成旧 grace，但manager在candidate → logical owner正式交接前仍有旧expiry stop、candidate辅助状态迁移与owner activation等取消点，可能形成ACTIVE index指向已被candidate cleanup关闭的新transport。
+- 历史边界：只追加P05-FIX-04，不改写或回滚P05-FIX-01/P05-FIX-02/P05-FIX-03的registry/schema/processor/rejected/composition、indexed/pre-index cleanup与draining terminal验收事实，不启动P06+能力。
+- 修改文件：更新`connection/lifecycle.py`建立resume post-commit同步handoff barrier与logical fail-close；扩展真实WebSocket composition竞态测试；更新implementation plan、acceptance log与ADR-030。
+- ownership transfer barrier：`ConnectionResumeCoordinator.resume()`成功返回后先同步保存旧expiry，构造新grace，并把新context/transport/grace写入既有`_LogicalOwner`；同一无await段设置`resume_handoff_pending_activation`并删除candidate cleanup record。下一个await发生时新transport已只属于logical owner，candidate state machine不再通过异步辅助迁移参与资源ownership。
+- post-commit fail-close：旧expiry stop、heartbeat/expiry/read startup或shutdown的普通失败/取消都按logical owner处理，先使ACTIVE target失效并进入CLOSING，再真实关闭transport。CancelledError保持原对象语义；cleanup期间普通close failure不覆盖原取消，index保持CLOSING、logical owner与handoff marker保留、candidate count保持0，后续`retry_cleanup(connection_id)`成功才发布CLOSED并删除index/owner。
+- 新增测试：真实WebSocket确定性事件屏障覆盖coordinator已发送accepted且index epoch+1/ACTIVE后阻塞旧expiry.stop再取消admission；同场景close首次失败验证CLOSING logical-only retry ownership；真实`_activate_owner`完成heartbeat/expiry/read启动后注入failure验证fail-close并无stale task；正常resume继续验证connection_id不变、session_id变化、epoch+1、heartbeat/read owner运行且candidate collection为0。
+- 回归结果：指定resume/composition/grace/authentication/drain/reauth/heartbeat联合`Ran 96, OK`；P03 `Ran 54, OK`；P04 `Ran 59, OK`；P05 `Ran 182, OK`；P03+P04+P05联合`Ran 295, OK`；runtime环境按DEP-1排除未安装Django的`test_cache`后P01-P05全量`Ran 645, OK (skipped=1)`；backend根目录全量`Ran 656, OK (skipped=49)`，新增3个真实WebSocket竞态用例在backend环境按可选transport依赖边界skip、已在runtime环境真实执行通过。runtime/backend `pip check`、两套`compileall -q src tests`、`git diff --check`通过；plaintext/TLS real loopback、resume epoch+1/old epoch fencing/reauth继续通过。
+- 安全/隔离检查：P05-FIX-03 candidate close retry/cancel与DRAINING first-reason/deadline convergence专项全部通过；9项P05 lifecycle contract、40项disabled、single HandshakeDeadlineBudget、IAM typed outcome/traceback cleanup、exact P03 schema、lightweight processor、canonical rejected、production fail-closed IAM、SC-1均未回退。源码未新增P06 backend IAM client/cache、P07 generic pipeline、P08 StateStore、RoutingPlan、DeliveryRecord、ACK/NACK/Defer state或cluster。
+- 已知限制：handoff marker与candidate collection均为单进程P05 cleanup ownership，不是durable/cluster ownership；P05 processor仍仅处理connection lifecycle。
+- 下一工作包：`P06-B01/P06-R01`继续暂停且为`NOT_STARTED`，等待新的显式恢复指令。
+
 ## 新记录模板
 
 - 工作包：

@@ -130,6 +130,7 @@ class _LogicalOwner:
     processors: ConnectionLifecycleProcessorRegistry | None = field(default=None, repr=False)
     read_task: asyncio.Task[object] | None = field(default=None, repr=False)
     drain_cleanup_task: asyncio.Task[object] | None = field(default=None, repr=False)
+    resume_handoff_pending_activation: bool = field(default=False, repr=False)
     cleanup_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
@@ -386,7 +387,6 @@ class ConnectionLifecycleManager:
                 parsed,
                 protocol=protocol,
                 transport=transport,
-                candidate_machine=machine,
                 candidate=candidate,
                 sequence=sequence,
                 budget=budget,
@@ -576,7 +576,6 @@ class ConnectionLifecycleManager:
         *,
         protocol: ProtocolGroup,
         transport: TransportSession,
-        candidate_machine: LogicalConnectionStateMachine,
         candidate: _CandidateCleanupOwner,
         sequence: int,
         budget: HandshakeDeadlineBudget,
@@ -595,6 +594,7 @@ class ConnectionLifecycleManager:
                 LogicalConnectionCloseReason.REJECTED,
             )
             return
+        ownership_transferred = False
         try:
             coordinator = ConnectionResumeCoordinator(
                 current_context=owner.context,
@@ -615,28 +615,43 @@ class ConnectionLifecycleManager:
                 ),
             )
             resumed = await coordinator.resume(parsed)
-            if owner.expiry is not None:
-                await owner.expiry.stop()
-            owner.context = resumed.session.context
-            owner.transport = transport
-            await candidate_machine.transition(LogicalConnectionState.AUTHENTICATED)
-            await candidate_machine.transition(LogicalConnectionState.ACTIVE)
-            self._candidate_cleanup_owners.pop(candidate.sequence, None)
-            owner.grace = self._new_grace(
-                context=owner.context,
+            previous_expiry = owner.expiry
+            resumed_context = resumed.session.context
+            resumed_grace = self._new_grace(
+                context=resumed_context,
                 mapping=owner.mapping,
                 sequence=sequence,
             )
+
+            # ResumeCoordinator has already published the new binding, index,
+            # accepted response and ACTIVE target.  Transfer the transport from
+            # the pre-index candidate to the logical owner synchronously before
+            # introducing another cancellation point.
+            owner.context = resumed_context
+            owner.transport = transport
+            owner.grace = resumed_grace
+            owner.resume_handoff_pending_activation = True
+            self._candidate_cleanup_owners.pop(candidate.sequence, None)
+            ownership_transferred = True
+
+            if previous_expiry is not None:
+                await previous_expiry.stop()
             await self._activate_owner(owner, sequence=sequence)
+            owner.resume_handoff_pending_activation = False
         except asyncio.CancelledError as error:
-            if candidate.terminal_reason is None:
+            if ownership_transferred:
+                await self._close_owner_preserving(
+                    owner,
+                    LogicalConnectionCloseReason.SHUTDOWN,
+                )
+            elif candidate.terminal_reason is None:
                 await self._close_candidate_preserving(
                     candidate,
                     LogicalConnectionCloseReason.SHUTDOWN,
                 )
             raise error
         except Exception:
-            if owner.transport is transport:
+            if ownership_transferred:
                 await self._close_owner(
                     owner,
                     LogicalConnectionCloseReason.INTERNAL_ERROR,
@@ -1064,6 +1079,18 @@ class ConnectionLifecycleManager:
     ) -> None:
         try:
             await self._close_candidate(candidate, reason)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    async def _close_owner_preserving(
+        self,
+        owner: _LogicalOwner,
+        reason: LogicalConnectionCloseReason,
+    ) -> None:
+        try:
+            await self._close_owner(owner, reason)
         except asyncio.CancelledError:
             pass
         except Exception:
