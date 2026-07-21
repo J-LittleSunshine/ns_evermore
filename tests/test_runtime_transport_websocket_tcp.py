@@ -12,6 +12,7 @@ from pathlib import Path
 from ns_common.exceptions import (
     NsRuntimeStartupSecurityError,
     NsRuntimeTransportHandshakeFailedError,
+    NsRuntimeTransportReceiveFailedError,
 )
 from ns_common.time import SystemClock
 from ns_runtime.transport import (
@@ -136,6 +137,82 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             )
             await session.send("tls-response")
             self.assertEqual("tls-response", await client.recv())
+
+    async def test_binary_message_is_rejected_with_unsupported_data_close(self) -> None:
+        from websockets.asyncio.client import connect
+        from websockets.exceptions import ConnectionClosedError
+
+        adapter = WebSocketTcpAdapter(options=self._options())
+        await adapter.start()
+        self.addAsyncCleanup(adapter.close)
+        async with connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        ) as client:
+            session = await adapter.accept()
+            await client.send(b"not-text")
+            with self.assertRaises(NsRuntimeTransportReceiveFailedError) as raised:
+                await session.receive()
+            self.assertEqual(
+                "binary_message_rejected",
+                raised.exception.details["reason"],
+            )
+            with self.assertRaises(ConnectionClosedError) as client_closed:
+                await client.recv()
+            self.assertEqual(1003, client_closed.exception.rcvd.code)
+            self.assertEqual(
+                TransportCloseReason.PROTOCOL_ERROR,
+                session.close_info.reason,
+            )
+
+    async def test_invalid_utf8_text_frame_is_closed_by_protocol_layer(self) -> None:
+        from websockets.asyncio.client import connect
+        from websockets.exceptions import ConnectionClosedError
+
+        adapter = WebSocketTcpAdapter(options=self._options())
+        await adapter.start()
+        self.addAsyncCleanup(adapter.close)
+        async with connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        ) as client:
+            session = await adapter.accept()
+            await client.send(b"\xff", text=True)
+            with self.assertRaises(NsRuntimeTransportReceiveFailedError):
+                await session.receive()
+            with self.assertRaises(ConnectionClosedError) as client_closed:
+                await client.recv()
+            self.assertEqual(1007, client_closed.exception.rcvd.code)
+
+    async def test_message_over_adapter_limit_is_closed(self) -> None:
+        from websockets.asyncio.client import connect
+        from websockets.exceptions import ConnectionClosedError
+
+        options = WebSocketTcpAdapterOptions(
+            host="127.0.0.1",
+            port=0,
+            clock=SystemClock(),
+            environment="test",
+            allow_plaintext_non_prod=True,
+            max_message_bytes=16,
+            close_timeout_seconds=1,
+            adapter_shutdown_timeout_seconds=1,
+        )
+        adapter = WebSocketTcpAdapter(options=options)
+        await adapter.start()
+        self.addAsyncCleanup(adapter.close)
+        async with connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+            max_size=None,
+        ) as client:
+            session = await adapter.accept()
+            await client.send("x" * 17)
+            with self.assertRaises(NsRuntimeTransportReceiveFailedError):
+                await session.receive()
+            with self.assertRaises(ConnectionClosedError) as client_closed:
+                await client.recv()
+            self.assertEqual(1009, client_closed.exception.rcvd.code)
 
     def test_production_plaintext_options_fail_closed(self) -> None:
         with self.assertRaises(NsRuntimeStartupSecurityError) as raised:

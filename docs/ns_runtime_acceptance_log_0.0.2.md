@@ -779,6 +779,18 @@
 - 已知限制：W03 验证正常文本路径；binary/invalid UTF-8/oversize 的冻结负向策略由 W04 完成，独立有界读写应用队列与完整背压由 W05 完成。
 - 下一工作包：`P04-W04 WebSocket text-only enforcement`，状态为 `IN_PROGRESS`。
 
+## P04-W04
+
+- 工作包：`P04-W04 WebSocket text-only enforcement`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-21T10:25:00+08:00`。
+- 修改文件：扩展 `tests/test_runtime_transport_websocket_tcp.py` 的 binary、invalid UTF-8 与 oversize 真实 loopback 负向矩阵，更新实施计划和执行游标。
+- 公共契约变化：WebSocket application data 只允许完整 UTF-8 text；binary 固定以 1003/protocol_error 关闭并返回标准 transport receive error，非法 UTF-8 由协议层以 1007 关闭，超过 adapter 最大消息边界以 1009 关闭。不得转换 binary 或调用 P03 codec。
+- 测试结果：W01-W04 transport 专项 `Ran 14, OK`，并以 DeprecationWarning-as-error 运行；`git diff --check` 通过。
+- 安全/隔离检查：负向错误 details 仅含固定 operation/reason/transport_type；不复制 frame、payload、第三方异常 message/repr、close reason 或 WebSocket 对象。源码扫描确认 adapter 不解析 JSON/Envelope，也不产生 runtime ACK。
+- 已知限制：底层 websockets frame queue 已受限，但 P04 独立的每-session application read/write queue 和背压语义由 W05 完成。
+- 下一工作包：`P04-W05 bounded queues and backpressure`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
