@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import (
@@ -85,7 +86,12 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             adapter_shutdown_timeout_seconds=1,
         )
 
-    def _adapter(self, options: WebSocketTcpAdapterOptions) -> WebSocketTcpAdapter:
+    def _adapter(
+        self,
+        options: WebSocketTcpAdapterOptions,
+        *,
+        sink: InMemoryMetricsSink | None = None,
+    ) -> WebSocketTcpAdapter:
         supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
         self.addAsyncCleanup(supervisor.shutdown)
         return WebSocketTcpAdapter(
@@ -94,9 +100,17 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             identity_factory=TransportIdentityFactory(),
             metrics=TransportMetricsRecorder(
                 clock=options.clock,
-                sink=InMemoryMetricsSink(),
+                sink=(InMemoryMetricsSink() if sink is None else sink),
             ),
         )
+
+    @staticmethod
+    def _close_metric_reason(sink: InMemoryMetricsSink) -> str:
+        close_record = next(
+            record for record in sink.records
+            if record.name == "runtime_transport_close_total"
+        )
+        return str(close_record.attributes["close_reason"])
 
     async def test_plaintext_loopback_text_send_receive_ping_and_idempotent_close(
         self,
@@ -223,7 +237,8 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
         from websockets.asyncio.client import connect
         from websockets.exceptions import ConnectionClosedError
 
-        adapter = self._adapter(self._options())
+        sink = InMemoryMetricsSink()
+        adapter = self._adapter(self._options(), sink=sink)
         await adapter.start()
         self.addAsyncCleanup(adapter.close)
         async with connect(
@@ -238,6 +253,12 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ConnectionClosedError) as client_closed:
                 await client.recv()
             self.assertEqual(1007, client_closed.exception.rcvd.code)
+            await session.wait_closed()
+            self.assertEqual(TransportCloseReason.PROTOCOL_ERROR, session.close_info.reason)
+            self.assertFalse(session.close_info.clean)
+            self.assertEqual("adapter", session.close_info.initiator.value)
+            self.assertEqual("protocol_error", self._close_metric_reason(sink))
+            self.assertNotIn("invalid start byte", repr(raised.exception))
 
     async def test_message_over_adapter_limit_is_closed(self) -> None:
         from websockets.asyncio.client import connect
@@ -253,7 +274,8 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             close_timeout_seconds=1,
             adapter_shutdown_timeout_seconds=1,
         )
-        adapter = self._adapter(options)
+        sink = InMemoryMetricsSink()
+        adapter = self._adapter(options, sink=sink)
         await adapter.start()
         self.addAsyncCleanup(adapter.close)
         async with connect(
@@ -269,11 +291,20 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ConnectionClosedError) as client_closed:
                 await client.recv()
             self.assertEqual(1009, client_closed.exception.rcvd.code)
+            await session.wait_closed()
+            self.assertEqual(
+                TransportCloseReason.MESSAGE_TOO_LARGE,
+                session.close_info.reason,
+            )
+            self.assertFalse(session.close_info.clean)
+            self.assertEqual("adapter", session.close_info.initiator.value)
+            self.assertEqual("message_too_large", self._close_metric_reason(sink))
 
     async def test_normal_remote_close_is_distinct_and_safe(self) -> None:
         from websockets.asyncio.client import connect
 
-        adapter = self._adapter(self._options())
+        sink = InMemoryMetricsSink()
+        adapter = self._adapter(self._options(), sink=sink)
         await adapter.start()
         self.addAsyncCleanup(adapter.close)
         client = await connect(
@@ -289,6 +320,61 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("remote_closed", raised.exception.details["reason"])
         self.assertEqual(TransportCloseReason.REMOTE_CLOSED, session.close_info.reason)
         self.assertTrue(session.close_info.clean)
+        self.assertEqual("remote", session.close_info.initiator.value)
+        self.assertEqual("remote_closed", self._close_metric_reason(sink))
+        self.assertNotIn("must-not-leak", repr(raised.exception))
+
+    async def test_abnormal_remote_close_is_remote_and_not_clean(self) -> None:
+        from websockets.asyncio.client import connect
+
+        sink = InMemoryMetricsSink()
+        adapter = self._adapter(self._options(), sink=sink)
+        await adapter.start()
+        self.addAsyncCleanup(adapter.close)
+        client = await connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        )
+        session = await adapter.accept()
+        client.transport.abort()
+        await asyncio.wait_for(session.wait_closed(), timeout=1)
+
+        with self.assertRaises(NsRuntimeTransportReceiveFailedError) as raised:
+            await session.receive()
+        self.assertEqual(
+            "remote_closed_abnormally",
+            raised.exception.details["reason"],
+        )
+        self.assertEqual(TransportCloseReason.REMOTE_CLOSED, session.close_info.reason)
+        self.assertFalse(session.close_info.clean)
+        self.assertEqual("remote", session.close_info.initiator.value)
+        self.assertEqual("remote_closed", self._close_metric_reason(sink))
+
+    async def test_loopback_generic_receive_failure_is_adapter_terminal(self) -> None:
+        from websockets.asyncio.client import connect
+        from websockets.asyncio.server import ServerConnection
+
+        sink = InMemoryMetricsSink()
+        adapter = self._adapter(self._options(), sink=sink)
+        failure = RuntimeError("credential=must-not-leak")
+        with mock.patch.object(ServerConnection, "recv", side_effect=failure):
+            await adapter.start()
+            self.addAsyncCleanup(adapter.close)
+            client = await connect(
+                f"ws://127.0.0.1:{adapter.bound_port}",
+                proxy=None,
+            )
+            self.addAsyncCleanup(client.close)
+            session = await adapter.accept()
+            with self.assertRaises(NsRuntimeTransportReceiveFailedError) as raised:
+                await session.receive()
+            await session.wait_closed()
+
+        self.assertEqual("read_failed", raised.exception.details["reason"])
+        self.assertEqual(TransportCloseReason.RECEIVE_FAILED, session.close_info.reason)
+        self.assertFalse(session.close_info.clean)
+        self.assertEqual("adapter", session.close_info.initiator.value)
+        self.assertEqual("receive_failed", self._close_metric_reason(sink))
         self.assertNotIn("must-not-leak", repr(raised.exception))
 
     def test_production_plaintext_options_fail_closed(self) -> None:

@@ -887,6 +887,20 @@
 - 已知限制：完整生产证书材料配置仍属 P20；composition root 未显式注入 server SSLContext 时 TLS fail-closed。P04 transport session 只提供底层消息边界，不代表 P05 logical session 已建立或任何业务消息可用。
 - 下一工作包：执行游标推进到 `P05-W01 连接状态机`，状态保持 `NOT_STARTED`；本阶段验收未开始 P05。
 
+## P04-FIX-02
+
+- 工作包：`P04-FIX-02 transport terminal outcome 与可重试清理语义`。
+- 状态：`VERIFIED`；P04 已恢复 `VERIFIED/F2`，`P05-W01` 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T11:35:47+08:00`。
+- 触发原因：阶段后续 review 发现 receive normalized failure 的终态 close 分类被统一覆盖、keepalive failure 未关闭 session、send 存在调用方与 writer 双 deadline、close cancellation 提前发布 CLOSED，以及 composition root 未在后续 start step 失败后显式清理已启动 transport。
+- 修改文件：校准 `transport/websocket_tcp.py` reader/keepalive/send/close 终态路径与 `main._run_service_once()` FAILED-start caller cleanup；扩展 WebSocket loopback、backpressure/cancellation、metrics 和 lifecycle tests；更新 implementation plan、TC-1 evidence 与 ADR-029。
+- 公共契约变化：normalized receive failure 按 kind 保留 `REMOTE_CLOSED`、`PROTOCOL_ERROR`、`MESSAGE_TOO_LARGE`、`RECEIVE_FAILED` 的 exact close reason/initiator/clean/metric；keepalive timeout/普通失败先记录固定 error metric并以 `KEEPALIVE_FAILED` terminal close 后抛原归一化公共异常，CancelledError 不记失败。send 只由调用方 completion wait 持有一个覆盖 queue+write 的 deadline：queued timeout 永不触发底层 send，active timeout 取消 writer 并在 CLOSED 后返回。close cancellation 只保留原始 pending outcome 与资源所有权，不发布 close_info/event/metric；后续及并发 close waiter 可重试真实清理且最终只发布一次。`_run_service_once()` 在 start 进入 FAILED 后显式 stop；普通 cleanup failure 不覆盖原 start exception，首次进程级 BaseException 优先。
+- 测试结果：P04 专项 `Ran 59, OK`；P03+P04 联合 `Ran 111, OK`；九个指定 websocket/backpressure/errors/lifecycle/metrics/conformance/service/shutdown/main 模块 `Ran 85, OK`。真实 loopback 覆盖 1000、1007、1009、abnormal remote close 与注入 generic receive failure，并逐项断言 public reason、close_info reason/initiator/clean 及 close metric 一致且无 reason text 泄露。可控竞态覆盖 queued/active timeout、active timeout 等待 terminal close、ping timeout/普通异常/取消、close cancellation+retry+并发 waiter，以及 monitor start exception/cancellation 后 transport/listener/session/task cleanup 和异常身份优先级。
+- 全量回归：runtime 目标矩阵 `Ran 460, OK (skipped=1)`；backend 根目录全量 `Ran 471, OK (skipped=32)`，skip 为 Windows event-loop policy 与 DEP-1 缺少 runtime WebSocket driver 时的明确操作测试。runtime/backend `pip check`、`compileall -q src tests` 与 `git diff --check` 全部通过。
+- 安全/隔离检查：未引入 P05 logical connection/hello/resume、IAM、processor、StateStore、DeliveryRecord、ACK 或 cluster；没有第二 coordinator/signal owner/TaskSupervisor/event loop/global context；所有 queue 仍显式有界；异常 message/repr、peer、URL、payload、完整 transport ID 未进入错误、日志或指标，send success 仍不产生 runtime ACK。
+- 已知限制：完整生产证书材料仍属 P20；FIX-02 只冻结底层 transport terminal outcome 与可重试清理，不开放 handshaking 之后的业务状态。
+- 下一工作包：执行游标恢复到 `P05-W01 连接状态机`，状态保持 `NOT_STARTED`；本 FIX 未开始 P05。
+
 ## 新记录模板
 
 - 工作包：

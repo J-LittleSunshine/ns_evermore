@@ -36,6 +36,7 @@ from .models import (
     TransportClose,
     TransportCloseInitiator,
     TransportCloseReason,
+    TransportErrorKind,
     TransportMessage,
     TransportSessionState,
 )
@@ -145,6 +146,12 @@ class _PendingWrite:
     backpressured: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _PendingClose:
+    close_info: TransportClose
+    send_close: bool
+
+
 class WebSocketTcpSession(TransportSession):
     """A library-object firewall around one accepted WebSocket connection."""
 
@@ -165,6 +172,7 @@ class WebSocketTcpSession(TransportSession):
         self._metrics = metrics
         self._state = TransportSessionState.HANDSHAKING
         self._close_info: TransportClose | None = None
+        self._pending_close: _PendingClose | None = None
         self._close_lock = asyncio.Lock()
         self._receive_lock = asyncio.Lock()
         self._closed = asyncio.Event()
@@ -298,6 +306,8 @@ class WebSocketTcpSession(TransportSession):
             ) from None
         self._metrics.write_queue_depth(self._write_queue.qsize())
         try:
+            # This is the sole authoritative timeout for both queueing and the
+            # underlying write.  The writer never starts a second budget.
             await asyncio.wait_for(
                 asyncio.shield(pending.completion),
                 timeout=self._options.send_timeout_seconds,
@@ -315,15 +325,14 @@ class WebSocketTcpSession(TransportSession):
             pending.cancelled = True
             pending.completion.cancel()
             self._metrics.send_error("RUNTIME_TRANSPORT_SEND_FAILED")
-            raise NsRuntimeTransportSendFailedError(
-                "Runtime transport send timed out.",
-                details={
-                    "component": "transport",
-                    "operation": "send",
-                    "reason": "send_timeout",
-                    "transport_type": WEBSOCKET_TCP_TRANSPORT_TYPE,
-                },
-            ) from None
+            if pending.started:
+                await self._close_with(
+                    reason=TransportCloseReason.SEND_TIMEOUT,
+                    initiator=TransportCloseInitiator.ADAPTER,
+                    clean=False,
+                    protocol_code=1011,
+                )
+            raise self._send_failure("send_timeout") from None
 
     async def _reader_loop(self) -> None:
         try:
@@ -379,8 +388,9 @@ class WebSocketTcpSession(TransportSession):
             reason = str(failure.error.details["reason"])
             self._set_read_failure(reason)
             self._metrics.receive_error(failure.error.code)
-            await self._mark_remote_closed(
-                clean=reason == "remote_closed",
+            await self._close_for_receive_failure(
+                kind=failure.error.kind,
+                reason=reason,
             )
 
     async def _writer_loop(self) -> None:
@@ -393,29 +403,11 @@ class WebSocketTcpSession(TransportSession):
                 pending.started = True
                 self._active_write = pending
                 try:
-                    await asyncio.wait_for(
-                        self._connection.send(pending.text),
-                        timeout=self._options.send_timeout_seconds,
-                    )
+                    await self._connection.send(pending.text)
                 except asyncio.CancelledError:
                     if not pending.completion.done():
                         pending.completion.cancel()
                     raise
-                except asyncio.TimeoutError as error:
-                    failure = normalize_transport_exception(
-                        error,
-                        operation="send",
-                    )
-                    if not pending.completion.done():
-                        pending.completion.set_exception(failure.exception)
-                    self._metrics.send_error(failure.error.code)
-                    await self._close_with(
-                        reason=TransportCloseReason.SEND_TIMEOUT,
-                        initiator=TransportCloseInitiator.ADAPTER,
-                        clean=False,
-                        protocol_code=1011,
-                    )
-                    return
                 except Exception as error:
                     failure = normalize_transport_exception(
                         error,
@@ -494,10 +486,18 @@ class WebSocketTcpSession(TransportSession):
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            raise normalize_transport_exception(
+            failure = normalize_transport_exception(
                 error,
                 operation="keepalive",
-            ).exception from None
+            )
+            self._metrics.receive_error(failure.error.code)
+            await self._close_with(
+                reason=TransportCloseReason.KEEPALIVE_FAILED,
+                initiator=TransportCloseInitiator.ADAPTER,
+                clean=False,
+                protocol_code=1011,
+            )
+            raise failure.exception from None
 
     async def close(self) -> TransportClose:
         return await self._close_with(
@@ -527,6 +527,31 @@ class WebSocketTcpSession(TransportSession):
             send_close=False,
         )
 
+    async def _close_for_receive_failure(
+        self,
+        *,
+        kind: TransportErrorKind,
+        reason: str,
+    ) -> TransportClose:
+        protocol_code = _safe_connection_close_code(self._connection)
+        if kind is TransportErrorKind.REMOTE_CLOSED:
+            return await self._mark_remote_closed(clean=reason == "remote_closed")
+        if kind is TransportErrorKind.PROTOCOL_ERROR:
+            close_reason = TransportCloseReason.PROTOCOL_ERROR
+            protocol_code = protocol_code or 1002
+        elif kind is TransportErrorKind.MESSAGE_TOO_LARGE:
+            close_reason = TransportCloseReason.MESSAGE_TOO_LARGE
+            protocol_code = 1009
+        else:
+            close_reason = TransportCloseReason.RECEIVE_FAILED
+            protocol_code = protocol_code or 1011
+        return await self._close_with(
+            reason=close_reason,
+            initiator=TransportCloseInitiator.ADAPTER,
+            clean=False,
+            protocol_code=protocol_code,
+        )
+
     async def _close_with(
         self,
         *,
@@ -542,12 +567,18 @@ class WebSocketTcpSession(TransportSession):
             self._state = TransportSessionState.CLOSING
             if self._read_failure_reason is None:
                 self._set_read_failure("session_closed")
-            close_info = TransportClose(
-                reason=reason,
-                initiator=initiator,
-                clean=clean,
-                protocol_code=protocol_code,
-            )
+            if self._pending_close is None:
+                self._pending_close = _PendingClose(
+                    close_info=TransportClose(
+                        reason=reason,
+                        initiator=initiator,
+                        clean=clean,
+                        protocol_code=protocol_code,
+                    ),
+                    send_close=send_close,
+                )
+            close_info = self._pending_close.close_info
+            send_close = self._pending_close.send_close
             self._fail_pending_writes()
             current_task = asyncio.current_task()
             io_tasks = tuple(
@@ -567,21 +598,20 @@ class WebSocketTcpSession(TransportSession):
                         timeout=self._options.close_timeout_seconds,
                     )
                 except asyncio.CancelledError:
-                    self._state = TransportSessionState.CLOSED
-                    self._close_info = close_info
-                    self._closed.set()
+                    # Resource ownership is retained in CLOSING.  A later
+                    # close call re-enters this path with the original outcome.
                     raise
                 except Exception:
                     close_info = TransportClose(
-                        reason=reason,
-                        initiator=initiator,
+                        reason=close_info.reason,
+                        initiator=close_info.initiator,
                         clean=False,
-                        protocol_code=protocol_code,
+                        protocol_code=close_info.protocol_code,
                     )
-            self._state = TransportSessionState.CLOSED
-            self._close_info = close_info
-            self._closed.set()
-            self._metrics.connection_closed(close_info.reason)
+                    self._pending_close = _PendingClose(
+                        close_info=close_info,
+                        send_close=send_close,
+                    )
             if io_tasks:
                 try:
                     await asyncio.wait_for(
@@ -592,6 +622,11 @@ class WebSocketTcpSession(TransportSession):
                     raise
                 except Exception:
                     pass
+            self._state = TransportSessionState.CLOSED
+            self._close_info = close_info
+            self._pending_close = None
+            self._closed.set()
+            self._metrics.connection_closed(close_info.reason)
             return close_info
 
     def _fail_pending_writes(self) -> None:

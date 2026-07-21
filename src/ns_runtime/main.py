@@ -22,7 +22,21 @@ async def _run_service_once(service: RuntimeService) -> None:
     from ns_runtime.shutdown import RuntimeShutdownReason
 
     with service.shutdown_coordinator.install_signal_handlers():
-        await service.start()
+        try:
+            await service.start()
+        except BaseException as start_failure:
+            try:
+                await service.stop()
+            except BaseException as cleanup_failure:
+                # Ordinary cleanup failure cannot hide the original startup
+                # outcome.  A process-level cleanup failure takes precedence
+                # only when startup itself was an ordinary Exception.
+                if (
+                    isinstance(start_failure, Exception)
+                    and not isinstance(cleanup_failure, Exception)
+                ):
+                    raise
+            raise
         service.shutdown_coordinator.request_shutdown(
             RuntimeShutdownReason.SELF_CHECK_COMPLETE,
         )
