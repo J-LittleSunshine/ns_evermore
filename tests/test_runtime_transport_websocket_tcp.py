@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import (
     NsRuntimeStartupSecurityError,
     NsRuntimeTransportHandshakeFailedError,
@@ -76,12 +77,20 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             adapter_shutdown_timeout_seconds=1,
         )
 
+    def _adapter(self, options: WebSocketTcpAdapterOptions) -> WebSocketTcpAdapter:
+        supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
+        self.addAsyncCleanup(supervisor.shutdown)
+        return WebSocketTcpAdapter(
+            options=options,
+            task_supervisor=supervisor,
+        )
+
     async def test_plaintext_loopback_text_send_receive_ping_and_idempotent_close(
         self,
     ) -> None:
         from websockets.asyncio.client import connect
 
-        adapter = WebSocketTcpAdapter(options=self._options())
+        adapter = self._adapter(self._options())
         await adapter.start()
         self.addAsyncCleanup(adapter.close)
         self.assertTrue(adapter.accepting)
@@ -116,9 +125,7 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_tls_loopback_delivers_complete_text_messages(self) -> None:
         from websockets.asyncio.client import connect
 
-        adapter = WebSocketTcpAdapter(
-            options=self._options(tls=self._server_tls_context()),
-        )
+        adapter = self._adapter(self._options(tls=self._server_tls_context()))
         await adapter.start()
         self.addAsyncCleanup(adapter.close)
 
@@ -137,12 +144,37 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             )
             await session.send("tls-response")
             self.assertEqual("tls-response", await client.recv())
+            await session.close()
+        # asyncio's TLS transport completes its close callback on a later loop
+        # turn after the WebSocket close handshake.
+        await asyncio.sleep(0)
+
+    async def test_adapter_shutdown_closes_active_session_and_io_tasks(self) -> None:
+        from websockets.asyncio.client import connect
+
+        adapter = self._adapter(self._options())
+        await adapter.start()
+        client = await connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        )
+        self.addAsyncCleanup(client.close)
+        session = await adapter.accept()
+        await asyncio.wait_for(adapter.close(), timeout=1)
+        await asyncio.wait_for(client.wait_closed(), timeout=1)
+
+        self.assertFalse(adapter.accepting)
+        self.assertEqual(TransportSessionState.CLOSED, session.state)
+        self.assertEqual(
+            TransportCloseReason.ADAPTER_SHUTDOWN,
+            session.close_info.reason,
+        )
 
     async def test_binary_message_is_rejected_with_unsupported_data_close(self) -> None:
         from websockets.asyncio.client import connect
         from websockets.exceptions import ConnectionClosedError
 
-        adapter = WebSocketTcpAdapter(options=self._options())
+        adapter = self._adapter(self._options())
         await adapter.start()
         self.addAsyncCleanup(adapter.close)
         async with connect(
@@ -160,6 +192,7 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ConnectionClosedError) as client_closed:
                 await client.recv()
             self.assertEqual(1003, client_closed.exception.rcvd.code)
+            await session.wait_closed()  # type: ignore[attr-defined]
             self.assertEqual(
                 TransportCloseReason.PROTOCOL_ERROR,
                 session.close_info.reason,
@@ -169,7 +202,7 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
         from websockets.asyncio.client import connect
         from websockets.exceptions import ConnectionClosedError
 
-        adapter = WebSocketTcpAdapter(options=self._options())
+        adapter = self._adapter(self._options())
         await adapter.start()
         self.addAsyncCleanup(adapter.close)
         async with connect(
@@ -198,7 +231,7 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             close_timeout_seconds=1,
             adapter_shutdown_timeout_seconds=1,
         )
-        adapter = WebSocketTcpAdapter(options=options)
+        adapter = self._adapter(options)
         await adapter.start()
         self.addAsyncCleanup(adapter.close)
         async with connect(
@@ -235,7 +268,7 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
         occupied.listen(1)
         self.addCleanup(occupied.close)
         port = occupied.getsockname()[1]
-        adapter = WebSocketTcpAdapter(options=WebSocketTcpAdapterOptions(
+        adapter = self._adapter(WebSocketTcpAdapterOptions(
             host="127.0.0.1",
             port=port,
             clock=SystemClock(),

@@ -791,6 +791,18 @@
 - 已知限制：底层 websockets frame queue 已受限，但 P04 独立的每-session application read/write queue 和背压语义由 W05 完成。
 - 下一工作包：`P04-W05 bounded queues and backpressure`，状态为 `IN_PROGRESS`。
 
+## P04-W05
+
+- 工作包：`P04-W05 bounded per-session queues and backpressure`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-21T10:30:00+08:00`。
+- 修改文件：重构 `WebSocketTcpSession` 为 TaskSupervisor 所有的 reader/writer pump，扩展 adapter options，新增 `tests/test_runtime_transport_backpressure.py` 并补充 adapter shutdown 测试，更新实施计划和执行游标。
+- 公共契约变化：每 session 独立有界 read/write queue；reader 只投递完整 text message，read full 固定 1013 并关闭；writer 串行保持消息顺序，write full 立即返回 `RUNTIME_TRANSPORT_FLOW_CONTROL_BLOCKED`，send timeout 返回 `RUNTIME_TRANSPORT_SEND_FAILED` 并有界关闭。取消 queued send 不写底层，close/adapter drain 并发幂等且拒绝新写入。所有 I/O task 由既有显式 TaskSupervisor 创建，无第二 supervisor/event-loop owner。
+- 测试结果：读队列满、慢写/写队列满、并发 send 顺序、取消 queued send、发送超时、10 路并发 close、关闭后写入、adapter shutdown 全部通过；W01-W05 专项 `Ran 20, OK`（warnings-as-errors），P01 async + P02 lifecycle/main + P03 codec 联合 `Ran 91, OK (skipped=1)`，compileall 与 `git diff --check` 通过。
+- 安全/隔离检查：所有 queue 均显式 maxsize；send/close/ping/adapter shutdown 均有 wait_for deadline，不存在无限 queue 或 transport wait。pending write repr 排除 text，失败不复制底层 exception；transport send success 只完成局部 future，不产生 ACK/DeliveryRecord/retry 决策。
+- 已知限制：session 尚未冻结 transport/path 标识和安全摘要（W06），第三方 close/异常的细分公共映射将在 W07 完成。
+- 下一工作包：`P04-W06 transport identities and safe diagnostics`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
