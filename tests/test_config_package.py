@@ -320,8 +320,13 @@ assert ensure_calls == ["ensure_runtime_dirs", "ensure_runtime_dirs"]
                 "backend": {
                     "debug": False,
                     "secret_key": "production-secret-key-at-least-32-characters",
+                    "iam_internal_token": "b" * 32,
                 },
                 "runtime": {
+                    "iam": {
+                        "base_url": "https://iam.example.test/api/iam/",
+                        "internal_service_credential": "r" * 32,
+                    },
                     "transport": {
                         "websocket_tcp": {"enabled": True, "tls_enabled": True},
                     },

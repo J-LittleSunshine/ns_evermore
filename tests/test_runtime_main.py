@@ -49,10 +49,18 @@ def _production_config(runtime: dict[str, object] | None = None) -> dict[str, ob
         "backend": {
             "debug": False,
             "secret_key": "s" * 32,
+            "iam_internal_token": "b" * 32,
+        },
+    }
+    runtime_config: dict[str, object] = {
+        "iam": {
+            "base_url": "https://iam.example.test/api/iam/",
+            "internal_service_credential": "r" * 32,
         },
     }
     if runtime is not None:
-        config["runtime"] = runtime
+        runtime_config.update(runtime)
+    config["runtime"] = runtime_config
     return config
 
 
@@ -82,6 +90,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
     def test_main_wires_each_initial_role_to_explicit_safe_logger(self) -> None:
         captured_contexts: list[object] = []
         captured_monitors: list[object] = []
+        captured_logical_owners: list[object] = []
 
         class CapturingService:
             def __init__(
@@ -97,6 +106,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
 
                 captured_contexts.append(context)
                 captured_monitors.append(event_loop_monitor)
+                captured_logical_owners.append(logical_connection_owner)
                 self.shutdown_coordinator = RuntimeShutdownCoordinator(
                     context=context,  # type: ignore[arg-type]
                     logger_close=logger_close,  # type: ignore[arg-type]
@@ -166,6 +176,13 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                             captured_monitors[-1].snapshot.implementation.value,  # type: ignore[attr-defined]
                         )
                         self.assertTrue((startup_root / "log").is_dir())
+                        from ns_runtime.iam import IamClient
+
+                        self.assertIsInstance(
+                            captured_logical_owners[-1]._iam,  # type: ignore[attr-defined]
+                            IamClient,
+                        )
+                        self.assertIsNotNone(context.http_client_owner)  # type: ignore[attr-defined]
         finally:
             close_ns_loggers()
 

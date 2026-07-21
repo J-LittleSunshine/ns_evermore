@@ -135,6 +135,11 @@ class NsRuntimeIamConfig:
     request_timeout_seconds: int = 5
     credential_refresh_interval_seconds: int = 300
     permission_snapshot_ttl_seconds: int = 60
+    authorization_mode: Literal["strict", "cache"] = "strict"
+    internal_service_credential: str = field(
+        default="change-me-iam-internal-token-at-least-32-chars",
+        repr=False,
+    )
     fail_closed: bool = True
     allow_degraded_startup: bool = False
     metadata: NsConfigGroupMetadata = field(

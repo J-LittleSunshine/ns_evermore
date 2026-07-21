@@ -229,8 +229,13 @@ class NsConfigSnapshotTestCase(unittest.TestCase):
                 "backend": {
                     "debug": False,
                     "secret_key": "s" * 32,
+                    "iam_internal_token": "b" * 32,
                 },
                 "runtime": {
+                    "iam": {
+                        "base_url": "https://iam.example.test/api/iam/",
+                        "internal_service_credential": "r" * 32,
+                    },
                     "transport": {
                         "websocket_tcp": {
                             "tls_enabled": True,
@@ -436,11 +441,16 @@ class NsRuntimeConfigGroupsTestCase(unittest.TestCase):
         prod_backend = {
             "debug": False,
             "secret_key": "s" * 32,
+            "iam_internal_token": "b" * 32,
         }
         with self.assertRaises(NsConfigError) as plaintext_context:
             NsConfig.from_dict({
                 "backend": prod_backend,
                 "runtime": {
+                    "iam": {
+                        "base_url": "https://iam.example.test/api/iam/",
+                        "internal_service_credential": "r" * 32,
+                    },
                     "state_store": {
                         "backend": "redis",
                         "url": "rediss://127.0.0.1:6379/0",
@@ -456,6 +466,10 @@ class NsRuntimeConfigGroupsTestCase(unittest.TestCase):
             NsConfig.from_dict({
                 "backend": prod_backend,
                 "runtime": {
+                    "iam": {
+                        "base_url": "https://iam.example.test/api/iam/",
+                        "internal_service_credential": "r" * 32,
+                    },
                     "transport": {
                         "websocket_tcp": {
                             "tls_enabled": True,

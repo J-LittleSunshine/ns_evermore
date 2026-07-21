@@ -97,6 +97,13 @@ urlpatterns = [
     path("policy_rule/delete/", PolicyRuleViewSet.as_view({"post": "delete"})),
 
     path("internal/introspect_token/", InternalIamViewSet.as_view({"post": "introspect_token"})),
+    path("internal/runtime_access_check/", InternalIamViewSet.as_view({"post": "runtime_access_check"})),
+    path("internal/permission_snapshot/", InternalIamViewSet.as_view({"post": "permission_snapshot"})),
+    path("internal/runtime_node_credential/issue/", InternalIamViewSet.as_view({"post": "issue_runtime_node_credential"})),
+    path("internal/runtime_node_credential/refresh/", InternalIamViewSet.as_view({"post": "refresh_runtime_node_credential"})),
+    path("internal/runtime_node_credential/revoke/", InternalIamViewSet.as_view({"post": "revoke_runtime_node_credential"})),
+    path("internal/runtime_bootstrap/", InternalIamViewSet.as_view({"post": "runtime_bootstrap"})),
+    path("internal/payload_ref/validate/", InternalIamViewSet.as_view({"post": "validate_payload_ref"})),
     path("internal/access_check/", InternalIamViewSet.as_view({"post": "access_check"})),
     path("internal/batch_access_check/", InternalIamViewSet.as_view({"post": "batch_access_check"})),
     path("internal/resolve_resource_filter/", InternalIamViewSet.as_view({"post": "resolve_resource_filter"})),

@@ -52,6 +52,13 @@ def _production_candidate_config() -> NsConfig:
             "backend": {
                 "debug": False,
                 "secret_key": "s" * 32,
+                "iam_internal_token": "b" * 32,
+            },
+            "runtime": {
+                "iam": {
+                    "base_url": "https://iam.example.test/api/iam/",
+                    "internal_service_credential": "r" * 32,
+                },
             },
         },
         environment="local",
@@ -400,8 +407,13 @@ class RuntimeStartupPreflightTestCase(unittest.TestCase):
                         "backend": {
                             "debug": False,
                             "secret_key": "s" * 32,
+                            "iam_internal_token": "b" * 32,
                         },
                         "runtime": {
+                            "iam": {
+                                "base_url": "https://iam.example.test/api/iam/",
+                                "internal_service_credential": "r" * 32,
+                            },
                             "transport": {
                                 "websocket_tcp": {
                                     "tls_enabled": True,

@@ -181,15 +181,17 @@ def main(
         WebSocketTcpAdapterOptions,
     )
     from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
+    from ns_common.http_client import NsHttpClientOwner
+    from ns_runtime.context import RuntimeDependencySlots
     from ns_runtime.connection import (
         AcceptedHeartbeatPolicy,
         ConnectionAcceptedEnvelopeBuilder,
         ConnectionLifecycleManager,
         ConnectionLifecyclePolicy,
         ConnectionLifecycleProcessorRegistryFactory,
-        FailClosedHandshakeIamAdapter,
         LocalConnectionIndex,
     )
+    from ns_runtime.iam import IamClient
     from ns_runtime.protocol import ErrorEnvelopeBuilder, JsonV1Codec
     from ns_runtime.roles import RuntimeRole
 
@@ -231,13 +233,41 @@ def main(
     transport_manager = TransportManager(adapters)
     identifier_factory = IdentifierFactory()
     runtime_id = identifier_factory.generate(NsIdentifierKind.RUNTIME_ID)
+    http_client_owner = NsHttpClientOwner()
+    iam_http_client = http_client_owner.create(
+        name="runtime-iam",
+        base_url=config.runtime.iam.base_url,
+        timeout_seconds=config.runtime.iam.request_timeout_seconds,
+    )
+    context = RuntimeContext(
+        config=config,
+        clock=context.clock,
+        logger=context.logger,
+        metrics=context.metrics,
+        traces=context.traces,
+        task_supervisor=context.task_supervisor,
+        dependencies=RuntimeDependencySlots(
+            http_client_owner=http_client_owner,
+        ),
+    )
+    iam_client = IamClient(
+        http_client=iam_http_client,
+        internal_service_credential=(
+            config.runtime.iam.internal_service_credential
+        ),
+        trace_id_factory=lambda: identifier_factory.generate(
+            NsIdentifierKind.OPERATION_ID,
+        ),
+        clock=context.clock,
+        iam_mode=config.runtime.iam.authorization_mode,
+    )
     logical_connection_manager = ConnectionLifecycleManager(
         transport_manager=transport_manager,
         connection_index=LocalConnectionIndex(),
         clock=context.clock,
         task_supervisor=context.task_supervisor,
         identifier_factory=identifier_factory,
-        iam_adapter=FailClosedHandshakeIamAdapter(),
+        iam_adapter=iam_client,
         accepted_builder=ConnectionAcceptedEnvelopeBuilder(
             clock=context.clock,
             identifier_factory=identifier_factory,

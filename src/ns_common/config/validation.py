@@ -650,6 +650,65 @@ class _ConfigValidator:
             "runtime.iam.permission_snapshot_ttl_seconds",
             iam.permission_snapshot_ttl_seconds,
         )
+        if iam.authorization_mode not in {"strict", "cache"}:
+            self._raise_invalid_choice(
+                "runtime.iam.authorization_mode",
+                iam.authorization_mode,
+                {"strict", "cache"},
+            )
+        self._validate_non_empty_string(
+            "runtime.iam.internal_service_credential",
+            iam.internal_service_credential,
+        )
+        if len(iam.internal_service_credential) < 32:
+            raise NsConfigError(
+                "runtime IAM internal service credential is too short.",
+                details={
+                    "field": "runtime.iam.internal_service_credential",
+                    "minimum_length": 32,
+                },
+            )
+        self._validate_non_empty_string(
+            "backend.iam_internal_token",
+            self._config.backend.iam_internal_token,
+        )
+        if len(self._config.backend.iam_internal_token) < 32:
+            raise NsConfigError(
+                "backend IAM internal token is too short.",
+                details={
+                    "field": "backend.iam_internal_token",
+                    "minimum_length": 32,
+                },
+            )
+        if environment == "prod":
+            if urlparse(iam.base_url.strip()).scheme != "https":
+                raise NsConfigError(
+                    "runtime IAM must use HTTPS in prod.",
+                    details={
+                        "field": "runtime.iam.base_url",
+                        "env": environment,
+                    },
+                )
+            for field_name, secret in (
+                (
+                    "runtime.iam.internal_service_credential",
+                    iam.internal_service_credential,
+                ),
+                (
+                    "backend.iam_internal_token",
+                    self._config.backend.iam_internal_token,
+                ),
+            ):
+                if secret.startswith("change-me-"):
+                    raise NsConfigError(
+                        "IAM internal credentials must be changed in prod.",
+                        details={"field": field_name, "env": environment},
+                    )
+            if not iam.fail_closed:
+                raise NsConfigError(
+                    "runtime IAM fail-closed mode is required in prod.",
+                    details={"field": "runtime.iam.fail_closed", "env": environment},
+                )
 
         state_store = runtime.state_store
         if environment == "prod" and state_store.backend not in {"redis", "valkey"}:

@@ -20,6 +20,13 @@ class InternalIamViewSet(NsViewSet):
     allowed_actions = {
         "introspect_token",
         "access_check",
+        "runtime_access_check",
+        "permission_snapshot",
+        "issue_runtime_node_credential",
+        "refresh_runtime_node_credential",
+        "revoke_runtime_node_credential",
+        "runtime_bootstrap",
+        "validate_payload_ref",
         "batch_access_check",
         "resolve_resource_filter",
     }
@@ -44,6 +51,32 @@ class InternalIamViewSet(NsViewSet):
             self.get_request_data(request),
             trace_id=self.get_trace_id(request),
         )
+
+    async def runtime_access_check(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.service_class.runtime_access_check(
+            self.get_request_data(request),
+            trace_id=self.get_trace_id(request),
+        )
+
+    async def permission_snapshot(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.service_class.permission_snapshot(
+            self.get_request_data(request),
+        )
+
+    async def issue_runtime_node_credential(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.service_class.issue_runtime_node_credential(self.get_request_data(request))
+
+    async def refresh_runtime_node_credential(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.service_class.refresh_runtime_node_credential(self.get_request_data(request))
+
+    async def revoke_runtime_node_credential(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.service_class.revoke_runtime_node_credential(self.get_request_data(request))
+
+    async def runtime_bootstrap(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.service_class.runtime_bootstrap(self.get_request_data(request))
+
+    async def validate_payload_ref(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.service_class.validate_payload_ref(self.get_request_data(request))
 
     async def batch_access_check(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         return await self.service_class.batch_access_check(

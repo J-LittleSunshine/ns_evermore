@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -11,7 +12,7 @@ from dataclasses import fields, is_dataclass
 from datetime import date, datetime, time
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import (
     parse_qsl,
     urlencode,
@@ -179,6 +180,84 @@ _ASSIGNMENT_PATTERN = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+
+
+class AesGcmSecretBox:
+    """Seal small in-memory secrets without defining storage or IAM policy."""
+
+    _NONCE_SIZE = 12
+
+    def __init__(
+        self,
+        *,
+        encryption_key: bytes,
+        nonce_factory: Callable[[int], bytes] = os.urandom,
+    ) -> None:
+        if (
+            not isinstance(encryption_key, bytes)
+            or len(encryption_key) not in {16, 24, 32}
+        ):
+            raise NsValidationError(
+                "Secret-box encryption key is invalid.",
+                details={"component": "aes_gcm_secret_box", "field": "encryption_key"},
+            )
+        if not callable(nonce_factory):
+            raise NsValidationError(
+                "Secret-box nonce factory is invalid.",
+                details={"component": "aes_gcm_secret_box", "field": "nonce_factory"},
+            )
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        self._cipher = AESGCM(bytes(encryption_key))
+        self._nonce_factory = nonce_factory
+
+    def __repr__(self) -> str:
+        return "AesGcmSecretBox(encrypted=True)"
+
+    def seal(self, secret: bytes, *, associated_data: bytes) -> bytes:
+        self._validate_bytes(secret, field_name="secret", allow_empty=False)
+        self._validate_bytes(associated_data, field_name="associated_data")
+        nonce = self._nonce_factory(self._NONCE_SIZE)
+        if not isinstance(nonce, bytes) or len(nonce) != self._NONCE_SIZE:
+            raise NsValidationError(
+                "Secret-box nonce is invalid.",
+                details={"component": "aes_gcm_secret_box", "field": "nonce_factory"},
+            )
+        return nonce + self._cipher.encrypt(nonce, secret, associated_data)
+
+    def open(self, sealed: bytes, *, associated_data: bytes) -> bytes:
+        self._validate_bytes(sealed, field_name="sealed", allow_empty=False)
+        self._validate_bytes(associated_data, field_name="associated_data")
+        if len(sealed) <= self._NONCE_SIZE:
+            raise NsValidationError(
+                "Encrypted secret is invalid.",
+                details={"component": "aes_gcm_secret_box", "field": "sealed"},
+            )
+        nonce = sealed[:self._NONCE_SIZE]
+        try:
+            return self._cipher.decrypt(
+                nonce,
+                sealed[self._NONCE_SIZE:],
+                associated_data,
+            )
+        except Exception:
+            raise NsValidationError(
+                "Encrypted secret authentication failed.",
+                details={"component": "aes_gcm_secret_box", "field": "sealed"},
+            ) from None
+
+    @staticmethod
+    def _validate_bytes(
+        value: object,
+        *,
+        field_name: str,
+        allow_empty: bool = True,
+    ) -> None:
+        if not isinstance(value, bytes) or not allow_empty and not value:
+            raise NsValidationError(
+                "Secret-box input is invalid.",
+                details={"component": "aes_gcm_secret_box", "field": field_name},
+            )
 
 
 def _compact_name(value: str) -> str:
@@ -1156,6 +1235,7 @@ def sanitize_text(value: object) -> str:
 
 
 __all__ = [
+    "AesGcmSecretBox",
     "CIRCULAR_REFERENCE",
     "DEFAULT_SANITIZER_DIGEST_MAX_BYTES_LENGTH",
     "DEFAULT_SANITIZER_DIGEST_MAX_CONTAINER_ITEMS",
