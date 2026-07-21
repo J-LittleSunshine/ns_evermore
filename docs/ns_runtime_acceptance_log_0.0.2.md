@@ -743,6 +743,18 @@
 - 已知限制：extension ignore 仍只产生待 P07 消费的结构化审计要求；49 个未实现内置 message type 继续由 FeatureDisabledProcessor 稳定拒绝，仅 runtime.error 构造 enabled。
 - 下一工作包：执行游标恢复为 `P04-W01 NOT_STARTED`；按本次暂停要求不开始 P04，等待外部 review。
 
+## P04-W01
+
+- 工作包：`P04-W01 transport-independent contracts`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-21T10:12:04+08:00`。
+- 修改文件：新增 `src/ns_runtime/transport/models.py`、`contracts.py`、package facade 与 `tests/test_runtime_transport_contracts.py`；更新实施计划和执行游标。
+- 公共契约变化：新增无第三方类型的 `TransportAdapter`、`TransportSession`、`TransportMessage`、`TransportClose`、`TransportError`、`TransportCapabilities`；transport session 在 P05 前只表达 handshaking/closing/closed，不存在 active 或业务消息接受状态。完整文本从 repr 排除，错误 details 仅允许固定低基数字段。
+- 测试结果：W01 专项 `Ran 5, OK`；P02 context/service/shutdown 与 P03 models 联合 `Ran 51, OK`；transport package compileall 通过。
+- 安全/隔离检查：源码扫描未引入 WebSocket 库对象、listener、Envelope codec、IAM、tenant、processor、ACK/DeliveryRecord、StateStore、管理端口、全局 context 或第二 lifecycle owner；错误模型不保留底层异常、peer/path/session ID 或 payload。
+- 已知限制：本包只冻结抽象与值对象，不创建 adapter/listener，不声明 websocket_tcp 能力，不执行收发；这些由 W02-W10 完成。
+- 下一工作包：`P04-W02 capability declaration`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
