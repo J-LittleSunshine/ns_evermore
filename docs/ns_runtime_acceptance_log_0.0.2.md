@@ -1021,6 +1021,18 @@
 - 已知限制：W10 只建立 grace与claim fencing；claimed resume的 IAM重验、capability协商、新 transport binding、epoch递增与旧 epoch拒绝由W11完成。claimed后失败/cancel须 fail-close，SC-1继续 `IN_PROGRESS`。
 - 下一工作包：`P05-W11 IAM-revalidated resume and epoch fencing`，状态为 `IN_PROGRESS`；P06保持 `NOT_STARTED`。
 
+## P05-W11
+
+- 工作包：`P05-W11 IAM-revalidated resume and epoch fencing`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W12；P06 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T17:18:57+08:00`。
+- 修改文件：新增 `connection/resume.py` 与 facade 导出，新增 `tests/test_runtime_connection_resume.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增 frozen `ResumedConnection`/`EpochValidation`、`ConnectionResumeCoordinator` 与 `ConnectionEpochGate`。resume先typed claim grace，再使用显式IAM adapter消费新token并重验旧/new eligibility、TTL、identity、tenant、component_type，重新执行protocol/capability/transport negotiation；保持connection_id，P01新session_id，epoch严格+1。新mapping/index先non-target，canonical accepted send后才restore active；所有失败关闭candidate与claimed logical。
+- 测试结果：P05-W01-W11 connection联合 `Ran 120, OK`；W11专项11项覆盖成功全链、identity/tenant/component mismatch、old/new resume eligibility、capability不可提权、total deadline、cancel、accepted send failure、concurrent resume、旧epoch普通/ACK/NACK/Defer fencing、invalid refs不消费grace与token/old transport隔离。P01-P04+P05-W01-W11 runtime联合 `Ran 580, OK (skipped=1)`，唯一skip为Windows event-loop policy；`compileall -q src tests`、`git diff --check`与delivery/processor/storage/network boundary scan通过。
+- 安全/隔离检查：resume token沿用single-use credential并在所有路径clear；supervised failure出task前清除traceback/context/cause，repr不含token/logical IDs/authority。candidate loser/timeout/cancel均关闭；旧transport无mapping，旧epoch在任何未来delivery path前拒绝。源码不调用HTTP/global config/service locator、不创建P06 backend或processor/DeliveryRecord/AckRecord/StateStore。
+- 已知限制：W11仍使用显式offline test IAM或production fail-closed adapter，不宣称P06真实IAM。不可恢复关闭/audit、reauth与最终safe snapshot分别由W12-W14完成，SC-1继续 `IN_PROGRESS`。
+- 下一工作包：`P05-W12 non-resumable security close`，状态为 `IN_PROGRESS`；P06保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

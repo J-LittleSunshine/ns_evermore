@@ -78,6 +78,12 @@ from .session import (
     P05_CAPABILITY_POLICY,
     SessionContext,
 )
+from .resume import (
+    ConnectionEpochGate,
+    ConnectionResumeCoordinator,
+    EpochValidation,
+    ResumedConnection,
+)
 from .state import (
     LogicalConnectionCloseReason,
     LogicalConnectionState,
@@ -100,13 +106,16 @@ __all__ = (
     "ConnectionAdmissionActivator",
     "ConnectionDrainService",
     "ConnectionDrainEnvelopeHandler",
+    "ConnectionEpochGate",
     "ConnectionIndexEntrySnapshot",
+    "ConnectionResumeCoordinator",
     "DeterministicTestIamAdapter",
     "DRAIN_ALLOWED_MESSAGE_TYPES",
     "DrainPolicy",
     "DrainSnapshot",
     "DrainingMessageDisposition",
     "DrainingMessageGate",
+    "EpochValidation",
     "FailClosedHandshakeIamAdapter",
     "HELLO_EXTENSION_REGISTRY",
     "HELLO_RESUME_NAMESPACE",
@@ -141,6 +150,7 @@ __all__ = (
     "ReconnectGracePolicy",
     "ReconnectGraceService",
     "ReconnectGraceSnapshot",
+    "ResumedConnection",
     "SessionContext",
     "EnvelopeHeartbeatOutcome",
     "TestIamAction",
