@@ -815,6 +815,18 @@
 - 已知限制：websocket_tcp path 固定 epoch=0/migration_count=0 且单受控 message stream；P21 adapter 才能声明 path migration 或 multiplexing。W07 将冻结底层异常的安全分类。
 - 下一工作包：`P04-W07 normalized transport errors`，状态为 `IN_PROGRESS`。
 
+## P04-W07
+
+- 工作包：`P04-W07 normalized transport errors`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-21T10:40:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/transport/errors.py` 与 `tests/test_runtime_transport_errors.py`，接入 websocket listener/reader/writer/keepalive，补充真实 remote/protocol/limit close tests，更新 facade、实施计划和执行游标。
+- 公共契约变化：`normalize_transport_exception()` 将第三方 handshake/listener/TLS/protocol/oversize/remote close/send timeout/send failure/keepalive/receive failure 收敛为 `TransportErrorKind`、现有 `RUNTIME_TRANSPORT_*` code 与安全 NsRuntimeTransportError；差异由固定 reason 保留。正常 remote close 与异常 remote close、protocol、limit、adapter shutdown 均可区分；进程级 BaseException 原对象穿透。
+- 测试结果：8 类第三方/系统异常映射、hostile exception str/repr 禁止、BaseException 穿透、真实 1000/1007/1009 close 分类通过；W01-W07 transport 专项 `Ran 27, OK`（warnings-as-errors），ERR-1/RSD-1/P03 error Envelope 联合 `Ran 38, OK`，compileall 与 `git diff --check` 通过。
+- 安全/隔离检查：mapper 从不复制或调用底层异常 message/repr，不保留 cause，details 只含固定 component/operation/reason/transport_type；remote close reason、证书文本、socket 地址、query、payload 和库对象均未进入错误。BaseException 不被 fail-soft 吞掉。
+- 已知限制：错误 code 复用 ERR-1 已冻结 transport 域，不新增或重编号 P01 错误；更细分类由 P04 TransportErrorKind 与低基数 reason 表达。W08 将冻结 adapter registry 和禁用依赖隔离。
+- 下一工作包：`P04-W08 adapter registry`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：

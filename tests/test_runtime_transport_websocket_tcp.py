@@ -221,8 +221,9 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
         ) as client:
             session = await adapter.accept()
             await client.send(b"\xff", text=True)
-            with self.assertRaises(NsRuntimeTransportReceiveFailedError):
+            with self.assertRaises(NsRuntimeTransportReceiveFailedError) as raised:
                 await session.receive()
+            self.assertEqual("protocol_error", raised.exception.details["reason"])
             with self.assertRaises(ConnectionClosedError) as client_closed:
                 await client.recv()
             self.assertEqual(1007, client_closed.exception.rcvd.code)
@@ -251,11 +252,33 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
         ) as client:
             session = await adapter.accept()
             await client.send("x" * 17)
-            with self.assertRaises(NsRuntimeTransportReceiveFailedError):
+            with self.assertRaises(NsRuntimeTransportReceiveFailedError) as raised:
                 await session.receive()
+            self.assertEqual("message_too_large", raised.exception.details["reason"])
             with self.assertRaises(ConnectionClosedError) as client_closed:
                 await client.recv()
             self.assertEqual(1009, client_closed.exception.rcvd.code)
+
+    async def test_normal_remote_close_is_distinct_and_safe(self) -> None:
+        from websockets.asyncio.client import connect
+
+        adapter = self._adapter(self._options())
+        await adapter.start()
+        self.addAsyncCleanup(adapter.close)
+        client = await connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        )
+        session = await adapter.accept()
+        await client.close(code=1000, reason="credential=must-not-leak")
+        await asyncio.wait_for(session.wait_closed(), timeout=1)
+
+        with self.assertRaises(NsRuntimeTransportReceiveFailedError) as raised:
+            await session.receive()
+        self.assertEqual("remote_closed", raised.exception.details["reason"])
+        self.assertEqual(TransportCloseReason.REMOTE_CLOSED, session.close_info.reason)
+        self.assertTrue(session.close_info.clean)
+        self.assertNotIn("must-not-leak", repr(raised.exception))
 
     def test_production_plaintext_options_fail_closed(self) -> None:
         with self.assertRaises(NsRuntimeStartupSecurityError) as raised:

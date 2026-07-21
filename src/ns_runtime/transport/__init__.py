@@ -2,6 +2,7 @@
 """Transport-independent runtime adapter contracts."""
 
 from .contracts import TransportAdapter, TransportSession
+from .errors import NormalizedTransportFailure, normalize_transport_exception
 from .identity import (
     TransportDiagnosticSummary,
     TransportIdentity,
@@ -41,6 +42,7 @@ __all__ = (
     "TransportIdentity",
     "TransportIdentityFactory",
     "TransportMessage",
+    "NormalizedTransportFailure",
     "TransportPathSnapshot",
     "TransportSession",
     "TransportSessionState",
@@ -49,4 +51,5 @@ __all__ = (
     "WebSocketTcpAdapter",
     "WebSocketTcpAdapterOptions",
     "WebSocketTcpSession",
+    "normalize_transport_exception",
 )
