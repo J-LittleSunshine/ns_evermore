@@ -337,9 +337,25 @@ BUILTIN_MESSAGE_CONTRACTS: tuple[MessageTypeContract, ...] = (
     ),
     _contract("connection.accepted", "connection", required_groups=("payload",)),
     _contract("connection.rejected", "connection", required_groups=("payload",)),
-    _contract("connection.reauth", "connection", required_groups=("payload",)),
-    _contract("connection.reauth_accepted", "connection", required_groups=("payload",)),
-    _contract("connection.reauth_rejected", "connection", required_groups=("payload",)),
+    _contract(
+        "connection.reauth", "connection", required_groups=("payload",),
+        forbidden_groups=("target", "route", "delivery", "stream", "callback", "extensions"),
+        payload_required=("token",),
+        payload_optional=("requested_capabilities",),
+    ),
+    _contract(
+        "connection.reauth_accepted", "connection", required_groups=("payload",),
+        forbidden_groups=("target", "route", "delivery", "stream", "callback", "extensions"),
+        payload_required=(
+            "session_id", "connection_epoch", "session_expires_at",
+            "server_time", "capabilities_changed",
+        ),
+    ),
+    _contract(
+        "connection.reauth_rejected", "connection", required_groups=("payload",),
+        forbidden_groups=("target", "route", "delivery", "stream", "callback", "extensions"),
+        payload_required=("reason", "server_time", "connection_closing"),
+    ),
     _contract("connection.heartbeat", "connection"),
     _contract("connection.heartbeat_ack", "connection"),
     _contract("connection.drain", "connection"),

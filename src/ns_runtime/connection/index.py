@@ -166,12 +166,39 @@ class LocalConnectionIndex:
     async def replace_authority_context(
         self,
         session_context: SessionContext,
+        *,
+        expected_session_context: SessionContext | None = None,
+        allowed_states: frozenset[LogicalConnectionState] | None = None,
     ) -> LocalConnectionIndexSnapshot:
         if not isinstance(session_context, SessionContext):
             _invalid("session_context")
+        if expected_session_context is not None and not isinstance(
+            expected_session_context,
+            SessionContext,
+        ):
+            _invalid("expected_session_context")
+        if allowed_states is not None and (
+            not isinstance(allowed_states, frozenset)
+            or not allowed_states
+            or any(
+                not isinstance(state, LogicalConnectionState)
+                for state in allowed_states
+            )
+        ):
+            _invalid("allowed_states")
         async with self._lock:
             entry = self._require_entry(session_context.connection_id)
             previous = entry.context
+            if (
+                expected_session_context is not None
+                and previous != expected_session_context
+            ):
+                _state_error("authority_context_fenced")
+            if (
+                allowed_states is not None
+                and entry.state_machine.state not in allowed_states
+            ):
+                _state_error("authority_context_state_fenced")
             if (
                 session_context.session_id != previous.session_id
                 or session_context.connection_epoch != previous.connection_epoch

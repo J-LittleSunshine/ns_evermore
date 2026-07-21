@@ -1045,6 +1045,18 @@
 - 已知限制：W12 audit仅为typed注入边界与deterministic test sink，不是强一致持久审计。W13实现reauth/expiry，W14聚合最终safe snapshot/audit接口，SC-1继续 `IN_PROGRESS`。
 - 下一工作包：`P05-W13 reauth and session expiry policy`，状态为 `IN_PROGRESS`；P06保持 `NOT_STARTED`。
 
+## P05-W13
+
+- 工作包：`P05-W13 reauth and session expiry policy`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W14；P06 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T17:34:55+08:00`。
+- 修改文件：新增 `connection/reauth.py` 与 facade 导出，收紧 P03 reauth request/response schema，增强 local index authority replacement fencing，新增 `tests/test_runtime_connection_reauth.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增 frozen `SessionExpiryPolicy`/`SessionExpirySnapshot`/`ParsedReauth`/`ReauthenticatedSession`、P03 `ConnectionReauthEnvelopeHandler`/`ReauthEnvelopeBuilder`、one-shot `ConnectionReauthCoordinator` 与 supervised `SessionExpiryController`。reauth保持logical connection/session/epoch，显式IAM重验identity/tenant/component/TTL并重新协商capability；accepted成功后以old context/state CAS发布新不可变authority，draining保持non-target。deny/timeout/mismatch/capability/send/publish/cancel均fail-close；absolute expiry先撤销target再close，close failure可retry。
+- 测试结果：W13专项12项，P03 registry/index/session/drain/grace/resume/security/reauth联合 `Ran 82, OK`，覆盖exact Envelope/authority forgery、token脱敏、成功续期、权限收缩与draining、capability越权、identity/tenant/component/expired authority、deny前撤销target、total deadline、cancel、accepted send failure、lead/expiry、generation refresh和close retry。P01-P04+P05-W01-W13 runtime联合 `Ran 601, OK (skipped=1)`，唯一skip为Windows event-loop policy；`compileall -q src/ns_runtime/connection src/ns_runtime/protocol`与`git diff --check`通过。
+- 安全/隔离检查：token只进入single-use credential且所有路径clear；request/result/repr/response不含token、identity、tenant、permission snapshot/digest、transport/path/peer或异常文本。rejected发送前index已closing/non-target，权限更新使用expected-old-context fencing；expiry只读取exact indexed context。源码不缓存credential、不访问HTTP/global config/service locator、不创建P06 backend/client、processor/DeliveryRecord/AckRecord/StateStore、thread/new loop/new supervisor或global registry。
+- 已知限制：W13复用显式offline test IAM或production fail-closed adapter，不实现后台凭证续期或P06网络IAM。W14仍需聚合最终async safe session snapshot与resume/kick/security close/reauth rejection强审计接口；当前W12 sink不代表durable audit，SC-1继续 `IN_PROGRESS`。
+- 下一工作包：`P05-W14 async safe session snapshot and audit aggregation`，状态为 `IN_PROGRESS`；P06保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：
