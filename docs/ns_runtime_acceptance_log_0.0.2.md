@@ -997,6 +997,18 @@
 - 已知限制：W08 不实现普通业务 read loop或 P07 pipeline；W09 drain 只会保留显式 lifecycle/control/health allowlist，W10/W11 才处理 disconnect/resume。SC-1 继续 `IN_PROGRESS`。
 - 下一工作包：`P05-W09 one-way bounded connection drain`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
 
+## P05-W09
+
+- 工作包：`P05-W09 one-way bounded connection drain`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W10；P06 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T14:45:30+08:00`。
+- 修改文件：新增 `connection/drain.py` 与 facade 导出，新增 `tests/test_runtime_connection_drain.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增 frozen `DrainPolicy`/`DrainSnapshot`、P03 `ConnectionDrainEnvelopeHandler`、classification-only `DrainingMessageGate` 和 `ConnectionDrainService`。self drain Envelope必须无 target/payload等可变 scope；begin 原子 ACTIVE->DRAINING并摘除 target但不关 transport，重复 begin不延长 deadline且不可回 active。Clock/TaskSupervisor deadline、显式 complete和并发 terminal request first-wins，close failure/cancel保持 closing并可重试。
+- 测试结果：W09 专项 12 项，与 W08 联合 `Ran 21, OK`，覆盖 one-way/no-immediate-close、idempotent begin、control/health/existing-response gate、complete、Clock timeout、close failure retry、cancel retry、concurrent terminal reason、non-active rejection、frozen snapshot、P03 self drain和 target/payload/type拒绝。P01-P04+P05-W01-W09 runtime 联合 `Ran 558, OK (skipped=1)`，唯一 skip 为 Windows event-loop policy；`compileall -q src tests`、`git diff --check` 与 delivery/state-store boundary scan通过。
+- 安全/隔离检查：drain request不能指定其他 connection或携带 payload；snapshot/task name不含 logical/transport/tenant/identity ID或异常文本。gate只分类 registry message type，不调用 processor，不创建 DeliveryRecord/StateStore/transfer/retry；没有独立 thread/loop/supervisor/global owner。
+- 已知限制：ACK/NACK/Defer 在 W09 仅保留 gate 语义，仍由 P12 实现；W09 不转移 pending delivery。W10/W11 才处理 disconnect grace/resume，SC-1 继续 `IN_PROGRESS`。
+- 下一工作包：`P05-W10 supervised disconnect grace`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

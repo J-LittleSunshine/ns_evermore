@@ -21,6 +21,15 @@ from .binding import (
     NetworkPathBinding,
     TransportSessionBinding,
 )
+from .drain import (
+    DRAIN_ALLOWED_MESSAGE_TYPES,
+    ConnectionDrainEnvelopeHandler,
+    ConnectionDrainService,
+    DrainPolicy,
+    DrainSnapshot,
+    DrainingMessageDisposition,
+    DrainingMessageGate,
+)
 from .handshake import ConnectionHelloReceiver
 from .hello import (
     HELLO_EXTENSION_REGISTRY,
@@ -82,8 +91,15 @@ __all__ = (
     "ConnectionHeartbeatService",
     "ConnectionAcceptedEnvelopeBuilder",
     "ConnectionAdmissionActivator",
+    "ConnectionDrainService",
+    "ConnectionDrainEnvelopeHandler",
     "ConnectionIndexEntrySnapshot",
     "DeterministicTestIamAdapter",
+    "DRAIN_ALLOWED_MESSAGE_TYPES",
+    "DrainPolicy",
+    "DrainSnapshot",
+    "DrainingMessageDisposition",
+    "DrainingMessageGate",
     "FailClosedHandshakeIamAdapter",
     "HELLO_EXTENSION_REGISTRY",
     "HELLO_RESUME_NAMESPACE",
