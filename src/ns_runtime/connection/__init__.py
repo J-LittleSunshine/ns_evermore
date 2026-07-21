@@ -48,6 +48,13 @@ from .heartbeat import (
     HeartbeatPolicy,
     HeartbeatSnapshot,
 )
+from .grace import (
+    ReconnectGraceClaim,
+    ReconnectGracePhase,
+    ReconnectGracePolicy,
+    ReconnectGraceService,
+    ReconnectGraceSnapshot,
+)
 from .iam import (
     DeterministicTestIamAdapter,
     FailClosedHandshakeIamAdapter,
@@ -129,6 +136,11 @@ __all__ = (
     "P05_CAPABILITY_POLICY",
     "ParsedHello",
     "PendingHelloClaims",
+    "ReconnectGraceClaim",
+    "ReconnectGracePhase",
+    "ReconnectGracePolicy",
+    "ReconnectGraceService",
+    "ReconnectGraceSnapshot",
     "SessionContext",
     "EnvelopeHeartbeatOutcome",
     "TestIamAction",

@@ -1009,6 +1009,18 @@
 - 已知限制：ACK/NACK/Defer 在 W09 仅保留 gate 语义，仍由 P12 实现；W09 不转移 pending delivery。W10/W11 才处理 disconnect grace/resume，SC-1 继续 `IN_PROGRESS`。
 - 下一工作包：`P05-W10 supervised disconnect grace`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
 
+## P05-W10
+
+- 工作包：`P05-W10 supervised disconnect grace`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W11；P06 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T14:55:52+08:00`。
+- 修改文件：新增 `connection/grace.py` 与 facade 导出，新增 `tests/test_runtime_connection_grace.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增 frozen `ReconnectGracePolicy`/`ReconnectGraceClaim`/`ReconnectGraceSnapshot`、phase enum 与 `ReconnectGraceService`。普通 active disconnect 默认30秒；先摘除 active target，再按 transport_session_id detach mapping，logical state/context最小保留但不持有旧 transport。typed resume refs可单次 claim，deadline同 tick expiry胜出；claim不恢复路由，W11必须先发布下一 epoch/index/mapping。expiry或early terminal清空 logical indexes。
+- 测试结果：W10 专项 11 项，覆盖 default 30s/detach/non-target、duplicate disconnect、Clock expiry cleanup、single-use claim、deadline priority、reference mismatch、concurrent claim、early shutdown、complete ownership fencing、draining rejection和safe frozen snapshot。P01-P04+P05-W01-W10 runtime 联合 `Ran 569, OK (skipped=1)`，唯一 skip为Windows event-loop policy；`compileall -q src tests`、`git diff --check` 与 transport/global storage/task ownership scan通过。
+- 安全/隔离检查：claim/snapshot repr不显示 logical IDs且不含 token/authority/permissions/Envelope/transport/path/peer；task name只用本地 sequence。grace不持有 TransportSession/WebSocket、不使用 real sleep/thread/new loop/new supervisor/global registry/StateStore/Redis/cache，不允许 grace connection继续普通 send。
+- 已知限制：W10 只建立 grace与claim fencing；claimed resume的 IAM重验、capability协商、新 transport binding、epoch递增与旧 epoch拒绝由W11完成。claimed后失败/cancel须 fail-close，SC-1继续 `IN_PROGRESS`。
+- 下一工作包：`P05-W11 IAM-revalidated resume and epoch fencing`，状态为 `IN_PROGRESS`；P06保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：
