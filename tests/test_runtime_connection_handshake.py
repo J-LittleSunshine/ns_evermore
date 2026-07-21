@@ -34,7 +34,11 @@ from ns_runtime.transport import (
 
 
 class _FakeTransportSession(TransportSession):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        capabilities: TransportCapabilities = TransportCapabilities(),
+    ) -> None:
         self.messages: asyncio.Queue[object] = asyncio.Queue()
         self.receive_calls = 0
         self.close_calls = 0
@@ -44,6 +48,7 @@ class _FakeTransportSession(TransportSession):
         self.close_failure = RuntimeError("credential=close-secret")
         self._state = TransportSessionState.HANDSHAKING
         self._close_info: TransportClose | None = None
+        self._capabilities = capabilities
         self._identity = TransportIdentity(
             transport_connection_id="transport_connection_00000000000000000000000000000001",
             transport_session_id="transport_session_00000000000000000000000000000002",
@@ -63,7 +68,7 @@ class _FakeTransportSession(TransportSession):
 
     @property
     def capabilities(self) -> TransportCapabilities:
-        return TransportCapabilities()
+        return self._capabilities
 
     @property
     def state(self) -> TransportSessionState:

@@ -937,6 +937,18 @@
 - 已知限制：P05 authority 只是 P06 前的注入合同和测试实现，不调用 backend IAM、不缓存、不提供权限失效。AuthenticatedHello 仍是握手临时结果；W04 才协商协议/capability并冻结 SC-1，W05以后才建立 logical/transport/path 映射和索引。
 - 下一工作包：`P05-W04 protocol/capability negotiation and SessionContext`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
 
+## P05-W04
+
+- 工作包：`P05-W04 protocol/capability negotiation and SessionContext`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，SC-1 进入增量冻结，下一游标为 P05-W05；P06 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T14:17:46+08:00`。
+- 修改文件：新增 `connection/session.py` 与 facade 导出，将可选 session negotiator 接入同一 handshake total deadline，扩展 fake transport capability 注入，新增 `tests/test_runtime_connection_session.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增 logical `LogicalSessionIdentity`、深度不可变 `SessionContext`、`NegotiatedSession`、immutable `CapabilityPolicy` 和 `HandshakeSessionNegotiator`。协议只由 ENV-1 `ProtocolCompatibilityMatrix` 选择；capability 只接受 requested、IAM authority、显式 P05 policy 以及 P04 adapter 权威 transport capability 的严格交集。SC-1 不含 transport/path ID 或对象、token、完整 hello/Envelope、完整 permissions、task/sink/client/callback；协商结果显式保存 selected protocol/schema/`json.v1` codec，状态只到 authenticated，不提前 active。
+- 测试结果：W01-W04 connection 专项 `Ran 45, OK`；W04 10 项覆盖成功协商、IAM 不可提权、adapter transport 权威、P03 matrix 权威、未知 capability、schema binding、SC-1 exact field/frozen/slots/deep immutability、permission 脱离、logical/transport identity 分离和 policy immutability。P01-P04+P05-W01-W04 runtime 联合 `Ran 505, OK (skipped=1)`，唯一 skip 为 Windows event-loop policy；`compileall -q src tests` 与 `git diff --check` 通过。
+- 安全/隔离检查：协商失败统一在 active/index 前以 protocol classification 关闭；客户端声明不能增加 IAM/transport/protocol 权威。SessionContext 和 NegotiatedSession repr 不显示 logical ID、identity、tenant、capability、permission ref/digest；完整权限 mapping 不进入 SC-1。源码不按 transport type 分支，不导入 WebSocket driver、global config/client/service locator、processor、DeliveryRecord/AckRecord/StateStore，也未修改 P03/P04 冻结公共合同。
+- 已知限制：SC-1 当前只冻结 SessionContext 与协商边界，logical/transport/path 绑定、索引、accepted、active、heartbeat、grace/resume、reauth、snapshot/audit 仍由 W05-W14 完成；普通生产连接仍由 P05 fail-closed adapter 拒绝。
+- 下一工作包：`P05-W05 logical connection/transport session/network path mapping`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

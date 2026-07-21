@@ -26,6 +26,15 @@ from .iam import (
     TestIamAction,
     TestIamOutcome,
 )
+from .session import (
+    CapabilityPolicy,
+    CapabilityRule,
+    HandshakeSessionNegotiator,
+    LogicalSessionIdentity,
+    NegotiatedSession,
+    P05_CAPABILITY_POLICY,
+    SessionContext,
+)
 from .state import (
     LogicalConnectionCloseReason,
     LogicalConnectionState,
@@ -36,6 +45,8 @@ from .state import (
 
 __all__ = (
     "AuthenticatedHello",
+    "CapabilityPolicy",
+    "CapabilityRule",
     "ConnectionHelloReceiver",
     "ConnectionHandshakeAuthenticator",
     "DeterministicTestIamAdapter",
@@ -46,14 +57,19 @@ __all__ = (
     "HandshakeIamAdapter",
     "HandshakeIamAuthority",
     "HandshakeIamRequest",
+    "HandshakeSessionNegotiator",
     "HelloClaimParser",
     "HelloResumeRequest",
     "LogicalConnectionCloseReason",
     "LogicalConnectionState",
     "LogicalConnectionStateMachine",
     "LogicalConnectionStateSnapshot",
+    "LogicalSessionIdentity",
+    "NegotiatedSession",
+    "P05_CAPABILITY_POLICY",
     "ParsedHello",
     "PendingHelloClaims",
+    "SessionContext",
     "TestIamAction",
     "TestIamOutcome",
 )

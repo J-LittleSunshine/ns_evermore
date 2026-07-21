@@ -23,6 +23,7 @@ from .iam import (
     HandshakeIamAuthority,
     HandshakeIamRequest,
 )
+from .session import HandshakeSessionNegotiator, NegotiatedSession
 from .state import LogicalConnectionCloseReason, LogicalConnectionState
 
 
@@ -56,6 +57,7 @@ class ConnectionHandshakeAuthenticator:
         task_supervisor: TaskSupervisor,
         task_sequence: int,
         timeout_seconds: float,
+        session_negotiator: HandshakeSessionNegotiator | None = None,
     ) -> None:
         if not isinstance(hello_receiver, ConnectionHelloReceiver):
             _invalid("hello_receiver")
@@ -79,6 +81,11 @@ class ConnectionHandshakeAuthenticator:
             or not 0 < float(timeout_seconds) < float("inf")
         ):
             _invalid("timeout_seconds")
+        if session_negotiator is not None and not isinstance(
+            session_negotiator,
+            HandshakeSessionNegotiator,
+        ):
+            _invalid("session_negotiator")
         started_at = clock.monotonic()
         deadline = started_at + float(timeout_seconds)
         if not math.isfinite(started_at) or not math.isfinite(deadline):
@@ -90,10 +97,11 @@ class ConnectionHandshakeAuthenticator:
         self._task_supervisor = task_supervisor
         self._task_sequence = task_sequence
         self._deadline = deadline
+        self._session_negotiator = session_negotiator
         self._claim_lock = asyncio.Lock()
         self._claimed = False
 
-    async def authenticate(self) -> AuthenticatedHello:
+    async def authenticate(self) -> AuthenticatedHello | NegotiatedSession:
         async with self._claim_lock:
             if self._claimed:
                 raise NsRuntimeIamDeniedError(
@@ -144,7 +152,7 @@ class ConnectionHandshakeAuthenticator:
             result = operation_task.result()
             if isinstance(result, _HandshakeFailure):
                 raise result.error from None
-            if not isinstance(result, AuthenticatedHello):
+            if not isinstance(result, (AuthenticatedHello, NegotiatedSession)):
                 raise NsRuntimeIamUnavailableError(
                     details={
                         "component": "logical_connection",
@@ -165,7 +173,7 @@ class ConnectionHandshakeAuthenticator:
 
     async def _execute_outcome(
         self,
-    ) -> AuthenticatedHello | _HandshakeFailure:
+    ) -> AuthenticatedHello | NegotiatedSession | _HandshakeFailure:
         try:
             return await self._execute()
         except asyncio.CancelledError:
@@ -176,7 +184,7 @@ class ConnectionHandshakeAuthenticator:
             error.__cause__ = None
             return _HandshakeFailure(error=error)
 
-    async def _execute(self) -> AuthenticatedHello:
+    async def _execute(self) -> AuthenticatedHello | NegotiatedSession:
         inbound = await self._hello_receiver.receive()
         try:
             parsed = self._claim_parser.parse(inbound)
@@ -236,6 +244,17 @@ class ConnectionHandshakeAuthenticator:
             await self._hello_receiver.state_machine.transition(
                 LogicalConnectionState.AUTHENTICATED,
             )
+            if self._session_negotiator is not None:
+                try:
+                    return self._session_negotiator.negotiate(
+                        claims=parsed.claims,
+                        authority=detached,
+                    )
+                except Exception:
+                    await self._terminate_isolated(
+                        LogicalConnectionCloseReason.PROTOCOL_FAILED,
+                    )
+                    raise
             return AuthenticatedHello(
                 claims=parsed.claims,
                 authority=detached,
