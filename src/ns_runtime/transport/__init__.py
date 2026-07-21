@@ -16,6 +16,9 @@ from .models import (
 from .websocket_tcp import (
     WEBSOCKET_TCP_CAPABILITIES,
     WEBSOCKET_TCP_TRANSPORT_TYPE,
+    WebSocketTcpAdapter,
+    WebSocketTcpAdapterOptions,
+    WebSocketTcpSession,
 )
 
 
@@ -33,4 +36,7 @@ __all__ = (
     "TransportSessionState",
     "WEBSOCKET_TCP_CAPABILITIES",
     "WEBSOCKET_TCP_TRANSPORT_TYPE",
+    "WebSocketTcpAdapter",
+    "WebSocketTcpAdapterOptions",
+    "WebSocketTcpSession",
 )

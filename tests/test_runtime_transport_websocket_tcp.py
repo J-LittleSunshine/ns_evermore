@@ -1,0 +1,172 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import asyncio
+import ssl
+import socket
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from ns_common.exceptions import (
+    NsRuntimeStartupSecurityError,
+    NsRuntimeTransportHandshakeFailedError,
+)
+from ns_common.time import SystemClock
+from ns_runtime.transport import (
+    TransportCloseReason,
+    TransportSessionState,
+    WebSocketTcpAdapter,
+    WebSocketTcpAdapterOptions,
+)
+
+
+class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._certificate_directory = tempfile.TemporaryDirectory()
+        directory = Path(cls._certificate_directory.name)
+        cls._certificate = directory / "loopback-cert.pem"
+        cls._private_key = directory / "loopback-key.pem"
+        completed = subprocess.run(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                "-keyout", str(cls._private_key),
+                "-out", str(cls._certificate),
+                "-days", "1", "-subj", "/CN=localhost",
+                "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError("loopback TLS certificate generation failed")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._certificate_directory.cleanup()
+
+    def _server_tls_context(self) -> ssl.SSLContext:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(self._certificate, self._private_key)
+        return context
+
+    @staticmethod
+    def _client_tls_context() -> ssl.SSLContext:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        return context
+
+    @staticmethod
+    def _options(*, tls: ssl.SSLContext | None = None) -> WebSocketTcpAdapterOptions:
+        return WebSocketTcpAdapterOptions(
+            host="127.0.0.1",
+            port=0,
+            clock=SystemClock(),
+            ssl_context=tls,
+            environment="test",
+            allow_plaintext_non_prod=tls is None,
+            send_timeout_seconds=1,
+            ping_timeout_seconds=1,
+            close_timeout_seconds=1,
+            adapter_shutdown_timeout_seconds=1,
+        )
+
+    async def test_plaintext_loopback_text_send_receive_ping_and_idempotent_close(
+        self,
+    ) -> None:
+        from websockets.asyncio.client import connect
+
+        adapter = WebSocketTcpAdapter(options=self._options())
+        await adapter.start()
+        self.addAsyncCleanup(adapter.close)
+        self.assertTrue(adapter.accepting)
+        self.assertIsNotNone(adapter.bound_port)
+
+        async with connect(
+            f"ws://127.0.0.1:{adapter.bound_port}",
+            proxy=None,
+        ) as client:
+            session = await asyncio.wait_for(adapter.accept(), timeout=1)
+            self.assertEqual(TransportSessionState.HANDSHAKING, session.state)
+            await client.send("client-to-runtime")
+            inbound = await asyncio.wait_for(session.receive(), timeout=1)
+            self.assertEqual("client-to-runtime", inbound.text)
+
+            await session.send("runtime-to-client")
+            self.assertEqual(
+                "runtime-to-client",
+                await asyncio.wait_for(client.recv(), timeout=1),
+            )
+            await session.ping()
+            first_close = await session.close()
+            second_close = await session.close()
+            self.assertIs(first_close, second_close)
+            self.assertEqual(TransportCloseReason.NORMAL, first_close.reason)
+            self.assertEqual(TransportSessionState.CLOSED, session.state)
+
+        await adapter.close()
+        await adapter.close()
+        self.assertFalse(adapter.accepting)
+
+    async def test_tls_loopback_delivers_complete_text_messages(self) -> None:
+        from websockets.asyncio.client import connect
+
+        adapter = WebSocketTcpAdapter(
+            options=self._options(tls=self._server_tls_context()),
+        )
+        await adapter.start()
+        self.addAsyncCleanup(adapter.close)
+
+        async with connect(
+            f"wss://127.0.0.1:{adapter.bound_port}",
+            ssl=self._client_tls_context(),
+            proxy=None,
+        ) as client:
+            session = await asyncio.wait_for(adapter.accept(), timeout=1)
+            await client.send("tls-complete-message")
+            message = await asyncio.wait_for(session.receive(), timeout=1)
+            self.assertEqual("tls-complete-message", message.text)
+            self.assertEqual(
+                len("tls-complete-message".encode("utf-8")),
+                message.byte_size,
+            )
+            await session.send("tls-response")
+            self.assertEqual("tls-response", await client.recv())
+
+    def test_production_plaintext_options_fail_closed(self) -> None:
+        with self.assertRaises(NsRuntimeStartupSecurityError) as raised:
+            WebSocketTcpAdapterOptions(
+                host="127.0.0.1",
+                port=0,
+                clock=SystemClock(),
+                environment="prod",
+                allow_plaintext_non_prod=True,
+            )
+        self.assertEqual(
+            "plaintext_transport_in_production",
+            raised.exception.details["reason"],
+        )
+
+    async def test_listener_failure_is_normalized_without_socket_text(self) -> None:
+        occupied = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen(1)
+        self.addCleanup(occupied.close)
+        port = occupied.getsockname()[1]
+        adapter = WebSocketTcpAdapter(options=WebSocketTcpAdapterOptions(
+            host="127.0.0.1",
+            port=port,
+            clock=SystemClock(),
+            environment="test",
+            allow_plaintext_non_prod=True,
+        ))
+
+        with self.assertRaises(NsRuntimeTransportHandshakeFailedError) as raised:
+            await adapter.start()
+        self.assertEqual("listen", raised.exception.details["operation"])
+        self.assertNotIn(str(port), repr(raised.exception.details))

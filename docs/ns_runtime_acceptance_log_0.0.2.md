@@ -767,6 +767,18 @@
 - 已知限制：capability 是 adapter 固定事实但尚未有运行 listener；W03 将实现唯一正式 adapter 的正常路径。
 - 下一工作包：`P04-W03 websocket_tcp operational adapter`，状态为 `IN_PROGRESS`。
 
+## P04-W03
+
+- 工作包：`P04-W03 WebSocket TLS/TCP operational adapter`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-21T10:22:00+08:00`。
+- 修改文件：实现 `WebSocketTcpAdapterOptions`、`WebSocketTcpAdapter`、`WebSocketTcpSession`，更新 facade，新增 `tests/test_runtime_transport_websocket_tcp.py`，更新实施计划和执行游标。
+- 公共契约变化：唯一正式 adapter 延迟加载 websockets 16，在显式 loopback host/port 上建立 TLS/TCP 或显式受控非生产明文 listener；accepted session 仅为 handshaking，完整文本 receive/send、native ping/pong、typed admission/drain、session/adapter close 幂等且有界。公共接口不暴露第三方 connection/server。
+- 测试结果：真实 loopback 明文与自签名 TLS、双向完整文本、ping/pong、close 幂等、prod 明文 fail-closed、端口占用 listener 错误归一化；W01-W03 专项 `Ran 11, OK`，startup/shutdown/service/P03 codec 联合 `Ran 53, OK`，`git diff --check` 通过。
+- 安全/隔离检查：listener 仅在 `start()` 内延迟加载并创建；端口失败不回显地址/端口/底层异常，close frame reason 固定为空；无 URL/query、peer、payload、connection repr 日志。没有 active 迁移、Envelope/IAM/tenant/processor/ACK/DeliveryRecord/StateStore/管理 HTTP 或第二 signal/event-loop owner。
+- 已知限制：W03 验证正常文本路径；binary/invalid UTF-8/oversize 的冻结负向策略由 W04 完成，独立有界读写应用队列与完整背压由 W05 完成。
+- 下一工作包：`P04-W04 WebSocket text-only enforcement`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
