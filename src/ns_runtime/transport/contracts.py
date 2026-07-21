@@ -11,6 +11,7 @@ from .models import (
     TransportMessage,
     TransportSessionState,
 )
+from .identity import TransportDiagnosticSummary, TransportIdentity
 
 
 class TransportSession(ABC):
@@ -34,6 +35,16 @@ class TransportSession(ABC):
     @property
     @abstractmethod
     def close_info(self) -> TransportClose | None:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def identity(self) -> TransportIdentity:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def diagnostic_summary(self) -> TransportDiagnosticSummary:
         raise NotImplementedError
 
     @abstractmethod
@@ -90,4 +101,3 @@ class TransportAdapter(ABC):
     @abstractmethod
     async def close(self) -> None:
         """Idempotently release listener and adapter resources."""
-

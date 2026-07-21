@@ -27,6 +27,11 @@ from ns_common.exceptions import (
 from ns_common.time import Clock
 
 from .contracts import TransportAdapter, TransportSession
+from .identity import (
+    TransportDiagnosticSummary,
+    TransportIdentity,
+    TransportIdentityFactory,
+)
 from .models import (
     TransportClose,
     TransportCloseInitiator,
@@ -148,10 +153,12 @@ class WebSocketTcpSession(TransportSession):
         options: WebSocketTcpAdapterOptions,
         task_supervisor: TaskSupervisor,
         task_suffix: int,
+        identity: TransportIdentity,
     ) -> None:
         self._connection = connection
         self._options = options
         self._task_supervisor = task_supervisor
+        self._identity = identity
         self._state = TransportSessionState.HANDSHAKING
         self._close_info: TransportClose | None = None
         self._close_lock = asyncio.Lock()
@@ -192,6 +199,17 @@ class WebSocketTcpSession(TransportSession):
     @property
     def close_info(self) -> TransportClose | None:
         return self._close_info
+
+    @property
+    def identity(self) -> TransportIdentity:
+        return self._identity
+
+    @property
+    def diagnostic_summary(self) -> TransportDiagnosticSummary:
+        return self._identity.diagnostic_summary(
+            transport_type=WEBSOCKET_TCP_TRANSPORT_TYPE,
+            tls=self._options.ssl_context is not None,
+        )
 
     @property
     def read_queue_depth(self) -> int:
@@ -558,6 +576,7 @@ class WebSocketTcpAdapter(TransportAdapter):
         *,
         options: WebSocketTcpAdapterOptions,
         task_supervisor: TaskSupervisor,
+        identity_factory: TransportIdentityFactory,
     ) -> None:
         if not isinstance(options, WebSocketTcpAdapterOptions):
             raise NsValidationError(
@@ -569,8 +588,14 @@ class WebSocketTcpAdapter(TransportAdapter):
                 "WebSocket TCP task supervisor is invalid.",
                 details={"component": "transport", "field": "task_supervisor"},
             )
+        if not isinstance(identity_factory, TransportIdentityFactory):
+            raise NsValidationError(
+                "WebSocket TCP identity factory is invalid.",
+                details={"component": "transport", "field": "identity_factory"},
+            )
         self._options = options
         self._task_supervisor = task_supervisor
+        self._identity_factory = identity_factory
         self._server: Any | None = None
         self._accept_queue: asyncio.Queue[WebSocketTcpSession] = asyncio.Queue(
             maxsize=options.accept_queue_capacity,
@@ -700,11 +725,24 @@ class WebSocketTcpAdapter(TransportAdapter):
                 pass
             return
         self._session_sequence += 1
+        try:
+            local_address = connection.local_address
+        except Exception:
+            local_address = None
+        try:
+            peer_address = connection.remote_address
+        except Exception:
+            peer_address = None
         session = WebSocketTcpSession(
             connection=connection,
             options=self._options,
             task_supervisor=self._task_supervisor,
             task_suffix=self._session_sequence,
+            identity=self._identity_factory.create(
+                local_address=local_address,
+                peer_address=peer_address,
+                validated_at=self._options.clock.utc_now(),
+            ),
         )
         self._sessions.add(session)
         try:

@@ -2,6 +2,12 @@
 """Transport-independent runtime adapter contracts."""
 
 from .contracts import TransportAdapter, TransportSession
+from .identity import (
+    TransportDiagnosticSummary,
+    TransportIdentity,
+    TransportIdentityFactory,
+    TransportPathSnapshot,
+)
 from .models import (
     TransportCapabilities,
     TransportCapability,
@@ -31,7 +37,11 @@ __all__ = (
     "TransportCloseReason",
     "TransportError",
     "TransportErrorKind",
+    "TransportDiagnosticSummary",
+    "TransportIdentity",
+    "TransportIdentityFactory",
     "TransportMessage",
+    "TransportPathSnapshot",
     "TransportSession",
     "TransportSessionState",
     "WEBSOCKET_TCP_CAPABILITIES",

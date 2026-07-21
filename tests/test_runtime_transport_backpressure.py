@@ -15,6 +15,7 @@ from ns_common.exceptions import (
 from ns_common.time import SystemClock
 from ns_runtime.transport import (
     TransportCloseReason,
+    TransportIdentityFactory,
     WebSocketTcpAdapterOptions,
     WebSocketTcpSession,
 )
@@ -73,6 +74,11 @@ class TransportBackpressureTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             task_supervisor=supervisor,
             task_suffix=1,
+            identity=TransportIdentityFactory().create(
+                local_address=("127.0.0.1", 8765),
+                peer_address=("127.0.0.1", 54321),
+                validated_at=SystemClock().utc_now(),
+            ),
         )
         self.addAsyncCleanup(session.close)
         return session
@@ -139,4 +145,3 @@ class TransportBackpressureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(item is closes[0] for item in closes))
         with self.assertRaises(NsStateError):
             await session.send("after-close")
-

@@ -18,6 +18,7 @@ from ns_common.exceptions import (
 from ns_common.time import SystemClock
 from ns_runtime.transport import (
     TransportCloseReason,
+    TransportIdentityFactory,
     TransportSessionState,
     WebSocketTcpAdapter,
     WebSocketTcpAdapterOptions,
@@ -83,6 +84,7 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
         return WebSocketTcpAdapter(
             options=options,
             task_supervisor=supervisor,
+            identity_factory=TransportIdentityFactory(),
         )
 
     async def test_plaintext_loopback_text_send_receive_ping_and_idempotent_close(
@@ -102,6 +104,13 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
         ) as client:
             session = await asyncio.wait_for(adapter.accept(), timeout=1)
             self.assertEqual(TransportSessionState.HANDSHAKING, session.state)
+            self.assertTrue(
+                session.identity.transport_connection_id.startswith(
+                    "transport_connection_",
+                ),
+            )
+            self.assertFalse(session.diagnostic_summary.tls)
+            self.assertNotIn("127.0.0.1", repr(session.diagnostic_summary))
             await client.send("client-to-runtime")
             inbound = await asyncio.wait_for(session.receive(), timeout=1)
             self.assertEqual("client-to-runtime", inbound.text)
@@ -135,6 +144,7 @@ class WebSocketTcpAdapterTestCase(unittest.IsolatedAsyncioTestCase):
             proxy=None,
         ) as client:
             session = await asyncio.wait_for(adapter.accept(), timeout=1)
+            self.assertTrue(session.diagnostic_summary.tls)
             await client.send("tls-complete-message")
             message = await asyncio.wait_for(session.receive(), timeout=1)
             self.assertEqual("tls-complete-message", message.text)

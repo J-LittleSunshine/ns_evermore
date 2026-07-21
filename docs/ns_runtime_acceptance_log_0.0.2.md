@@ -803,6 +803,18 @@
 - 已知限制：session 尚未冻结 transport/path 标识和安全摘要（W06），第三方 close/异常的细分公共映射将在 W07 完成。
 - 下一工作包：`P04-W06 transport identities and safe diagnostics`，状态为 `IN_PROGRESS`。
 
+## P04-W06
+
+- 工作包：`P04-W06 transport identity and safe diagnostics`。
+- 状态：`VERIFIED`。
+- 完成时间：`2026-07-21T10:35:00+08:00`。
+- 修改文件：新增 `src/ns_runtime/transport/identity.py` 与 `tests/test_runtime_transport_identity.py`，扩展 TransportSession contract、websocket adapter/session、facade 和既有 transport tests，更新实施计划和执行游标。
+- 公共契约变化：冻结 transport-local `transport_connection_id`、`transport_session_id`、`transport_stream_id`、`TransportPathSnapshot(path_id/path_epoch/validated_at/migration_count)`；标识由显式 factory 创建且全部从 repr 排除。local/peer address 在 adapter 边界只转为 16-hex SHA-256 摘要，公开 `TransportDiagnosticSummary` 只含 transport_type、TLS flag 与受控摘要。
+- 测试结果：确定性四类 ID、初始 path、地址不泄露、hostile repr/str 不调用、非法 UUID 安全失败、真实明文/TLS session 摘要通过；transport+P01 identifiers/security/observability 联合 `Ran 84, OK`，compileall 与 `git diff --check` 通过。
+- 安全/隔离检查：诊断不保留完整地址、URL/query、证书、payload 或第三方对象；高基数 transport/path ID 只存在本地类型化对象且 repr=false。模型未创建 P05 logical connection_id/connection_epoch/session state，也无 migration/resume 实现。
+- 已知限制：websocket_tcp path 固定 epoch=0/migration_count=0 且单受控 message stream；P21 adapter 才能声明 path migration 或 multiplexing。W07 将冻结底层异常的安全分类。
+- 下一工作包：`P04-W07 normalized transport errors`，状态为 `IN_PROGRESS`。
+
 ## 新记录模板
 
 - 工作包：
