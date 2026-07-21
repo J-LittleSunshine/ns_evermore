@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from .handshake import ConnectionHelloReceiver
 from .state import (
     LogicalConnectionCloseReason,
     LogicalConnectionState,
@@ -12,6 +13,7 @@ from .state import (
 
 
 __all__ = (
+    "ConnectionHelloReceiver",
     "LogicalConnectionCloseReason",
     "LogicalConnectionState",
     "LogicalConnectionStateMachine",

@@ -913,6 +913,18 @@
 - 已知限制：W01 只冻结状态机和关闭分类；尚未绑定 transport、生成 logical ID、读取 Envelope 或建立 handshake deadline。SC-1、IAM、active/index、heartbeat、grace/resume、reauth 和 audit 仍按 W02-W14 保持未完成，生产 ordinary connection 继续 fail-closed。
 - 下一工作包：`P05-W02 hello-first 与 handshake deadline`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
 
+## P05-W02
+
+- 工作包：`P05-W02 hello-first and handshake deadline`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W03。
+- 完成时间：`2026-07-21T13:57:58+08:00`。
+- 修改文件：新增 `src/ns_runtime/connection/handshake.py` 与 facade 导出，新增 `tests/test_runtime_connection_handshake.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：`ConnectionHelloReceiver` 对每个 transport session 只允许一次 claim，使用既有 TaskSupervisor 创建 receive/deadline 两个具名任务，以显式 Clock 总 deadline 竞速；timeout 与同 tick hello 同时发生时 timeout 稳定胜出。第一条消息仅经 P03 JsonV1Codec、InboundEnvelope 和 exact registry schema 验证；非 hello、malformed、duplicate、timeout、cancel、transport failure 均终止 logical/transport handshake，不进入 processor。
+- 测试结果：W01-W02 connection 专项 `Ran 22, OK`，其中 W02 13 项覆盖成功、non-hello、malformed、不读第二条、timeout、deadline 边界、cancel、duplicate/concurrent duplicate、hello/close、transport failure 和 close retry；P01-P04+P05-W01/W02 runtime 联合 `Ran 481, OK (skipped=1)`，唯一 skip 为 Windows event-loop policy。`compileall -q src tests` 与 `git diff --check` 通过。
+- 安全/隔离检查：receiver 不保存或复制 hello/payload，仅把 P03 冻结 group 引用装入临时 schema shape；失败不回显 message、payload、transport exception 或 ID。任务名只使用显式本地数值 sequence，不含 logical/transport/path/identity/tenant/message ID。源码不引用 processor callback、IAM/global config/client/context、DeliveryRecord、AckRecord 或 StateStore；native ping/pong 未替代 hello，普通 cleanup failure 不覆盖原错误，CancelledError 原对象语义保持。
+- 已知限制：W02 成功只返回待 W03 消费的 InboundEnvelope，logical state 保持 handshaking；尚未读取 token 声明、认证、协商、构造 SessionContext、发送 accepted 或进入 active。生产 ordinary connection 仍 fail-closed。
+- 下一工作包：`P05-W03 controlled hello parsing and test IAM boundary`，状态为 `IN_PROGRESS`；P06 保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：
