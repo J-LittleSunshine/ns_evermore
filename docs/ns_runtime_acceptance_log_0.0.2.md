@@ -1033,6 +1033,18 @@
 - 已知限制：W11仍使用显式offline test IAM或production fail-closed adapter，不宣称P06真实IAM。不可恢复关闭/audit、reauth与最终safe snapshot分别由W12-W14完成，SC-1继续 `IN_PROGRESS`。
 - 下一工作包：`P05-W12 non-resumable security close`，状态为 `IN_PROGRESS`；P06保持 `NOT_STARTED`。
 
+## P05-W12
+
+- 工作包：`P05-W12 non-resumable security close`。
+- 状态：`VERIFIED`；P05 保持 `IN_PROGRESS/F1`，下一游标为 P05-W13；P06 保持 `NOT_STARTED`。
+- 完成时间：`2026-07-21T17:23:52+08:00`。
+- 修改文件：新增 `connection/security.py` 与 facade 导出，增强 resume 对 indexed revocation 的权威检查，新增 `tests/test_runtime_connection_security.py`，更新 implementation plan、acceptance log 与 ADR-030。
+- 公共契约变化：新增五项 `NonResumableCloseKind`、固定 close/public-error decision、单向 `NonResumableConnectionGuard`、frozen snapshot，以及显式async `ConnectionSecurityAuditSink`/typed event/test sink。guard先原子替换indexed context撤销resume，再执行first-classification-wins close；grace close取消deadline，close failure/cancel保持closing可重试。W11 claim后再次检查indexed current session/epoch/resume eligibility，revocation不可被旧context绕过。
+- 测试结果：W12专项9项，W09-W12联合 `Ran 43, OK`，覆盖五类close/public/audit一致映射、close完成前revocation、grace安全关闭、audit failure隔离、重复幂等、cancel+retry、安全event脱敏、普通disconnect不误标和显式sink/frozen snapshot。P01-P04+P05-W01-W12 runtime联合 `Ran 589, OK (skipped=1)`，唯一skip为Windows event-loop policy；`compileall -q src tests`、`git diff --check`与敏感字段/global audit/storage边界scan通过。
+- 安全/隔离检查：API根本不接收attacker payload/token/peer/free-text reason；event只保存fixed enum、connection digest、component/epoch/time，不含raw ID/transport/exception。ordinary audit failure不放行安全操作、不阻止close、不覆盖cancel；无global sink、不声称P07/P08 durability。普通network disconnect保持resumable且无security event。
+- 已知限制：W12 audit仅为typed注入边界与deterministic test sink，不是强一致持久审计。W13实现reauth/expiry，W14聚合最终safe snapshot/audit接口，SC-1继续 `IN_PROGRESS`。
+- 下一工作包：`P05-W13 reauth and session expiry policy`，状态为 `IN_PROGRESS`；P06保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

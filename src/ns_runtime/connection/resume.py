@@ -277,7 +277,19 @@ class ConnectionResumeCoordinator:
             _state_error("resume_reference_required")
         await self._grace.claim_resume(resume_request)
         self._grace_claimed = True
-        if not self._current.resume_eligible:
+        indexed = await self._index.lookup_connection(self._current.connection_id)
+        if (
+            indexed is None
+            or indexed.session_context.session_id != self._current.session_id
+            or indexed.session_context.connection_epoch
+            != self._current.connection_epoch
+        ):
+            await self._fail_if_claimed(LogicalConnectionCloseReason.AUTH_FAILED)
+            raise _resume_denied("current_session_not_available")
+        if (
+            not self._current.resume_eligible
+            or not indexed.session_context.resume_eligible
+        ):
             await self._fail_if_claimed(LogicalConnectionCloseReason.AUTH_FAILED)
             raise _resume_denied("current_session_not_resume_eligible")
         if self._current.session_expires_at <= self._clock.utc_now():
