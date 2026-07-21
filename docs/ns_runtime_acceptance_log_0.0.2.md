@@ -874,6 +874,19 @@
 - 安全/隔离检查：fallback 不捕获或保存原异常，不调用 str/repr，不把 ImportError 文本或模块路径复制到错误；sentinel 永不作为 adapter success 或 capability。无新 dependency、listener、global registry 或 stub success。
 - 下一工作包：恢复 P04 阶段出口 backend 全量与全部验证。
 
+## P04
+
+- 阶段：`P04 Transport 抽象与 WebSocket/TCP Adapter`。
+- 状态：`VERIFIED/F2`；`P04-W01` 至 `P04-W10` 与 `P04-FIX-01` 全部 `VERIFIED`，`TC-1` 与 ADR-029 已冻结。
+- 完成时间：`2026-07-21T11:00:00+08:00`。
+- 修改范围：新增 transport contracts、capabilities、WebSocket/TCP adapter、有界 session queues、transport-local identity、安全错误归一化、immutable adapter registry、22-case conformance harness、10 项 OBS-1 transport metrics，以及复用既有 RuntimeService/context/coordinator/TaskSupervisor/event loop 的 lifecycle integration；没有实现 P05+ logical connection、IAM、processor、StateStore、delivery 或 cluster 能力。
+- 专项与联合测试：P04 最终专项 `Ran 45, OK`；P03+P04 联合矩阵 `Ran 97, OK`；真实 TLS 与受控开发明文 loopback、text-only/close codes、oversize/invalid UTF-8、queue/backpressure/cancellation/concurrent send、registry dependency isolation、metrics cardinality 与 shutdown order 均通过。
+- 全量回归：runtime 目标矩阵 `Ran 446, OK (skipped=1)`，唯一 skip 为 Windows event-loop policy；backend 根目录全量 `Ran 457, OK (skipped=23)`，其中 22 项为 DEP-1 未安装 websockets 时明确跳过的真实 driver 操作测试，另 1 项为 Windows policy。runtime/backend 的 `pip check`、`compileall -q src tests` 与 `git diff --check` 全部通过。
+- 安全/隔离检查：生产 transport 未引用 JsonV1Codec、processor、DeliveryRecord、AckRecord、StateStore 或业务实现；所有 session application queues 显式有界；未创建第二 signal/lifecycle coordinator/TaskSupervisor/event loop/global context；metrics 不含高基数 ID、peer/path/message/tenant/异常文本；WebSocket 第三方导入保持 lazy，未启用的 HTTP/3、WebTransport、QUIC 无 factory、无依赖加载、无伪成功。
+- 提交与推送：同一 `codex/ns-runtime-implementation` 分支逐包提交并推送，实施提交从 `63d34c6`（W01）至 `9f0e824`（P04-FIX-01）；阶段出口文档在本记录对应提交中冻结。
+- 已知限制：完整生产证书材料配置仍属 P20；composition root 未显式注入 server SSLContext 时 TLS fail-closed。P04 transport session 只提供底层消息边界，不代表 P05 logical session 已建立或任何业务消息可用。
+- 下一工作包：执行游标推进到 `P05-W01 连接状态机`，状态保持 `NOT_STARTED`；本阶段验收未开始 P05。
+
 ## 新记录模板
 
 - 工作包：

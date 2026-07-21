@@ -316,7 +316,7 @@
 - 决策（P03-FIX-01 校准）：W01 必填 major/minor/patch、route hop/max_hops、delivery attempt 必须使用 required integer 检查，不能复用 optional 检查接受 None；capabilities 和 route_segment 必须先证明为 list/tuple，字符串不得按字符迭代伪装数组。未知直接 mapping key 统一固定拒绝，不排序或回显攻击者 key。W03 depth 明确定义为 JSON object/array nesting 层数，容器中的标量不额外占一层；lexical pre-scan 与解析后迭代验证必须使用同一口径。
 - 决策（P03-FIX-02 校准）：StreamGroup 的 missing_sequences、received_sequences 与 ack_ranges 顶层只接受 list/tuple；前两者的每个元素以及 ack_ranges 每个二元 list/tuple 的 start/end 都使用 required non-negative integer 语义，明确拒绝 None、bool、float、str，并在 start <= end 比较前完成类型验证。合法输入继续冻结为 tuple，wire 数组形状不变。extension wire namespace 必须先按 `[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+` 校验语法，再执行 registry lookup；语法非法固定以 group=extensions、field=$namespace、reason=invalid_namespace fail-closed，且不回显 namespace。`IGNORE_AND_AUDIT` 只处理语法合法但未注册的 namespace。
 - 后果：后续 adapter 只能向统一 codec 提交完整应用消息边界，processor 只能接收完成 P03 normalization 的 Envelope；现阶段没有 listener、ACK 快速通道、裸 JSON 管理命令、业务 processor 或伪成功。修改分组字段或允许规则必须重跑 P03 及所有下游协议回归。
-- 阶段冻结：P03-W01 至 W11、P03-FIX-01 与 P03-FIX-02 已在 WSL/runtime/backend 联合回归后达到 `VERIFIED/F2`。`ENV-1` 只冻结协议入口、类型/registry/错误/serialization 与 disabled 行为；P04-W01 保持 `NOT_STARTED`，不得由本 ADR 推断 transport、session、IAM、StateStore、delivery 或 cluster 已开始。
+- 阶段冻结：P03-W01 至 W11、P03-FIX-01 与 P03-FIX-02 已在 WSL/runtime/backend 联合回归后达到 `VERIFIED/F2`。`ENV-1` 只冻结协议入口、类型/registry/错误/serialization 与 disabled 行为；本 ADR 冻结时 P04-W01 为 `NOT_STARTED`，其后 transport 状态由 P04 与 ADR-029 权威记录，仍不得仅由本 ADR 推断 transport、session、IAM、StateStore、delivery 或 cluster 已开始。
 - 关联阶段/工作包：`P03-W01` 至 `P03-W11`、`P04`、`P05`、`P07`、`P10`、`P12`、`P16`、`P21`。
 
 ## ADR-029
@@ -331,4 +331,5 @@
 - 决策：复用 OBS-1 十个标准 transport metric name。常规 attributes 只允许有限 transport_type，以及按具体指标允许的 component_type/tenant_scope classification、close_reason、error_code；禁止 connection/session/transport/path/message/tenant ID、peer、URL、payload 或异常文本。指标不进入 ACK、DeliveryRecord 或强一致事务。
 - 决策：P04 只以一个类型化 `TransportLifecycleOwner` 兼容扩展既有 RSD-1。首次 shutdown request 同步关闭本地与 listener admission gate，随后固定执行 stop admission、drain sessions/I/O、close adapters/listeners，再继续既有 supervisor/sink/client/logger 相位；不创建第二 coordinator、signal owner、TaskSupervisor 或 event loop。`TransportRuntimeService` 仅在 RSP-1 成功后启动 manager。完整生产证书材料仍属 P20；启用 TLS 但 composition root 未显式收到 server SSLContext 时必须 fail-closed。
 - 后果：P04 可以真实建立 TLS 或受控非生产明文 loopback WebSocket，把完整 text message 交给上层；上层仍不得接受业务消息，P05 handshake 完成前 session 不进入 active。后续 adapter 必须复用 22-case TC-1 和公共 harness；修改任何冻结接口、capability、queue/error/metric/lifecycle 语义必须重跑 P04 及全部下游阶段。
+- 阶段冻结：`P04-W01` 至 `P04-W10` 与 `P04-FIX-01` 已在真实 TLS/明文 loopback、P03+P04 联合矩阵及 runtime/backend 全量回归后达到 `VERIFIED/F2`。冻结范围仅为 transport adapter、底层 session/message boundary、queue/error/registry/metrics/lifecycle 合同；`P05-W01` 保持 `NOT_STARTED`，不得由本 ADR 推断 logical connection、handshake、IAM、processor、StateStore、delivery 或 cluster 已开始。
 - 关联阶段/工作包：`P04-W01` 至 `P04-W10`、`P05`、`P11`、`P20`、`P21`、`P22`。
