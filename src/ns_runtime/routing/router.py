@@ -11,13 +11,7 @@ from ns_common.config import NsRuntimeRoutingConfig
 from ns_common.exceptions import NsValidationError
 from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
 from ns_common.time import Clock
-from ns_runtime.connection.index import (
-    ConnectionRoutingEligibility,
-    LocalConnectionIndex,
-)
-from ns_runtime.connection.state import (
-    LogicalConnectionState,
-)
+from ns_runtime.connection.index import LocalConnectionIndex
 
 from .authority import (
     LocalRoutingConsistencyPolicy,
@@ -45,8 +39,11 @@ from .models import (
     RoutingScorerIdentity,
     RoutingStrategy,
     SelectedRoutingBinding,
+    compute_fallback_candidate_score,
     compute_routing_decision_fingerprint,
+    derive_candidate_filter_reason,
     safe_target_reference,
+    select_candidates_from_evidence,
 )
 
 
@@ -196,10 +193,10 @@ class LocalRouter:
             if entry is None:
                 continue
             context = entry.session_context
-            reason = self._filter_reason(
-                request,
-                entry=entry,
-                previous=previous,
+            rebind_eligible = (
+                previous is None
+                or request.effective_strategy is RoutingStrategy.BROADCAST
+                or self._rebind_allowed(request, context, previous)
             )
             candidate = CandidateEvidence(
                 runtime_id=self._runtime_id,
@@ -211,11 +208,28 @@ class LocalRouter:
                 component_type=context.component_type,
                 capabilities=context.capabilities,
                 required_capabilities=frozenset(target.capabilities or ()),
+                connection_state=entry.state,
+                active_target_eligible=entry.active_target_eligible,
+                routing_eligibility=entry.routing_eligibility,
+                rebind_eligible=rebind_eligible,
+                filter_reason=CandidateFilterReason.ELIGIBLE,
+            )
+            reason = derive_candidate_filter_reason(
+                target=request.target,
+                effective_tenant_id=request.effective_tenant_id,
+                candidate=candidate,
+            )
+            candidate = replace(
+                candidate,
                 filter_reason=reason or CandidateFilterReason.ELIGIBLE,
             )
             evidence.append(candidate)
             if reason is None:
-                score = self._score(request, candidate)
+                score = compute_fallback_candidate_score(
+                    target=request.target,
+                    scoring_decision=request.scoring_decision,
+                    candidate=candidate,
+                )
                 eligible.append(replace(candidate, score=score))
 
         filtered = tuple(
@@ -252,8 +266,11 @@ class LocalRouter:
                 sequence=snapshot.mutation_sequence,
             )
 
-        eligible.sort(key=lambda value: value.score or ())
-        selected_evidence = self._select(request, eligible)
+        selected_evidence = select_candidates_from_evidence(
+            strategy=request.effective_strategy,
+            parameters=request.strategy_parameters,
+            candidates=tuple(eligible),
+        )
         if selected_evidence is None:
             return self._failure(
                 request,
@@ -425,44 +442,6 @@ class LocalRouter:
             return snapshot.by_tenant.get(target.tenant_id, frozenset())
         return frozenset()
 
-    def _filter_reason(self, request, *, entry, previous):
-        target = request.target
-        context = entry.session_context
-        if context.tenant_id != request.effective_tenant_id and not request.cross_tenant_authorized:
-            return CandidateFilterReason.TENANT_MISMATCH
-        if target.tenant_id is not None and context.tenant_id != target.tenant_id:
-            return CandidateFilterReason.TENANT_MISMATCH
-        if target.component_type is not None and context.component_type != target.component_type:
-            return CandidateFilterReason.COMPONENT_MISMATCH
-        required = frozenset(target.capabilities or ())
-        if not required.issubset(context.capabilities):
-            return CandidateFilterReason.CAPABILITY_MISMATCH
-        if (
-            previous is not None
-            and request.effective_strategy is not RoutingStrategy.BROADCAST
-            and not self._rebind_allowed(request, context, previous)
-        ):
-            return CandidateFilterReason.REBIND_FORBIDDEN
-        if entry.state is LogicalConnectionState.DRAINING:
-            return CandidateFilterReason.DRAINING
-        if entry.state is not LogicalConnectionState.ACTIVE:
-            return CandidateFilterReason.NOT_ACTIVE
-        eligibility = entry.routing_eligibility
-        if eligibility is ConnectionRoutingEligibility.RECONNECT_GRACE:
-            return CandidateFilterReason.RECONNECT_GRACE
-        if eligibility is ConnectionRoutingEligibility.AUTHORITY_SUSPENDED:
-            return CandidateFilterReason.AUTHORITY_SUSPENDED
-        if eligibility is ConnectionRoutingEligibility.SESSION_EXPIRY_SUSPENDED:
-            return CandidateFilterReason.SESSION_EXPIRY_SUSPENDED
-        if eligibility is not ConnectionRoutingEligibility.ELIGIBLE or not entry.active_target_eligible:
-            return CandidateFilterReason.NOT_ELIGIBLE
-        if (
-            target.connection_epoch is not None
-            and target.connection_epoch != context.connection_epoch
-        ):
-            return CandidateFilterReason.EPOCH_STALE
-        return None
-
     def _rebind_allowed(self, request, context, previous) -> bool:
         policy = request.effective_rebind_policy
         old = previous.selected_bindings
@@ -488,53 +467,6 @@ class LocalRouter:
         if policy is RebindPolicy.SAME_TENANT:
             return any(item.tenant_id == context.tenant_id for item in old)
         return False
-
-    def _score(self, request, candidate):
-        target = request.target
-        exactness = 0 if target.kind == "connection" else 1
-        scoring = request.scoring_decision
-        affinity = (
-            0
-            if candidate.connection_id in scoring.trusted_affinity_connection_ids
-            else 1
-        )
-        weights = dict(scoring.runtime_policy_static_weights)
-        static_weight = -weights.get(candidate.connection_id, 0)
-        required = frozenset(target.capabilities or ())
-        capability_surplus = len(candidate.capabilities - required)
-        tie_break = "|".join((
-            self._runtime_id,
-            candidate.tenant_id,
-            candidate.component_type,
-            candidate.identity_reference.value,
-            candidate.connection_id,
-            candidate.session_id,
-            str(candidate.connection_epoch),
-        ))
-        return (exactness, affinity, static_weight, capability_surplus, tie_break)
-
-    def _select(self, request, eligible):
-        strategy = request.effective_strategy
-        parameters = request.strategy_parameters
-        if strategy is RoutingStrategy.SINGLE:
-            return tuple(eligible[:1])
-        if strategy in {
-            RoutingStrategy.ALL,
-            RoutingStrategy.BROADCAST,
-            RoutingStrategy.ALL_REQUIRED,
-        }:
-            return tuple(eligible)
-        if strategy is RoutingStrategy.QUORUM:
-            assert parameters.fanout_count is not None
-            if len(eligible) < parameters.fanout_count:
-                return None
-            return tuple(eligible[:parameters.fanout_count])
-        if strategy is RoutingStrategy.WEIGHTED_SUBSET:
-            assert parameters.subset_size is not None
-            if len(eligible) < parameters.subset_size:
-                return None
-            return tuple(eligible[:parameters.subset_size])
-        return None
 
     def _failure_reason_from_filtered(self, filtered):
         reasons = {value.filter_reason for value in filtered}

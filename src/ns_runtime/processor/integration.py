@@ -28,6 +28,7 @@ from ns_runtime.transport import TransportSession
 from .audit import AuditConsistency, AuditSink
 from .contracts import (
     PROCESSOR_STAGE_ORDER,
+    AuthorizationDecisionOutcome,
     AuthorizationDecisionEvidence,
     ProcessorAuthorization,
     ProcessorContext,
@@ -196,7 +197,7 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
         }
         return AuthorizationDecisionEvidence.bound(
             decision_version="authorization-decision.v1",
-            decision_classification="allow",
+            decision_outcome=AuthorizationDecisionOutcome.ALLOW,
             decision_reason="deterministic_allow",
             semantic_access_check_reference=_decision_digest(
                 semantic_access_payload,
@@ -537,7 +538,7 @@ def _authorization_evidence(
     effective_request["permission_version"] = effective_snapshot.permission_version
     return AuthorizationDecisionEvidence.bound(
         decision_version="authorization-decision.v1",
-        decision_classification="allow",
+        decision_outcome=AuthorizationDecisionOutcome.ALLOW,
         decision_reason=decision.reason,
         semantic_access_check_reference=_decision_digest(effective_request),
         message_reference=message_reference,

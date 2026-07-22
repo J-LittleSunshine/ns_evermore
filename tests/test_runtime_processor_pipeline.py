@@ -40,6 +40,7 @@ from ns_runtime.processor import (
     ProcessorExecutionPolicy,
     ProcessorPipeline,
     ProcessorAuditRecord,
+    ProcessorAuthorization,
     ProcessorRegistration,
     ProcessorRegistry,
     ProcessorStage,
@@ -116,6 +117,17 @@ class _RoutingResultPreparation(RoutingPreparation):
         return self.result
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _DenyLikeEvidence:
+    decision_outcome: str = "deny"
+    decision_reason: str = "allow"
+
+
+class _DenyLikeAuthorization(ProcessorAuthorization):
+    async def authorize(self, context: ProcessorContext):
+        return _DenyLikeEvidence()
+
+
 class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
@@ -156,6 +168,23 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         ):
             retained = await standard[stage].process(context, value)
             self.assertIs(value, retained)
+
+    async def test_deny_like_authorization_dependency_cannot_enter_stage_three(self) -> None:
+        calls: list[ProcessorStage] = []
+        _, context = self._pipeline(calls=calls)
+        context = dataclasses.replace(
+            context,
+            dependencies=dataclasses.replace(
+                context.dependencies,
+                authorization=_DenyLikeAuthorization(),
+            ),
+        )
+        standard = build_standard_stage_processors(
+            message_processor=_MessageProcessorBinding(calls),
+        )
+        with self.assertRaises(NsValidationError):
+            await standard[ProcessorStage.AUTHORIZATION].process(context, None)
+        self.assertEqual([], calls)
 
     def test_standard_stage_contract_contains_exact_fixed_order(self) -> None:
         binding = _MessageProcessorBinding([])

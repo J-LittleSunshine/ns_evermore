@@ -1820,6 +1820,37 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 三个P09-FIX-03 blocker均关闭；P09恢复`VERIFIED/F3 (local only)`。
 - strong RoutingPlan persistence、remote/master routing、cluster/lease/fencing、P14 health scoring、Delivery/Summary/ACK/retry仍未实现。`P10-W01`保持`BLOCKED`，等待独立授权。
 
+## P09-FIX-04 RP-1 selected authority and scorer closure验收证据
+
+- 工作包：`P09-FIX-04`；开始时P09按`IN_PROGRESS`处理，以下证据全部通过后恢复`VERIFIED/F3 (local only)`。
+- 完成时间：`2026-07-22T17:36:40+08:00`。
+- 范围：只关闭P09公共Plan仍可构造未经policy/IAM/scorer授权selected bindings的问题；不实施P10、P14、remote/master routing或strong provider。`P10-W01`保持`BLOCKED`。
+- 修改文件：更新processor contracts/integration/pipeline/facade，routing models/router/integration/facade，routing/processor三组测试，以及ADR-036、implementation plan和本日志。
+
+### 关闭证据
+
+- ALLOW-only authorization：新增唯一`AuthorizationDecisionOutcome.ALLOW`，Evidence公共构造拒绝字符串allow、deny及任意对象；production只在真实IAM allowed后构造ALLOW。AuthorizationProcessor和stage six再次检查；自定义dependency返回`decision_reason=allow`但outcome=deny的deny-like对象时，在stage three前以`NsValidationError`失败。
+- Policy target/message与Plan一致：Plan要求invocation完整requested intent和normalized target等于original target，policy message type等于IAM message type，IAM message reference等于plan，并将authorized target reference复算为plan canonical target。负向矩阵覆盖tenant值、target kind、同selector capability constraint、connection epoch、broadcast tenant及quorum count；policy target错误的标准stage-six路径在Router snapshot为零时拒绝。
+- Selected满足IAM/target constraint：统一target/filter纯函数由Router与Plan共用；全部candidate冻结并验证primary intended universe、effective tenant、connection/epoch、identity、tenant、capability AND、component、runtime、broadcast tenant/constraint及P05 state/eligibility。filtered必须score=None，ELIGIBLE/SELECTED必须通过target/static/dynamic filter并具有可复算score，selected binding与candidate逐字段一致。
+- Scorer前N重算：统一fallback.v1 score与canonical selection纯函数由Router与Plan共用；Plan复算所有通过candidate score，并严格选择single第1名、quorum前fanout_count、weighted_subset前subset_size及all/broadcast/all-required完整canonical顺序。数量正确但错选、跳过高分、低分替换、逆序、少选、多选均失败。
+- Fingerprint不能替代语义：所有主要负向测试使用公共构造或`dataclasses.replace()`，先用唯一canonical函数同步生成合法fingerprint，再由Plan target/message/IAM/candidate/filter/score/selection不变量拒绝；同步篡改selected/candidates/score/binding并不能形成语义非法但可消费的Plan。
+
+### 测试命令与结果
+
+- P09 models/policy/router/integration、PC-1与IAM refresh联合：`Ran 55 tests in 1.137s, OK`；26项规定矩阵以测试和subtest覆盖，并回归message-ID independence、previous chain、broadcast fixed、all-required、permission/scoring和5001 fanout。
+- ENV-1、P05 eligibility、IAM refresh、audit-before-send与lifecycle strong audit：`Ran 86 tests in 1.504s, OK`。
+- P03-P09联合：`Ran 381 tests in 14.025s, OK`。
+- Linux runtime标准asyncio：按DEP-1排除Django-only `test_cache.py`，`Ran 750 tests in 28.248s, OK (skipped=1)`。
+- Linux runtime uvloop：同一750项在`uvloop.EventLoopPolicy()`下执行，`Ran 750 tests in 28.289s, OK (skipped=1)`。
+- Linux backend：`Ran 761 tests in 22.903s, OK (skipped=49)`。
+- 依赖与静态：两隔离环境`pip check`均为`No broken requirements found.`；runtime `compileall -q src tests`与`git diff --check`通过。
+- 冷导入/禁止项：cold import `ns_runtime.routing`得到`cold_import_forbidden=[]`；routing源码扫描无transport delivery/send、Delivery/Summary、ACK/NACK/Defer、retry/dead letter、Redis/Valkey/SQLite/Lua、lease/fencing、master query/remote forwarding、P14 health/latency/pressure、TaskSupervisor/EventBus/create-task、global registry/service locator，未新增第二supervisor/event loop/shutdown owner。
+
+### 最终判断与限制
+
+- P09-FIX-04全部要求关闭；P09恢复`VERIFIED/F3 (local only)`。
+- strong RoutingPlan persistence、remote/master routing、cluster/lease/fencing、P14 health scoring、Delivery/Summary/ACK/retry仍未实现。`P10-W01`保持`BLOCKED`，等待独立授权。
+
 ## 新记录模板
 
 - 工作包：

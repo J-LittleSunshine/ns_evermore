@@ -43,6 +43,7 @@ from ns_runtime.protocol import (
 from ns_runtime.routing import (
     DefaultLocalRoutingPolicy,
     LocalRoutingPreparation,
+    RequestedRoutingIntent,
     ResolvedRoutingPlan,
     RoutingFailureReason,
     RoutingPolicyInvocation,
@@ -354,6 +355,14 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
 
         intent = resolved.plan.policy_decision.invocation.requested_intent
         mismatched_invocations = (
+            RoutingPolicyInvocation.from_contract(
+                contract=contract,
+                requested_intent=RequestedRoutingIntent.from_target(
+                    TargetGroup(kind="tenant", tenant_id="tenant-other"),
+                ),
+                config_version=context.config_version,
+                policy_version=context.policy_version,
+            ),
             RoutingPolicyInvocation.from_contract(
                 contract=BUILTIN_MESSAGE_REGISTRY.require("stream.start"),
                 requested_intent=intent,

@@ -21,7 +21,10 @@ from ns_runtime.connection import (
     LocalConnectionIndexSnapshot,
     LogicalConnectionState,
 )
-from ns_runtime.processor import AuthorizationDecisionEvidence
+from ns_runtime.processor import (
+    AuthorizationDecisionEvidence,
+    AuthorizationDecisionOutcome,
+)
 from ns_runtime.protocol import (
     BUILTIN_MESSAGE_REGISTRY,
     MessageAuditLevel,
@@ -39,6 +42,7 @@ from ns_runtime.routing import (
     RoutingFailureReason,
     RoutingFailureReport,
     RoutingFailureOutcome,
+    RoutingIdentityReference,
     RoutingPolicyInvocation,
     RoutingRequest,
     RoutingScorerIdentity,
@@ -48,6 +52,7 @@ from ns_runtime.routing import (
     ResolutionHint,
     StrategyParameters,
     SelectedRoutingBinding,
+    compute_fallback_candidate_score,
     compute_routing_decision_fingerprint,
 )
 
@@ -908,6 +913,377 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
                 policy_version="policy-v2",
             )
 
+    def test_authorization_evidence_is_allow_only(self) -> None:
+        evidence = _request(TargetGroup(
+            kind="tenant",
+            tenant_id="tenant-a",
+        )).authorization_evidence
+        self.assertIs(AuthorizationDecisionOutcome.ALLOW, evidence.decision_outcome)
+        for invalid in ("allow", "deny", object()):
+            with self.subTest(outcome=invalid), self.assertRaises(
+                NsValidationError,
+            ):
+                dataclasses.replace(evidence, decision_outcome=invalid)
+            with self.subTest(factory_outcome=invalid), self.assertRaises(
+                NsValidationError,
+            ):
+                _bound_authorization(evidence, decision_outcome=invalid)
+
+    async def test_plan_binds_the_complete_policy_target(self) -> None:
+        target_pairs = (
+            (
+                TargetGroup(kind="tenant", tenant_id="tenant-a"),
+                TargetGroup(kind="tenant", tenant_id="tenant-b"),
+            ),
+            (
+                TargetGroup(kind="tenant", tenant_id="tenant-a"),
+                TargetGroup(kind="component_type", component_type="worker"),
+            ),
+            (
+                TargetGroup(kind="identity", identity="identity-shared"),
+                TargetGroup(
+                    kind="identity",
+                    identity="identity-shared",
+                    capabilities=("cap.shared",),
+                ),
+            ),
+            (
+                TargetGroup(
+                    kind="connection",
+                    connection_id=self.contexts[0].connection_id,
+                    connection_epoch=0,
+                ),
+                TargetGroup(
+                    kind="connection",
+                    connection_id=self.contexts[0].connection_id,
+                    connection_epoch=1,
+                ),
+            ),
+            (
+                TargetGroup(
+                    kind="broadcast",
+                    scope="tenant",
+                    tenant_id="tenant-a",
+                    multi_connection_policy="broadcast",
+                ),
+                TargetGroup(
+                    kind="broadcast",
+                    scope="tenant",
+                    tenant_id="tenant-b",
+                    multi_connection_policy="broadcast",
+                ),
+            ),
+            (
+                TargetGroup(
+                    kind="tenant",
+                    tenant_id="tenant-a",
+                    multi_connection_policy="quorum",
+                    fanout_count=2,
+                    required_count=1,
+                ),
+                TargetGroup(
+                    kind="tenant",
+                    tenant_id="tenant-a",
+                    multi_connection_policy="quorum",
+                    fanout_count=3,
+                    required_count=1,
+                ),
+            ),
+        )
+        for policy_target, forged_plan_target in target_pairs:
+            plan = await self.router.route(_request(policy_target))
+            assert isinstance(plan, ResolvedRoutingPlan)
+            with self.subTest(
+                policy=policy_target.to_dict(),
+                plan=forged_plan_target.to_dict(),
+            ), self.assertRaises(NsValidationError):
+                _replace_plan_semantics(
+                    plan,
+                    original_target=forged_plan_target,
+                )
+
+    async def test_plan_binds_policy_iam_message_and_authorized_target(self) -> None:
+        target = TargetGroup(kind="tenant", tenant_id="tenant-a")
+        plan = await self.router.route(_request(target))
+        assert isinstance(plan, ResolvedRoutingPlan)
+        stream_evidence = _bound_authorization(
+            plan.authorization_evidence,
+            message_type="stream.start",
+        )
+        with self.assertRaises(NsValidationError):
+            _replace_plan_semantics(
+                plan,
+                authorization_evidence=stream_evidence,
+                iam_decision_reference=stream_evidence.semantic_decision_reference,
+                iam_decision_version=stream_evidence.decision_version,
+            )
+        other_target = TargetGroup(kind="tenant", tenant_id="tenant-b")
+        other_target_evidence = _bound_authorization(
+            plan.authorization_evidence,
+            authorized_target_reference=(
+                AuthorizationDecisionEvidence.target_reference(
+                    other_target,
+                    session_tenant_id=(
+                        plan.authorization_evidence.principal_tenant_id
+                    ),
+                )
+            ),
+        )
+        with self.assertRaises(NsValidationError):
+            _replace_plan_semantics(
+                plan,
+                authorization_evidence=other_target_evidence,
+                iam_decision_reference=(
+                    other_target_evidence.semantic_decision_reference
+                ),
+                authorized_target_reference=(
+                    other_target_evidence.authorized_target_reference
+                ),
+            )
+
+    async def test_plan_rejects_selected_target_and_universe_forgery(self) -> None:
+        cases = (
+            (
+                TargetGroup(
+                    kind="connection",
+                    connection_id=self.contexts[0].connection_id,
+                    connection_epoch=0,
+                ),
+                {"connection_id": "connection-forged"},
+            ),
+            (
+                TargetGroup(
+                    kind="connection",
+                    connection_id=self.contexts[0].connection_id,
+                    connection_epoch=0,
+                ),
+                {"connection_epoch": 1},
+            ),
+            (
+                TargetGroup(kind="identity", identity="identity-shared"),
+                {"identity_reference": RoutingIdentityReference(value="identity-forged")},
+            ),
+            (
+                TargetGroup(kind="identity", identity="identity-shared"),
+                {"tenant_id": "tenant-forged"},
+            ),
+            (
+                TargetGroup(kind="tenant", tenant_id="tenant-a"),
+                {"tenant_id": "tenant-forged"},
+            ),
+            (
+                TargetGroup(kind="capability", capabilities=("cap.shared",)),
+                {"capabilities": frozenset({"cap.other"})},
+            ),
+            (
+                TargetGroup(kind="component_type", component_type="worker"),
+                {"component_type": "scheduler"},
+            ),
+            (
+                TargetGroup(kind="runtime", runtime_id=RUNTIME_ID),
+                {"runtime_id": "runtime-forged"},
+            ),
+            (
+                TargetGroup(
+                    kind="broadcast",
+                    scope="tenant",
+                    tenant_id="tenant-a",
+                    capabilities=("cap.shared",),
+                    component_type="worker",
+                    multi_connection_policy="broadcast",
+                ),
+                {"tenant_id": "tenant-forged"},
+            ),
+            (
+                TargetGroup(
+                    kind="broadcast",
+                    scope="tenant",
+                    tenant_id="tenant-a",
+                    capabilities=("cap.shared",),
+                    component_type="worker",
+                    multi_connection_policy="broadcast",
+                ),
+                {"component_type": "scheduler"},
+            ),
+        )
+        for target, changes in cases:
+            plan = await self.router.route(_request(target))
+            assert isinstance(plan, ResolvedRoutingPlan)
+            selected = next(
+                value
+                for value in plan.candidates
+                if value.filter_reason is CandidateFilterReason.SELECTED
+            )
+            forged = dataclasses.replace(selected, score=None, **changes)
+            forged = dataclasses.replace(
+                forged,
+                score=compute_fallback_candidate_score(
+                    target=target,
+                    scoring_decision=plan.policy_decision.scoring_decision,
+                    candidate=forged,
+                ),
+            )
+            candidates = tuple(
+                forged if value is selected else value
+                for value in plan.candidates
+            )
+            bindings = tuple(
+                _binding_from_candidate(plan, forged)
+                if _binding_key(value) == _candidate_key(selected)
+                else value
+                for value in plan.selected_bindings
+            )
+            with self.subTest(target=target.kind, changes=changes), self.assertRaises(
+                NsValidationError,
+            ):
+                _replace_plan_semantics(
+                    plan,
+                    candidates=candidates,
+                    selected_bindings=bindings,
+                )
+
+    async def test_plan_recomputes_fallback_scores_and_canonical_top_n(self) -> None:
+        selection_targets = (
+            TargetGroup(kind="tenant", tenant_id="tenant-a"),
+            TargetGroup(
+                kind="tenant",
+                tenant_id="tenant-a",
+                multi_connection_policy="quorum",
+                fanout_count=2,
+                required_count=1,
+            ),
+            TargetGroup(
+                kind="tenant",
+                tenant_id="tenant-a",
+                multi_connection_policy="weighted_subset",
+                subset_size=2,
+            ),
+        )
+        for target in selection_targets:
+            plan = await self.router.route(_request(target))
+            assert isinstance(plan, ResolvedRoutingPlan)
+            passing = sorted(
+                (
+                    value
+                    for value in plan.candidates
+                    if value.filter_reason in {
+                        CandidateFilterReason.ELIGIBLE,
+                        CandidateFilterReason.SELECTED,
+                    }
+                ),
+                key=lambda value: value.score,
+            )
+            selected_count = len(plan.selected_bindings)
+            wrong = passing[-selected_count:]
+            if tuple(_candidate_key(value) for value in wrong) == tuple(
+                _binding_key(value) for value in plan.selected_bindings
+            ):
+                wrong = tuple(reversed(passing[:selected_count]))
+            wrong_keys = {_candidate_key(value) for value in wrong}
+            candidates = tuple(
+                dataclasses.replace(
+                    value,
+                    filter_reason=(
+                        CandidateFilterReason.SELECTED
+                        if _candidate_key(value) in wrong_keys
+                        else CandidateFilterReason.ELIGIBLE
+                    ),
+                )
+                for value in plan.candidates
+            )
+            bindings = tuple(_binding_from_candidate(plan, value) for value in wrong)
+            with self.subTest(strategy=plan.effective_strategy), self.assertRaises(
+                NsValidationError,
+            ):
+                _replace_plan_semantics(
+                    plan,
+                    candidates=candidates,
+                    selected_bindings=bindings,
+                )
+
+        for strategy_target in (
+            TargetGroup(
+                kind="tenant",
+                tenant_id="tenant-a",
+                multi_connection_policy="all",
+            ),
+            TargetGroup(
+                kind="broadcast",
+                scope="tenant",
+                tenant_id="tenant-a",
+                multi_connection_policy="broadcast",
+            ),
+        ):
+            plan = await self.router.route(_request(strategy_target))
+            assert isinstance(plan, ResolvedRoutingPlan)
+            with self.subTest(strategy=plan.effective_strategy), self.assertRaises(
+                NsValidationError,
+            ):
+                _replace_plan_semantics(
+                    plan,
+                    selected_bindings=tuple(reversed(plan.selected_bindings)),
+                )
+            removed = plan.selected_bindings[-1]
+            reduced_candidates = tuple(
+                dataclasses.replace(
+                    value,
+                    filter_reason=CandidateFilterReason.ELIGIBLE,
+                )
+                if _candidate_key(value) == _binding_key(removed)
+                else value
+                for value in plan.candidates
+            )
+            with self.subTest(
+                strategy=plan.effective_strategy,
+                selection="missing",
+            ), self.assertRaises(NsValidationError):
+                _replace_plan_semantics(
+                    plan,
+                    candidates=reduced_candidates,
+                    selected_bindings=plan.selected_bindings[:-1],
+                )
+            with self.subTest(
+                strategy=plan.effective_strategy,
+                selection="extra",
+            ), self.assertRaises(NsValidationError):
+                _replace_plan_semantics(
+                    plan,
+                    selected_bindings=(
+                        *plan.selected_bindings,
+                        plan.selected_bindings[0],
+                    ),
+                )
+
+        score_plan = await self.router.route(_request(TargetGroup(
+            kind="tenant",
+            tenant_id="tenant-a",
+            multi_connection_policy="all",
+        )))
+        assert isinstance(score_plan, ResolvedRoutingPlan)
+        candidate = score_plan.candidates[0]
+        assert candidate.score is not None
+        with self.assertRaises(NsValidationError):
+            _replace_plan_semantics(
+                score_plan,
+                candidates=(
+                    dataclasses.replace(candidate, score=None),
+                    *score_plan.candidates[1:],
+                ),
+            )
+        forged_score = (
+            candidate.score[0],
+            candidate.score[1],
+            candidate.score[2] - 100,
+            candidate.score[3],
+            candidate.score[4],
+        )
+        forged_candidate = dataclasses.replace(candidate, score=forged_score)
+        with self.assertRaises(NsValidationError):
+            _replace_plan_semantics(
+                score_plan,
+                candidates=(forged_candidate, *score_plan.candidates[1:]),
+            )
+
     async def test_plan_is_deeply_immutable_versioned_and_safe(self) -> None:
         target = TargetGroup(
             kind="identity",
@@ -1097,7 +1473,7 @@ def _request(
     crosses = target_tenant is not None and target_tenant != principal_tenant_id
     evidence = AuthorizationDecisionEvidence.bound(
         decision_version="authorization-decision.v1",
-        decision_classification="allow",
+        decision_outcome=AuthorizationDecisionOutcome.ALLOW,
         decision_reason=iam_decision_reason,
         semantic_access_check_reference=iam_decision_result_reference,
         message_reference=message_reference,
@@ -1193,6 +1569,22 @@ def _binding_from_candidate(
         component_type=candidate.component_type,
         binding_rebind_policy=plan.effective_rebind_policy,
     )
+
+
+def _bound_authorization(
+    evidence: AuthorizationDecisionEvidence,
+    **changes: object,
+) -> AuthorizationDecisionEvidence:
+    values = {
+        item.name: getattr(evidence, item.name)
+        for item in dataclasses.fields(AuthorizationDecisionEvidence)
+        if item.name not in {
+            "message_binding_reference",
+            "semantic_decision_reference",
+        }
+    }
+    values.update(changes)
+    return AuthorizationDecisionEvidence.bound(**values)  # type: ignore[arg-type]
 
 
 def _replace_plan_semantics(

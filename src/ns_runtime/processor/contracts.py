@@ -41,6 +41,12 @@ class ProcessorStage(str, Enum):
     RESPONSE_FINALIZE = "response_finalize"
 
 
+class AuthorizationDecisionOutcome(str, Enum):
+    """The only successful stage-two authorization outcome."""
+
+    ALLOW = "allow"
+
+
 PROCESSOR_STAGE_ORDER: tuple[ProcessorStage, ...] = (
     ProcessorStage.SECURITY_VALIDATION,
     ProcessorStage.AUTHORIZATION,
@@ -114,13 +120,13 @@ class ProcessorSafeSummary:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AuthorizationDecisionEvidence:
-    """Immutable stage-two value bound to one message authorization check."""
+    """Immutable ALLOW evidence bound to one message authorization check."""
 
     message_binding_reference: str = field(repr=False)
     semantic_decision_reference: str = field(repr=False)
     semantic_access_check_reference: str = field(repr=False)
     decision_version: str
-    decision_classification: str
+    decision_outcome: AuthorizationDecisionOutcome
     decision_reason: str
     message_reference: str
     message_type: str
@@ -146,7 +152,7 @@ class AuthorizationDecisionEvidence:
         if _SAFE_REFERENCE.fullmatch(self.authorized_target_reference) is None:
             _invalid("authorization_evidence.authorized_target_reference")
         for name in (
-            "decision_version", "decision_classification", "decision_reason",
+            "decision_version", "decision_reason",
             "message_type", "principal_tenant_id", "effective_tenant_id",
             "session_permission_snapshot_ref",
             "session_permission_snapshot_version",
@@ -156,6 +162,8 @@ class AuthorizationDecisionEvidence:
             value = getattr(self, name)
             if not isinstance(value, str) or not value or len(value) > 512:
                 _invalid(f"authorization_evidence.{name}")
+        if self.decision_outcome is not AuthorizationDecisionOutcome.ALLOW:
+            _invalid("authorization_evidence.decision_outcome")
         if type(self.cross_tenant_authorized) is not bool:
             _invalid("authorization_evidence.cross_tenant_authorized")
         if (
@@ -173,7 +181,7 @@ class AuthorizationDecisionEvidence:
         cls,
         *,
         decision_version: str,
-        decision_classification: str,
+        decision_outcome: AuthorizationDecisionOutcome,
         decision_reason: str,
         semantic_access_check_reference: str,
         message_reference: str,
@@ -187,9 +195,11 @@ class AuthorizationDecisionEvidence:
         effective_permission_snapshot_ref: str,
         effective_permission_snapshot_version: str,
     ) -> "AuthorizationDecisionEvidence":
+        if decision_outcome is not AuthorizationDecisionOutcome.ALLOW:
+            _invalid("authorization_evidence.decision_outcome")
         semantic_values = {
             "decision_version": decision_version,
-            "decision_classification": decision_classification,
+            "decision_outcome": decision_outcome.value,
             "decision_reason": decision_reason,
             "semantic_access_check_reference": semantic_access_check_reference,
             "message_type": message_type,
@@ -219,7 +229,7 @@ class AuthorizationDecisionEvidence:
             semantic_decision_reference=semantic_decision_reference,
             semantic_access_check_reference=semantic_access_check_reference,
             decision_version=decision_version,
-            decision_classification=decision_classification,
+            decision_outcome=decision_outcome,
             decision_reason=decision_reason,
             message_reference=message_reference,
             message_type=message_type,
@@ -236,7 +246,7 @@ class AuthorizationDecisionEvidence:
     def has_valid_semantic_decision(self) -> bool:
         return self.semantic_decision_reference == self._reference({
             "decision_version": self.decision_version,
-            "decision_classification": self.decision_classification,
+            "decision_outcome": self.decision_outcome.value,
             "decision_reason": self.decision_reason,
             "semantic_access_check_reference": self.semantic_access_check_reference,
             "message_type": self.message_type,
@@ -287,6 +297,8 @@ class AuthorizationDecisionEvidence:
 
 
 class ProcessorAuthorization(ABC):
+    """Return validated ALLOW evidence or raise; DENY is not a success value."""
+
     @abstractmethod
     async def authorize(
         self,
@@ -515,6 +527,7 @@ def _invalid(field_name: str) -> None:
 
 
 __all__ = (
+    "AuthorizationDecisionOutcome",
     "AuthorizationDecisionEvidence",
     "IdempotencyPrecheck",
     "MessageProcessor",

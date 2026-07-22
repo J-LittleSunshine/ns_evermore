@@ -10,6 +10,7 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_runtime.processor import (
+    AuthorizationDecisionOutcome,
     AuthorizationDecisionEvidence,
     ProcessorContext,
     ProcessorSafeSummary,
@@ -114,6 +115,7 @@ class LocalRoutingPreparation(RoutingPreparation):
             or value.cross_tenant_authorized is not crosses_tenant
             or value.effective_tenant_id
             != (target_tenant if crosses_tenant else context.session.tenant_id)
+            or value.decision_outcome is not AuthorizationDecisionOutcome.ALLOW
             or not value.has_valid_binding()
         ):
             return RoutingPreparationResult.rejected(_failure(

@@ -38,7 +38,11 @@ from .models import (
     SafeRoutingProjection,
     SelectedRoutingBinding,
     StrategyParameters,
+    compute_fallback_candidate_score,
     compute_routing_decision_fingerprint,
+    derive_candidate_filter_reason,
+    select_candidates_from_evidence,
+    validate_candidate_against_routing_target,
 )
 from .policy import DefaultLocalRoutingPolicy, RoutingPolicy
 from .router import (
@@ -92,5 +96,9 @@ __all__ = (
     "StrategyParameters",
     "StrongRoutingPlanAuthority",
     "UnavailableStrongRoutingPlanAuthority",
+    "compute_fallback_candidate_score",
     "compute_routing_decision_fingerprint",
+    "derive_candidate_filter_reason",
+    "select_candidates_from_evidence",
+    "validate_candidate_against_routing_target",
 )

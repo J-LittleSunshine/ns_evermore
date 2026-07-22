@@ -17,7 +17,12 @@ from ns_common.exceptions import (
     NsRuntimeTargetNotFoundError,
     NsValidationError,
 )
-from ns_runtime.processor.contracts import AuthorizationDecisionEvidence
+from ns_runtime.connection.index import ConnectionRoutingEligibility
+from ns_runtime.connection.state import LogicalConnectionState
+from ns_runtime.processor.contracts import (
+    AuthorizationDecisionEvidence,
+    AuthorizationDecisionOutcome,
+)
 from ns_runtime.protocol import (
     MessageAuditLevel,
     MessageCategory,
@@ -663,6 +668,7 @@ class RoutingRequest:
         if (
             evidence.message_reference != self.message_reference
             or evidence.message_type != self.message_type
+            or evidence.decision_outcome is not AuthorizationDecisionOutcome.ALLOW
             or evidence.authorized_target_reference != expected_target_reference
             or evidence.cross_tenant_authorized is not crosses_tenant
             or evidence.effective_tenant_id != expected_effective_tenant
@@ -751,6 +757,10 @@ class CandidateEvidence:
     component_type: str
     capabilities: frozenset[str] = field(repr=False)
     required_capabilities: frozenset[str] = field(repr=False)
+    connection_state: LogicalConnectionState
+    active_target_eligible: bool
+    routing_eligibility: ConnectionRoutingEligibility | None
+    rebind_eligible: bool
     filter_reason: CandidateFilterReason
     score: tuple[int | str, ...] | None = field(default=None, repr=False)
 
@@ -775,6 +785,30 @@ class CandidateEvidence:
         )
         if not isinstance(self.filter_reason, CandidateFilterReason):
             _invalid("candidate.filter_reason")
+        if not isinstance(self.connection_state, LogicalConnectionState):
+            _invalid("candidate.connection_state")
+        if type(self.active_target_eligible) is not bool:
+            _invalid("candidate.active_target_eligible")
+        if self.routing_eligibility is not None and not isinstance(
+            self.routing_eligibility,
+            ConnectionRoutingEligibility,
+        ):
+            _invalid("candidate.routing_eligibility")
+        if type(self.rebind_eligible) is not bool:
+            _invalid("candidate.rebind_eligible")
+        if (
+            self.active_target_eligible
+            != (self.routing_eligibility is ConnectionRoutingEligibility.ELIGIBLE)
+            or (
+                self.active_target_eligible
+                and self.connection_state is not LogicalConnectionState.ACTIVE
+            )
+            or (
+                self.routing_eligibility is ConnectionRoutingEligibility.DRAINING
+                and self.connection_state is not LogicalConnectionState.DRAINING
+            )
+        ):
+            _invalid("candidate.dynamic_state")
         if self.score is not None and not isinstance(self.score, tuple):
             _invalid("candidate.score")
 
@@ -951,7 +985,10 @@ class ResolvedRoutingPlan:
             f"rebind={decision.effective_rebind_policy.value}"
         )
         if (
-            decision.requested_strategy is not intent.requested_strategy
+            decision.invocation.requested_intent != intent
+            or decision.invocation.requested_intent.normalized_target
+            != self.original_target
+            or decision.requested_strategy is not intent.requested_strategy
             or decision.requested_rebind_policy is not intent.requested_rebind_policy
             or decision.requested_strategy_parameters
             != intent.requested_strategy_parameters
@@ -981,7 +1018,10 @@ class ResolvedRoutingPlan:
             session_tenant_id=authorization.principal_tenant_id,
         )
         if (
-            self.message_reference != authorization.message_reference
+            authorization.decision_outcome
+            is not AuthorizationDecisionOutcome.ALLOW
+            or decision.invocation.message_type != authorization.message_type
+            or self.message_reference != authorization.message_reference
             or self.iam_decision_reference
             != authorization.semantic_decision_reference
             or self.iam_decision_version != authorization.decision_version
@@ -1007,6 +1047,46 @@ class ResolvedRoutingPlan:
             or self.effective_strategy_parameters.strategy is not self.effective_strategy
         ):
             _invalid("routing_plan.strategy_parameters")
+        for candidate in self.candidates:
+            expected_reason = derive_candidate_filter_reason(
+                target=self.original_target,
+                effective_tenant_id=authorization.effective_tenant_id,
+                candidate=candidate,
+            )
+            if expected_reason is None:
+                if candidate.filter_reason not in {
+                    CandidateFilterReason.ELIGIBLE,
+                    CandidateFilterReason.SELECTED,
+                }:
+                    _invalid("routing_plan.candidate_eligible_reason")
+                expected_score = compute_fallback_candidate_score(
+                    target=self.original_target,
+                    scoring_decision=decision.scoring_decision,
+                    candidate=candidate,
+                )
+                if candidate.score != expected_score:
+                    _invalid("routing_plan.candidate_score")
+            elif (
+                candidate.filter_reason is not expected_reason
+                or candidate.score is not None
+            ):
+                _invalid("routing_plan.candidate_filter_reason")
+        expected_selected = select_candidates_from_evidence(
+            strategy=self.effective_strategy,
+            parameters=self.effective_strategy_parameters,
+            candidates=self.candidates,
+        )
+        if expected_selected is None or tuple(
+            _candidate_key(value) for value in expected_selected
+        ) != tuple(_binding_key(value) for value in self.selected_bindings):
+            _invalid("routing_plan.scorer_selection")
+        for binding in self.selected_bindings:
+            if validate_candidate_against_routing_target(
+                self.original_target,
+                authorization.effective_tenant_id,
+                binding,
+            ) is not None:
+                _invalid("routing_plan.selected_target_mismatch")
         passing_count = sum(
             value.filter_reason in {
                 CandidateFilterReason.ELIGIBLE,
@@ -1230,6 +1310,170 @@ class SafeRoutingProjection:
 RoutingDecision = ResolvedRoutingPlan | RoutingFailureReport
 
 
+def validate_candidate_against_routing_target(
+    target: TargetGroup,
+    effective_tenant_id: str,
+    candidate_or_binding: CandidateEvidence | SelectedRoutingBinding,
+    *,
+    check_connection_epoch: bool = True,
+) -> CandidateFilterReason | None:
+    """Validate the frozen intended-universe and target-constraint evidence."""
+
+    if not isinstance(target, TargetGroup):
+        _invalid("routing_target_validation.target")
+    _nonempty(effective_tenant_id, "routing_target_validation.effective_tenant_id")
+    if not isinstance(
+        candidate_or_binding,
+        (CandidateEvidence, SelectedRoutingBinding),
+    ):
+        _invalid("routing_target_validation.candidate_or_binding")
+    value = candidate_or_binding
+    required = frozenset(target.capabilities or ())
+    if value.required_capabilities != required:
+        _invalid("routing_target_validation.required_capabilities")
+
+    if target.kind == "connection":
+        if value.connection_id != target.connection_id:
+            _invalid("routing_target_validation.connection_universe")
+    elif target.kind == "identity":
+        if value.identity_reference.value != target.identity:
+            _invalid("routing_target_validation.identity_universe")
+    elif target.kind == "tenant":
+        if value.tenant_id != target.tenant_id:
+            _invalid("routing_target_validation.tenant_universe")
+    elif target.kind == "capability":
+        if isinstance(value, CandidateEvidence) and not required.issubset(
+            value.capabilities,
+        ):
+            _invalid("routing_target_validation.capability_universe")
+    elif target.kind == "component_type":
+        if value.component_type != target.component_type:
+            _invalid("routing_target_validation.component_universe")
+    elif target.kind == "runtime":
+        if value.runtime_id != target.runtime_id:
+            _invalid("routing_target_validation.runtime_universe")
+    elif target.kind == "broadcast":
+        if target.scope != "tenant" or value.tenant_id != target.tenant_id:
+            _invalid("routing_target_validation.broadcast_universe")
+        if (
+            isinstance(value, SelectedRoutingBinding)
+            and value.binding_rebind_policy is not RebindPolicy.FIXED_CONNECTION
+        ):
+            _invalid("routing_target_validation.broadcast_binding")
+    else:
+        _invalid("routing_target_validation.kind")
+
+    if value.tenant_id != effective_tenant_id:
+        return CandidateFilterReason.TENANT_MISMATCH
+    if target.tenant_id is not None and value.tenant_id != target.tenant_id:
+        return CandidateFilterReason.TENANT_MISMATCH
+    if (
+        target.component_type is not None
+        and value.component_type != target.component_type
+    ):
+        return CandidateFilterReason.COMPONENT_MISMATCH
+    if isinstance(value, CandidateEvidence) and not required.issubset(
+        value.capabilities,
+    ):
+        return CandidateFilterReason.CAPABILITY_MISMATCH
+    if (
+        check_connection_epoch
+        and target.connection_epoch is not None
+        and value.connection_epoch != target.connection_epoch
+    ):
+        return CandidateFilterReason.EPOCH_STALE
+    return None
+
+
+def compute_fallback_candidate_score(
+    *,
+    target: TargetGroup,
+    scoring_decision: RoutingScoringDecision,
+    candidate: CandidateEvidence,
+) -> tuple[int | str, ...]:
+    """Compute the canonical runtime_fallback/fallback.v1 score."""
+
+    if not isinstance(target, TargetGroup):
+        _invalid("routing_score.target")
+    if not isinstance(scoring_decision, RoutingScoringDecision):
+        _invalid("routing_score.scoring_decision")
+    if not isinstance(candidate, CandidateEvidence):
+        _invalid("routing_score.candidate")
+    exactness = 0 if target.kind == "connection" else 1
+    affinity = (
+        0
+        if candidate.connection_id
+        in scoring_decision.trusted_affinity_connection_ids
+        else 1
+    )
+    static_weight = -dict(
+        scoring_decision.runtime_policy_static_weights,
+    ).get(candidate.connection_id, 0)
+    required = frozenset(target.capabilities or ())
+    capability_surplus = len(candidate.capabilities - required)
+    tie_break = "|".join((
+        candidate.runtime_id,
+        candidate.tenant_id,
+        candidate.component_type,
+        candidate.identity_reference.value,
+        candidate.connection_id,
+        candidate.session_id,
+        str(candidate.connection_epoch),
+    ))
+    return (
+        exactness,
+        affinity,
+        static_weight,
+        capability_surplus,
+        tie_break,
+    )
+
+
+def select_candidates_from_evidence(
+    *,
+    strategy: RoutingStrategy,
+    parameters: StrategyParameters,
+    candidates: tuple[CandidateEvidence, ...],
+) -> tuple[CandidateEvidence, ...] | None:
+    """Select exclusively from canonical frozen fallback.v1 score evidence."""
+
+    if not isinstance(strategy, RoutingStrategy):
+        _invalid("routing_selection.strategy")
+    if (
+        not isinstance(parameters, StrategyParameters)
+        or parameters.strategy is not strategy
+    ):
+        _invalid("routing_selection.parameters")
+    if not isinstance(candidates, tuple) or any(
+        not isinstance(value, CandidateEvidence) for value in candidates
+    ):
+        _invalid("routing_selection.candidates")
+    passing = tuple(
+        value
+        for value in candidates
+        if value.filter_reason in {
+            CandidateFilterReason.ELIGIBLE,
+            CandidateFilterReason.SELECTED,
+        }
+    )
+    for value in passing:
+        _validate_fallback_score(value.score, "routing_selection.score")
+    ordered = tuple(sorted(passing, key=lambda value: value.score))
+    if strategy is RoutingStrategy.SINGLE:
+        selected_count = 1
+    elif strategy is RoutingStrategy.QUORUM:
+        assert parameters.fanout_count is not None
+        selected_count = parameters.fanout_count
+    elif strategy is RoutingStrategy.WEIGHTED_SUBSET:
+        assert parameters.subset_size is not None
+        selected_count = parameters.subset_size
+    else:
+        selected_count = len(ordered)
+    if selected_count < 1 or len(ordered) < selected_count:
+        return None
+    return ordered[:selected_count]
+
+
 def safe_target_reference(target: TargetGroup | None) -> str:
     payload = None if target is None else target.to_dict()
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -1333,6 +1577,14 @@ def compute_routing_decision_fingerprint(
                 "component_type": value.component_type,
                 "capabilities": sorted(value.capabilities),
                 "required_capabilities": sorted(value.required_capabilities),
+                "connection_state": value.connection_state.value,
+                "active_target_eligible": value.active_target_eligible,
+                "routing_eligibility": (
+                    None
+                    if value.routing_eligibility is None
+                    else value.routing_eligibility.value
+                ),
+                "rebind_eligible": value.rebind_eligible,
                 "filter_reason": value.filter_reason.value,
                 "score": value.score,
             }
@@ -1499,6 +1751,72 @@ def _binding_matches_candidate(
     )
 
 
+def _validate_fallback_score(value: object, name: str) -> None:
+    if (
+        not isinstance(value, tuple)
+        or len(value) != 5
+        or any(
+            isinstance(item, bool) or not isinstance(item, int)
+            for item in value[:4]
+        )
+        or value[0] not in {0, 1}
+        or value[1] not in {0, 1}
+        or value[3] < 0
+        or not isinstance(value[4], str)
+        or not value[4]
+    ):
+        _invalid(name)
+
+
+def derive_candidate_filter_reason(
+    *,
+    target: TargetGroup,
+    effective_tenant_id: str,
+    candidate: CandidateEvidence,
+) -> CandidateFilterReason | None:
+    target_reason = validate_candidate_against_routing_target(
+        target,
+        effective_tenant_id,
+        candidate,
+        check_connection_epoch=False,
+    )
+    if target_reason is not None:
+        return target_reason
+    if not candidate.rebind_eligible:
+        return CandidateFilterReason.REBIND_FORBIDDEN
+    if candidate.connection_state is LogicalConnectionState.DRAINING:
+        return CandidateFilterReason.DRAINING
+    if candidate.connection_state is not LogicalConnectionState.ACTIVE:
+        return CandidateFilterReason.NOT_ACTIVE
+    if (
+        candidate.routing_eligibility
+        is ConnectionRoutingEligibility.RECONNECT_GRACE
+    ):
+        return CandidateFilterReason.RECONNECT_GRACE
+    if (
+        candidate.routing_eligibility
+        is ConnectionRoutingEligibility.AUTHORITY_SUSPENDED
+    ):
+        return CandidateFilterReason.AUTHORITY_SUSPENDED
+    if (
+        candidate.routing_eligibility
+        is ConnectionRoutingEligibility.SESSION_EXPIRY_SUSPENDED
+    ):
+        return CandidateFilterReason.SESSION_EXPIRY_SUSPENDED
+    if (
+        candidate.routing_eligibility
+        is not ConnectionRoutingEligibility.ELIGIBLE
+        or not candidate.active_target_eligible
+    ):
+        return CandidateFilterReason.NOT_ELIGIBLE
+    return validate_candidate_against_routing_target(
+        target,
+        effective_tenant_id,
+        candidate,
+        check_connection_epoch=True,
+    )
+
+
 def _previous_context_integrity(
     *,
     plan_id: str,
@@ -1568,5 +1886,9 @@ __all__ = (
     "RoutingScorerIdentity", "RoutingScoringDecision",
     "RoutingSecurityOverride", "RoutingStrategy", "SafeRoutingProjection",
     "SelectedRoutingBinding", "StrategyParameters",
+    "compute_fallback_candidate_score",
     "compute_routing_decision_fingerprint", "safe_target_reference",
+    "derive_candidate_filter_reason",
+    "select_candidates_from_evidence",
+    "validate_candidate_against_routing_target",
 )

@@ -25,6 +25,7 @@ from .audit import (
 )
 from .contracts import (
     PROCESSOR_STAGE_ORDER,
+    AuthorizationDecisionOutcome,
     AuthorizationDecisionEvidence,
     IdempotencyPrecheck,
     MessageProcessor,
@@ -133,7 +134,10 @@ class AuthorizationProcessor(PipelineProcessor):
 
     async def process(self, context: ProcessorContext, value: object) -> object:
         evidence = await context.dependencies.authorization.authorize(context)
-        if not isinstance(evidence, AuthorizationDecisionEvidence):
+        if (
+            not isinstance(evidence, AuthorizationDecisionEvidence)
+            or evidence.decision_outcome is not AuthorizationDecisionOutcome.ALLOW
+        ):
             _invalid("authorization_evidence")
         return evidence
 
