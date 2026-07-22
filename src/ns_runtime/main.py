@@ -16,13 +16,19 @@ if TYPE_CHECKING:
     )
 
 
-async def _run_service_once(service: RuntimeService) -> None:
+async def _run_service_once(
+    service: RuntimeService,
+    *,
+    state_store: object | None = None,
+) -> None:
     """Run one listener self-check through the production shutdown path."""
 
     from ns_runtime.shutdown import RuntimeShutdownReason
 
     with service.shutdown_coordinator.install_signal_handlers():
         try:
+            if state_store is not None:
+                await state_store.open()  # type: ignore[attr-defined]
             await service.start()
         except BaseException as start_failure:
             try:
@@ -253,6 +259,12 @@ def main(
         base_url=config.runtime.iam.base_url,
         timeout_seconds=config.runtime.iam.request_timeout_seconds,
     )
+    from ns_common.state_store import create_state_store_provider
+
+    state_store = create_state_store_provider(
+        config=config.runtime.state_store,
+        clock=context.clock,
+    )
     context = RuntimeContext(
         config=config,
         clock=context.clock,
@@ -262,6 +274,7 @@ def main(
         task_supervisor=context.task_supervisor,
         dependencies=RuntimeDependencySlots(
             http_client_owner=http_client_owner,
+            state_store=state_store,
         ),
     )
     iam_client = IamClient(
@@ -363,7 +376,7 @@ def main(
         event_loop_monitor=event_loop_monitor,
         logical_connection_owner=logical_connection_manager,
     )
-    asyncio.run(_run_service_once(service))
+    asyncio.run(_run_service_once(service, state_store=state_store))
 
     return 0
 

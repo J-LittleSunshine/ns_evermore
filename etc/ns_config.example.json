@@ -254,6 +254,9 @@
     },
     "state_store": {
       "backend": "sqlite",
+      "endpoint": "",
+      "username": "",
+      "password_source": "none",
       "url": "",
       "namespace": "ns_runtime",
       "sqlite_path": "data/ns_runtime_state.sqlite3",

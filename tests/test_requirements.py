@@ -56,8 +56,10 @@ EXPECTED_DIRECT_PACKAGES = {
             "sqlparse",
         }
     ),
-    "requirements-runtime.txt": frozenset({"uvloop", "websockets"}),
-    "requirements-runtime-test.txt": frozenset({"redis", "valkey"}),
+    "requirements-runtime.txt": frozenset({
+        "redis", "uvloop", "valkey", "websockets",
+    }),
+    "requirements-runtime-test.txt": frozenset(),
     "requirements-runtime-benchmark.txt": frozenset({"pyperf", "psutil"}),
 }
 
@@ -242,9 +244,9 @@ class RequirementManifestTests(unittest.TestCase):
             manifests,
         )
 
-        self.assertLess(production, test)
+        self.assertEqual(production, test)
         self.assertLess(test, benchmark)
-        self.assertEqual(test - production, {"redis", "valkey"})
+        self.assertEqual(test - production, set())
         self.assertEqual(benchmark - test, {"pyperf", "psutil"})
 
     def test_quic_experiments_are_deferred_from_every_manifest(self) -> None:

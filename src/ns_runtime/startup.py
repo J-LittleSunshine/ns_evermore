@@ -51,6 +51,10 @@ _STARTUP_ADMITTED_TRANSPORT_ADAPTERS = frozenset({"websocket_tcp"})
 _TRANSPORT_DEPENDENCIES: Mapping[str, str] = MappingProxyType({
     "websocket_tcp": "websockets",
 })
+_STATE_STORE_DEPENDENCIES: Mapping[str, str] = MappingProxyType({
+    "redis": "redis",
+    "valkey": "valkey",
+})
 
 DependencyProbe = Callable[[str], object | None]
 DirectoryAccessProbe = Callable[[Path, int], bool]
@@ -614,6 +618,24 @@ class RuntimeStartupPreflight:
                     "dependency": package_name,
                 },
             ) from None
+        state_store_backend = context.config.runtime.state_store.backend
+        state_store_package = _STATE_STORE_DEPENDENCIES.get(state_store_backend)
+        if state_store_package is not None:
+            checked_dependencies.append(state_store_package)
+            try:
+                available = self._dependency_probe(state_store_package) is not None
+            except Exception:
+                available = False
+            if not available:
+                raise NsDependencyError(
+                    "Runtime startup dependency is unavailable.",
+                    details={
+                        "component": "runtime_startup",
+                        "phase": "preflight",
+                        "field": "runtime.state_store.backend",
+                        "dependency": state_store_package,
+                    },
+                ) from None
         return tuple(checked_dependencies)
 
     def _validate_tls_capability(self, context: RuntimeContext) -> None:

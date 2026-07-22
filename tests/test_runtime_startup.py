@@ -441,7 +441,10 @@ class RuntimeStartupPreflightTestCase(unittest.TestCase):
 
                 self.assertEqual(backend, result.state_store_backend)
                 self.assertEqual(("websocket_tcp",), result.tls_transport_adapters)
-                self.assertEqual(("websockets",), result.checked_dependencies)
+                self.assertEqual(
+                    ("websockets", backend),
+                    result.checked_dependencies,
+                )
 
     def test_tls_capability_is_checked_before_directories_and_policy(self) -> None:
         config = NsConfig.from_dict({}, environment="local")

@@ -31,6 +31,16 @@ from .model import (
     StateTransactionResult,
 )
 from .store import StateStore, StateStoreLifecycleState
+from .composition import create_state_store_provider
+from .redis_provider import (
+    EnvironmentStateStorePassword,
+    FileStateStorePassword,
+    NoStateStorePassword,
+    RedisStateStoreOptions,
+    RedisValkeyStateStore,
+    StateStorePasswordSource,
+    password_source_from_reference,
+)
 
 
 __all__ = (
@@ -58,7 +68,15 @@ __all__ = (
     "StateStoreHealth",
     "StateStoreHealthStatus",
     "StateStoreLifecycleState",
+    "EnvironmentStateStorePassword",
+    "FileStateStorePassword",
+    "NoStateStorePassword",
+    "RedisStateStoreOptions",
+    "RedisValkeyStateStore",
+    "StateStorePasswordSource",
     "StateTransaction",
     "StateTransactionResult",
     "classify_state_authority",
+    "create_state_store_provider",
+    "password_source_from_reference",
 )

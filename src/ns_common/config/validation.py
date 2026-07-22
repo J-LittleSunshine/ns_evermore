@@ -727,13 +727,29 @@ class _ConfigValidator:
         )
         if state_store.backend == "sqlite":
             self._validate_non_empty_string("runtime.state_store.sqlite_path", state_store.sqlite_path)
-        elif state_store.backend == "redis":
-            self._validate_cache_url("runtime.state_store.url", state_store.url, {"redis", "rediss"})
-        elif state_store.backend == "valkey":
-            self._validate_cache_url(
-                "runtime.state_store.url",
-                state_store.url,
-                {"redis", "rediss", "valkey", "valkeys"},
+        else:
+            if state_store.endpoint and state_store.url:
+                raise NsConfigError(
+                    "runtime.state_store endpoint aliases cannot be combined.",
+                    details={"field": "runtime.state_store.endpoint"},
+                )
+            endpoint = state_store.resolved_endpoint
+            allowed_schemes = (
+                {"redis", "rediss"}
+                if state_store.backend == "redis"
+                else {"redis", "rediss", "valkey", "valkeys"}
+            )
+            self._validate_state_store_endpoint(
+                "runtime.state_store.endpoint", endpoint, allowed_schemes,
+            )
+            if not isinstance(state_store.username, str):
+                raise NsConfigError(
+                    "runtime.state_store.username must be a string.",
+                    details={"field": "runtime.state_store.username"},
+                )
+            self._validate_state_store_password_source(
+                state_store.password_source,
+                environment=environment,
             )
 
         routing = runtime.routing
@@ -997,6 +1013,74 @@ class _ConfigValidator:
                     "field": field_name,
                     "value": cache_url,
                 },
+            )
+
+    @staticmethod
+    def _validate_state_store_endpoint(
+        field_name: str,
+        endpoint: Any,
+        allowed_schemes: set[str],
+    ) -> None:
+        if not isinstance(endpoint, str) or not endpoint.strip():
+            raise NsConfigError(
+                "Runtime StateStore endpoint must be configured.",
+                details={"field": field_name},
+            )
+        parsed = urlparse(endpoint.strip())
+        if parsed.scheme not in allowed_schemes:
+            raise NsConfigError(
+                "Runtime StateStore endpoint scheme is invalid.",
+                details={
+                    "field": field_name,
+                    "scheme": parsed.scheme,
+                    "allowed_schemes": sorted(allowed_schemes),
+                },
+            )
+        if not parsed.hostname:
+            raise NsConfigError(
+                "Runtime StateStore endpoint host is required.",
+                details={"field": field_name},
+            )
+        if parsed.username is not None or parsed.password is not None:
+            raise NsConfigError(
+                "Runtime StateStore credentials must use typed fields and a secret source.",
+                details={"field": field_name, "reason": "userinfo_forbidden"},
+            )
+        if parsed.query or parsed.fragment or parsed.params:
+            raise NsConfigError(
+                "Runtime StateStore endpoint contains unsupported components.",
+                details={"field": field_name},
+            )
+        path = parsed.path or "/0"
+        try:
+            database = int(path.removeprefix("/"))
+        except ValueError:
+            database = -1
+        if not path.startswith("/") or database < 0:
+            raise NsConfigError(
+                "Runtime StateStore endpoint database is invalid.",
+                details={"field": field_name},
+            )
+
+    @staticmethod
+    def _validate_state_store_password_source(
+        value: Any,
+        *,
+        environment: str,
+    ) -> None:
+        valid = False
+        if value == "none":
+            valid = True
+        elif isinstance(value, str) and value.startswith("env:"):
+            name = value[4:]
+            valid = re.fullmatch(r"[A-Z_][A-Z0-9_]{0,127}", name) is not None
+        elif isinstance(value, str) and value.startswith("file:"):
+            path = value[5:]
+            valid = bool(path) and Path(path).is_absolute()
+        if not valid:
+            raise NsConfigError(
+                "runtime.state_store.password_source is invalid.",
+                details={"field": "runtime.state_store.password_source"},
             )
 
     @staticmethod

@@ -150,13 +150,21 @@ class NsRuntimeIamConfig:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NsRuntimeStateStoreConfig:
     backend: Literal["sqlite", "redis", "valkey"] = "sqlite"
-    url: str = ""
+    endpoint: str = field(default="", repr=False)
+    username: str = field(default="", repr=False)
+    password_source: str = field(default="none", repr=False)
+    # Deprecated compatibility alias. New snapshots must prefer ``endpoint``.
+    url: str = field(default="", repr=False)
     namespace: str = "ns_runtime"
     sqlite_path: str = "data/ns_runtime_state.sqlite3"
     operation_timeout_seconds: int = 5
     metadata: NsConfigGroupMetadata = field(
         default_factory=lambda: NsConfigGroupMetadata(apply_mode="restart_required")
     )
+
+    @property
+    def resolved_endpoint(self) -> str:
+        return self.endpoint or self.url
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
