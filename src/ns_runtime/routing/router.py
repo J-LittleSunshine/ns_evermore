@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from dataclasses import replace
 
 from ns_common.config import NsRuntimeRoutingConfig
@@ -38,6 +39,7 @@ from .models import (
     ResolvedRoutingPlan,
     ResolutionHint,
     RoutingDecision,
+    RoutingFailureOutcome,
     RoutingFailureReason,
     RoutingFailureReport,
     RoutingIdentityReference,
@@ -45,6 +47,7 @@ from .models import (
     RoutingStrategy,
     SelectedRoutingBinding,
     StrategyParameters,
+    safe_target_reference,
 )
 
 
@@ -114,6 +117,39 @@ class LocalRouter:
             PreviousRoutingPlanContext,
         ):
             _invalid("previous")
+        if previous is not None:
+            if previous.message_reference != request.message_reference:
+                return self._failure(
+                    request,
+                    RoutingFailureReason.PREVIOUS_MESSAGE_MISMATCH,
+                )
+            if (
+                isinstance(previous.plan_version, bool)
+                or not isinstance(previous.plan_version, int)
+                or previous.plan_version < 1
+            ):
+                return self._failure(
+                    request,
+                    RoutingFailureReason.PREVIOUS_PLAN_VERSION_INVALID,
+                )
+            if not self._ids.is_valid(
+                previous.plan_id,
+                expected_kind=NsIdentifierKind.PLAN_ID,
+            ):
+                return self._failure(
+                    request,
+                    RoutingFailureReason.PREVIOUS_PLAN_ID_INVALID,
+                )
+            if re.fullmatch(r"sha256:[0-9a-f]{64}", previous.decision_fingerprint) is None:
+                return self._failure(
+                    request,
+                    RoutingFailureReason.PREVIOUS_FINGERPRINT_INVALID,
+                )
+            if not previous.has_valid_integrity():
+                return self._failure(
+                    request,
+                    RoutingFailureReason.PREVIOUS_FINGERPRINT_MISMATCH,
+                )
 
         target_tenant = request.target.tenant_id
         if (
@@ -135,7 +171,7 @@ class LocalRouter:
         if target.kind == "runtime" and target.runtime_id != self._runtime_id:
             return self._failure(
                 request,
-                RoutingFailureReason.REMOTE_RUNTIME,
+                RoutingFailureReason.REMOTE_RUNTIME_REQUIRED,
                 sequence=snapshot.mutation_sequence,
             )
 
@@ -149,7 +185,7 @@ class LocalRouter:
         if len(intended) > self._config.max_candidate_count:
             return self._failure(
                 request,
-                RoutingFailureReason.LIMIT_EXCEEDED,
+                RoutingFailureReason.CANDIDATE_LIMIT_EXCEEDED,
                 sequence=snapshot.mutation_sequence,
             )
 
@@ -188,7 +224,7 @@ class LocalRouter:
         if len(evidence) + len(filtered) > self._config.max_plan_evidence_count:
             return self._failure(
                 request,
-                RoutingFailureReason.LIMIT_EXCEEDED,
+                RoutingFailureReason.PLAN_EVIDENCE_LIMIT_EXCEEDED,
                 sequence=snapshot.mutation_sequence,
             )
         if (
@@ -225,7 +261,7 @@ class LocalRouter:
         if len(selected_evidence) > self._config.max_selected_target_count:
             return self._failure(
                 request,
-                RoutingFailureReason.LIMIT_EXCEEDED,
+                RoutingFailureReason.SELECTED_TARGET_LIMIT_EXCEEDED,
                 sequence=snapshot.mutation_sequence,
             )
         selected_ids = {candidate.connection_id for candidate in selected_evidence}
@@ -254,6 +290,7 @@ class LocalRouter:
                 identity_reference=candidate.identity_reference,
                 required_capabilities=frozenset(target.capabilities or ()),
                 component_type=candidate.component_type,
+                binding_rebind_policy=request.effective_rebind_policy,
             )
             for candidate in selected_evidence
         )
@@ -269,23 +306,39 @@ class LocalRouter:
             plan_id=self._ids.generate(NsIdentifierKind.PLAN_ID),
             plan_version=1 if previous is None else previous.plan_version + 1,
             previous_plan_id=None if previous is None else previous.plan_id,
+            previous_decision_fingerprint=(
+                None if previous is None else previous.decision_fingerprint
+            ),
+            previous_message_reference=(
+                None if previous is None else previous.message_reference
+            ),
             message_reference=request.message_reference,
             decision_fingerprint=fingerprint,
             original_target=target,
             candidates=final_evidence,
             filtered_evidence=filtered,
             selected_bindings=bindings,
-            strategy=request.effective_strategy,
-            strategy_parameters=StrategyParameters(
-                fanout_count=target.fanout_count,
-                required_count=target.required_count,
-                subset_size=target.subset_size,
+            requested_strategy=request.requested_intent.requested_strategy,
+            effective_strategy=request.effective_strategy,
+            requested_strategy_parameters=(
+                request.requested_intent.requested_strategy_parameters
+            ),
+            effective_strategy_parameters=request.strategy_parameters,
+            requested_rebind_policy=(
+                request.requested_intent.requested_rebind_policy
             ),
             effective_rebind_policy=request.effective_rebind_policy,
             requested_policy_evidence=(
-                target.rebind_policy or "default"
+                f"strategy={request.requested_intent.requested_strategy.value};"
+                f"rebind={target.rebind_policy or 'unspecified'}"
             ),
-            effective_policy_evidence=request.effective_rebind_policy.value,
+            effective_policy_evidence=(
+                f"strategy={request.effective_strategy.value};"
+                f"rebind={request.effective_rebind_policy.value}"
+            ),
+            security_override_evidence=(
+                request.policy_decision.security_override_evidence
+            ),
             config_version=request.config_version,
             policy_version=request.policy_version,
             scorer_source=FALLBACK_SCORER_SOURCE,
@@ -307,7 +360,7 @@ class LocalRouter:
             except Exception:
                 return self._failure(
                     request,
-                    RoutingFailureReason.AUTHORITY_UNAVAILABLE,
+                    RoutingFailureReason.STRONG_PLAN_AUTHORITY_UNAVAILABLE,
                     sequence=snapshot.mutation_sequence,
                     strong=True,
                 )
@@ -362,7 +415,11 @@ class LocalRouter:
         required = frozenset(target.capabilities or ())
         if not required.issubset(context.capabilities):
             return CandidateFilterReason.CAPABILITY_MISMATCH
-        if previous is not None and not self._rebind_allowed(request, context, previous):
+        if (
+            previous is not None
+            and request.effective_strategy is not RoutingStrategy.BROADCAST
+            and not self._rebind_allowed(request, context, previous)
+        ):
             return CandidateFilterReason.REBIND_FORBIDDEN
         if entry.state is LogicalConnectionState.DRAINING:
             return CandidateFilterReason.DRAINING
@@ -431,7 +488,7 @@ class LocalRouter:
 
     def _select(self, request, eligible):
         strategy = request.effective_strategy
-        target = request.target
+        parameters = request.strategy_parameters
         if strategy is RoutingStrategy.SINGLE:
             return tuple(eligible[:1])
         if strategy in {
@@ -441,15 +498,15 @@ class LocalRouter:
         }:
             return tuple(eligible)
         if strategy is RoutingStrategy.QUORUM:
-            assert target.fanout_count is not None
-            if len(eligible) < target.fanout_count:
+            assert parameters.fanout_count is not None
+            if len(eligible) < parameters.fanout_count:
                 return None
-            return tuple(eligible[:target.fanout_count])
+            return tuple(eligible[:parameters.fanout_count])
         if strategy is RoutingStrategy.WEIGHTED_SUBSET:
-            assert target.subset_size is not None
-            if len(eligible) < target.subset_size:
+            assert parameters.subset_size is not None
+            if len(eligible) < parameters.subset_size:
                 return None
-            return tuple(eligible[:target.subset_size])
+            return tuple(eligible[:parameters.subset_size])
         return None
 
     def _fingerprint(self, request, *, sequence, evidence, selected, previous):
@@ -465,14 +522,26 @@ class LocalRouter:
                 )
             },
             "effective_tenant": request.effective_tenant_id,
-            "strategy": request.effective_strategy.value,
-            "rebind": request.effective_rebind_policy.value,
+            "requested_strategy": request.requested_intent.requested_strategy.value,
+            "effective_strategy": request.effective_strategy.value,
+            "requested_rebind": (
+                None
+                if request.requested_intent.requested_rebind_policy is None
+                else request.requested_intent.requested_rebind_policy.value
+            ),
+            "effective_rebind": request.effective_rebind_policy.value,
+            "requested_parameters": _parameters_payload(
+                request.requested_intent.requested_strategy_parameters,
+            ),
+            "effective_parameters": _parameters_payload(request.strategy_parameters),
             "config_version": request.config_version,
             "policy_version": request.policy_version,
             "iam_version": request.iam_decision_version,
             "index_sequence": sequence,
             "scorer": [FALLBACK_SCORER_SOURCE, FALLBACK_SCORER_VERSION],
-            "previous": None if previous is None else [previous.plan_id, previous.plan_version],
+            "previous_decision_fingerprint": (
+                None if previous is None else previous.decision_fingerprint
+            ),
             "evidence": [
                 [
                     item.connection_id, item.session_id, item.connection_epoch,
@@ -493,43 +562,84 @@ class LocalRouter:
     def _failure_reason_from_filtered(self, filtered):
         reasons = {value.filter_reason for value in filtered}
         if CandidateFilterReason.DRAINING in reasons:
-            return RoutingFailureReason.DRAINING
+            return RoutingFailureReason.DRAINING_TARGET
         if CandidateFilterReason.RECONNECT_GRACE in reasons:
-            return RoutingFailureReason.RECONNECT_GRACE
+            return RoutingFailureReason.RECONNECT_GRACE_TARGET
         if CandidateFilterReason.AUTHORITY_SUSPENDED in reasons:
             return RoutingFailureReason.AUTHORITY_SUSPENDED
         if CandidateFilterReason.SESSION_EXPIRY_SUSPENDED in reasons:
             return RoutingFailureReason.SESSION_EXPIRY_SUSPENDED
         if CandidateFilterReason.EPOCH_STALE in reasons:
-            return RoutingFailureReason.EPOCH_STALE
+            return RoutingFailureReason.STALE_CONNECTION_EPOCH
+        if CandidateFilterReason.CAPABILITY_MISMATCH in reasons:
+            return RoutingFailureReason.CAPABILITY_MISMATCH
         return RoutingFailureReason.NO_CANDIDATE
 
     def _failure(self, request, reason, *, sequence=None, strong=False):
-        if reason is RoutingFailureReason.POLICY_REJECTED:
+        if reason in {
+            RoutingFailureReason.TARGET_REQUIRED,
+            RoutingFailureReason.STRATEGY_NOT_PERMITTED,
+            RoutingFailureReason.REBIND_NOT_PERMITTED,
+            RoutingFailureReason.PREVIOUS_MESSAGE_MISMATCH,
+            RoutingFailureReason.PREVIOUS_PLAN_ID_INVALID,
+            RoutingFailureReason.PREVIOUS_PLAN_VERSION_INVALID,
+            RoutingFailureReason.PREVIOUS_FINGERPRINT_INVALID,
+            RoutingFailureReason.PREVIOUS_FINGERPRINT_MISMATCH,
+        }:
             action = LaterActionSuggestion.SUBMIT_CORRECTED_TARGET
         elif reason in {
             RoutingFailureReason.TARGET_NOT_FOUND,
             RoutingFailureReason.TENANT_DENIED,
         }:
             action = LaterActionSuggestion.DO_NOT_RETRY_UNCHANGED
-        elif reason is RoutingFailureReason.AUTHORITY_UNAVAILABLE:
+        elif reason is RoutingFailureReason.STRONG_PLAN_AUTHORITY_UNAVAILABLE:
             action = LaterActionSuggestion.REROUTE_AFTER_AUTHORITY_REFRESH
         else:
             action = LaterActionSuggestion.REROUTE_AFTER_TOPOLOGY_CHANGE
         hint = (
             ResolutionHint.STRONG_AUTHORITY_REQUIRED
-            if strong or reason is RoutingFailureReason.AUTHORITY_UNAVAILABLE
+            if strong or reason is RoutingFailureReason.STRONG_PLAN_AUTHORITY_UNAVAILABLE
             else ResolutionHint.REMOTE_UNAVAILABLE
-            if reason is RoutingFailureReason.REMOTE_RUNTIME
+            if reason is RoutingFailureReason.REMOTE_RUNTIME_REQUIRED
             else ResolutionHint.LOCAL_INDEX
         )
         return RoutingFailureReport(
+            outcome=(
+                RoutingFailureOutcome.REJECTED
+                if reason in {
+                    RoutingFailureReason.TARGET_REQUIRED,
+                    RoutingFailureReason.STRATEGY_NOT_PERMITTED,
+                    RoutingFailureReason.REBIND_NOT_PERMITTED,
+                    RoutingFailureReason.AUTHORIZATION_EVIDENCE_MISMATCH,
+                    RoutingFailureReason.PREVIOUS_MESSAGE_MISMATCH,
+                    RoutingFailureReason.PREVIOUS_PLAN_ID_INVALID,
+                    RoutingFailureReason.PREVIOUS_PLAN_VERSION_INVALID,
+                    RoutingFailureReason.PREVIOUS_FINGERPRINT_INVALID,
+                    RoutingFailureReason.PREVIOUS_FINGERPRINT_MISMATCH,
+                    RoutingFailureReason.TARGET_NOT_FOUND,
+                    RoutingFailureReason.TENANT_DENIED,
+                }
+                else RoutingFailureOutcome.UNAVAILABLE
+            ),
             reason=reason,
+            original_target_safe_reference=safe_target_reference(request.target),
+            safe_message_reference=request.message_reference,
+            config_version=request.config_version,
+            policy_version=request.policy_version,
+            index_mutation_sequence=sequence,
             resolution_hint=hint,
             later_action=action,
-            safe_message_reference=request.message_reference,
-            index_mutation_sequence=sequence,
+            occurred_at=self._clock.utc_now(),
         )
+
+
+def _parameters_payload(parameters: StrategyParameters) -> dict[str, object]:
+    return {
+        "strategy": parameters.strategy.value,
+        "fanout_count": parameters.fanout_count,
+        "required_count": parameters.required_count,
+        "subset_size": parameters.subset_size,
+    }
 
 
 def _invalid(field_name: str) -> None:

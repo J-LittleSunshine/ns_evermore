@@ -21,6 +21,7 @@ from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
 from ns_common.time import ControlledClock
 from ns_runtime.connection import LogicalConnectionState, SessionContext
 from ns_runtime.processor import (
+    AuthorizationDecisionEvidence,
     AuditAction,
     AuditConsistency,
     DefaultProcessorErrorMapper,
@@ -62,6 +63,7 @@ from ns_runtime.routing import (
     LaterActionSuggestion,
     ResolutionHint,
     RoutingFailureReason,
+    RoutingFailureOutcome,
     RoutingFailureReport,
 )
 
@@ -138,6 +140,22 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(AuditAction.SUCCEEDED, record.action)
         self.assertEqual("config-v7", record.config_version)
         self.assertEqual("policy-v7", record.policy_version)
+
+    async def test_authorization_evidence_is_preserved_through_stages_three_to_five(self) -> None:
+        calls: list[ProcessorStage] = []
+        _, context = self._pipeline(calls=calls)
+        standard = build_standard_stage_processors(
+            message_processor=_MessageProcessorBinding(calls),
+        )
+        value = await standard[ProcessorStage.AUTHORIZATION].process(context, None)
+        self.assertIsInstance(value, AuthorizationDecisionEvidence)
+        for stage in (
+            ProcessorStage.RATE_LIMIT_ENTRY,
+            ProcessorStage.IDEMPOTENCY_PRECHECK,
+            ProcessorStage.AUDIT_MARKER,
+        ):
+            retained = await standard[stage].process(context, value)
+            self.assertIs(value, retained)
 
     def test_standard_stage_contract_contains_exact_fixed_order(self) -> None:
         binding = _MessageProcessorBinding([])
@@ -349,7 +367,7 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         for outcome, reason, error_type in (
             (
                 "rejected",
-                RoutingFailureReason.POLICY_REJECTED,
+                RoutingFailureReason.STRATEGY_NOT_PERMITTED,
                 NsRuntimeRouteRejectedError,
             ),
             (
@@ -361,10 +379,20 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
             with self.subTest(outcome=outcome):
                 routing_calls: list[str] = []
                 failure = RoutingFailureReport(
+                    outcome=(
+                        RoutingFailureOutcome.REJECTED
+                        if outcome == "rejected"
+                        else RoutingFailureOutcome.UNAVAILABLE
+                    ),
                     reason=reason,
+                    original_target_safe_reference="sha256:fedcba9876543210",
+                    safe_message_reference="sha256:0123456789abcdef",
+                    config_version="config-v1",
+                    policy_version="policy-v1",
+                    index_mutation_sequence=None,
                     resolution_hint=ResolutionHint.LOCAL_INDEX,
                     later_action=LaterActionSuggestion.DO_NOT_RETRY_UNCHANGED,
-                    safe_message_reference="sha256:0123456789abcdef",
+                    occurred_at=NOW,
                 )
                 contract = (
                     RoutingPreparationResult.rejected(failure)

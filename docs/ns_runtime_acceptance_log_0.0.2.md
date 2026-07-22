@@ -1728,6 +1728,38 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - strong RoutingPlan persistence未启用；无production StateStore provider、Redis/Valkey/SQLite adapter、Lua、lease/fencing。master query、remote forwarding、stale topology、DeliveryRecord/attempt、ACK/NACK/Defer、retry/queue/timer/dead-letter、delivery quorum和P14 health scoring均未实现。
 - 下一工作包：`P10-W01`保持`NOT_STARTED`；P10只能消费ResolvedRoutingPlan并独立冻结受理、Summary、去重与payload reference权威。
 
+## P09 RP-1 post-submit公共契约复核修复验收证据
+
+- 工作包：P09 RP-1 post-submit contract review；复核开始时状态按`IN_PROGRESS`处理，完成源码检查、实现、文档和全部回归后恢复为`VERIFIED/F3 (local only)`。
+- 完成时间：`2026-07-22T14:49:31+08:00`。
+- 范围：只修复P09。P10 Summary/DeliveryRecord未实施，`P10-W01`保持`BLOCKED`。
+- 修改文件：新增`src/ns_runtime/routing/policy.py`；更新routing models/router/integration/exports、processor authorization contract/value propagation/integration、三组runtime测试，以及ADR-036、implementation plan和本日志。ENV-1 TargetGroup、P05 index eligibility、PC-1八阶段顺序、audit-before-send、lifecycle strong audit和W09 interface-only authority均未迁移owner。
+
+### 公共契约修复
+
+- Routing authority：删除`RoutingRequest.from_target()`把wire值直接提升为effective policy的路径，冻结`RequestedRoutingIntent -> RoutingPolicyDecision -> trusted RoutingRequest`。`DefaultLocalRoutingPolicy`对strategy/rebind显式accept/reject/tighten；same-identity、same-capability、same-tenant只有被decision接受后才生效。strategy/rebind reject保留精确reason并映射`RUNTIME_ROUTE_REJECTED`。
+- Security override：policy只消费从可信`MessageTypeContract`生成的`RoutingRiskMetadata`；control、management、config、cluster、security audit和management capability强制`no_rebind_for_control`，不再依赖不存在的`security` category字符串。
+- Broadcast：wire继续禁止rebind，effective policy固定`fixed_connection`。previous broadcast触发完整新snapshot/新plan ID/version/全量bindings重建，失效旧binding不会通过`same_tenant`局部替换。
+- Previous chain：context包含plan ID/version、message reference、decision fingerprint、context-integrity fingerprint和selected bindings。Router在snapshot读取前验证message ownership、typed plan ID、version、fingerprint格式与完整性；跨message和篡改稳定拒绝，不生成plan。new decision fingerprint包含previous decision fingerprint，排除previous/current plan ID、created-at和message reference。
+- IAM evidence：PC-1 stage 2返回immutable `AuthorizationDecisionEvidence`，stage 3至5透明保留，stage 6验证message、normalized target、principal/effective tenant、cross-tenant allow与permission snapshot。backend无decision ID时，runtime把access-check输入/allow结果、permission版本、target和message绑定为安全decision reference；RoutingPlan IAM reference/version来自该message decision而不是session snapshot。
+- 类型不变量：`StrategyParameters`直接构造强制strategy/count矩阵并拒绝bool；`ResolvedRoutingPlan`强制version/previous、message chain、fingerprint、非空唯一binding和strategy-parameters一致；`RoutingFailureReport`强制outcome/reason一致并携带original-target safe reference、config/policy/index/later-action/resolution/occurred-at。stable reason细分strategy/rebind、三种limit、no-candidate、capability、target、epoch、draining/grace、authority/session suspension、strong authority和remote runtime。
+
+### 测试命令与结果
+
+- P09/PC-1专项：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09_rp1_review/bin/python -m unittest tests.test_runtime_routing tests.test_runtime_routing_contracts tests.test_runtime_processor_pipeline`，`Ran 38 tests in 0.777s, OK`。覆盖sender不能绕过policy、accept/reject/tighten、安全override、fixed broadcast/rebroadcast、previous ownership/fingerprint/plan-ID independence、authorization evidence正反向、direct invalid construction及原target/strategy/rebind/5001 fanout。
+- 既有边界专项：执行`test_runtime_protocol_schema`、`test_runtime_processor_pipeline`、`test_runtime_connection_index`、`test_runtime_connection_resume`、`test_runtime_connection_reauth`、`test_runtime_connection_security`和`test_runtime_connection_snapshot_audit`，`Ran 79 tests in 1.163s, OK`。ENV-1、P05 eligibility、stage-six、audit-before-send和lifecycle audit保持通过。
+- P03-P09联合：加载protocol、transport、connection/session、IAM、processor、state和routing模块，`Ran 383 tests in 12.109s, OK`。
+- Linux runtime标准asyncio：按DEP-1排除唯一Django-only `test_cache.py`，`Ran 739 tests in 24.722s, OK (skipped=1)`。
+- Linux runtime uvloop：同一739项在uvloop下执行，`Ran 739 tests in 25.888s, OK (skipped=1)`。
+- Linux backend：`PYTHONPATH=src /home/ns/.virtualenvs/ns_backend_p09_rp1_review/bin/python -m unittest discover -s tests -p 'test_*.py'`，最终顺序执行`Ran 750 tests in 20.980s, OK (skipped=49)`。一次与runtime全量并行的压力运行出现既有SQLite cache TTL timing assertion，单测立即复跑`Ran 1 test in 1.248s, OK`，随后backend全量顺序复跑通过；没有P09实现失败。
+- 依赖与静态：两隔离环境`pip check`均为`No broken requirements found.`；runtime `compileall -q src tests`与`git diff --check`通过。
+- 冷导入/禁止项：cold import `ns_runtime.routing`未加载Django、rest_framework或ns_backend。routing仍无transport send、DeliveryRecord/DeliveryAttempt/Summary、StateStore直连、TaskSupervisor/EventBus、worker、ACK/NACK/Defer、authority provider、remote forwarding或第二生命周期owner；later action仍只是纯数据。
+
+### 最终判断与限制
+
+- 实现完成：是；测试通过：是；P09 evidence状态：`VERIFIED/F3 (local only)`。
+- strong RoutingPlan persistence、remote/master routing、cluster/lease/fencing、Delivery/Summary/ACK/retry仍未实现。P10-W01保持`BLOCKED`，必须等待独立范围授权。
+
 ## 新记录模板
 
 - 工作包：

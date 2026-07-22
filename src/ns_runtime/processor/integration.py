@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import TYPE_CHECKING, Callable, Mapping
 
 from ns_common.async_runtime import TaskSupervisor
@@ -26,11 +28,13 @@ from ns_runtime.transport import TransportSession
 from .audit import AuditConsistency, AuditSink
 from .contracts import (
     PROCESSOR_STAGE_ORDER,
+    AuthorizationDecisionEvidence,
     ProcessorAuthorization,
     ProcessorContext,
     ProcessorDependencies,
     ProcessorErrorMapper,
     ProcessorExecutionPolicy,
+    ProcessorSafeSummary,
     MessageProcessor,
     ProcessorStage,
     ResponseFinalizer,
@@ -66,7 +70,10 @@ class IamProcessorAuthorization(ProcessorAuthorization):
         self._service = service
         self._registry = protocol_registry
 
-    async def authorize(self, context: ProcessorContext) -> None:
+    async def authorize(
+        self,
+        context: ProcessorContext,
+    ) -> AuthorizationDecisionEvidence:
         from ns_runtime.iam import PermissionSnapshot
 
         if not isinstance(context, ProcessorContext):
@@ -112,23 +119,38 @@ class IamProcessorAuthorization(ProcessorAuthorization):
             expires_at=session.session_expires_at,
             resume_eligible=session.resume_eligible,
         )
-        await self._service.authorize(
+        effective, decision = await self._service.authorize(
             snapshot=snapshot,
             request=request,
             risk=_risk_context(contract, crosses_tenant=crosses_tenant),
+        )
+        return _authorization_evidence(
+            context=context,
+            request=request,
+            effective_snapshot=effective,
+            decision=decision,
         )
 
 
 class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
     """Explicit test boundary; production composition uses IAM-R1 above."""
 
-    def __init__(self, *, allowed: bool = True) -> None:
-        if type(allowed) is not bool:
+    def __init__(
+        self,
+        *,
+        allowed: bool = True,
+        authorize_cross_tenant: bool = False,
+    ) -> None:
+        if type(allowed) is not bool or type(authorize_cross_tenant) is not bool:
             _invalid("test_authorization.allowed")
         self.allowed = allowed
+        self.authorize_cross_tenant = authorize_cross_tenant
         self.calls: list[ProcessorContext] = []
 
-    async def authorize(self, context: ProcessorContext) -> None:
+    async def authorize(
+        self,
+        context: ProcessorContext,
+    ) -> AuthorizationDecisionEvidence:
         if not isinstance(context, ProcessorContext):
             _invalid("test_authorization.context")
         self.calls.append(context)
@@ -140,6 +162,49 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
                     "reason": "deterministic_test_denial",
                 },
             )
+        target = context.envelope.target
+        target_reference = AuthorizationDecisionEvidence.target_reference(
+            target,
+            session_tenant_id=context.session.tenant_id,
+        )
+        message_reference = ProcessorSafeSummary.from_envelope(
+            context.envelope,
+        ).object_reference
+        target_tenant = None if target is None else target.tenant_id
+        crosses_tenant = (
+            target_tenant is not None
+            and target_tenant != context.session.tenant_id
+        )
+        if crosses_tenant and not self.authorize_cross_tenant:
+            raise NsRuntimeIamDeniedError(
+                details={
+                    "component": "processor_authorization",
+                    "operation": "authorize",
+                    "reason": "cross_tenant_not_authorized_by_test_policy",
+                },
+            )
+        payload = {
+            "allowed": True,
+            "message_reference": message_reference,
+            "message_type": context.envelope.message.type,
+            "permission_snapshot_ref": context.session.permission_snapshot_ref,
+            "permission_version": context.session.permission_version,
+            "target_reference": target_reference,
+        }
+        return AuthorizationDecisionEvidence(
+            decision_reference=_decision_digest(payload),
+            decision_version="authorization-decision.v1",
+            message_reference=message_reference,
+            message_type=context.envelope.message.type,
+            principal_tenant_id=context.session.tenant_id,
+            effective_tenant_id=(target_tenant if crosses_tenant else context.session.tenant_id),
+            cross_tenant_authorized=(
+                self.authorize_cross_tenant if crosses_tenant else False
+            ),
+            authorized_target_reference=target_reference,
+            permission_snapshot_ref=context.session.permission_snapshot_ref,
+            permission_snapshot_version=context.session.permission_version,
+        )
 
 
 class CanonicalResponseFinalizer(ResponseFinalizer):
@@ -406,22 +471,82 @@ def _registration(
 def _target_context(context: ProcessorContext) -> IamTargetContext:
     target = context.envelope.target
     if target is None:
-        return IamTargetContext(kind="session", tenant_id=context.session.tenant_id)
-    reference = next((
-        value
-        for value in (
-            target.connection_id,
-            target.identity,
-            target.runtime_id,
-            target.scope,
+        return IamTargetContext(
+            kind="session",
+            tenant_id=context.session.tenant_id,
+            reference=AuthorizationDecisionEvidence.target_reference(
+                None,
+                session_tenant_id=context.session.tenant_id,
+            ),
         )
-        if value is not None
-    ), None)
     return IamTargetContext(
         kind=target.kind,
         tenant_id=target.tenant_id or context.session.tenant_id,
-        reference=reference,
+        reference=AuthorizationDecisionEvidence.target_reference(
+            target,
+            session_tenant_id=context.session.tenant_id,
+        ),
     )
+
+
+def _authorization_evidence(
+    *,
+    context: ProcessorContext,
+    request: IamAccessCheckRequest,
+    effective_snapshot: object,
+    decision: object,
+) -> AuthorizationDecisionEvidence:
+    from ns_common.iam import IamAccessDecision
+    from ns_runtime.iam import PermissionSnapshot
+
+    if not isinstance(effective_snapshot, PermissionSnapshot):
+        _invalid("authorization.effective_snapshot")
+    if not isinstance(decision, IamAccessDecision) or not decision.allowed:
+        _invalid("authorization.decision")
+    message_reference = ProcessorSafeSummary.from_envelope(
+        context.envelope,
+    ).object_reference
+    target_reference = AuthorizationDecisionEvidence.target_reference(
+        context.envelope.target,
+        session_tenant_id=context.session.tenant_id,
+    )
+    if request.target.reference != target_reference:
+        _invalid("authorization.target_reference")
+    effective_tenant_id = (
+        request.target.tenant_id
+        if request.cross_tenant
+        else effective_snapshot.tenant_id
+    )
+    effective_request = request.to_wire()
+    effective_request["permission_snapshot_ref"] = (
+        effective_snapshot.permission_snapshot_ref
+    )
+    effective_request["permission_version"] = effective_snapshot.permission_version
+    payload = {
+        "request": effective_request,
+        "decision": decision.to_wire(),
+        "effective_permission_snapshot_ref": effective_snapshot.permission_snapshot_ref,
+        "effective_permission_version": effective_snapshot.permission_version,
+        "message_reference": message_reference,
+        "target_reference": target_reference,
+    }
+    return AuthorizationDecisionEvidence(
+        decision_reference=_decision_digest(payload),
+        decision_version="authorization-decision.v1",
+        message_reference=message_reference,
+        message_type=context.envelope.message.type,
+        principal_tenant_id=effective_snapshot.tenant_id,
+        effective_tenant_id=effective_tenant_id,
+        cross_tenant_authorized=(decision.allowed and request.cross_tenant),
+        authorized_target_reference=target_reference,
+        permission_snapshot_ref=effective_snapshot.permission_snapshot_ref,
+        permission_snapshot_version=effective_snapshot.permission_version,
+    )
+
+
+def _decision_digest(payload: object) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _risk_context(contract: MessageTypeContract, *, crosses_tenant: bool) -> OperationRiskContext:

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from ns_common.async_runtime import TaskSupervisor
-from ns_common.exceptions import NsRuntimeEnvelopeSchemaError
+from ns_common.exceptions import NsRuntimeEnvelopeSchemaError, NsRuntimeRouteRejectedError
 from ns_common.iam import IamPrincipalType
 from ns_common.time import ControlledClock
 from ns_runtime.processor import (
@@ -20,15 +20,23 @@ from ns_runtime.processor import (
     ProcessorDependencies,
     ProcessorTraceReference,
     RoutingPreparationOutcome,
+    AuthorizationDecisionEvidence,
 )
 from ns_runtime.processor.integration import DeterministicTestProcessorAuthorization
 from ns_runtime.protocol import (
     BUILTIN_MESSAGE_REGISTRY,
     MessageGroup,
+    MessageTypeRegistry,
     RoutingRequirement,
     TargetGroup,
 )
-from ns_runtime.routing import LocalRoutingPreparation
+from ns_runtime.routing import (
+    DefaultLocalRoutingPolicy,
+    LocalRoutingPreparation,
+    ResolvedRoutingPlan,
+    RoutingFailureReason,
+    RoutingStrategy,
+)
 
 from tests.test_runtime_processor_pipeline import NOW, _envelope, _session
 from tests.test_runtime_routing import RUNTIME_ID, _router, _snapshot, _SnapshotIndex, _routing_context
@@ -202,6 +210,123 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
         result = await preparation.prepare(context, None)
         self.assertIs(RoutingPreparationOutcome.NO_ROUTING_REQUIRED, result.outcome)
         self.assertEqual(0, index.snapshot_calls)
+
+    async def test_explicit_cross_tenant_authorization_evidence_is_required(self) -> None:
+        target_context = dataclasses.replace(_routing_context(0), tenant_id="tenant-b")
+        index = _SnapshotIndex(_snapshot((target_context,)))
+        contract = dataclasses.replace(
+            BUILTIN_MESSAGE_REGISTRY.require("task.dispatch"),
+            feature_enabled=True,
+        )
+        registry = MessageTypeRegistry((contract,))
+        preparation = LocalRoutingPreparation(
+            router=_router(index, self.clock),
+            protocol_registry=registry,
+        )
+        session = dataclasses.replace(
+            _session(),
+            tenant_id="tenant-a",
+            permission_snapshot_ref="permission-ref",
+            permission_version="permission-v1",
+        )
+        target = TargetGroup(kind="tenant", tenant_id="tenant-b")
+        envelope = dataclasses.replace(
+            _envelope(),
+            message=MessageGroup(
+                message_id="message-test",
+                type="task.dispatch",
+                category="task",
+                priority=0,
+                created_at="2026-07-22T00:00:00Z",
+            ),
+            target=target,
+        )
+        envelope = dataclasses.replace(
+            envelope,
+            source=dataclasses.replace(
+                envelope.source,
+                connection_id=session.connection_id,
+                tenant_id=session.tenant_id,
+            ),
+            auth_context=dataclasses.replace(
+                envelope.auth_context,
+                permission_snapshot_ref=session.permission_snapshot_ref,
+            ),
+        )
+        authorization = DeterministicTestProcessorAuthorization(
+            authorize_cross_tenant=True,
+        )
+        dependencies = ProcessorDependencies(
+            authorization=authorization,
+            rate_limit=InterfaceOnlyRateLimitEntry(),
+            idempotency=InterfaceOnlyIdempotencyPrecheck(),
+            routing=preparation,
+            response_finalizer=PassthroughResponseFinalizer(),
+            error_mapper=DefaultProcessorErrorMapper(),
+            principal_type=IamPrincipalType.CLIENT,
+            audit_sink=DeterministicTestAuditSink(),
+            event_bus=EventBus(task_supervisor=self.supervisor, default_timeout_seconds=1),
+            task_supervisor=self.supervisor,
+        )
+        context = ProcessorContext(
+            normalized_envelope=envelope,
+            session=session,
+            trace=ProcessorTraceReference(value="trace:test"),
+            config_version="config-v1",
+            policy_version="policy-v1",
+            clock=self.clock,
+            dependencies=dependencies,
+        )
+        evidence = await authorization.authorize(context)
+        self.assertIsInstance(evidence, AuthorizationDecisionEvidence)
+        self.assertTrue(evidence.cross_tenant_authorized)
+        resolved = await preparation.prepare(context, evidence)
+        self.assertIs(RoutingPreparationOutcome.RESOLVED, resolved.outcome)
+        self.assertIsInstance(resolved.plan, ResolvedRoutingPlan)
+        assert isinstance(resolved.plan, ResolvedRoutingPlan)
+        self.assertEqual(evidence.decision_reference, resolved.plan.iam_decision_reference)
+        self.assertEqual(evidence.decision_version, resolved.plan.iam_decision_version)
+        self.assertNotEqual(session.permission_snapshot_ref, resolved.plan.iam_decision_reference)
+
+        before = index.snapshot_calls
+        policy_rejected = await LocalRoutingPreparation(
+            router=_router(index, self.clock),
+            protocol_registry=registry,
+            policy=DefaultLocalRoutingPolicy(
+                allowed_strategies=frozenset({RoutingStrategy.ALL}),
+            ),
+        ).prepare(context, evidence)
+        self.assertIs(RoutingPreparationOutcome.REJECTED, policy_rejected.outcome)
+        self.assertIs(
+            RoutingFailureReason.STRATEGY_NOT_PERMITTED,
+            policy_rejected.failure.reason,
+        )
+        self.assertIsInstance(
+            policy_rejected.failure.public_error(),
+            NsRuntimeRouteRejectedError,
+        )
+        self.assertEqual(before, index.snapshot_calls)
+
+        unauthorized = dataclasses.replace(
+            evidence,
+            cross_tenant_authorized=False,
+            effective_tenant_id=session.tenant_id,
+        )
+        rejected = await preparation.prepare(context, unauthorized)
+        self.assertIs(RoutingPreparationOutcome.REJECTED, rejected.outcome)
+        self.assertIs(
+            RoutingFailureReason.AUTHORIZATION_EVIDENCE_MISMATCH,
+            rejected.failure.reason,
+        )
+        self.assertEqual(before, index.snapshot_calls)
+
+        unrelated = dataclasses.replace(
+            evidence,
+            message_reference="sha256:1111111111111111",
+        )
+        rejected_message = await preparation.prepare(context, unrelated)
+        self.assertIs(RoutingPreparationOutcome.REJECTED, rejected_message.outcome)
+        self.assertEqual(before, index.snapshot_calls)
 
 
 if __name__ == "__main__":

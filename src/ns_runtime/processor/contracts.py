@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from abc import ABC, abstractmethod
@@ -16,7 +17,7 @@ from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import NsValidationError
 from ns_common.time import Clock
 from ns_common.iam import IamPrincipalType
-from ns_runtime.protocol import Envelope, ProtocolVersion
+from ns_runtime.protocol import Envelope, ProtocolVersion, TargetGroup
 
 if TYPE_CHECKING:
     from ns_runtime.connection.session import SessionContext
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
 
 
 _NAME = re.compile(r"[a-z][a-z0-9_]*(?:[.:-][a-z0-9_]+)*")
+_SAFE_REFERENCE = re.compile(r"sha256:[0-9a-f]{16}")
+_DECISION_REFERENCE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class ProcessorStage(str, Enum):
@@ -109,9 +112,60 @@ class ProcessorSafeSummary:
         )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AuthorizationDecisionEvidence:
+    """Immutable stage-two value bound to one message authorization check."""
+
+    decision_reference: str = field(repr=False)
+    decision_version: str
+    message_reference: str
+    message_type: str
+    principal_tenant_id: str = field(repr=False)
+    effective_tenant_id: str = field(repr=False)
+    cross_tenant_authorized: bool
+    authorized_target_reference: str = field(repr=False)
+    permission_snapshot_ref: str = field(repr=False)
+    permission_snapshot_version: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if _DECISION_REFERENCE.fullmatch(self.decision_reference) is None:
+            _invalid("authorization_evidence.decision_reference")
+        if _SAFE_REFERENCE.fullmatch(self.message_reference) is None:
+            _invalid("authorization_evidence.message_reference")
+        if _SAFE_REFERENCE.fullmatch(self.authorized_target_reference) is None:
+            _invalid("authorization_evidence.authorized_target_reference")
+        for name in (
+            "decision_version", "message_type", "principal_tenant_id",
+            "effective_tenant_id",
+            "permission_snapshot_ref", "permission_snapshot_version",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value or len(value) > 512:
+                _invalid(f"authorization_evidence.{name}")
+        if type(self.cross_tenant_authorized) is not bool:
+            _invalid("authorization_evidence.cross_tenant_authorized")
+
+    @staticmethod
+    def target_reference(target: TargetGroup | None, *, session_tenant_id: str) -> str:
+        if not isinstance(session_tenant_id, str) or not session_tenant_id:
+            _invalid("authorization_evidence.session_tenant_id")
+        if target is not None and not isinstance(target, TargetGroup):
+            _invalid("authorization_evidence.target")
+        payload = (
+            {"kind": "session", "tenant_id": session_tenant_id}
+            if target is None
+            else target.to_dict()
+        )
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
 class ProcessorAuthorization(ABC):
     @abstractmethod
-    async def authorize(self, context: "ProcessorContext") -> None:
+    async def authorize(
+        self,
+        context: "ProcessorContext",
+    ) -> AuthorizationDecisionEvidence:
         raise NotImplementedError
 
 
@@ -335,6 +389,7 @@ def _invalid(field_name: str) -> None:
 
 
 __all__ = (
+    "AuthorizationDecisionEvidence",
     "IdempotencyPrecheck",
     "MessageProcessor",
     "MessageProcessorExecutionBoundary",

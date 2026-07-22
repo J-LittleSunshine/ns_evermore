@@ -12,6 +12,7 @@ from .audit import (
     ProcessorAuditRecord,
 )
 from .contracts import (
+    AuthorizationDecisionEvidence,
     IdempotencyPrecheck,
     MessageProcessor,
     MessageProcessorExecutionBoundary,
@@ -55,6 +56,7 @@ from .registry import PipelineProcessor, ProcessorRegistration, ProcessorRegistr
 
 
 __all__ = (
+    "AuthorizationDecisionEvidence",
     "AuditAction",
     "AuditConsistency",
     "AuditSink",

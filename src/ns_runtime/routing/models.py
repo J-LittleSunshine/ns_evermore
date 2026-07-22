@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Immutable RP-1 request, evidence, decision, and safe projection contracts."""
+"""Immutable RP-1 request, policy, evidence, decision, and projection contracts."""
 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,10 +17,13 @@ from ns_common.exceptions import (
     NsRuntimeTargetNotFoundError,
     NsValidationError,
 )
+from ns_runtime.processor.contracts import AuthorizationDecisionEvidence
 from ns_runtime.protocol import TargetGroup
 
 
 _SAFE_REFERENCE = re.compile(r"sha256:[0-9a-f]{16}")
+_DECISION_FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
+_PLAN_ID = re.compile(r"plan_[0-9a-f]{32}")
 
 
 class RoutingStrategy(str, Enum):
@@ -39,19 +43,35 @@ class RebindPolicy(str, Enum):
     NO_REBIND_FOR_CONTROL = "no_rebind_for_control"
 
 
+class RoutingFailureOutcome(str, Enum):
+    REJECTED = "rejected"
+    UNAVAILABLE = "unavailable"
+
+
 class RoutingFailureReason(str, Enum):
-    POLICY_REJECTED = "policy_rejected"
+    TARGET_REQUIRED = "target_required"
+    STRATEGY_NOT_PERMITTED = "strategy_not_permitted"
+    REBIND_NOT_PERMITTED = "rebind_not_permitted"
+    AUTHORIZATION_EVIDENCE_MISMATCH = "authorization_evidence_mismatch"
+    PREVIOUS_MESSAGE_MISMATCH = "previous_message_mismatch"
+    PREVIOUS_PLAN_ID_INVALID = "previous_plan_id_invalid"
+    PREVIOUS_PLAN_VERSION_INVALID = "previous_plan_version_invalid"
+    PREVIOUS_FINGERPRINT_INVALID = "previous_fingerprint_invalid"
+    PREVIOUS_FINGERPRINT_MISMATCH = "previous_fingerprint_mismatch"
     TARGET_NOT_FOUND = "target_not_found"
     TENANT_DENIED = "tenant_denied"
+    CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"
+    SELECTED_TARGET_LIMIT_EXCEEDED = "selected_target_limit_exceeded"
+    PLAN_EVIDENCE_LIMIT_EXCEEDED = "plan_evidence_limit_exceeded"
     NO_CANDIDATE = "no_candidate"
-    DRAINING = "draining"
-    RECONNECT_GRACE = "reconnect_grace"
+    CAPABILITY_MISMATCH = "capability_mismatch"
+    STALE_CONNECTION_EPOCH = "stale_connection_epoch"
+    DRAINING_TARGET = "draining_target"
+    RECONNECT_GRACE_TARGET = "reconnect_grace_target"
     AUTHORITY_SUSPENDED = "authority_suspended"
     SESSION_EXPIRY_SUSPENDED = "session_expiry_suspended"
-    EPOCH_STALE = "epoch_stale"
-    LIMIT_EXCEEDED = "limit_exceeded"
-    REMOTE_RUNTIME = "remote_runtime"
-    AUTHORITY_UNAVAILABLE = "authority_unavailable"
+    STRONG_PLAN_AUTHORITY_UNAVAILABLE = "strong_plan_authority_unavailable"
+    REMOTE_RUNTIME_REQUIRED = "remote_runtime_required"
     INDEX_UNAVAILABLE = "index_unavailable"
 
 
@@ -98,45 +118,204 @@ class RoutingIdentityReference:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class StrategyParameters:
+    strategy: RoutingStrategy
+    fanout_count: int | None = None
+    required_count: int | None = None
+    subset_size: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.strategy, RoutingStrategy):
+            _invalid("strategy_parameters.strategy")
+        for name in ("fanout_count", "required_count", "subset_size"):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 1
+            ):
+                _invalid(f"strategy_parameters.{name}")
+        if self.strategy is RoutingStrategy.QUORUM:
+            if self.fanout_count is None or self.required_count is None:
+                _invalid("strategy_parameters.quorum_counts")
+            if self.subset_size is not None or self.required_count > self.fanout_count:
+                _invalid("strategy_parameters.quorum_shape")
+        elif self.strategy is RoutingStrategy.WEIGHTED_SUBSET:
+            if self.subset_size is None:
+                _invalid("strategy_parameters.subset_size")
+            if self.fanout_count is not None or self.required_count is not None:
+                _invalid("strategy_parameters.weighted_subset_shape")
+        elif any(
+            value is not None
+            for value in (self.fanout_count, self.required_count, self.subset_size)
+        ):
+            _invalid("strategy_parameters.counts_forbidden")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RequestedRoutingIntent:
+    normalized_target: TargetGroup = field(repr=False)
+    requested_strategy: RoutingStrategy
+    requested_rebind_policy: RebindPolicy | None
+    requested_strategy_parameters: StrategyParameters
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.normalized_target, TargetGroup):
+            _invalid("routing_intent.normalized_target")
+        if not isinstance(self.requested_strategy, RoutingStrategy):
+            _invalid("routing_intent.requested_strategy")
+        if self.requested_rebind_policy is not None and not isinstance(
+            self.requested_rebind_policy,
+            RebindPolicy,
+        ):
+            _invalid("routing_intent.requested_rebind_policy")
+        if (
+            not isinstance(self.requested_strategy_parameters, StrategyParameters)
+            or self.requested_strategy_parameters.strategy is not self.requested_strategy
+        ):
+            _invalid("routing_intent.requested_strategy_parameters")
+
+    @classmethod
+    def from_target(cls, target: TargetGroup) -> "RequestedRoutingIntent":
+        if not isinstance(target, TargetGroup):
+            _invalid("routing_intent.normalized_target")
+        strategy = RoutingStrategy(target.multi_connection_policy or "single")
+        return cls(
+            normalized_target=target,
+            requested_strategy=strategy,
+            requested_rebind_policy=(
+                None if target.rebind_policy is None else RebindPolicy(target.rebind_policy)
+            ),
+            requested_strategy_parameters=StrategyParameters(
+                strategy=strategy,
+                fanout_count=target.fanout_count,
+                required_count=target.required_count,
+                subset_size=target.subset_size,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RoutingPolicyDecision:
+    accepted: bool
+    requested_strategy: RoutingStrategy
+    effective_strategy: RoutingStrategy | None
+    requested_rebind_policy: RebindPolicy | None
+    effective_rebind_policy: RebindPolicy | None
+    requested_strategy_parameters: StrategyParameters
+    effective_strategy_parameters: StrategyParameters | None
+    rejection_reason: RoutingFailureReason | None
+    config_version: str
+    policy_version: str
+    security_override_evidence: str
+
+    def __post_init__(self) -> None:
+        if type(self.accepted) is not bool:
+            _invalid("routing_policy_decision.accepted")
+        if not isinstance(self.requested_strategy, RoutingStrategy):
+            _invalid("routing_policy_decision.requested_strategy")
+        if self.requested_rebind_policy is not None and not isinstance(
+            self.requested_rebind_policy, RebindPolicy,
+        ):
+            _invalid("routing_policy_decision.requested_rebind_policy")
+        if (
+            not isinstance(self.requested_strategy_parameters, StrategyParameters)
+            or self.requested_strategy_parameters.strategy is not self.requested_strategy
+        ):
+            _invalid("routing_policy_decision.requested_parameters")
+        for name in ("config_version", "policy_version", "security_override_evidence"):
+            _nonempty(getattr(self, name), f"routing_policy_decision.{name}")
+        if self.accepted:
+            if (
+                not isinstance(self.effective_strategy, RoutingStrategy)
+                or not isinstance(self.effective_rebind_policy, RebindPolicy)
+                or not isinstance(self.effective_strategy_parameters, StrategyParameters)
+                or self.rejection_reason is not None
+            ):
+                _invalid("routing_policy_decision.accepted_shape")
+            if self.effective_strategy_parameters.strategy is not self.effective_strategy:
+                _invalid("routing_policy_decision.effective_parameters")
+            if self.effective_strategy is not self.requested_strategy:
+                _invalid("routing_policy_decision.strategy_expansion")
+            _validate_no_parameter_expansion(
+                self.requested_strategy_parameters,
+                self.effective_strategy_parameters,
+            )
+            if (
+                self.requested_rebind_policy is not None
+                and self.effective_rebind_policy is not self.requested_rebind_policy
+                and self.effective_rebind_policy not in {
+                    RebindPolicy.FIXED_CONNECTION,
+                    RebindPolicy.NO_REBIND_FOR_CONTROL,
+                }
+            ):
+                _invalid("routing_policy_decision.rebind_expansion")
+        elif (
+            self.effective_strategy is not None
+            or self.effective_rebind_policy is not None
+            or self.effective_strategy_parameters is not None
+            or self.rejection_reason not in {
+                RoutingFailureReason.STRATEGY_NOT_PERMITTED,
+                RoutingFailureReason.REBIND_NOT_PERMITTED,
+            }
+        ):
+            _invalid("routing_policy_decision.rejected_shape")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RoutingRequest:
     message_reference: str
     message_type: str
-    message_category: str
     target: TargetGroup = field(repr=False)
-    effective_tenant_id: str = field(repr=False)
-    effective_strategy: RoutingStrategy
-    effective_rebind_policy: RebindPolicy
-    config_version: str
-    policy_version: str
-    iam_decision_reference: str = field(repr=False)
-    iam_decision_version: str = field(repr=False)
-    cross_tenant_authorized: bool = False
-    trusted_affinity_connection_ids: tuple[str, ...] = field(
-        default=(),
-        repr=False,
-    )
-    runtime_policy_static_weights: tuple[tuple[str, int], ...] = field(
-        default=(),
-        repr=False,
-    )
+    requested_intent: RequestedRoutingIntent
+    policy_decision: RoutingPolicyDecision
+    authorization_evidence: AuthorizationDecisionEvidence = field(repr=False)
+    trusted_affinity_connection_ids: tuple[str, ...] = field(default=(), repr=False)
+    runtime_policy_static_weights: tuple[tuple[str, int], ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
-        for name in (
-            "message_type", "message_category",
-            "effective_tenant_id", "config_version", "policy_version",
-            "iam_decision_reference", "iam_decision_version",
-        ):
-            _nonempty(getattr(self, name), f"routing_request.{name}")
         if _SAFE_REFERENCE.fullmatch(self.message_reference) is None:
             _invalid("routing_request.message_reference")
+        _nonempty(self.message_type, "routing_request.message_type")
         if not isinstance(self.target, TargetGroup):
             _invalid("routing_request.target")
-        if not isinstance(self.effective_strategy, RoutingStrategy):
-            _invalid("routing_request.effective_strategy")
-        if not isinstance(self.effective_rebind_policy, RebindPolicy):
-            _invalid("routing_request.effective_rebind_policy")
-        if type(self.cross_tenant_authorized) is not bool:
-            _invalid("routing_request.cross_tenant_authorized")
+        if not isinstance(self.requested_intent, RequestedRoutingIntent):
+            _invalid("routing_request.requested_intent")
+        if self.requested_intent.normalized_target != self.target:
+            _invalid("routing_request.intent_target")
+        if not isinstance(self.policy_decision, RoutingPolicyDecision):
+            _invalid("routing_request.policy_decision")
+        if not self.policy_decision.accepted:
+            _invalid("routing_request.unaccepted_policy_decision")
+        if (
+            self.policy_decision.requested_strategy is not self.requested_intent.requested_strategy
+            or self.policy_decision.requested_rebind_policy
+            is not self.requested_intent.requested_rebind_policy
+            or self.policy_decision.requested_strategy_parameters
+            != self.requested_intent.requested_strategy_parameters
+        ):
+            _invalid("routing_request.policy_intent_mismatch")
+        if not isinstance(self.authorization_evidence, AuthorizationDecisionEvidence):
+            _invalid("routing_request.authorization_evidence")
+        evidence = self.authorization_evidence
+        expected_target_reference = AuthorizationDecisionEvidence.target_reference(
+            self.target,
+            session_tenant_id=evidence.principal_tenant_id,
+        )
+        target_tenant = self.target.tenant_id
+        crosses_tenant = (
+            target_tenant is not None
+            and target_tenant != evidence.principal_tenant_id
+        )
+        expected_effective_tenant = (
+            target_tenant if crosses_tenant else evidence.principal_tenant_id
+        )
+        if (
+            evidence.message_reference != self.message_reference
+            or evidence.message_type != self.message_type
+            or evidence.authorized_target_reference != expected_target_reference
+            or evidence.cross_tenant_authorized is not crosses_tenant
+            or evidence.effective_tenant_id != expected_effective_tenant
+        ):
+            _invalid("routing_request.authorization_evidence_mismatch")
         _unique_strings(
             self.trusted_affinity_connection_ids,
             "routing_request.trusted_affinity_connection_ids",
@@ -150,54 +329,44 @@ class RoutingRequest:
                 _invalid("routing_request.static_weight.value")
             seen.add(connection_id)
 
-    @classmethod
-    def from_target(
-        cls,
-        *,
-        message_reference: str,
-        message_type: str,
-        message_category: str,
-        target: TargetGroup,
-        effective_tenant_id: str,
-        config_version: str,
-        policy_version: str,
-        iam_decision_reference: str,
-        iam_decision_version: str,
-        cross_tenant_authorized: bool = False,
-    ) -> "RoutingRequest":
-        if not isinstance(target, TargetGroup):
-            _invalid("routing_request.target")
-        strategy = RoutingStrategy(target.multi_connection_policy or "single")
-        if target.rebind_policy is not None:
-            rebind = RebindPolicy(target.rebind_policy)
-        elif message_category in {"control", "management", "security"}:
-            rebind = RebindPolicy.NO_REBIND_FOR_CONTROL
-        elif target.kind == "broadcast":
-            rebind = RebindPolicy.SAME_TENANT
-        else:
-            rebind = RebindPolicy.FIXED_CONNECTION
-        if message_category in {"control", "management", "security"}:
-            if rebind is not RebindPolicy.NO_REBIND_FOR_CONTROL:
-                raise NsRuntimeRouteRejectedError(
-                    details={
-                        "component": "routing",
-                        "reason": "control_rebind_policy_forbidden",
-                    },
-                )
-        return cls(
-            message_reference=message_reference,
-            message_type=message_type,
-            message_category=message_category,
-            target=target,
-            effective_tenant_id=effective_tenant_id,
-            effective_strategy=strategy,
-            effective_rebind_policy=rebind,
-            config_version=config_version,
-            policy_version=policy_version,
-            iam_decision_reference=iam_decision_reference,
-            iam_decision_version=iam_decision_version,
-            cross_tenant_authorized=cross_tenant_authorized,
-        )
+    @property
+    def effective_tenant_id(self) -> str:
+        return self.authorization_evidence.effective_tenant_id
+
+    @property
+    def cross_tenant_authorized(self) -> bool:
+        return self.authorization_evidence.cross_tenant_authorized
+
+    @property
+    def effective_strategy(self) -> RoutingStrategy:
+        assert self.policy_decision.effective_strategy is not None
+        return self.policy_decision.effective_strategy
+
+    @property
+    def effective_rebind_policy(self) -> RebindPolicy:
+        assert self.policy_decision.effective_rebind_policy is not None
+        return self.policy_decision.effective_rebind_policy
+
+    @property
+    def strategy_parameters(self) -> StrategyParameters:
+        assert self.policy_decision.effective_strategy_parameters is not None
+        return self.policy_decision.effective_strategy_parameters
+
+    @property
+    def config_version(self) -> str:
+        return self.policy_decision.config_version
+
+    @property
+    def policy_version(self) -> str:
+        return self.policy_decision.policy_version
+
+    @property
+    def iam_decision_reference(self) -> str:
+        return self.authorization_evidence.decision_reference
+
+    @property
+    def iam_decision_version(self) -> str:
+        return self.authorization_evidence.decision_version
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -210,26 +379,20 @@ class SelectedRoutingBinding:
     identity_reference: RoutingIdentityReference = field(repr=False)
     required_capabilities: frozenset[str] = field(repr=False)
     component_type: str
+    binding_rebind_policy: RebindPolicy
 
     def __post_init__(self) -> None:
-        for name in (
-            "runtime_id", "connection_id", "session_id", "tenant_id",
-            "component_type",
-        ):
+        for name in ("runtime_id", "connection_id", "session_id", "tenant_id", "component_type"):
             _nonempty(getattr(self, name), f"selected_binding.{name}")
-        if isinstance(self.connection_epoch, bool) or not isinstance(
-            self.connection_epoch,
-            int,
-        ) or self.connection_epoch < 0:
+        if isinstance(self.connection_epoch, bool) or not isinstance(self.connection_epoch, int) or self.connection_epoch < 0:
             _invalid("selected_binding.connection_epoch")
         if not isinstance(self.identity_reference, RoutingIdentityReference):
             _invalid("selected_binding.identity_reference")
         if not isinstance(self.required_capabilities, frozenset):
             _invalid("selected_binding.required_capabilities")
-        _unique_strings(
-            tuple(self.required_capabilities),
-            "selected_binding.required_capabilities",
-        )
+        if not isinstance(self.binding_rebind_policy, RebindPolicy):
+            _invalid("selected_binding.binding_rebind_policy")
+        _unique_strings(tuple(self.required_capabilities), "selected_binding.required_capabilities")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -247,10 +410,7 @@ class CandidateEvidence:
     def __post_init__(self) -> None:
         for name in ("connection_id", "session_id", "tenant_id", "component_type"):
             _nonempty(getattr(self, name), f"candidate.{name}")
-        if isinstance(self.connection_epoch, bool) or not isinstance(
-            self.connection_epoch,
-            int,
-        ) or self.connection_epoch < 0:
+        if isinstance(self.connection_epoch, bool) or not isinstance(self.connection_epoch, int) or self.connection_epoch < 0:
             _invalid("candidate.connection_epoch")
         if not isinstance(self.identity_reference, RoutingIdentityReference):
             _invalid("candidate.identity_reference")
@@ -263,30 +423,34 @@ class CandidateEvidence:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class StrategyParameters:
-    fanout_count: int | None = None
-    required_count: int | None = None
-    subset_size: int | None = None
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
 class PreviousRoutingPlanContext:
     plan_id: str
     plan_version: int
+    message_reference: str
+    decision_fingerprint: str
+    context_integrity_fingerprint: str
     selected_bindings: tuple[SelectedRoutingBinding, ...] = field(repr=False)
 
     def __post_init__(self) -> None:
         _nonempty(self.plan_id, "previous_plan.plan_id")
-        if isinstance(self.plan_version, bool) or not isinstance(
-            self.plan_version,
-            int,
-        ) or self.plan_version < 1:
+        if isinstance(self.plan_version, bool) or not isinstance(self.plan_version, int) or self.plan_version < 1:
             _invalid("previous_plan.plan_version")
-        if not self.selected_bindings or any(
-            not isinstance(binding, SelectedRoutingBinding)
-            for binding in self.selected_bindings
-        ):
-            _invalid("previous_plan.selected_bindings")
+        if _SAFE_REFERENCE.fullmatch(self.message_reference) is None:
+            _invalid("previous_plan.message_reference")
+        if _DECISION_FINGERPRINT.fullmatch(self.decision_fingerprint) is None:
+            _invalid("previous_plan.decision_fingerprint")
+        if _DECISION_FINGERPRINT.fullmatch(self.context_integrity_fingerprint) is None:
+            _invalid("previous_plan.context_integrity_fingerprint")
+        _validate_bindings(self.selected_bindings, "previous_plan.selected_bindings")
+
+    def has_valid_integrity(self) -> bool:
+        return self.context_integrity_fingerprint == _previous_context_integrity(
+            plan_id=self.plan_id,
+            plan_version=self.plan_version,
+            message_reference=self.message_reference,
+            decision_fingerprint=self.decision_fingerprint,
+            selected_bindings=self.selected_bindings,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -295,17 +459,23 @@ class ResolvedRoutingPlan:
     plan_id: str = field(repr=False)
     plan_version: int
     previous_plan_id: str | None = field(default=None, repr=False)
+    previous_decision_fingerprint: str | None = field(default=None, repr=False)
+    previous_message_reference: str | None = field(default=None, repr=False)
     message_reference: str = field(repr=False)
     decision_fingerprint: str
     original_target: TargetGroup = field(repr=False)
     candidates: tuple[CandidateEvidence, ...] = field(repr=False)
     filtered_evidence: tuple[CandidateEvidence, ...] = field(repr=False)
     selected_bindings: tuple[SelectedRoutingBinding, ...] = field(repr=False)
-    strategy: RoutingStrategy
-    strategy_parameters: StrategyParameters
+    requested_strategy: RoutingStrategy
+    effective_strategy: RoutingStrategy
+    requested_strategy_parameters: StrategyParameters
+    effective_strategy_parameters: StrategyParameters
+    requested_rebind_policy: RebindPolicy | None
     effective_rebind_policy: RebindPolicy
     requested_policy_evidence: str
     effective_policy_evidence: str
+    security_override_evidence: str
     config_version: str
     policy_version: str
     scorer_source: str
@@ -319,43 +489,64 @@ class ResolvedRoutingPlan:
 
     def __post_init__(self) -> None:
         for name in (
-            "schema_version", "plan_id", "message_reference",
-            "decision_fingerprint", "requested_policy_evidence",
-            "effective_policy_evidence", "config_version", "policy_version",
+            "schema_version", "plan_id", "message_reference", "decision_fingerprint",
+            "requested_policy_evidence", "effective_policy_evidence",
+            "security_override_evidence", "config_version", "policy_version",
             "scorer_source", "scorer_version", "iam_decision_reference",
             "iam_decision_version",
         ):
             _nonempty(getattr(self, name), f"routing_plan.{name}")
-        if self.previous_plan_id is not None:
-            _nonempty(self.previous_plan_id, "routing_plan.previous_plan_id")
-        if isinstance(self.plan_version, bool) or not isinstance(
-            self.plan_version,
-            int,
-        ) or self.plan_version < 1:
+        if _SAFE_REFERENCE.fullmatch(self.message_reference) is None:
+            _invalid("routing_plan.message_reference")
+        if _PLAN_ID.fullmatch(self.plan_id) is None:
+            _invalid("routing_plan.plan_id")
+        if _DECISION_FINGERPRINT.fullmatch(self.decision_fingerprint) is None:
+            _invalid("routing_plan.decision_fingerprint")
+        if isinstance(self.plan_version, bool) or not isinstance(self.plan_version, int) or self.plan_version < 1:
             _invalid("routing_plan.plan_version")
+        if (self.plan_version == 1) is not (self.previous_plan_id is None):
+            _invalid("routing_plan.version_previous_plan")
+        if self.plan_version == 1:
+            if (
+                self.previous_decision_fingerprint is not None
+                or self.previous_message_reference is not None
+            ):
+                _invalid("routing_plan.previous_context")
+        else:
+            if self.previous_plan_id is None or _PLAN_ID.fullmatch(self.previous_plan_id) is None:
+                _invalid("routing_plan.previous_plan_id")
+            if self.previous_decision_fingerprint is None or _DECISION_FINGERPRINT.fullmatch(self.previous_decision_fingerprint) is None:
+                _invalid("routing_plan.previous_decision_fingerprint")
+            if self.previous_message_reference != self.message_reference:
+                _invalid("routing_plan.previous_message_reference")
         if not isinstance(self.original_target, TargetGroup):
             _invalid("routing_plan.original_target")
         for name, values, value_type in (
             ("candidates", self.candidates, CandidateEvidence),
             ("filtered_evidence", self.filtered_evidence, CandidateEvidence),
-            ("selected_bindings", self.selected_bindings, SelectedRoutingBinding),
         ):
-            if not isinstance(values, tuple) or any(
-                not isinstance(value, value_type) for value in values
-            ):
+            if not isinstance(values, tuple) or any(not isinstance(value, value_type) for value in values):
                 _invalid(f"routing_plan.{name}")
-        if not self.selected_bindings:
-            _invalid("routing_plan.selected_bindings")
-        if not isinstance(self.strategy, RoutingStrategy):
+        _validate_bindings(self.selected_bindings, "routing_plan.selected_bindings")
+        if not isinstance(self.requested_strategy, RoutingStrategy) or not isinstance(self.effective_strategy, RoutingStrategy):
             _invalid("routing_plan.strategy")
-        if not isinstance(self.strategy_parameters, StrategyParameters):
+        if (
+            not isinstance(self.requested_strategy_parameters, StrategyParameters)
+            or self.requested_strategy_parameters.strategy is not self.requested_strategy
+            or not isinstance(self.effective_strategy_parameters, StrategyParameters)
+            or self.effective_strategy_parameters.strategy is not self.effective_strategy
+        ):
             _invalid("routing_plan.strategy_parameters")
+        if self.requested_rebind_policy is not None and not isinstance(self.requested_rebind_policy, RebindPolicy):
+            _invalid("routing_plan.requested_rebind_policy")
         if not isinstance(self.effective_rebind_policy, RebindPolicy):
             _invalid("routing_plan.effective_rebind_policy")
-        if isinstance(self.index_mutation_sequence, bool) or not isinstance(
-            self.index_mutation_sequence,
-            int,
-        ) or self.index_mutation_sequence < 0:
+        if any(
+            binding.binding_rebind_policy is not self.effective_rebind_policy
+            for binding in self.selected_bindings
+        ):
+            _invalid("routing_plan.binding_rebind_policy")
+        if isinstance(self.index_mutation_sequence, bool) or not isinstance(self.index_mutation_sequence, int) or self.index_mutation_sequence < 0:
             _invalid("routing_plan.index_mutation_sequence")
         if type(self.local_hit) is not bool or type(self.used_stale_route) is not bool:
             _invalid("routing_plan.flags")
@@ -363,10 +554,28 @@ class ResolvedRoutingPlan:
             _invalid("routing_plan.used_stale_route")
         object.__setattr__(self, "created_at", _utc(self.created_at))
 
+    @property
+    def strategy(self) -> RoutingStrategy:
+        return self.effective_strategy
+
+    @property
+    def strategy_parameters(self) -> StrategyParameters:
+        return self.effective_strategy_parameters
+
     def previous_context(self) -> PreviousRoutingPlanContext:
+        integrity = _previous_context_integrity(
+            plan_id=self.plan_id,
+            plan_version=self.plan_version,
+            message_reference=self.message_reference,
+            decision_fingerprint=self.decision_fingerprint,
+            selected_bindings=self.selected_bindings,
+        )
         return PreviousRoutingPlanContext(
             plan_id=self.plan_id,
             plan_version=self.plan_version,
+            message_reference=self.message_reference,
+            decision_fingerprint=self.decision_fingerprint,
+            context_integrity_fingerprint=integrity,
             selected_bindings=self.selected_bindings,
         )
 
@@ -375,7 +584,7 @@ class ResolvedRoutingPlan:
             plan_reference=_digest(self.plan_id),
             message_reference=self.message_reference,
             decision_fingerprint=self.decision_fingerprint,
-            strategy=self.strategy,
+            strategy=self.effective_strategy,
             candidate_count=len(self.candidates),
             filtered_count=len(self.filtered_evidence),
             selected_count=len(self.selected_bindings),
@@ -387,21 +596,41 @@ class ResolvedRoutingPlan:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RoutingFailureReport:
+    outcome: RoutingFailureOutcome
     reason: RoutingFailureReason
-    resolution_hint: ResolutionHint
-    later_action: LaterActionSuggestion
+    original_target_safe_reference: str
     safe_message_reference: str
-    index_mutation_sequence: int | None = None
+    config_version: str
+    policy_version: str
+    index_mutation_sequence: int | None
+    later_action: LaterActionSuggestion
+    resolution_hint: ResolutionHint
+    occurred_at: datetime
 
     def __post_init__(self) -> None:
+        if not isinstance(self.outcome, RoutingFailureOutcome):
+            _invalid("routing_failure.outcome")
         if not isinstance(self.reason, RoutingFailureReason):
             _invalid("routing_failure.reason")
         if not isinstance(self.resolution_hint, ResolutionHint):
             _invalid("routing_failure.resolution_hint")
         if not isinstance(self.later_action, LaterActionSuggestion):
             _invalid("routing_failure.later_action")
-        if _SAFE_REFERENCE.fullmatch(self.safe_message_reference) is None:
-            _invalid("routing_failure.safe_message_reference")
+        for name in ("original_target_safe_reference", "safe_message_reference"):
+            if _SAFE_REFERENCE.fullmatch(getattr(self, name)) is None:
+                _invalid(f"routing_failure.{name}")
+        for name in ("config_version", "policy_version"):
+            _nonempty(getattr(self, name), f"routing_failure.{name}")
+        if self.index_mutation_sequence is not None and (
+            isinstance(self.index_mutation_sequence, bool)
+            or not isinstance(self.index_mutation_sequence, int)
+            or self.index_mutation_sequence < 0
+        ):
+            _invalid("routing_failure.index_mutation_sequence")
+        expected_outcome = _failure_outcome(self.reason)
+        if self.outcome is not expected_outcome:
+            _invalid("routing_failure.outcome_reason")
+        object.__setattr__(self, "occurred_at", _utc(self.occurred_at))
 
     def public_error(self) -> Exception:
         details = {
@@ -410,11 +639,23 @@ class RoutingFailureReport:
             "resolution_hint": self.resolution_hint.value,
             "later_action": self.later_action.value,
         }
-        if self.reason is RoutingFailureReason.POLICY_REJECTED:
+        if self.reason in {
+            RoutingFailureReason.TARGET_REQUIRED,
+            RoutingFailureReason.STRATEGY_NOT_PERMITTED,
+            RoutingFailureReason.REBIND_NOT_PERMITTED,
+            RoutingFailureReason.PREVIOUS_MESSAGE_MISMATCH,
+            RoutingFailureReason.PREVIOUS_PLAN_ID_INVALID,
+            RoutingFailureReason.PREVIOUS_PLAN_VERSION_INVALID,
+            RoutingFailureReason.PREVIOUS_FINGERPRINT_INVALID,
+            RoutingFailureReason.PREVIOUS_FINGERPRINT_MISMATCH,
+        }:
             return NsRuntimeRouteRejectedError(details=details)
         if self.reason is RoutingFailureReason.TARGET_NOT_FOUND:
             return NsRuntimeTargetNotFoundError(details=details)
-        if self.reason is RoutingFailureReason.TENANT_DENIED:
+        if self.reason in {
+            RoutingFailureReason.TENANT_DENIED,
+            RoutingFailureReason.AUTHORIZATION_EVIDENCE_MISMATCH,
+        }:
             return NsRuntimeIamDeniedError(details=details)
         return NsRuntimeRouteUnavailableError(details=details)
 
@@ -441,6 +682,86 @@ class SafeRoutingProjection:
 RoutingDecision = ResolvedRoutingPlan | RoutingFailureReport
 
 
+def safe_target_reference(target: TargetGroup | None) -> str:
+    payload = None if target is None else target.to_dict()
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return _digest(canonical)
+
+
+def _validate_no_parameter_expansion(
+    requested: StrategyParameters,
+    effective: StrategyParameters,
+) -> None:
+    for name in ("fanout_count", "subset_size"):
+        requested_value = getattr(requested, name)
+        effective_value = getattr(effective, name)
+        if requested_value is not None and effective_value is not None and effective_value > requested_value:
+            _invalid(f"routing_policy_decision.{name}_expanded")
+    if requested.required_count != effective.required_count:
+        _invalid("routing_policy_decision.required_count_changed")
+
+
+def _failure_outcome(reason: RoutingFailureReason) -> RoutingFailureOutcome:
+    if reason in {
+        RoutingFailureReason.TARGET_REQUIRED,
+        RoutingFailureReason.STRATEGY_NOT_PERMITTED,
+        RoutingFailureReason.REBIND_NOT_PERMITTED,
+        RoutingFailureReason.AUTHORIZATION_EVIDENCE_MISMATCH,
+        RoutingFailureReason.PREVIOUS_MESSAGE_MISMATCH,
+        RoutingFailureReason.PREVIOUS_PLAN_ID_INVALID,
+        RoutingFailureReason.PREVIOUS_PLAN_VERSION_INVALID,
+        RoutingFailureReason.PREVIOUS_FINGERPRINT_INVALID,
+        RoutingFailureReason.PREVIOUS_FINGERPRINT_MISMATCH,
+        RoutingFailureReason.TARGET_NOT_FOUND,
+        RoutingFailureReason.TENANT_DENIED,
+    }:
+        return RoutingFailureOutcome.REJECTED
+    return RoutingFailureOutcome.UNAVAILABLE
+
+
+def _validate_bindings(values: object, name: str) -> None:
+    if not isinstance(values, tuple) or not values or any(not isinstance(value, SelectedRoutingBinding) for value in values):
+        _invalid(name)
+    keys = [
+        (value.runtime_id, value.connection_id, value.session_id, value.connection_epoch)
+        for value in values
+    ]
+    if len(keys) != len(set(keys)):
+        _invalid(f"{name}.duplicate")
+
+
+def _previous_context_integrity(
+    *,
+    plan_id: str,
+    plan_version: int,
+    message_reference: str,
+    decision_fingerprint: str,
+    selected_bindings: tuple[SelectedRoutingBinding, ...],
+) -> str:
+    payload = {
+        "plan_id": plan_id,
+        "plan_version": plan_version,
+        "message_reference": message_reference,
+        "decision_fingerprint": decision_fingerprint,
+        "selected_bindings": [
+            {
+                "runtime_id": item.runtime_id,
+                "connection_id": item.connection_id,
+                "session_id": item.session_id,
+                "connection_epoch": item.connection_epoch,
+                "tenant_id": item.tenant_id,
+                "identity": item.identity_reference.value,
+                "required_capabilities": sorted(item.required_capabilities),
+                "component_type": item.component_type,
+                "binding_rebind_policy": item.binding_rebind_policy.value,
+            }
+            for item in selected_bindings
+        ],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
@@ -451,9 +772,7 @@ def _nonempty(value: object, name: str) -> None:
 
 
 def _unique_strings(values: tuple[str, ...], name: str) -> None:
-    if not isinstance(values, tuple) or any(
-        not isinstance(value, str) or not value for value in values
-    ) or len(values) != len(set(values)):
+    if not isinstance(values, tuple) or any(not isinstance(value, str) or not value for value in values) or len(values) != len(set(values)):
         _invalid(name)
 
 
@@ -471,20 +790,11 @@ def _invalid(field_name: str) -> None:
 
 
 __all__ = (
-    "CandidateEvidence",
-    "CandidateFilterReason",
-    "LaterActionSuggestion",
-    "PreviousRoutingPlanContext",
-    "RebindPolicy",
-    "ResolvedRoutingPlan",
-    "ResolutionHint",
-    "RoutingDecision",
-    "RoutingFailureReason",
-    "RoutingFailureReport",
-    "RoutingIdentityReference",
-    "RoutingRequest",
-    "RoutingStrategy",
-    "SafeRoutingProjection",
-    "SelectedRoutingBinding",
-    "StrategyParameters",
+    "CandidateEvidence", "CandidateFilterReason", "LaterActionSuggestion",
+    "PreviousRoutingPlanContext", "RebindPolicy", "RequestedRoutingIntent",
+    "ResolvedRoutingPlan", "ResolutionHint", "RoutingDecision",
+    "RoutingFailureOutcome", "RoutingFailureReason", "RoutingFailureReport",
+    "RoutingIdentityReference", "RoutingPolicyDecision", "RoutingRequest",
+    "RoutingStrategy", "SafeRoutingProjection", "SelectedRoutingBinding",
+    "StrategyParameters", "safe_target_reference",
 )
