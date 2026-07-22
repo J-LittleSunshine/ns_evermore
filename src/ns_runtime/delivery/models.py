@@ -24,6 +24,9 @@ DEDUP_EVIDENCE_VERSION = "dedup-evidence-1"
 ADMISSION_RESPONSE_VERSION = "delivery-admission-response-1"
 ADMISSION_RESULT_VERSION = "delivery-admission-result-1"
 ATOMIC_ADMISSION_VERSION = "delivery-admission-atomic-1"
+P11_ATTEMPT_SCHEMA_VERSION = "delivery-attempt-1"
+P11_ACTIVATION_SCHEMA_VERSION = "delivery-activation-1"
+P11_OWNER_SCHEMA_VERSION = "delivery-owner-1"
 MAX_UNSHARDED_TARGETS = 5000
 DEFAULT_SHARD_BUCKET_SIZE = 1000
 DEFAULT_INITIALIZATION_BATCH_SIZE = 500
@@ -41,7 +44,36 @@ class DeliverySummaryStatus(str, Enum):
 
 class DeliveryRecordStatus(str, Enum):
     PREPARED = "prepared"
+    QUEUED = "queued"
+    SENDING = "sending"
+    ACK_WAITING = "ack_waiting"
+    WRITE_FAILED = "write_failed"
+    # Contract placeholder only. P11 has no production transition into retry.
+    RETRY_SCHEDULED = "retry_scheduled"
     CANCELLED_INITIALIZING = "cancelled_initializing"
+
+
+class DeliveryOwnerRisk(str, Enum):
+    HEALTHY = "healthy"
+    AT_RISK = "at_risk"
+
+
+class DeliveryAttemptStatus(str, Enum):
+    WRITING = "writing"
+    WRITE_SUCCEEDED = "write_succeeded"
+    WRITE_FAILED = "write_failed"
+
+
+class DeliveryWriteFailure(str, Enum):
+    TARGET_DISCONNECTED = "target_disconnected"
+    TARGET_IDENTITY_MISMATCH = "target_identity_mismatch"
+    PAYLOAD_INVALID = "payload_invalid"
+    DELIVERY_EXPIRED = "delivery_expired"
+    POLICY_VERSION_MISMATCH = "policy_version_mismatch"
+    OWNER_AT_RISK = "owner_at_risk"
+    TRANSPORT_WRITE_FAILED = "transport_write_failed"
+    TRANSPORT_WRITE_TIMEOUT = "transport_write_timeout"
+    SHUTDOWN_INTERRUPTED = "shutdown_interrupted"
 
 
 class PayloadKind(str, Enum):
@@ -274,6 +306,106 @@ class TargetRejection:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class DeliveryActivationEvidence:
+    schema_version: str
+    config_version: str
+    policy_version: str
+    reason: str
+    batch_size: int
+    candidate_count: int
+    activated_at: datetime
+
+    def __post_init__(self) -> None:
+        if self.schema_version != P11_ACTIVATION_SCHEMA_VERSION:
+            _invalid("activation.schema_version")
+        for name in ("config_version", "policy_version", "reason"):
+            _text(getattr(self, name), f"activation.{name}")
+        _positive(self.batch_size, "activation.batch_size")
+        _positive(self.candidate_count, "activation.candidate_count")
+        object.__setattr__(self, "activated_at", _utc(self.activated_at, "activation.activated_at"))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DeliveryOwner:
+    schema_version: str
+    runtime_id: str
+    worker_id: str
+    claim_token: str = field(repr=False)
+    claimed_at: datetime
+    lease_expires_at: datetime
+    renew_failures: int
+    risk: DeliveryOwnerRisk
+    risk_since: datetime | None = None
+    protection_until: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.schema_version != P11_OWNER_SCHEMA_VERSION:
+            _invalid("owner.schema_version")
+        for name in ("runtime_id", "worker_id", "claim_token"):
+            _text(getattr(self, name), f"owner.{name}")
+        object.__setattr__(self, "claimed_at", _utc(self.claimed_at, "owner.claimed_at"))
+        object.__setattr__(self, "lease_expires_at", _utc(self.lease_expires_at, "owner.lease_expires_at"))
+        if self.lease_expires_at <= self.claimed_at:
+            _invalid("owner.lease_expires_at")
+        _nonnegative(self.renew_failures, "owner.renew_failures")
+        if not isinstance(self.risk, DeliveryOwnerRisk):
+            _invalid("owner.risk")
+        if self.risk is DeliveryOwnerRisk.HEALTHY:
+            if self.risk_since is not None or self.protection_until is not None:
+                _invalid("owner.healthy_risk_window")
+        else:
+            object.__setattr__(self, "risk_since", _utc(self.risk_since, "owner.risk_since"))
+            object.__setattr__(self, "protection_until", _utc(self.protection_until, "owner.protection_until"))
+            if self.protection_until <= self.risk_since:  # type: ignore[operator]
+                _invalid("owner.protection_until")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DeliveryAttempt:
+    schema_version: str
+    attempt_id: str = field(repr=False)
+    delivery_id: str = field(repr=False)
+    tenant_id: str = field(repr=False)
+    attempt_number: int
+    owner_runtime_id: str
+    owner_worker_id: str
+    owner_claim_token: str = field(repr=False)
+    status: DeliveryAttemptStatus
+    started_at: datetime
+    ack_deadline: datetime
+    completed_at: datetime | None = None
+    failure: DeliveryWriteFailure | None = None
+
+    def __post_init__(self) -> None:
+        if self.schema_version != P11_ATTEMPT_SCHEMA_VERSION:
+            _invalid("attempt.schema_version")
+        for name in (
+            "attempt_id", "delivery_id", "tenant_id", "owner_runtime_id",
+            "owner_worker_id", "owner_claim_token",
+        ):
+            _text(getattr(self, name), f"attempt.{name}")
+        _positive(self.attempt_number, "attempt.attempt_number")
+        if not isinstance(self.status, DeliveryAttemptStatus):
+            _invalid("attempt.status")
+        object.__setattr__(self, "started_at", _utc(self.started_at, "attempt.started_at"))
+        object.__setattr__(self, "ack_deadline", _utc(self.ack_deadline, "attempt.ack_deadline"))
+        if self.ack_deadline <= self.started_at:
+            _invalid("attempt.ack_deadline")
+        if self.status is DeliveryAttemptStatus.WRITING:
+            if self.completed_at is not None or self.failure is not None:
+                _invalid("attempt.writing_outcome")
+        else:
+            object.__setattr__(self, "completed_at", _utc(self.completed_at, "attempt.completed_at"))
+            if self.completed_at < self.started_at:  # type: ignore[operator]
+                _invalid("attempt.completed_at")
+            if self.status is DeliveryAttemptStatus.WRITE_SUCCEEDED:
+                if self.failure is not None:
+                    _invalid("attempt.success_failure")
+            elif not isinstance(self.failure, DeliveryWriteFailure):
+                _invalid("attempt.failure")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class MessageDeliverySummary:
     schema_version: str
     summary_id: str = field(repr=False)
@@ -301,6 +433,10 @@ class MessageDeliverySummary:
     state_version: int
     created_at: datetime
     updated_at: datetime
+    queued_count: int = 0
+    sending_count: int = 0
+    ack_waiting_count: int = 0
+    write_failed_count: int = 0
 
     def __post_init__(self) -> None:
         if self.schema_version != DR1_SCHEMA_VERSION:
@@ -321,15 +457,23 @@ class MessageDeliverySummary:
         _positive(self.shard_count, "summary.shard_count")
         counts = (self.total_count, self.accepted_count, self.rejected_count,
                   self.prepared_count, self.cancelled_count,
-                  self.not_initialized_count, self.active_count, self.inflight_count)
+                  self.not_initialized_count, self.active_count, self.inflight_count,
+                  self.queued_count, self.sending_count,
+                  self.ack_waiting_count, self.write_failed_count)
         for value in counts:
             _nonnegative(value, "summary.count")
         if self.total_count != self.accepted_count + self.rejected_count + self.not_initialized_count:
             _invalid("summary.total_count")
-        if self.prepared_count + self.cancelled_count > self.accepted_count:
+        if (
+            self.prepared_count + self.queued_count + self.sending_count
+            + self.ack_waiting_count + self.write_failed_count
+            + self.cancelled_count > self.accepted_count
+        ):
             _invalid("summary.delivery_count")
-        if self.active_count != 0 or self.inflight_count != 0:
-            _invalid("summary.p10_active_inflight")
+        if self.active_count != self.sending_count:
+            _invalid("summary.active_count")
+        if self.inflight_count != self.ack_waiting_count:
+            _invalid("summary.inflight_count")
         if self.payload_evidence is not None and not isinstance(self.payload_evidence, PayloadEvidence):
             _invalid("summary.payload_evidence")
         if not isinstance(self.policy_decision, AdmissionPolicyDecision):
@@ -367,6 +511,12 @@ class DeliveryRecord:
     state_version: int
     created_at: datetime
     updated_at: datetime
+    activation: DeliveryActivationEvidence | None = None
+    owner: DeliveryOwner | None = field(default=None, repr=False)
+    current_attempt_id: str | None = field(default=None, repr=False)
+    attempt_count: int = 0
+    ack_deadline: datetime | None = None
+    last_failure: DeliveryWriteFailure | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != DR1_SCHEMA_VERSION:
@@ -391,6 +541,14 @@ class DeliveryRecord:
         object.__setattr__(self, "updated_at", _utc(self.updated_at, "delivery.updated_at"))
         if self.updated_at < self.created_at:
             _invalid("delivery.updated_at")
+        _nonnegative(self.attempt_count, "delivery.attempt_count")
+        if self.current_attempt_id is not None:
+            _text(self.current_attempt_id, "delivery.current_attempt_id")
+        if self.ack_deadline is not None:
+            object.__setattr__(self, "ack_deadline", _utc(self.ack_deadline, "delivery.ack_deadline"))
+        if self.last_failure is not None and not isinstance(self.last_failure, DeliveryWriteFailure):
+            _invalid("delivery.last_failure")
+        _validate_delivery_dispatch_state(self)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -539,7 +697,12 @@ def validate_initialization_graph(
 
 def _validate_summary_status(value: MessageDeliverySummary) -> None:
     if value.status is DeliverySummaryStatus.INITIALIZING:
-        if value.cancelled_count or value.prepared_count != value.accepted_count:
+        if (
+            value.cancelled_count
+            or value.prepared_count != value.accepted_count
+            or any((value.queued_count, value.sending_count,
+                    value.ack_waiting_count, value.write_failed_count))
+        ):
             _invalid("summary.initializing_counts")
     elif value.status is DeliverySummaryStatus.ACCEPTED:
         if value.accepted_count != value.total_count or value.rejected_count or value.not_initialized_count:
@@ -551,8 +714,60 @@ def _validate_summary_status(value: MessageDeliverySummary) -> None:
         if value.accepted_count or value.prepared_count or value.cancelled_count:
             _invalid("summary.failed_counts")
     elif value.status is DeliverySummaryStatus.CANCELLED_INITIALIZING:
-        if value.prepared_count or value.cancelled_count != value.accepted_count:
+        if (
+            value.prepared_count
+            or value.cancelled_count != value.accepted_count
+            or any((value.queued_count, value.sending_count,
+                    value.ack_waiting_count, value.write_failed_count))
+        ):
             _invalid("summary.cancelled_counts")
+
+
+def _validate_delivery_dispatch_state(value: DeliveryRecord) -> None:
+    status = value.status
+    if status in {
+        DeliveryRecordStatus.PREPARED,
+        DeliveryRecordStatus.CANCELLED_INITIALIZING,
+    }:
+        if any((value.activation, value.owner, value.current_attempt_id,
+                value.ack_deadline, value.last_failure)) or value.attempt_count:
+            _invalid("delivery.pre_dispatch_fields")
+        return
+    if not isinstance(value.activation, DeliveryActivationEvidence):
+        _invalid("delivery.activation")
+    if status is DeliveryRecordStatus.QUEUED:
+        if (
+            value.current_attempt_id is not None
+            or value.attempt_count
+            or value.ack_deadline is not None
+            or value.last_failure is not None
+        ):
+            _invalid("delivery.queued_fields")
+        if value.owner is not None and not isinstance(value.owner, DeliveryOwner):
+            _invalid("delivery.owner")
+        return
+    if status in {DeliveryRecordStatus.SENDING, DeliveryRecordStatus.ACK_WAITING}:
+        if (
+            not isinstance(value.owner, DeliveryOwner)
+            or value.current_attempt_id is None
+            or value.attempt_count <= 0
+            or value.ack_deadline is None
+            or value.last_failure is not None
+        ):
+            _invalid("delivery.inflight_fields")
+        return
+    if status is DeliveryRecordStatus.WRITE_FAILED:
+        if (
+            value.owner is not None
+            or value.current_attempt_id is None
+            or value.attempt_count <= 0
+            or value.ack_deadline is not None
+            or not isinstance(value.last_failure, DeliveryWriteFailure)
+        ):
+            _invalid("delivery.write_failed_fields")
+        return
+    if status is DeliveryRecordStatus.RETRY_SCHEDULED:
+        _invalid("delivery.retry_scheduled_reserved")
 
 
 def _binding_projection(value: SelectedRoutingBinding) -> dict[str, object]:
@@ -714,9 +929,13 @@ __all__ = (
     "ATOMIC_ADMISSION_VERSION", "DEDUP_EVIDENCE_VERSION",
     "DEFAULT_INITIALIZATION_BATCH_SIZE", "DEFAULT_SHARD_BUCKET_SIZE",
     "DR1_SCHEMA_VERSION", "MAX_UNSHARDED_TARGETS",
-    "PAYLOAD_EVIDENCE_VERSION", "AdmissionOutcome", "AdmissionPriority",
+    "PAYLOAD_EVIDENCE_VERSION", "P11_ACTIVATION_SCHEMA_VERSION",
+    "P11_ATTEMPT_SCHEMA_VERSION", "P11_OWNER_SCHEMA_VERSION",
+    "AdmissionOutcome", "AdmissionPriority",
     "AdmissionReliability", "AdmissionPolicyDecision", "AdmissionTrace",
-    "DedupEvidence", "DeliveryRecord", "DeliveryRecordStatus",
+    "DedupEvidence", "DeliveryActivationEvidence", "DeliveryAttempt",
+    "DeliveryAttemptStatus", "DeliveryOwner", "DeliveryOwnerRisk",
+    "DeliveryRecord", "DeliveryRecordStatus", "DeliveryWriteFailure",
     "DeliverySummaryStatus", "DuplicateLifecycle", "InlinePayload",
     "MessageDeliverySummary", "PayloadDependencyDisposition",
     "PayloadEvidence", "PayloadKind", "PayloadReference", "RejectionReason",

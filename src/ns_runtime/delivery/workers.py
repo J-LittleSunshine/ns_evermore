@@ -1,0 +1,425 @@
+# -*- coding: utf-8 -*-
+"""P11 run-once workers composed under the existing runtime supervisor."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Callable
+
+from ns_common.exceptions import NsRuntimeStateStoreError, NsValidationError
+from ns_common.time import Clock
+
+from .models import DeliveryOwnerRisk, DeliveryRecordStatus, DeliveryWriteFailure
+from .scheduling import (
+    ClaimResult,
+    DeliveryClaim,
+    DeliveryPayloadResolver,
+    DeliveryPayloadValidator,
+    DeliverySchedulingPolicy,
+    DeliveryTargetResolver,
+    DeliveryTransportWriter,
+    LeaseRenewOutcome,
+    LeaseRenewResult,
+    LocalDeliveryTarget,
+    OutboundDeliveryPayload,
+    OwnerRiskGuard,
+    PayloadValidationResult,
+    SendOutcome,
+    SendResult,
+    validate_outbound_payload,
+    validate_payload_authority,
+)
+from .scheduling_store import StateStoreDeliveryScheduler
+
+
+class PreparedActivationWorker:
+    def __init__(
+        self,
+        *,
+        scheduler: StateStoreDeliveryScheduler,
+        policy: DeliverySchedulingPolicy,
+    ) -> None:
+        _dependencies(scheduler, policy)
+        self._scheduler = scheduler
+        self._policy = policy
+
+    async def run_once(
+        self,
+        *,
+        tenant_id: str,
+        global_queued_before: int | None = None,
+    ):
+        return await self._scheduler.activate_prepared(
+            tenant_id=tenant_id,
+            policy=self._policy,
+            global_queued_before=global_queued_before,
+        )
+
+
+class PreparedActivationCoordinator:
+    """Serialize local activation and derive the global watermark from authority."""
+
+    def __init__(
+        self,
+        *,
+        scheduler: StateStoreDeliveryScheduler,
+        policy: DeliverySchedulingPolicy,
+    ) -> None:
+        _dependencies(scheduler, policy)
+        self._scheduler = scheduler
+        self._policy = policy
+        self._lock = asyncio.Lock()
+
+    async def run_once(
+        self,
+        *,
+        tenant_id: str,
+        known_tenant_ids: tuple[str, ...],
+    ):
+        _text(tenant_id, "activation_coordinator.tenant_id")
+        if (
+            not isinstance(known_tenant_ids, tuple)
+            or not known_tenant_ids
+            or tenant_id not in known_tenant_ids
+            or len(set(known_tenant_ids)) != len(known_tenant_ids)
+        ):
+            _invalid("activation_coordinator.known_tenant_ids")
+        for value in known_tenant_ids:
+            _text(value, "activation_coordinator.known_tenant_id")
+        async with self._lock:
+            global_queued = 0
+            for value in known_tenant_ids:
+                global_queued += (
+                    await self._scheduler.resource_counts(tenant_id=value)
+                ).queued
+            return await self._scheduler.activate_prepared(
+                tenant_id=tenant_id,
+                policy=self._policy,
+                global_queued_before=global_queued,
+            )
+
+
+class ClaimWorker:
+    def __init__(
+        self,
+        *,
+        scheduler: StateStoreDeliveryScheduler,
+        policy: DeliverySchedulingPolicy,
+        runtime_id: str,
+        worker_id: str,
+        token_factory: Callable[[], str],
+    ) -> None:
+        _dependencies(scheduler, policy)
+        for value, field in ((runtime_id, "runtime_id"), (worker_id, "worker_id")):
+            _text(value, field)
+        if not callable(token_factory):
+            _invalid("token_factory")
+        self._scheduler = scheduler
+        self._policy = policy
+        self._runtime_id = runtime_id
+        self._worker_id = worker_id
+        self._tokens = token_factory
+
+    async def run_once(self, *, tenant_id: str) -> ClaimResult:
+        token = self._tokens()
+        if type(token) is not str or not token:
+            _invalid("token_factory.result")
+        return await self._scheduler.claim_next(
+            tenant_id=tenant_id,
+            runtime_id=self._runtime_id,
+            worker_id=self._worker_id,
+            claim_token=token,
+            policy=self._policy,
+        )
+
+
+class LeaseRenewWorker:
+    def __init__(
+        self,
+        *,
+        scheduler: StateStoreDeliveryScheduler,
+        policy: DeliverySchedulingPolicy,
+        risk_guard: OwnerRiskGuard,
+    ) -> None:
+        _dependencies(scheduler, policy)
+        if not isinstance(risk_guard, OwnerRiskGuard):
+            _invalid("risk_guard")
+        self._scheduler = scheduler
+        self._policy = policy
+        self._risk_guard = risk_guard
+
+    async def run_once(
+        self,
+        *,
+        claim: DeliveryClaim,
+        renewal_succeeded: bool,
+    ) -> LeaseRenewResult:
+        if not isinstance(claim, DeliveryClaim):
+            _invalid("renew.claim")
+        if type(renewal_succeeded) is not bool:
+            _invalid("renew.renewal_succeeded")
+        try:
+            delivery = await self._scheduler.renew_owner(
+                claim=claim,
+                policy=self._policy,
+                renewal_succeeded=renewal_succeeded,
+            )
+        except NsRuntimeStateStoreError:
+            self._risk_guard.mark_at_risk(claim)
+            return LeaseRenewResult(
+                outcome=LeaseRenewOutcome.AT_RISK,
+                delivery=None,
+            )
+        owner = delivery.owner
+        if owner is not None and owner.risk is DeliveryOwnerRisk.AT_RISK:
+            self._risk_guard.mark_at_risk(claim)
+            return LeaseRenewResult(
+                outcome=LeaseRenewOutcome.AT_RISK,
+                delivery=delivery,
+            )
+        if renewal_succeeded:
+            self._risk_guard.clear(claim)
+            outcome = LeaseRenewOutcome.RENEWED
+        else:
+            outcome = LeaseRenewOutcome.FAILURE_RECORDED
+        return LeaseRenewResult(outcome=outcome, delivery=delivery)
+
+
+class SendWorker:
+    def __init__(
+        self,
+        *,
+        scheduler: StateStoreDeliveryScheduler,
+        policy: DeliverySchedulingPolicy,
+        target_resolver: DeliveryTargetResolver,
+        payload_validator: DeliveryPayloadValidator,
+        payload_resolver: DeliveryPayloadResolver,
+        transport_writer: DeliveryTransportWriter,
+        risk_guard: OwnerRiskGuard,
+        attempt_id_factory: Callable[[], str],
+        clock: Clock,
+    ) -> None:
+        _dependencies(scheduler, policy)
+        for value, expected, field in (
+            (target_resolver, DeliveryTargetResolver, "target_resolver"),
+            (payload_validator, DeliveryPayloadValidator, "payload_validator"),
+            (payload_resolver, DeliveryPayloadResolver, "payload_resolver"),
+            (transport_writer, DeliveryTransportWriter, "transport_writer"),
+            (risk_guard, OwnerRiskGuard, "risk_guard"),
+            (clock, Clock, "clock"),
+        ):
+            if not isinstance(value, expected):
+                _invalid(field)
+        if not callable(attempt_id_factory):
+            _invalid("attempt_id_factory")
+        self._scheduler = scheduler
+        self._policy = policy
+        self._targets = target_resolver
+        self._payload_validation = payload_validator
+        self._payloads = payload_resolver
+        self._transport = transport_writer
+        self._risk_guard = risk_guard
+        self._attempt_ids = attempt_id_factory
+        self._clock = clock
+
+    async def run_once(self, *, claim: DeliveryClaim) -> SendResult:
+        if not isinstance(claim, DeliveryClaim):
+            _invalid("send.claim")
+        delivery = await self._scheduler.load_claimed(claim=claim)
+        if delivery.status is not DeliveryRecordStatus.QUEUED:
+            _invalid("send.delivery_status")
+        if self._risk_guard.is_at_risk(claim) or (
+            delivery.owner is not None
+            and delivery.owner.risk is DeliveryOwnerRisk.AT_RISK
+        ):
+            released = await self._release_if_queued(claim, delivery)
+            return SendResult(
+                outcome=SendOutcome.OWNER_RISK,
+                delivery=released,
+                failure=DeliveryWriteFailure.OWNER_AT_RISK,
+            )
+        if (
+            delivery.policy_decision.config_version != self._policy.config_version
+            or delivery.policy_decision.policy_version != self._policy.policy_version
+            or delivery.activation is None
+            or delivery.activation.config_version != self._policy.config_version
+            or delivery.activation.policy_version != self._policy.policy_version
+        ):
+            return await self._precheck_failure(
+                claim,
+                delivery,
+                DeliveryWriteFailure.POLICY_VERSION_MISMATCH,
+            )
+        if delivery.policy_decision.expires_at <= self._clock.utc_now():
+            return await self._precheck_failure(
+                claim,
+                delivery,
+                DeliveryWriteFailure.DELIVERY_EXPIRED,
+            )
+        try:
+            target = await self._targets.resolve(delivery)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return await self._precheck_failure(
+                claim,
+                delivery,
+                DeliveryWriteFailure.TARGET_DISCONNECTED,
+            )
+        if type(target) is not LocalDeliveryTarget or not target.active:
+            return await self._precheck_failure(
+                claim,
+                delivery,
+                DeliveryWriteFailure.TARGET_DISCONNECTED,
+            )
+        if not _target_matches(delivery, target):
+            return await self._precheck_failure(
+                claim,
+                delivery,
+                DeliveryWriteFailure.TARGET_IDENTITY_MISMATCH,
+            )
+        try:
+            validation = await self._payload_validation.validate(delivery)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return await self._precheck_failure(
+                claim,
+                delivery,
+                DeliveryWriteFailure.PAYLOAD_INVALID,
+            )
+        if type(validation) is not PayloadValidationResult or not validate_payload_authority(
+            delivery,
+            validation,
+        ):
+            return await self._precheck_failure(
+                claim,
+                delivery,
+                DeliveryWriteFailure.PAYLOAD_INVALID,
+            )
+        try:
+            payload = await self._payloads.resolve(delivery)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return await self._precheck_failure(
+                claim,
+                delivery,
+                DeliveryWriteFailure.PAYLOAD_INVALID,
+            )
+        if type(payload) is not OutboundDeliveryPayload or not validate_outbound_payload(
+            delivery,
+            payload,
+        ):
+            return await self._precheck_failure(
+                claim,
+                delivery,
+                DeliveryWriteFailure.PAYLOAD_INVALID,
+            )
+        attempt_id = self._attempt_ids()
+        if type(attempt_id) is not str or not attempt_id:
+            _invalid("attempt_id_factory.result")
+        transition = await self._scheduler.start_sending(
+            claim=claim,
+            attempt_id=attempt_id,
+            policy=self._policy,
+        )
+        try:
+            write_result = await asyncio.wait_for(
+                self._transport.write(target=target, payload=payload),
+                timeout=self._policy.write_timeout_seconds,
+            )
+            if write_result is not None:
+                raise RuntimeError("transport writer returned a value")
+        except asyncio.CancelledError:
+            try:
+                await asyncio.shield(self._scheduler.complete_write_failure(
+                    claim=claim,
+                    failure=DeliveryWriteFailure.SHUTDOWN_INTERRUPTED,
+                ))
+            except Exception:
+                pass
+            raise
+        except asyncio.TimeoutError:
+            failed = await self._scheduler.complete_write_failure(
+                claim=claim,
+                failure=DeliveryWriteFailure.TRANSPORT_WRITE_TIMEOUT,
+            )
+            return SendResult(
+                outcome=SendOutcome.WRITE_FAILED,
+                delivery=failed,
+                failure=DeliveryWriteFailure.TRANSPORT_WRITE_TIMEOUT,
+            )
+        except Exception:
+            failed = await self._scheduler.complete_write_failure(
+                claim=claim,
+                failure=DeliveryWriteFailure.TRANSPORT_WRITE_FAILED,
+            )
+            return SendResult(
+                outcome=SendOutcome.WRITE_FAILED,
+                delivery=failed,
+                failure=DeliveryWriteFailure.TRANSPORT_WRITE_FAILED,
+            )
+        ack_waiting = await self._scheduler.complete_write_success(claim=claim)
+        return SendResult(
+            outcome=SendOutcome.ACK_WAITING,
+            delivery=ack_waiting,
+        )
+
+    async def _precheck_failure(
+        self,
+        claim: DeliveryClaim,
+        delivery,
+        failure: DeliveryWriteFailure,
+    ) -> SendResult:
+        released = await self._release_if_queued(claim, delivery)
+        return SendResult(
+            outcome=SendOutcome.PRECHECK_FAILED,
+            delivery=released,
+            failure=failure,
+        )
+
+    async def _release_if_queued(self, claim: DeliveryClaim, delivery):
+        if delivery.status is DeliveryRecordStatus.QUEUED and delivery.owner is not None:
+            return await self._scheduler.release_claim(claim=claim)
+        return delivery
+
+
+def _target_matches(delivery, target: LocalDeliveryTarget) -> bool:
+    binding = delivery.binding
+    return (
+        target.runtime_id == binding.runtime_id
+        and target.connection_id == binding.connection_id
+        and target.session_id == binding.session_id
+        and target.connection_epoch == binding.connection_epoch
+        and target.tenant_id == binding.tenant_id
+        and target.identity == binding.identity_reference.value
+    )
+
+
+def _dependencies(
+    scheduler: StateStoreDeliveryScheduler,
+    policy: DeliverySchedulingPolicy,
+) -> None:
+    if not isinstance(scheduler, StateStoreDeliveryScheduler):
+        _invalid("scheduler")
+    if not isinstance(policy, DeliverySchedulingPolicy):
+        _invalid("policy")
+
+
+def _text(value: object, field: str) -> None:
+    if type(value) is not str or not value:
+        _invalid(field)
+
+
+def _invalid(field: str):
+    raise NsValidationError(
+        "P11 worker dependency or state is invalid.",
+        details={"component": "delivery_worker", "field": field},
+    )
+
+
+__all__ = (
+    "ClaimWorker", "LeaseRenewWorker", "PreparedActivationCoordinator",
+    "PreparedActivationWorker", "SendWorker",
+)

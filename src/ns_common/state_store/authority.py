@@ -66,6 +66,7 @@ class StateStoreCapability(str, Enum):
     LINEARIZABLE_READ = "linearizable_read"
     MINIMUM_REVISION_READ = "minimum_revision_read"
     STALE_READ = "stale_read"
+    SCAN = "scan"
 
 
 class StateCallerCapability(str, Enum):
@@ -73,6 +74,7 @@ class StateCallerCapability(str, Enum):
     COMPARE_AND_SET = "compare_and_set"
     TRANSACT = "transact"
     APPEND = "append"
+    SCAN = "scan"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -240,6 +240,30 @@ class StateReadResult:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class StateScanResult:
+    records: tuple[StateRecord, ...]
+    next_cursor: str | None
+    observed_at: datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.records, tuple) or any(
+            not isinstance(value, StateRecord) for value in self.records
+        ):
+            _invalid("scan_result.records")
+        if self.next_cursor is not None and (
+            type(self.next_cursor) is not str
+            or not self.next_cursor.isdigit()
+            or self.next_cursor == "0"
+        ):
+            _invalid("scan_result.next_cursor")
+        object.__setattr__(
+            self,
+            "observed_at",
+            _utc(self.observed_at, "scan_result.observed_at"),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StateAppendResult:
     revision: StateRevision = field(repr=False)
     position: int
@@ -328,6 +352,7 @@ __all__ = (
     "StateReadResult",
     "StateRecord",
     "StateRevision",
+    "StateScanResult",
     "StateStoreHealth",
     "StateStoreHealthStatus",
     "StateTransaction",

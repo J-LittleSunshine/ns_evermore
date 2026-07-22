@@ -1957,6 +1957,49 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 只关闭Redis standalone production provider及本次六项blocker。仍deferred/unverified：Valkey server integration、Sentinel、Cluster、failover、replica read、TLS证书/CA材料、lease/fencing、leader election、跨节点owner、P11 prepared->queued/claim/send、DeliveryAttempt及P12 ACK/NACK/Defer/timeout/retry。
 - P11-W01继续`BLOCKED`；`task.dispatch`不在`_ENABLED_MESSAGE_TYPES`且production processor仍未注册，P12 ACK闭环前不得开启。
 
+## P11 本地可靠投递调度与发送验收证据
+
+- 工作包：`P11-W01`至`P11-W11`。
+- 状态：`VERIFIED/F3 (local only)`；只完成本地write到`ack_waiting`，不代表ACK闭环或production可靠可用。
+- 完成时间：`2026-07-23T00:22:16+08:00`。
+- 基线：当前分支`codex/ns-runtime-implementation`的最新P10/P10-FIX VERIFIED基线`c3a74e0`，实施开始时worktree干净且与upstream一致。
+- 修改文件：`src/ns_common/state_store/{authority,model,store,redis_provider,__init__}.py`、`src/ns_common/config/groups/runtime.py`、`src/ns_common/config/validation.py`、`etc/ns_config.example.json`、`src/ns_runtime/connection/lifecycle.py`、`src/ns_runtime/processor/integration.py`、`src/ns_runtime/delivery/`下P10 additive model/serde/store integration及P11 scheduling/store/workers/dispatch/local transport模块、`tests/_state_store_contract_model.py`、`tests/test_state_store.py`、`tests/test_redis_state_store_integration.py`、`tests/test_runtime_delivery_scheduling.py`，以及implementation plan、ADR-039和本acceptance log。
+
+### P11-W01至W11完成映射
+
+- W01：activation从StateStore typed scan读取prepared authority，按priority、batch、tenant/target/global queued水位分批转queued；activation evidence记录config/policy version、reason、batch/candidate count与UTC时间。大fanout不会一次全部激活。
+- W02：ClaimWorker以revision/state-version CAS claim，DeliveryOwner持有local runtime/worker/token/lease。内存模型8 worker和真实Redis 16 worker并发均仅一个CLAIMED，duplicate claim不触发transport。
+- W03：15s lease、5s renew、连续失败超过2次at_risk与4s保护窗口均为typed配置/authority；旧token、过期lease、risk owner停止新write。没有P17 fencing、remote transfer或第二worker lifecycle。
+- W04：SendWorker每次重读authority，校验state、owner/lease、active session/connection_epoch/tenant/identity、payload evidence、config/policy version和expires_at；断连、identity mismatch、非法payload_ref、过期及恶意dependency在transport前fail closed。RoutingPlan未修改，Router未调用，target未重选。
+- W05：queued -> sending、DeliveryAttempt create和root/shard Summary计数同一StateStore transaction；fake transport在调用点验证authority已是sending且attempt为writing，不能产生sending无attempt。
+- W06：sending时记录ack_deadline；write timeout配置必须小于lease TTL。无timeout scanner、ACK timeout状态迁移或retry。
+- W07：transport write成功只原子进入ack_waiting并把attempt标记write_succeeded；不存在sent/sent_success，transport success不等于delivery success。
+- W08：write exception、timeout和shutdown interruption形成bounded typed failure并原子进入write_failed；异常正文不持久化。retry_scheduled只是拒绝公共构造的placeholder，production path无该迁移；dead letter未实现。
+- W09：owner risk停止新write和同轮放大，仅允许已经sending的完成在保护窗口内提交；不形成新lease或ownership transfer。
+- W10：prepared/queued/sending/ack_waiting/write_failed在每次原子迁移同步root/shard计数；authority重算与Summary交叉校验。prepared不占active/inflight，sending占active/write，ack_waiting占inflight。
+- W11：LocalTaskDispatchExperimentalProcessor与bounded coordinator显式复用P01唯一TaskSupervisor和P05 connection owner；默认配置false、builtin task.dispatch production contract仍disabled，P12前不得production enable。
+
+### 实际测试命令与原始结果
+
+- P11/StateStore/config专项：`PYTHONPATH=src python3 -m unittest tests.test_state_store tests.test_runtime_delivery_scheduling tests.test_config -q`，最终复跑`Ran 67 tests in 0.909s`，`OK`。
+- Redis provider/integration专项：`PYTHONPATH=src python3 -m unittest tests.test_redis_state_store_provider tests.test_redis_state_store_integration -q`，`Ran 24 tests in 8.004s`，`OK`。真实`redis-server`覆盖Lua索引、scan、P10 admit -> P11 activate及16 worker原子claim；Valkey仍只表示driver对Redis server的协议兼容，不是valkey-server证据。
+- 全树：`python3 -m compileall -q src tests && PYTHONPATH=src python3 -m unittest discover -s tests -t . -q`，最终复跑`Ran 816 tests in 44.814s`，`OK (skipped=1)`；跳过项为既有平台条件，不是P11失败。
+- 差异：`git diff --check`成功；行尾只出现Git工作区LF/CRLF转换提示，没有whitespace error。
+- 以上全部是当前WSL工作区的local verification；没有远程CI结果，不据此声明远程或生产环境通过。
+
+### 安全、恢复与禁止项结论
+
+- public model直接构造、`dataclasses.replace()`非法状态、reserved retry_scheduled、自定义dependency返回mapping/object、fake transport试图绕过迁移均fail closed。
+- runtime shutdown取消发生在write中时，attempt和DeliveryRecord原子落typed`shutdown_interrupted/write_failed`；StateStore冲突发生在transport前不写，transport后authority冲突保持sending歧义供后续阶段处理，不伪造成功。
+- 本阶段没有改写RP-1、调用Router、选择新target、绕过IAM/payload evidence、把queued当connection write queue、创建第二TaskSupervisor/event loop/shutdown owner，或开启production task.dispatch。
+
+### 当前限制与下一工作包
+
+- 明确未实现：P12 ACK/NACK/Defer、AckRecord、acked、ACK timeout scanner、自动retry及retry budget；P13 DeadLetterRecord/replay/一般cancel/hold；P14 health scoring/fair scheduling；P17 lease/fencing/leader coordination；master query、remote forwarding、cluster与跨runtime owner。
+- P11 local owner lease不允许无fencing的过期owner接管；旧/过期owner只会fail closed。跨shutdown的安全ownership recovery必须等待后续fencing/恢复设计，不能伪造transfer。
+- inline payload正文按P10冻结规则不进入StateStore；P11 payload validator/resolver是显式可信依赖，local experiment必须提供能按DeliveryRecord evidence返回内容的authority adapter。本阶段不把内存cache升级为可靠payload authority。
+- 下一工作包：`P12-W01`保持`BLOCKED`，等待独立授权。ACK闭环完成并重新验收前，可靠投递只能陈述为“写入目标并进入ack_waiting”，不得陈述为成功送达。
+
 ## 新记录模板
 
 - 工作包：

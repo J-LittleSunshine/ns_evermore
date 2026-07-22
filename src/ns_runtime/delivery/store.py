@@ -28,6 +28,7 @@ from .models import (
     compute_dedup_evidence_fingerprint, validate_initialization_graph,
 )
 from ns_runtime.routing import ResolvedRoutingPlan
+from .serde import delivery_to_dict, summary_to_dict
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -486,50 +487,12 @@ def _dedup_dict(value: DedupEvidence) -> dict[str, object]:
 
 
 def _summary_dict(value: MessageDeliverySummary) -> dict[str, object]:
-    return {
-        "schema_version": value.schema_version, "summary_id": value.summary_id,
-        "root_summary_id": value.root_summary_id,
-        "shard_index": value.shard_index, "shard_count": value.shard_count,
-        "message_id": value.message_id, "tenant_id": value.tenant_id,
-        "plan_id": value.plan_id, "plan_version": value.plan_version,
-        "plan_decision_fingerprint": value.plan_decision_fingerprint,
-        "target_fingerprint": value.target_fingerprint,
-        "status": value.status.value, "total_count": value.total_count,
-        "accepted_count": value.accepted_count,
-        "rejected_count": value.rejected_count,
-        "prepared_count": value.prepared_count,
-        "cancelled_count": value.cancelled_count,
-        "not_initialized_count": value.not_initialized_count,
-        "active_count": value.active_count, "inflight_count": value.inflight_count,
-        "payload_evidence": value.payload_evidence.safe_dict() if value.payload_evidence else None,
-        "policy_request_fingerprint": value.policy_decision.request_fingerprint,
-        "policy_version": value.policy_decision.policy_version,
-        "rejection_reasons": [item.reason.value for item in value.rejection_evidence],
-        "state_version": value.state_version,
-        "created_at": value.created_at.isoformat(), "updated_at": value.updated_at.isoformat(),
-    }
+    return summary_to_dict(value)
 
 
 def _delivery_dict(value: DeliveryRecord) -> dict[str, object]:
-    # No business payload, address, credential, or arbitrary rejection text.
-    return {
-        "schema_version": value.schema_version, "delivery_id": value.delivery_id,
-        "summary_id": value.summary_id, "root_summary_id": value.root_summary_id,
-        "shard_index": value.shard_index, "message_id": value.message_id,
-        "tenant_id": value.tenant_id, "plan_id": value.plan_id,
-        "plan_version": value.plan_version,
-        "plan_decision_fingerprint": value.plan_decision_fingerprint,
-        "target_fingerprint": value.target_fingerprint,
-        "target_index": value.target_index, "status": value.status.value,
-        "binding_runtime_id": value.binding.runtime_id,
-        "binding_connection_id": value.binding.connection_id,
-        "binding_session_id": value.binding.session_id,
-        "binding_connection_epoch": value.binding.connection_epoch,
-        "payload_evidence": value.payload_evidence.safe_dict(),
-        "policy_request_fingerprint": value.policy_decision.request_fingerprint,
-        "state_version": value.state_version,
-        "created_at": value.created_at.isoformat(), "updated_at": value.updated_at.isoformat(),
-    }
+    # No business payload, credential, or arbitrary exception text is stored.
+    return delivery_to_dict(value)
 
 
 def _key_digest(*parts: str) -> str:

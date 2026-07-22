@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import unittest
 
 from ns_common.exceptions import (
@@ -32,6 +33,7 @@ from ns_common.state_store import (
     StateMutationKind,
     StateNamespace,
     StateNamespaceKind,
+    StateScanResult,
     StateStoreCapabilities,
     StateStoreCapability,
     StateStoreHealthStatus,
@@ -217,6 +219,48 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_contract_exposes_no_unconditional_put(self) -> None:
         self.assertFalse(hasattr(self.store, "put"))
         self.assertFalse(hasattr(self.store, "set"))
+
+    async def test_scan_is_typed_paginated_and_scope_bounded(self) -> None:
+        await self.store.open()
+        for object_id in ("scan-c", "scan-a", "scan-b"):
+            await self.store.compare_and_set(
+                scope=self.scope,
+                mutation=_create(_key(self.scope, object_id)),
+            )
+        first = await self.store.scan(
+            scope=self.scope,
+            object_type="contract_record",
+            limit=2,
+        )
+        self.assertIsInstance(first, StateScanResult)
+        self.assertEqual(("scan-a", "scan-b"), tuple(
+            record.key.object_id for record in first.records
+        ))
+        self.assertEqual("2", first.next_cursor)
+        second = await self.store.scan(
+            scope=self.scope,
+            object_type="contract_record",
+            cursor=first.next_cursor,
+            limit=2,
+        )
+        self.assertEqual(("scan-c",), tuple(
+            record.key.object_id for record in second.records
+        ))
+        self.assertIsNone(second.next_cursor)
+        with self.assertRaises(NsValidationError):
+            StateScanResult(
+                records=[],  # type: ignore[arg-type]
+                next_cursor=None,
+                observed_at=self.clock.utc_now(),
+            )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(first, next_cursor="0")
+        without_scan = _scope(capabilities=frozenset({StateCallerCapability.READ}))
+        with self.assertRaises(NsRuntimeStateStoreCapabilityUnavailableError):
+            await self.store.scan(
+                scope=without_scan,
+                object_type="contract_record",
+            )
 
     async def test_cancelled_close_while_waiting_preserves_retryable_ownership(self) -> None:
         await self.store.open()

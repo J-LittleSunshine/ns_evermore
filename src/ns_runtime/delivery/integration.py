@@ -15,9 +15,11 @@ from ns_runtime.processor import (
 from ns_runtime.routing import ResolvedRoutingPlan
 
 from .models import (
-    AdmissionPriority, AdmissionReliability, AdmissionTrace, InlinePayload,
+    AdmissionOutcome, AdmissionPriority, AdmissionReliability, AdmissionTrace,
+    InlinePayload,
     PayloadReference,
 )
+from .dispatch import LocalDeliveryDispatchCoordinator
 from .policy import AdmissionPolicyConfig, AdmissionRequest
 from .service import DeliveryAdmissionService
 
@@ -130,8 +132,8 @@ class EnvelopeAdmissionRequestFactory(AdmissionRequestFactory):
 class DeliveryAdmissionMessageProcessor(MessageProcessor):
     """Consumes exactly RoutingPreparationResult.RESOLVED from PC-1 stage six.
 
-    It is intentionally not registered while ``task.dispatch`` remains disabled
-    through P12.  P10 tests may compose it explicitly.
+    It is not production-registered while ``task.dispatch`` remains disabled.
+    P10/P11 tests and local experiments may compose it explicitly.
     """
 
     def __init__(self, *, service: DeliveryAdmissionService,
@@ -157,6 +159,40 @@ class DeliveryAdmissionMessageProcessor(MessageProcessor):
         return await self._service.admit(
             request, trace=AdmissionTrace(trace_id=context.trace.value),
         )
+
+
+class LocalTaskDispatchExperimentalProcessor(MessageProcessor):
+    """P11 local-only admission plus supervised dispatch wakeup.
+
+    The returned value remains the frozen P10 admission result. Scheduling is
+    post-commit and cannot rewrite an accepted result during shutdown.
+    """
+
+    def __init__(
+        self,
+        *,
+        admission: DeliveryAdmissionMessageProcessor,
+        coordinator: LocalDeliveryDispatchCoordinator,
+    ) -> None:
+        if not isinstance(admission, DeliveryAdmissionMessageProcessor):
+            _invalid("experimental.admission")
+        if not isinstance(coordinator, LocalDeliveryDispatchCoordinator):
+            _invalid("experimental.coordinator")
+        self._admission = admission
+        self._coordinator = coordinator
+
+    @property
+    def name(self) -> str:
+        return "delivery.local_dispatch.p11.experimental"
+
+    async def process(self, context: ProcessorContext, value: object) -> object:
+        stage_six = StageSixAdmissionInput.from_result(value)
+        result = await self._admission.process(context, value)
+        if result.outcome is AdmissionOutcome.ACCEPTED and result.committed:
+            self._coordinator.schedule(
+                tenant_id=stage_six.plan.authorization_evidence.effective_tenant_id,
+            )
+        return result
 
 
 def _priority(value: int) -> AdmissionPriority:
@@ -203,4 +239,5 @@ def _invalid(field: str) -> None:
 __all__ = (
     "AdmissionRequestFactory", "DeliveryAdmissionMessageProcessor",
     "EnvelopeAdmissionRequestFactory", "StageSixAdmissionInput",
+    "LocalTaskDispatchExperimentalProcessor",
 )

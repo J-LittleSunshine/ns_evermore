@@ -60,10 +60,14 @@ from ns_runtime.delivery import (
     AdmissionRequest,
     AdmissionTrace,
     DefaultAdmissionPolicy,
+    ClaimOutcome,
+    ClaimWorker,
+    DeliverySchedulingPolicy,
     DeliveryAdmissionService,
     InlinePayload,
     StageSixAdmissionInput,
     StateStoreDeliveryAdmissionStore,
+    StateStoreDeliveryScheduler,
 )
 from ns_runtime.processor import RoutingPreparationResult
 from ns_runtime.context import RuntimeContext, RuntimeDependencySlots
@@ -359,6 +363,56 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             consistency=StateConsistency.LINEARIZABLE,
         )
         self.assertEqual(advanced, observed.record)
+        await store.close()
+
+    async def test_p11_real_redis_scan_activation_and_atomic_claim_conflict(self) -> None:
+        store = self._provider()
+        await store.open()
+        plan = await _plan()
+        service, request = self._admission_service(store, plan)
+        admitted = await service.admit(
+            request,
+            trace=AdmissionTrace(trace_id="trace-p11-redis"),
+        )
+        self.assertIs(AdmissionOutcome.ACCEPTED, admitted.outcome)
+        scheduler = StateStoreDeliveryScheduler(store=store, clock=self.clock)
+        policy = DeliverySchedulingPolicy(
+            config_version="c1",
+            policy_version="p1",
+            activation_batch_size=1,
+            tenant_queued_high_watermark=10,
+            target_queued_high_watermark=2,
+            lease_ttl_seconds=60,
+            renew_interval_seconds=5,
+        )
+        activated = await scheduler.activate_prepared(
+            tenant_id=plan.authorization_evidence.effective_tenant_id,
+            policy=policy,
+        )
+        self.assertEqual(1, len(activated.activated))
+        workers = tuple(
+            ClaimWorker(
+                scheduler=scheduler,
+                policy=policy,
+                runtime_id=plan.selected_bindings[0].runtime_id,
+                worker_id=f"redis-worker-{index}",
+                token_factory=lambda index=index: f"redis-claim-{index}",
+            )
+            for index in range(16)
+        )
+        results = await asyncio.gather(*(
+            worker.run_once(
+                tenant_id=plan.authorization_evidence.effective_tenant_id,
+            )
+            for worker in workers
+        ))
+        self.assertEqual(1, sum(
+            result.outcome is ClaimOutcome.CLAIMED for result in results
+        ))
+        self.assertEqual(15, sum(
+            result.outcome in {ClaimOutcome.CONTENDED, ClaimOutcome.EMPTY}
+            for result in results
+        ))
         await store.close()
 
     async def test_revision_order_and_schema_version_contract(self) -> None:

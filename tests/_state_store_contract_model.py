@@ -21,6 +21,7 @@ from ns_common.state_store import (
     StateReadResult,
     StateRecord,
     StateRevision,
+    StateScanResult,
     StateStore,
     StateStoreCapabilities,
     StateStoreHealth,
@@ -131,6 +132,35 @@ class DeterministicStateStoreContractModel(StateStore):
         async with self._lock:
             self._validate_mutation(mutation, self._records)
             return self._apply_mutation(mutation)
+
+    async def _scan(
+        self,
+        *,
+        scope: StateAccessScope,
+        object_type: str,
+        cursor: str | None,
+        limit: int,
+    ) -> StateScanResult:
+        self.read_count += 1
+        if self.read_error is not None:
+            raise self.read_error
+        offset = 0 if cursor is None else int(cursor)
+        async with self._lock:
+            values = tuple(
+                record for key, record in sorted(
+                    self._records.items(),
+                    key=lambda item: (item[0].object_type, item[0].object_id),
+                )
+                if key.namespace == scope.namespace
+                and key.object_type == object_type
+            )
+            page = values[offset:offset + limit]
+            next_offset = offset + len(page)
+            return StateScanResult(
+                records=page,
+                next_cursor=(str(next_offset) if next_offset < len(values) else None),
+                observed_at=self.clock.utc_now(),
+            )
 
     async def _transact(
         self,

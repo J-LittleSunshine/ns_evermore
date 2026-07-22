@@ -38,6 +38,7 @@ from .model import (
     StateReadResult,
     StateRecord,
     StateRevision,
+    StateScanResult,
     StateStoreHealth,
     StateStoreHealthStatus,
     StateTransaction,
@@ -223,8 +224,10 @@ end
 local results = {}
 for index, mutation in ipairs(mutations) do
     local key = KEYS[index + 1]
+    local index_key = KEYS[#mutations + index + 1]
     if mutation.kind == 'delete' then
         redis.call('DEL', key)
+        redis.call('ZREM', index_key, key)
         results[index] = {present = '0'}
     else
         local revision = tostring(redis.call('INCR', KEYS[1]))
@@ -237,8 +240,12 @@ for index, mutation in ipairs(mutations) do
             'epoch', document.epoch,
             'payload', document.payload,
             'revision', revision,
-            'committed_at', committed_at
+            'committed_at', committed_at,
+            'namespace_digest', mutation.key.namespace_digest,
+            'object_type', mutation.key.object_type,
+            'object_id', mutation.key.object_id
         )
+        redis.call('ZADD', index_key, 0, key)
         results[index] = {
             present = '1',
             schema_name = document.schema_name,
@@ -430,6 +437,59 @@ class RedisValkeyStateStore(StateStore):
         )
         return result.records[0]
 
+    async def _scan(
+        self,
+        *,
+        scope: StateAccessScope,
+        object_type: str,
+        cursor: str | None,
+        limit: int,
+    ) -> StateScanResult:
+        client = self._require_client()
+        offset = 0 if cursor is None else int(cursor)
+        index_key = self._index_key(scope.namespace, object_type)
+        raw_keys = await self._execute(
+            client.zrange(index_key, offset, offset + limit - 1),  # type: ignore[attr-defined]
+        )
+        if not isinstance(raw_keys, (list, tuple)):
+            raise RuntimeError("provider scan result invalid")
+        records: list[StateRecord] = []
+        expected_namespace_digest = _namespace_digest(scope.namespace)
+        for raw_key in raw_keys:
+            values = await self._execute(
+                client.hgetall(raw_key),  # type: ignore[attr-defined]
+            )
+            if not values:
+                continue
+            if not isinstance(values, dict):
+                raise RuntimeError("provider scan record invalid")
+            text_values = {
+                _as_text(field): _as_text(value)
+                for field, value in values.items()
+            }
+            if (
+                text_values.get("namespace_digest") != expected_namespace_digest
+                or text_values.get("object_type") != object_type
+            ):
+                raise RuntimeError("provider scan scope invalid")
+            key = StateKey(
+                namespace=scope.namespace,
+                object_type=object_type,
+                object_id=text_values["object_id"],
+            )
+            records.append(self._record_from_wire(key, text_values))
+        total = await self._execute(
+            client.zcard(index_key),  # type: ignore[attr-defined]
+        )
+        if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+            raise RuntimeError("provider scan count invalid")
+        next_offset = offset + len(raw_keys)
+        return StateScanResult(
+            records=tuple(records),
+            next_cursor=(str(next_offset) if next_offset < total else None),
+            observed_at=self._clock.utc_now(),
+        )
+
     async def _transact(
         self,
         transaction: StateTransaction,
@@ -493,9 +553,14 @@ class RedisValkeyStateStore(StateStore):
         client = self._require_client()
         committed_at = self._clock.utc_now()
         payload = tuple(_mutation_payload(mutation) for mutation in mutations)
-        keys = (self._revision_key,) + tuple(
+        record_keys = tuple(
             self._record_key(mutation.key) for mutation in mutations
         )
+        index_keys = tuple(
+            self._index_key(mutation.key.namespace, mutation.key.object_type)
+            for mutation in mutations
+        )
+        keys = (self._revision_key,) + record_keys + index_keys
         raw = await self._execute(
             client.eval(  # type: ignore[attr-defined]
                 _TRANSACTION_SCRIPT,
@@ -599,6 +664,12 @@ class RedisValkeyStateStore(StateStore):
 
     def _record_key(self, key: StateKey) -> str:
         return self._prefix + "record:" + _state_key_digest(key)
+
+    def _index_key(self, namespace: StateNamespace, object_type: str) -> str:
+        return (
+            self._prefix + "index:" + _namespace_digest(namespace)
+            + ":" + hashlib.sha256(object_type.encode("utf-8")).hexdigest()
+        )
 
     def _append_key(self, key: StateKey) -> str:
         return self._prefix + "append:" + _state_key_digest(key)
@@ -714,6 +785,10 @@ def _namespace_payload(namespace: StateNamespace) -> dict[str, object]:
     }
 
 
+def _namespace_digest(namespace: StateNamespace) -> str:
+    return hashlib.sha256(_canonical_json(_namespace_payload(namespace))).hexdigest()
+
+
 def _document_payload(document: StateDocument) -> dict[str, str]:
     return {
         "schema_name": document.schema_name,
@@ -732,6 +807,11 @@ def _mutation_payload(mutation: StateMutation) -> dict[str, object]:
         expected_revision = "invalid" if revision_number is None else str(revision_number)
     return {
         "kind": mutation.kind.value,
+        "key": {
+            "namespace_digest": _namespace_digest(mutation.key.namespace),
+            "object_type": mutation.key.object_type,
+            "object_id": mutation.key.object_id,
+        },
         "expected_revision": expected_revision,
         "expected_state_version": (
             "" if assertion.expected_state_version is None

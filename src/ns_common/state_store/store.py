@@ -37,6 +37,7 @@ from .model import (
     StateReadResult,
     StateRecord,
     StateRevision,
+    StateScanResult,
     StateStoreHealth,
     StateStoreHealthStatus,
     StateTransaction,
@@ -235,6 +236,66 @@ class StateStore(ABC):
                 self._compare_and_set(scope=scope, mutation=mutation),
                 expected_type=(StateRecord, type(None)),
             )
+        finally:
+            await self._exit_operation()
+
+    async def scan(
+        self,
+        *,
+        scope: StateAccessScope,
+        object_type: str,
+        cursor: str | None = None,
+        limit: int = 100,
+    ) -> StateScanResult:
+        if type(object_type) is not str or not object_type:
+            _invalid("scan.object_type")
+        if cursor is not None and (
+            type(cursor) is not str or not cursor.isdigit() or cursor == "0"
+        ):
+            _invalid("scan.cursor")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= 1000:
+            _invalid("scan.limit")
+        self._require_caller_capability(scope, StateCallerCapability.SCAN)
+        self._require_authority(scope)
+        self._require_store_capability(StateStoreCapability.SCAN)
+        await self._enter_operation("scan")
+        try:
+            try:
+                result = await self._scan(
+                    scope=scope,
+                    object_type=object_type,
+                    cursor=cursor,
+                    limit=limit,
+                )
+            except asyncio.CancelledError:
+                raise
+            except NsRuntimeStateStoreError:
+                raise
+            except asyncio.TimeoutError:
+                raise NsRuntimeStateStoreTimeoutError(
+                    details={"component": "state_store", "operation": "scan"},
+                ) from None
+            except Exception:
+                raise NsRuntimeStateStoreUnavailableError(
+                    details={"component": "state_store", "operation": "scan"},
+                ) from None
+            if not isinstance(result, StateScanResult):
+                raise NsRuntimeStateStoreError(
+                    details={"component": "state_store", "operation": "scan"},
+                )
+            if any(
+                record.key.namespace != scope.namespace
+                or record.key.object_type != object_type
+                for record in result.records
+            ):
+                raise NsRuntimeStateStoreNamespaceViolationError(
+                    details={
+                        "component": "state_store",
+                        "operation": "scan",
+                        "reason": "provider_scope_mismatch",
+                    },
+                )
+            return result
         finally:
             await self._exit_operation()
 
@@ -476,6 +537,17 @@ class StateStore(ABC):
         scope: StateAccessScope,
         mutation: StateMutation,
     ) -> StateRecord | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _scan(
+        self,
+        *,
+        scope: StateAccessScope,
+        object_type: str,
+        cursor: str | None,
+        limit: int,
+    ) -> StateScanResult:
         raise NotImplementedError
 
     @abstractmethod

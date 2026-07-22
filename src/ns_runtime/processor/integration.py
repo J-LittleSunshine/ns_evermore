@@ -374,6 +374,7 @@ def build_connection_processor_pipeline(
     policy_version: str,
     timeout_seconds: float,
     protocol_registry: MessageTypeRegistry = BUILTIN_MESSAGE_REGISTRY,
+    experimental_message_processors: Mapping[str, MessageProcessor] | None = None,
 ) -> ConnectionProcessorPipeline:
     from ns_runtime.connection.session import SessionContext
     from ns_runtime.connection.processors import ConnectionLifecycleProcessorRegistry
@@ -384,6 +385,15 @@ def build_connection_processor_pipeline(
         _invalid("build.lifecycle_registry")
     if not isinstance(protocol_registry, MessageTypeRegistry):
         _invalid("build.protocol_registry")
+    if experimental_message_processors is None:
+        experimental_message_processors = {}
+    if not isinstance(experimental_message_processors, Mapping) or any(
+        type(message_type) is not str
+        or message_type != "task.dispatch"
+        or not isinstance(processor, MessageProcessor)
+        for message_type, processor in experimental_message_processors.items()
+    ):
+        _invalid("build.experimental_message_processors")
     if not isinstance(task_supervisor, TaskSupervisor):
         _invalid("build.task_supervisor")
     if not isinstance(clock, Clock):
@@ -399,7 +409,12 @@ def build_connection_processor_pipeline(
         previous = feature_flags.setdefault(contract.feature_flag, contract.feature_enabled)
         if previous is not contract.feature_enabled:
             _invalid("build.feature_flag_contract_conflict")
-        if contract.feature_enabled:
+        experimental = experimental_message_processors.get(contract.message_type)
+        if experimental is not None:
+            if contract.feature_enabled:
+                _invalid("build.experimental_contract_already_enabled")
+            message_processor = experimental
+        elif contract.feature_enabled:
             message_processor = LifecycleMessageProcessorAdapter(
                 registry=lifecycle_registry,
                 contract=contract,

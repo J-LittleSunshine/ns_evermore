@@ -184,6 +184,16 @@ class NsRuntimeRoutingConfig:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NsRuntimeDeliveryConfig:
     ack_timeout_seconds: int = 30
+    local_task_dispatch_experimental_enabled: bool = False
+    activation_batch_size: int = 200
+    global_queued_high_watermark: int = 10_000
+    tenant_queued_high_watermark: int = 10_000
+    target_queued_high_watermark: int = 256
+    lease_ttl_seconds: int = 15
+    lease_renew_interval_seconds: int = 5
+    lease_max_renew_failures: int = 2
+    owner_risk_window_seconds: int = 4
+    write_timeout_seconds: int = 10
     max_retry_attempts: int = 5
     retry_base_delay_ms: int = 100
     retry_max_delay_ms: int = 30_000

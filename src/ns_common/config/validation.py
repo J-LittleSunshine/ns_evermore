@@ -770,6 +770,35 @@ class _ConfigValidator:
 
         delivery = runtime.delivery
         self._validate_positive_int("runtime.delivery.ack_timeout_seconds", delivery.ack_timeout_seconds)
+        if type(delivery.local_task_dispatch_experimental_enabled) is not bool:
+            raise NsConfigError(
+                "runtime.delivery.local_task_dispatch_experimental_enabled must be a boolean.",
+                details={"field": "runtime.delivery.local_task_dispatch_experimental_enabled"},
+            )
+        for field_name in (
+            "activation_batch_size",
+            "global_queued_high_watermark",
+            "tenant_queued_high_watermark",
+            "target_queued_high_watermark",
+            "lease_ttl_seconds",
+            "lease_renew_interval_seconds",
+            "lease_max_renew_failures",
+            "owner_risk_window_seconds",
+            "write_timeout_seconds",
+        ):
+            self._validate_positive_int(
+                f"runtime.delivery.{field_name}", getattr(delivery, field_name),
+            )
+        if delivery.lease_renew_interval_seconds >= delivery.lease_ttl_seconds:
+            raise NsConfigError(
+                "runtime.delivery lease renew interval must be lower than the lease TTL.",
+                details={"field": "runtime.delivery.lease_renew_interval_seconds"},
+            )
+        if delivery.write_timeout_seconds >= delivery.lease_ttl_seconds:
+            raise NsConfigError(
+                "runtime.delivery write timeout must be lower than the lease TTL.",
+                details={"field": "runtime.delivery.write_timeout_seconds"},
+            )
         self._validate_non_negative_int("runtime.delivery.max_retry_attempts", delivery.max_retry_attempts)
         self._validate_non_negative_int("runtime.delivery.retry_base_delay_ms", delivery.retry_base_delay_ms)
         self._validate_non_negative_int("runtime.delivery.retry_max_delay_ms", delivery.retry_max_delay_ms)

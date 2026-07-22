@@ -320,6 +320,75 @@ class ConnectionLifecycleManager:
     def pending_candidate_cleanup_count(self) -> int:
         return len(self._candidate_cleanup_owners)
 
+    async def resolve_local_delivery_target(self, binding):
+        """Resolve the current local transport owner without rerouting."""
+        from ns_runtime.delivery.scheduling import LocalDeliveryTarget
+        from ns_runtime.routing import SelectedRoutingBinding
+
+        if not isinstance(binding, SelectedRoutingBinding):
+            _invalid("delivery.binding")
+        entry = await self._index.lookup_connection(binding.connection_id)
+        owner = self._owners.get(binding.connection_id)
+        context = None if owner is None else owner.context
+        active = bool(
+            entry is not None
+            and entry.state is LogicalConnectionState.ACTIVE
+            and entry.active_target_eligible
+            and owner is not None
+            and owner.transport is not None
+            and context is not None
+            and context.session_id == binding.session_id
+            and context.connection_epoch == binding.connection_epoch
+            and context.tenant_id == binding.tenant_id
+            and context.identity == binding.identity_reference.value
+        )
+        return LocalDeliveryTarget(
+            runtime_id=binding.runtime_id,
+            connection_id=binding.connection_id,
+            session_id=binding.session_id,
+            connection_epoch=binding.connection_epoch,
+            tenant_id=binding.tenant_id,
+            identity=binding.identity_reference.value,
+            active=active,
+        )
+
+    async def write_local_delivery(self, *, target, payload) -> None:
+        """Revalidate the same local owner immediately before transport write."""
+        from ns_runtime.delivery.scheduling import (
+            LocalDeliveryTarget,
+            OutboundDeliveryPayload,
+        )
+
+        if not isinstance(target, LocalDeliveryTarget):
+            _invalid("delivery.target")
+        if not isinstance(payload, OutboundDeliveryPayload):
+            _invalid("delivery.payload")
+        entry = await self._index.lookup_connection(target.connection_id)
+        owner = self._owners.get(target.connection_id)
+        context = None if owner is None else owner.context
+        if not (
+            target.active
+            and entry is not None
+            and entry.state is LogicalConnectionState.ACTIVE
+            and entry.active_target_eligible
+            and owner is not None
+            and owner.transport is not None
+            and context is not None
+            and context.session_id == target.session_id
+            and context.connection_epoch == target.connection_epoch
+            and context.tenant_id == target.tenant_id
+            and context.identity == target.identity
+        ):
+            raise NsStateError(
+                "Local delivery target is no longer active.",
+                details={
+                    "component": "connection_lifecycle_manager",
+                    "operation": "write_local_delivery",
+                    "reason": "target_inactive",
+                },
+            )
+        await owner.transport.send(payload.wire_text)
+
     async def start(self) -> None:
         async with self._lifecycle_lock:
             if self._started:
