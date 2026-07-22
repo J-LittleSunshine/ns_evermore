@@ -1791,6 +1791,35 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 六个P09 blocker均关闭；实现与全部规定回归通过，P09恢复`VERIFIED/F3 (local only)`。
 - strong RoutingPlan persistence、remote/master routing、cluster/lease/fencing、P14 health scoring、Delivery/Summary/ACK/retry仍未实现。`P10-W01`保持`BLOCKED`，等待独立授权。
 
+## P09-FIX-03 RP-1 public type trusted-boundary closure验收证据
+
+- 工作包：`P09-FIX-03`；开始时P09按`IN_PROGRESS`处理，以下证据全部通过后恢复`VERIFIED/F3 (local only)`。
+- 完成时间：`2026-07-22T16:50:35+08:00`。
+- 范围：只关闭P09 RP-1公共类型可信边界；不实施P10、P14 health scoring、remote/master routing或strong authority provider。`P10-W01`保持`BLOCKED`。
+- 修改文件：更新processor authorization contract/integration，routing models/policy/integration/router/facade，两组routing测试，以及ADR-036、implementation plan和本日志。
+
+### 三个blocker关闭证据
+
+- Blocker 1，IAM message/semantic boundary：`AuthorizationDecisionEvidence`将当前message防重放binding与可复现semantic decision分开；公共构造即拒绝session/effective ref不同、空ref/version和两种binding伪造，同ref v1到v2 refresh合法。真实两个Envelope仅message ID不同的集成路径得到不同`message_binding_reference`、相同`semantic_decision_reference`与相同decision fingerprint；将第一条evidence跨message复用在policy调用和index snapshot均为零时拒绝。
+- Blocker 2，policy/scorer authority：不可变`RoutingPolicyInvocation`绑定可信message type/category/audit/security、contract ref/version/capabilities、config/policy和intent/risk references；stage six重建并比较，message type、risk、config或policy不一致均在Router前拒绝。恶意policy试图用伪造`security_sensitive=false`覆盖真实security-sensitive contract时，结果为`POLICY_DECISION_MISMATCH`且index snapshot为零；类型化security override只允许reject/no-rebind安全结果，scorer身份只接受`runtime_fallback/fallback.v1`。
+- Blocker 3，plan/fingerprint self-validation：Router与plan共享唯一canonical fingerprint函数。plan公开构造独立复验candidate/binding精确性、filtered全集、single/quorum/weighted-subset/all-required cardinality及policy/IAM/scoring authority，并重算fingerprint；即使调用方用`dataclasses.replace`同步修改expanded evidence，沿用旧fingerprint仍被拒绝。candidate score、selected顺序、index sequence、previous fingerprint及IAM/scoring/policy语义变化均有负向证据。
+
+### 测试命令与结果
+
+- P09 routing/models/policy/integration与PC-1专项：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09_rp1_review/bin/python -m unittest tests.test_runtime_routing tests.test_runtime_routing_contracts tests.test_runtime_processor_pipeline`，`Ran 43 tests in 0.926s, OK`。覆盖15项规定矩阵，并额外覆盖typed scorer身份、跨message防重放与恶意policy；加入IAM authorization refresh专项的联合为`Ran 49 tests in 0.936s, OK`。
+- ENV-1、P05 eligibility、audit-before-send、lifecycle audit：`Ran 79 tests in 1.268s, OK`。
+- P03-P09联合：`Ran 375 tests in 12.182s, OK`。
+- Linux runtime标准asyncio：按DEP-1排除Django-only `test_cache.py`，`Ran 744 tests in 25.360s, OK (skipped=1)`。
+- Linux runtime uvloop：同一744项在`uvloop.EventLoopPolicy()`下执行，`Ran 744 tests in 26.185s, OK (skipped=1)`。
+- Linux backend：`Ran 755 tests in 21.454s, OK (skipped=49)`。
+- 依赖与静态：两隔离环境`pip check`均为`No broken requirements found.`；runtime `compileall -q src tests`与`git diff --check`通过。
+- 冷导入/禁止项：cold import `ns_runtime.routing`得到`cold_import_forbidden=[]`；routing源码扫描无transport delivery/send、DeliveryRecord/DeliveryAttempt/MessageDeliverySummary、ACK/NACK/Defer、dead letter、Redis/Valkey/SQLite/Lua、lease/fencing、master query/remote forwarding、P14 health/latency/pressure、TaskSupervisor/EventBus/create-task。未新增第二supervisor/event loop/shutdown owner。
+
+### 最终判断与限制
+
+- 三个P09-FIX-03 blocker均关闭；P09恢复`VERIFIED/F3 (local only)`。
+- strong RoutingPlan persistence、remote/master routing、cluster/lease/fencing、P14 health scoring、Delivery/Summary/ACK/retry仍未实现。`P10-W01`保持`BLOCKED`，等待独立授权。
+
 ## 新记录模板
 
 - 工作包：

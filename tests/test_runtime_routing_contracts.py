@@ -6,7 +6,11 @@ import unittest
 from pathlib import Path
 
 from ns_common.async_runtime import TaskSupervisor
-from ns_common.exceptions import NsRuntimeEnvelopeSchemaError, NsRuntimeRouteRejectedError
+from ns_common.exceptions import (
+    NsRuntimeEnvelopeSchemaError,
+    NsRuntimeRouteRejectedError,
+    NsValidationError,
+)
 from ns_common.iam import IamPrincipalType, PermissionInvalidation
 from ns_common.time import ControlledClock
 from ns_runtime.processor import (
@@ -29,6 +33,8 @@ from ns_runtime.processor.integration import (
 from ns_runtime.iam import AuthorizationMode, MessageAuthorizationService
 from ns_runtime.protocol import (
     BUILTIN_MESSAGE_REGISTRY,
+    MessageAuditLevel,
+    MessageCategory,
     MessageGroup,
     MessageTypeRegistry,
     RoutingRequirement,
@@ -39,6 +45,7 @@ from ns_runtime.routing import (
     LocalRoutingPreparation,
     ResolvedRoutingPlan,
     RoutingFailureReason,
+    RoutingPolicyInvocation,
     RoutingStrategy,
 )
 
@@ -55,6 +62,17 @@ class _CountingPolicy(DefaultLocalRoutingPolicy):
     def decide(self, *args, **kwargs):
         self.calls += 1
         return super().decide(*args, **kwargs)
+
+
+class _MismatchedInvocationPolicy(DefaultLocalRoutingPolicy):
+    def __init__(self, replacement: RoutingPolicyInvocation) -> None:
+        super().__init__()
+        self.replacement = replacement
+        self.calls = 0
+
+    def decide(self, invocation):
+        self.calls += 1
+        return super().decide(self.replacement)
 
 
 class TargetGroupContractTestCase(unittest.TestCase):
@@ -299,27 +317,128 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(RoutingPreparationOutcome.RESOLVED, resolved.outcome)
         self.assertIsInstance(resolved.plan, ResolvedRoutingPlan)
         assert isinstance(resolved.plan, ResolvedRoutingPlan)
-        self.assertEqual(evidence.decision_reference, resolved.plan.iam_decision_reference)
+        self.assertEqual(
+            evidence.semantic_decision_reference,
+            resolved.plan.iam_decision_reference,
+        )
         self.assertEqual(evidence.decision_version, resolved.plan.iam_decision_version)
         self.assertNotEqual(session.permission_snapshot_ref, resolved.plan.iam_decision_reference)
+
+        other_envelope = dataclasses.replace(
+            envelope,
+            message=dataclasses.replace(
+                envelope.message,
+                message_id="message-other",
+            ),
+        )
+        other_context = dataclasses.replace(
+            context,
+            normalized_envelope=other_envelope,
+        )
+        other_evidence = await authorization.authorize(other_context)
+        other_resolved = await preparation.prepare(other_context, other_evidence)
+        self.assertIs(RoutingPreparationOutcome.RESOLVED, other_resolved.outcome)
+        assert isinstance(other_resolved.plan, ResolvedRoutingPlan)
+        self.assertNotEqual(
+            evidence.message_binding_reference,
+            other_evidence.message_binding_reference,
+        )
+        self.assertEqual(
+            evidence.semantic_decision_reference,
+            other_evidence.semantic_decision_reference,
+        )
+        self.assertEqual(
+            resolved.plan.decision_fingerprint,
+            other_resolved.plan.decision_fingerprint,
+        )
+
+        intent = resolved.plan.policy_decision.invocation.requested_intent
+        mismatched_invocations = (
+            RoutingPolicyInvocation.from_contract(
+                contract=BUILTIN_MESSAGE_REGISTRY.require("stream.start"),
+                requested_intent=intent,
+                config_version=context.config_version,
+                policy_version=context.policy_version,
+            ),
+            RoutingPolicyInvocation.from_contract(
+                contract=dataclasses.replace(
+                    contract,
+                    category=MessageCategory.CONTROL,
+                    audit_level=MessageAuditLevel.SECURITY,
+                ),
+                requested_intent=intent,
+                config_version=context.config_version,
+                policy_version=context.policy_version,
+            ),
+            RoutingPolicyInvocation.from_contract(
+                contract=contract,
+                requested_intent=intent,
+                config_version="config-v9",
+                policy_version=context.policy_version,
+            ),
+            RoutingPolicyInvocation.from_contract(
+                contract=contract,
+                requested_intent=intent,
+                config_version=context.config_version,
+                policy_version="policy-v9",
+            ),
+        )
+        for replacement in mismatched_invocations:
+            with self.subTest(invocation_mismatch=replacement):
+                mismatch_index = _SnapshotIndex(_snapshot((target_context,)))
+                mismatch_policy = _MismatchedInvocationPolicy(replacement)
+                mismatch_preparation = LocalRoutingPreparation(
+                    router=_router(mismatch_index, self.clock),
+                    protocol_registry=registry,
+                    policy=mismatch_policy,
+                )
+                mismatch_result = await mismatch_preparation.prepare(
+                    context,
+                    evidence,
+                )
+                self.assertIs(
+                    RoutingPreparationOutcome.REJECTED,
+                    mismatch_result.outcome,
+                )
+                self.assertIs(
+                    RoutingFailureReason.POLICY_DECISION_MISMATCH,
+                    mismatch_result.failure.reason,
+                )
+                self.assertEqual(1, mismatch_policy.calls)
+                self.assertEqual(0, mismatch_index.snapshot_calls)
+
+        security_contract = dataclasses.replace(
+            contract,
+            required_capabilities=("runtime.management",),
+        )
+        security_registry = MessageTypeRegistry((security_contract,))
+        malicious_index = _SnapshotIndex(_snapshot((target_context,)))
+        malicious_policy = _MismatchedInvocationPolicy(
+            resolved.plan.policy_decision.invocation,
+        )
+        malicious_result = await LocalRoutingPreparation(
+            router=_router(malicious_index, self.clock),
+            protocol_registry=security_registry,
+            policy=malicious_policy,
+        ).prepare(context, evidence)
+        self.assertIs(RoutingPreparationOutcome.REJECTED, malicious_result.outcome)
+        self.assertIs(
+            RoutingFailureReason.POLICY_DECISION_MISMATCH,
+            malicious_result.failure.reason,
+        )
+        self.assertFalse(malicious_policy.replacement.security_sensitive)
+        self.assertEqual(0, malicious_index.snapshot_calls)
 
         before = index.snapshot_calls
         mismatch_cases = (
             _bound_replace(
                 evidence,
                 session_permission_snapshot_ref="permission-other",
+                effective_permission_snapshot_ref="permission-other",
             ),
             _bound_replace(
                 evidence,
                 session_permission_snapshot_version="permission-v9",
-            ),
-            _bound_replace(
-                evidence,
-                effective_permission_snapshot_ref="permission-other",
-            ),
-            dataclasses.replace(
-                evidence,
-                effective_permission_snapshot_version="permission-v9",
             ),
         )
         for mismatch in mismatch_cases:
@@ -342,6 +461,19 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(0, counting_policy.calls)
                 self.assertEqual(before, index.snapshot_calls)
 
+        for invalid_change in (
+            {"effective_permission_snapshot_ref": "permission-other"},
+            {"effective_permission_snapshot_version": "permission-v9"},
+            {"session_permission_snapshot_ref": ""},
+            {"session_permission_snapshot_version": ""},
+            {"message_binding_reference": "sha256:" + "0" * 64},
+            {"decision_reason": "different_allow_reason"},
+        ):
+            with self.subTest(invalid_evidence=invalid_change), self.assertRaises(
+                NsValidationError,
+            ):
+                dataclasses.replace(evidence, **invalid_change)
+
         policy_rejected = await LocalRoutingPreparation(
             router=_router(index, self.clock),
             protocol_registry=registry,
@@ -360,7 +492,7 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(before, index.snapshot_calls)
 
-        unauthorized = dataclasses.replace(
+        unauthorized = _bound_replace(
             evidence,
             cross_tenant_authorized=False,
             effective_tenant_id=session.tenant_id,
@@ -373,13 +505,32 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(before, index.snapshot_calls)
 
-        unrelated = dataclasses.replace(
+        unrelated = _bound_replace(
             evidence,
             message_reference="sha256:1111111111111111",
         )
-        rejected_message = await preparation.prepare(context, unrelated)
+        self.assertEqual(
+            evidence.semantic_decision_reference,
+            unrelated.semantic_decision_reference,
+        )
+        self.assertNotEqual(
+            evidence.message_binding_reference,
+            unrelated.message_binding_reference,
+        )
+        cross_message_index = _SnapshotIndex(_snapshot((target_context,)))
+        cross_message_policy = _CountingPolicy()
+        rejected_message = await LocalRoutingPreparation(
+            router=_router(cross_message_index, self.clock),
+            protocol_registry=registry,
+            policy=cross_message_policy,
+        ).prepare(context, unrelated)
         self.assertIs(RoutingPreparationOutcome.REJECTED, rejected_message.outcome)
-        self.assertEqual(before, index.snapshot_calls)
+        self.assertIs(
+            RoutingFailureReason.AUTHORIZATION_EVIDENCE_MISMATCH,
+            rejected_message.failure.reason,
+        )
+        self.assertEqual(0, cross_message_policy.calls)
+        self.assertEqual(0, cross_message_index.snapshot_calls)
 
     async def test_iam_refresh_binds_session_and_effective_snapshots(self) -> None:
         contract = dataclasses.replace(
@@ -504,7 +655,10 @@ def _bound_replace(
     values = {
         item.name: getattr(evidence, item.name)
         for item in dataclasses.fields(AuthorizationDecisionEvidence)
-        if item.name != "decision_reference"
+        if item.name not in {
+            "message_binding_reference",
+            "semantic_decision_reference",
+        }
     }
     values.update(changes)
     return AuthorizationDecisionEvidence.bound(**values)  # type: ignore[arg-type]

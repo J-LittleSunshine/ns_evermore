@@ -183,16 +183,24 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
                     "reason": "cross_tenant_not_authorized_by_test_policy",
                 },
             )
-        result_payload = {
-            "allowed": True,
-            "message_reference": message_reference,
+        semantic_access_payload = {
+            "identity": context.session.identity,
+            "tenant_id": context.session.tenant_id,
             "message_type": context.envelope.message.type,
             "permission_snapshot_ref": context.session.permission_snapshot_ref,
             "permission_version": context.session.permission_version,
             "target_reference": target_reference,
+            "cross_tenant": crosses_tenant,
+            "management": False,
+            "task_creation": context.envelope.message.type == "task.dispatch",
         }
         return AuthorizationDecisionEvidence.bound(
             decision_version="authorization-decision.v1",
+            decision_classification="allow",
+            decision_reason="deterministic_allow",
+            semantic_access_check_reference=_decision_digest(
+                semantic_access_payload,
+            ),
             message_reference=message_reference,
             message_type=context.envelope.message.type,
             principal_tenant_id=context.session.tenant_id,
@@ -209,7 +217,6 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
                 context.session.permission_snapshot_ref
             ),
             effective_permission_snapshot_version=context.session.permission_version,
-            decision_result_reference=_decision_digest(result_payload),
         )
 
 
@@ -528,12 +535,11 @@ def _authorization_evidence(
         effective_snapshot.permission_snapshot_ref
     )
     effective_request["permission_version"] = effective_snapshot.permission_version
-    decision_result_reference = _decision_digest({
-        "request": effective_request,
-        "decision": decision.to_wire(),
-    })
     return AuthorizationDecisionEvidence.bound(
         decision_version="authorization-decision.v1",
+        decision_classification="allow",
+        decision_reason=decision.reason,
+        semantic_access_check_reference=_decision_digest(effective_request),
         message_reference=message_reference,
         message_type=context.envelope.message.type,
         principal_tenant_id=context.session.tenant_id,
@@ -544,7 +550,6 @@ def _authorization_evidence(
         session_permission_snapshot_version=context.session.permission_version,
         effective_permission_snapshot_ref=effective_snapshot.permission_snapshot_ref,
         effective_permission_snapshot_version=effective_snapshot.permission_version,
-        decision_result_reference=decision_result_reference,
     )
 
 

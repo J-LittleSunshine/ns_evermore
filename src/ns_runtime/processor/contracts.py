@@ -116,8 +116,12 @@ class ProcessorSafeSummary:
 class AuthorizationDecisionEvidence:
     """Immutable stage-two value bound to one message authorization check."""
 
-    decision_reference: str = field(repr=False)
+    message_binding_reference: str = field(repr=False)
+    semantic_decision_reference: str = field(repr=False)
+    semantic_access_check_reference: str = field(repr=False)
     decision_version: str
+    decision_classification: str
+    decision_reason: str
     message_reference: str
     message_type: str
     principal_tenant_id: str = field(repr=False)
@@ -128,20 +132,22 @@ class AuthorizationDecisionEvidence:
     session_permission_snapshot_version: str = field(repr=False)
     effective_permission_snapshot_ref: str = field(repr=False)
     effective_permission_snapshot_version: str = field(repr=False)
-    decision_result_reference: str = field(repr=False)
 
     def __post_init__(self) -> None:
-        if _DECISION_REFERENCE.fullmatch(self.decision_reference) is None:
-            _invalid("authorization_evidence.decision_reference")
+        for name in (
+            "message_binding_reference",
+            "semantic_decision_reference",
+            "semantic_access_check_reference",
+        ):
+            if _DECISION_REFERENCE.fullmatch(getattr(self, name)) is None:
+                _invalid(f"authorization_evidence.{name}")
         if _SAFE_REFERENCE.fullmatch(self.message_reference) is None:
             _invalid("authorization_evidence.message_reference")
         if _SAFE_REFERENCE.fullmatch(self.authorized_target_reference) is None:
             _invalid("authorization_evidence.authorized_target_reference")
-        if _DECISION_REFERENCE.fullmatch(self.decision_result_reference) is None:
-            _invalid("authorization_evidence.decision_result_reference")
         for name in (
-            "decision_version", "message_type", "principal_tenant_id",
-            "effective_tenant_id",
+            "decision_version", "decision_classification", "decision_reason",
+            "message_type", "principal_tenant_id", "effective_tenant_id",
             "session_permission_snapshot_ref",
             "session_permission_snapshot_version",
             "effective_permission_snapshot_ref",
@@ -152,12 +158,24 @@ class AuthorizationDecisionEvidence:
                 _invalid(f"authorization_evidence.{name}")
         if type(self.cross_tenant_authorized) is not bool:
             _invalid("authorization_evidence.cross_tenant_authorized")
+        if (
+            self.effective_permission_snapshot_ref
+            != self.session_permission_snapshot_ref
+        ):
+            _invalid("authorization_evidence.permission_snapshot_ref_refresh")
+        if not self.has_valid_semantic_decision():
+            _invalid("authorization_evidence.semantic_decision_reference")
+        if not self.has_valid_message_binding():
+            _invalid("authorization_evidence.message_binding_reference")
 
     @classmethod
     def bound(
         cls,
         *,
         decision_version: str,
+        decision_classification: str,
+        decision_reason: str,
+        semantic_access_check_reference: str,
         message_reference: str,
         message_type: str,
         principal_tenant_id: str,
@@ -168,10 +186,22 @@ class AuthorizationDecisionEvidence:
         session_permission_snapshot_version: str,
         effective_permission_snapshot_ref: str,
         effective_permission_snapshot_version: str,
-        decision_result_reference: str,
     ) -> "AuthorizationDecisionEvidence":
-        values = {
+        semantic_values = {
             "decision_version": decision_version,
+            "decision_classification": decision_classification,
+            "decision_reason": decision_reason,
+            "semantic_access_check_reference": semantic_access_check_reference,
+            "message_type": message_type,
+            "principal_tenant_id": principal_tenant_id,
+            "effective_tenant_id": effective_tenant_id,
+            "cross_tenant_authorized": cross_tenant_authorized,
+            "authorized_target_reference": authorized_target_reference,
+            "effective_permission_snapshot_ref": effective_permission_snapshot_ref,
+            "effective_permission_snapshot_version": effective_permission_snapshot_version,
+        }
+        semantic_decision_reference = cls._reference(semantic_values)
+        binding_values = {
             "message_reference": message_reference,
             "message_type": message_type,
             "principal_tenant_id": principal_tenant_id,
@@ -182,35 +212,62 @@ class AuthorizationDecisionEvidence:
             "session_permission_snapshot_version": session_permission_snapshot_version,
             "effective_permission_snapshot_ref": effective_permission_snapshot_ref,
             "effective_permission_snapshot_version": effective_permission_snapshot_version,
-            "decision_result_reference": decision_result_reference,
+            "semantic_decision_reference": semantic_decision_reference,
         }
         return cls(
-            decision_reference=cls._binding_reference(**values),
-            **values,
+            message_binding_reference=cls._reference(binding_values),
+            semantic_decision_reference=semantic_decision_reference,
+            semantic_access_check_reference=semantic_access_check_reference,
+            decision_version=decision_version,
+            decision_classification=decision_classification,
+            decision_reason=decision_reason,
+            message_reference=message_reference,
+            message_type=message_type,
+            principal_tenant_id=principal_tenant_id,
+            effective_tenant_id=effective_tenant_id,
+            cross_tenant_authorized=cross_tenant_authorized,
+            authorized_target_reference=authorized_target_reference,
+            session_permission_snapshot_ref=session_permission_snapshot_ref,
+            session_permission_snapshot_version=session_permission_snapshot_version,
+            effective_permission_snapshot_ref=effective_permission_snapshot_ref,
+            effective_permission_snapshot_version=effective_permission_snapshot_version,
         )
+
+    def has_valid_semantic_decision(self) -> bool:
+        return self.semantic_decision_reference == self._reference({
+            "decision_version": self.decision_version,
+            "decision_classification": self.decision_classification,
+            "decision_reason": self.decision_reason,
+            "semantic_access_check_reference": self.semantic_access_check_reference,
+            "message_type": self.message_type,
+            "principal_tenant_id": self.principal_tenant_id,
+            "effective_tenant_id": self.effective_tenant_id,
+            "cross_tenant_authorized": self.cross_tenant_authorized,
+            "authorized_target_reference": self.authorized_target_reference,
+            "effective_permission_snapshot_ref": self.effective_permission_snapshot_ref,
+            "effective_permission_snapshot_version": self.effective_permission_snapshot_version,
+        })
+
+    def has_valid_message_binding(self) -> bool:
+        return self.message_binding_reference == self._reference({
+            "message_reference": self.message_reference,
+            "message_type": self.message_type,
+            "principal_tenant_id": self.principal_tenant_id,
+            "effective_tenant_id": self.effective_tenant_id,
+            "cross_tenant_authorized": self.cross_tenant_authorized,
+            "authorized_target_reference": self.authorized_target_reference,
+            "session_permission_snapshot_ref": self.session_permission_snapshot_ref,
+            "session_permission_snapshot_version": self.session_permission_snapshot_version,
+            "effective_permission_snapshot_ref": self.effective_permission_snapshot_ref,
+            "effective_permission_snapshot_version": self.effective_permission_snapshot_version,
+            "semantic_decision_reference": self.semantic_decision_reference,
+        })
 
     def has_valid_binding(self) -> bool:
-        return self.decision_reference == self._binding_reference(
-            decision_version=self.decision_version,
-            message_reference=self.message_reference,
-            message_type=self.message_type,
-            principal_tenant_id=self.principal_tenant_id,
-            effective_tenant_id=self.effective_tenant_id,
-            cross_tenant_authorized=self.cross_tenant_authorized,
-            authorized_target_reference=self.authorized_target_reference,
-            session_permission_snapshot_ref=self.session_permission_snapshot_ref,
-            session_permission_snapshot_version=(
-                self.session_permission_snapshot_version
-            ),
-            effective_permission_snapshot_ref=self.effective_permission_snapshot_ref,
-            effective_permission_snapshot_version=(
-                self.effective_permission_snapshot_version
-            ),
-            decision_result_reference=self.decision_result_reference,
-        )
+        return self.has_valid_semantic_decision() and self.has_valid_message_binding()
 
     @staticmethod
-    def _binding_reference(**values: object) -> str:
+    def _reference(values: Mapping[str, object]) -> str:
         canonical = json.dumps(values, sort_keys=True, separators=(",", ":"))
         return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

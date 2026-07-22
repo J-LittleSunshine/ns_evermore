@@ -18,7 +18,12 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_runtime.processor.contracts import AuthorizationDecisionEvidence
-from ns_runtime.protocol import TargetGroup
+from ns_runtime.protocol import (
+    MessageAuditLevel,
+    MessageCategory,
+    MessageTypeContract,
+    TargetGroup,
+)
 
 
 _SAFE_REFERENCE = re.compile(r"sha256:[0-9a-f]{16}")
@@ -53,6 +58,7 @@ class RoutingFailureReason(str, Enum):
     STRATEGY_NOT_PERMITTED = "strategy_not_permitted"
     REBIND_NOT_PERMITTED = "rebind_not_permitted"
     AUTHORIZATION_EVIDENCE_MISMATCH = "authorization_evidence_mismatch"
+    POLICY_DECISION_MISMATCH = "policy_decision_mismatch"
     PREVIOUS_MESSAGE_MISMATCH = "previous_message_mismatch"
     PREVIOUS_PLAN_ID_INVALID = "previous_plan_id_invalid"
     PREVIOUS_PLAN_VERSION_INVALID = "previous_plan_version_invalid"
@@ -97,6 +103,13 @@ class ResolutionHint(str, Enum):
     MASTER_QUERY_REQUIRED = "master_query_required"
     REMOTE_RUNTIME_REQUIRED = "remote_runtime_required"
     AUTHORITY_RECOVERY_REQUIRED = "authority_recovery_required"
+
+
+class RoutingSecurityOverride(str, Enum):
+    NONE = "none"
+    BROADCAST_FIXED_BINDING = "broadcast_fixed_binding"
+    NO_REBIND_FOR_SECURITY = "no_rebind_for_security"
+    REJECTED = "rejected"
 
 
 class LaterActionSuggestion(str, Enum):
@@ -195,6 +208,220 @@ class RequestedRoutingIntent:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class RoutingRiskMetadata:
+    message_type: str
+    category: MessageCategory
+    audit_level: MessageAuditLevel
+    security_sensitive: bool
+
+    def __post_init__(self) -> None:
+        _nonempty(self.message_type, "risk.message_type")
+        if not isinstance(self.category, MessageCategory):
+            _invalid("risk.category")
+        if not isinstance(self.audit_level, MessageAuditLevel):
+            _invalid("risk.audit_level")
+        if type(self.security_sensitive) is not bool:
+            _invalid("risk.security_sensitive")
+        if (
+            self.category in {
+                MessageCategory.CONTROL,
+                MessageCategory.MANAGEMENT,
+                MessageCategory.CONFIG,
+                MessageCategory.CLUSTER,
+            }
+            or self.audit_level is MessageAuditLevel.SECURITY
+        ) and not self.security_sensitive:
+            _invalid("risk.security_sensitive_required")
+
+    @classmethod
+    def from_contract(cls, contract: MessageTypeContract) -> "RoutingRiskMetadata":
+        if not isinstance(contract, MessageTypeContract):
+            _invalid("risk.contract")
+        sensitive = (
+            contract.category in {
+                MessageCategory.CONTROL,
+                MessageCategory.MANAGEMENT,
+                MessageCategory.CONFIG,
+                MessageCategory.CLUSTER,
+            }
+            or contract.audit_level is MessageAuditLevel.SECURITY
+            or "runtime.management" in contract.required_capabilities
+        )
+        return cls(
+            message_type=contract.message_type,
+            category=contract.category,
+            audit_level=contract.audit_level,
+            security_sensitive=sensitive,
+        )
+
+    @property
+    def reference(self) -> str:
+        return _canonical_reference({
+            "message_type": self.message_type,
+            "category": self.category.value,
+            "audit_level": self.audit_level.value,
+            "security_sensitive": self.security_sensitive,
+        })
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RoutingPolicyInvocation:
+    invocation_reference: str
+    message_type: str
+    category: MessageCategory
+    audit_level: MessageAuditLevel
+    security_sensitive: bool
+    trusted_contract_reference: str
+    trusted_contract_version: str
+    trusted_contract_required_capabilities: tuple[str, ...]
+    config_version: str
+    policy_version: str
+    requested_intent_reference: str
+    risk_metadata_reference: str
+    requested_intent: RequestedRoutingIntent = field(repr=False)
+
+    def __post_init__(self) -> None:
+        for name in (
+            "invocation_reference",
+            "trusted_contract_reference",
+            "requested_intent_reference",
+            "risk_metadata_reference",
+        ):
+            if _DECISION_FINGERPRINT.fullmatch(getattr(self, name)) is None:
+                _invalid(f"routing_policy_invocation.{name}")
+        for name in (
+            "message_type",
+            "trusted_contract_version",
+            "config_version",
+            "policy_version",
+        ):
+            _nonempty(getattr(self, name), f"routing_policy_invocation.{name}")
+        if not isinstance(self.category, MessageCategory):
+            _invalid("routing_policy_invocation.category")
+        if not isinstance(self.audit_level, MessageAuditLevel):
+            _invalid("routing_policy_invocation.audit_level")
+        if type(self.security_sensitive) is not bool:
+            _invalid("routing_policy_invocation.security_sensitive")
+        _unique_strings(
+            self.trusted_contract_required_capabilities,
+            "routing_policy_invocation.trusted_contract_required_capabilities",
+        )
+        if self.trusted_contract_required_capabilities != tuple(
+            sorted(self.trusted_contract_required_capabilities),
+        ):
+            _invalid("routing_policy_invocation.trusted_contract_capability_order")
+        if not isinstance(self.requested_intent, RequestedRoutingIntent):
+            _invalid("routing_policy_invocation.requested_intent")
+        risk = RoutingRiskMetadata(
+            message_type=self.message_type,
+            category=self.category,
+            audit_level=self.audit_level,
+            security_sensitive=self.security_sensitive,
+        )
+        if self.requested_intent_reference != _intent_reference(
+            self.requested_intent,
+        ):
+            _invalid("routing_policy_invocation.requested_intent_reference")
+        if self.risk_metadata_reference != risk.reference:
+            _invalid("routing_policy_invocation.risk_metadata_reference")
+        if self.trusted_contract_reference != _canonical_reference({
+            "message_type": self.message_type,
+            "category": self.category.value,
+            "audit_level": self.audit_level.value,
+            "required_capabilities": self.trusted_contract_required_capabilities,
+            "contract_version": self.trusted_contract_version,
+        }):
+            _invalid("routing_policy_invocation.trusted_contract_reference")
+        if self.invocation_reference != self._computed_reference():
+            _invalid("routing_policy_invocation.invocation_reference")
+
+    @classmethod
+    def from_contract(
+        cls,
+        *,
+        contract: MessageTypeContract,
+        requested_intent: RequestedRoutingIntent,
+        config_version: str,
+        policy_version: str,
+    ) -> "RoutingPolicyInvocation":
+        if not isinstance(contract, MessageTypeContract):
+            _invalid("routing_policy_invocation.contract")
+        risk = RoutingRiskMetadata.from_contract(contract)
+        contract_version = ",".join(sorted(contract.schemas))
+        values = {
+            "message_type": contract.message_type,
+            "category": contract.category,
+            "audit_level": contract.audit_level,
+            "security_sensitive": risk.security_sensitive,
+            "trusted_contract_reference": _contract_reference(contract),
+            "trusted_contract_version": contract_version,
+            "trusted_contract_required_capabilities": tuple(sorted(
+                contract.required_capabilities,
+            )),
+            "config_version": config_version,
+            "policy_version": policy_version,
+            "requested_intent_reference": _intent_reference(requested_intent),
+            "risk_metadata_reference": risk.reference,
+            "requested_intent": requested_intent,
+        }
+        return cls(
+            invocation_reference=_canonical_reference({
+                "message_type": contract.message_type,
+                "category": contract.category.value,
+                "audit_level": contract.audit_level.value,
+                "security_sensitive": risk.security_sensitive,
+                "trusted_contract_reference": values[
+                    "trusted_contract_reference"
+                ],
+                "trusted_contract_version": contract_version,
+                "trusted_contract_required_capabilities": values[
+                    "trusted_contract_required_capabilities"
+                ],
+                "config_version": config_version,
+                "policy_version": policy_version,
+                "requested_intent_reference": values[
+                    "requested_intent_reference"
+                ],
+                "risk_metadata_reference": risk.reference,
+            }),
+            **values,
+        )
+
+    def _computed_reference(self) -> str:
+        return _canonical_reference({
+            "message_type": self.message_type,
+            "category": self.category.value,
+            "audit_level": self.audit_level.value,
+            "security_sensitive": self.security_sensitive,
+            "trusted_contract_reference": self.trusted_contract_reference,
+            "trusted_contract_version": self.trusted_contract_version,
+            "trusted_contract_required_capabilities": (
+                self.trusted_contract_required_capabilities
+            ),
+            "config_version": self.config_version,
+            "policy_version": self.policy_version,
+            "requested_intent_reference": self.requested_intent_reference,
+            "risk_metadata_reference": self.risk_metadata_reference,
+        })
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RoutingScorerIdentity:
+    source: str
+    version: str
+
+    def __post_init__(self) -> None:
+        if self.source != "runtime_fallback":
+            _invalid("routing_scorer_identity.source")
+        if self.version != "fallback.v1":
+            _invalid("routing_scorer_identity.version")
+
+    @classmethod
+    def fallback(cls) -> "RoutingScorerIdentity":
+        return cls(source="runtime_fallback", version="fallback.v1")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RoutingScoringDecision:
     scorer_input_version: str
     scorer_input_reference: str
@@ -271,6 +498,8 @@ class RoutingScoringDecision:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RoutingPolicyDecision:
+    invocation: RoutingPolicyInvocation = field(repr=False)
+    invocation_reference: str
     accepted: bool
     requested_strategy: RoutingStrategy
     effective_strategy: RoutingStrategy | None
@@ -281,17 +510,23 @@ class RoutingPolicyDecision:
     rejection_reason: RoutingFailureReason | None
     config_version: str
     policy_version: str
-    security_override_evidence: str
+    security_override_evidence: RoutingSecurityOverride
     security_sensitive: bool
     scoring_decision: RoutingScoringDecision
 
     def __post_init__(self) -> None:
+        if not isinstance(self.invocation, RoutingPolicyInvocation):
+            _invalid("routing_policy_decision.invocation")
+        if self.invocation_reference != self.invocation.invocation_reference:
+            _invalid("routing_policy_decision.invocation_reference")
         if type(self.accepted) is not bool:
             _invalid("routing_policy_decision.accepted")
         if type(self.security_sensitive) is not bool:
             _invalid("routing_policy_decision.security_sensitive")
         if not isinstance(self.scoring_decision, RoutingScoringDecision):
             _invalid("routing_policy_decision.scoring_decision")
+        if not isinstance(self.security_override_evidence, RoutingSecurityOverride):
+            _invalid("routing_policy_decision.security_override_evidence")
         if not isinstance(self.requested_strategy, RoutingStrategy):
             _invalid("routing_policy_decision.requested_strategy")
         if self.requested_rebind_policy is not None and not isinstance(
@@ -303,8 +538,19 @@ class RoutingPolicyDecision:
             or self.requested_strategy_parameters.strategy is not self.requested_strategy
         ):
             _invalid("routing_policy_decision.requested_parameters")
-        for name in ("config_version", "policy_version", "security_override_evidence"):
+        for name in ("config_version", "policy_version"):
             _nonempty(getattr(self, name), f"routing_policy_decision.{name}")
+        intent = self.invocation.requested_intent
+        if (
+            self.requested_strategy is not intent.requested_strategy
+            or self.requested_rebind_policy is not intent.requested_rebind_policy
+            or self.requested_strategy_parameters
+            != intent.requested_strategy_parameters
+            or self.config_version != self.invocation.config_version
+            or self.policy_version != self.invocation.policy_version
+            or self.security_sensitive is not self.invocation.security_sensitive
+        ):
+            _invalid("routing_policy_decision.invocation_mismatch")
         if self.accepted:
             if (
                 not isinstance(self.effective_strategy, RoutingStrategy)
@@ -340,10 +586,14 @@ class RoutingPolicyDecision:
                 is not RebindPolicy.NO_REBIND_FOR_CONTROL
             ):
                 _invalid("routing_policy_decision.security_rebind")
-            claims_security_override = self.security_override_evidence.endswith(
-                ":no_rebind_for_control",
+            expected_override = (
+                RoutingSecurityOverride.BROADCAST_FIXED_BINDING
+                if self.requested_strategy is RoutingStrategy.BROADCAST
+                else RoutingSecurityOverride.NO_REBIND_FOR_SECURITY
+                if self.security_sensitive
+                else RoutingSecurityOverride.NONE
             )
-            if claims_security_override is not self.security_sensitive:
+            if self.security_override_evidence is not expected_override:
                 _invalid("routing_policy_decision.security_override_evidence")
         elif (
             self.effective_strategy is not None
@@ -353,6 +603,7 @@ class RoutingPolicyDecision:
                 RoutingFailureReason.STRATEGY_NOT_PERMITTED,
                 RoutingFailureReason.REBIND_NOT_PERMITTED,
             }
+            or self.security_override_evidence is not RoutingSecurityOverride.REJECTED
         ):
             _invalid("routing_policy_decision.rejected_shape")
 
@@ -381,6 +632,12 @@ class RoutingRequest:
         if not self.policy_decision.accepted:
             _invalid("routing_request.unaccepted_policy_decision")
         if (
+            self.policy_decision.invocation.message_type != self.message_type
+            or self.policy_decision.invocation.requested_intent
+            != self.requested_intent
+            or self.policy_decision.invocation_reference
+            != self.policy_decision.invocation.invocation_reference
+            or
             self.policy_decision.requested_strategy is not self.requested_intent.requested_strategy
             or self.policy_decision.requested_rebind_policy
             is not self.requested_intent.requested_rebind_policy
@@ -446,7 +703,7 @@ class RoutingRequest:
 
     @property
     def iam_decision_reference(self) -> str:
-        return self.authorization_evidence.decision_reference
+        return self.authorization_evidence.semantic_decision_reference
 
     @property
     def iam_decision_version(self) -> str:
@@ -485,6 +742,7 @@ class SelectedRoutingBinding:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CandidateEvidence:
+    runtime_id: str = field(repr=False)
     connection_id: str = field(repr=False)
     session_id: str = field(repr=False)
     connection_epoch: int
@@ -492,11 +750,15 @@ class CandidateEvidence:
     tenant_id: str = field(repr=False)
     component_type: str
     capabilities: frozenset[str] = field(repr=False)
+    required_capabilities: frozenset[str] = field(repr=False)
     filter_reason: CandidateFilterReason
     score: tuple[int | str, ...] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        for name in ("connection_id", "session_id", "tenant_id", "component_type"):
+        for name in (
+            "runtime_id", "connection_id", "session_id", "tenant_id",
+            "component_type",
+        ):
             _nonempty(getattr(self, name), f"candidate.{name}")
         if isinstance(self.connection_epoch, bool) or not isinstance(self.connection_epoch, int) or self.connection_epoch < 0:
             _invalid("candidate.connection_epoch")
@@ -504,6 +766,13 @@ class CandidateEvidence:
             _invalid("candidate.identity_reference")
         if not isinstance(self.capabilities, frozenset):
             _invalid("candidate.capabilities")
+        if not isinstance(self.required_capabilities, frozenset):
+            _invalid("candidate.required_capabilities")
+        _unique_strings(tuple(self.capabilities), "candidate.capabilities")
+        _unique_strings(
+            tuple(self.required_capabilities),
+            "candidate.required_capabilities",
+        )
         if not isinstance(self.filter_reason, CandidateFilterReason):
             _invalid("candidate.filter_reason")
         if self.score is not None and not isinstance(self.score, tuple):
@@ -565,11 +834,10 @@ class ResolvedRoutingPlan:
     effective_rebind_policy: RebindPolicy
     requested_policy_evidence: str
     effective_policy_evidence: str
-    security_override_evidence: str
+    security_override_evidence: RoutingSecurityOverride
     config_version: str
     policy_version: str
-    scorer_source: str
-    scorer_version: str
+    scorer_identity: RoutingScorerIdentity
     scorer_input_reference: str
     scorer_input_version: str
     iam_decision_reference: str = field(repr=False)
@@ -586,8 +854,7 @@ class ResolvedRoutingPlan:
         for name in (
             "schema_version", "plan_id", "message_reference", "decision_fingerprint",
             "requested_policy_evidence", "effective_policy_evidence",
-            "security_override_evidence", "config_version", "policy_version",
-            "scorer_source", "scorer_version", "scorer_input_reference",
+            "config_version", "policy_version", "scorer_input_reference",
             "scorer_input_version", "iam_decision_reference",
             "iam_decision_version", "effective_permission_snapshot_ref",
             "effective_permission_snapshot_version",
@@ -599,6 +866,13 @@ class ResolvedRoutingPlan:
             _invalid("routing_plan.plan_id")
         if _DECISION_FINGERPRINT.fullmatch(self.decision_fingerprint) is None:
             _invalid("routing_plan.decision_fingerprint")
+        if not isinstance(
+            self.security_override_evidence,
+            RoutingSecurityOverride,
+        ):
+            _invalid("routing_plan.security_override_evidence")
+        if not isinstance(self.scorer_identity, RoutingScorerIdentity):
+            _invalid("routing_plan.scorer_identity")
         if isinstance(self.plan_version, bool) or not isinstance(self.plan_version, int) or self.plan_version < 1:
             _invalid("routing_plan.plan_version")
         if (self.plan_version == 1) is not (self.previous_plan_id is None):
@@ -625,6 +899,37 @@ class ResolvedRoutingPlan:
             if not isinstance(values, tuple) or any(not isinstance(value, value_type) for value in values):
                 _invalid(f"routing_plan.{name}")
         _validate_bindings(self.selected_bindings, "routing_plan.selected_bindings")
+        candidate_keys = [_candidate_key(value) for value in self.candidates]
+        if len(candidate_keys) != len(set(candidate_keys)):
+            _invalid("routing_plan.candidates.duplicate")
+        expected_filtered = tuple(
+            value
+            for value in self.candidates
+            if value.filter_reason not in {
+                CandidateFilterReason.ELIGIBLE,
+                CandidateFilterReason.SELECTED,
+            }
+        )
+        if self.filtered_evidence != expected_filtered:
+            _invalid("routing_plan.filtered_evidence_exactness")
+        candidates_by_key = {
+            _candidate_key(value): value for value in self.candidates
+        }
+        binding_keys = {_binding_key(value) for value in self.selected_bindings}
+        selected_candidate_keys = {
+            _candidate_key(value)
+            for value in self.candidates
+            if value.filter_reason is CandidateFilterReason.SELECTED
+        }
+        if binding_keys != selected_candidate_keys:
+            _invalid("routing_plan.selected_candidate_set")
+        for binding in self.selected_bindings:
+            candidate = candidates_by_key.get(_binding_key(binding))
+            if candidate is None or not _binding_matches_candidate(
+                binding,
+                candidate,
+            ):
+                _invalid("routing_plan.selected_candidate_mismatch")
         if (
             not isinstance(self.policy_decision, RoutingPolicyDecision)
             or not self.policy_decision.accepted
@@ -677,7 +982,8 @@ class ResolvedRoutingPlan:
         )
         if (
             self.message_reference != authorization.message_reference
-            or self.iam_decision_reference != authorization.decision_reference
+            or self.iam_decision_reference
+            != authorization.semantic_decision_reference
             or self.iam_decision_version != authorization.decision_version
             or self.authorized_target_reference
             != authorization.authorized_target_reference
@@ -701,6 +1007,33 @@ class ResolvedRoutingPlan:
             or self.effective_strategy_parameters.strategy is not self.effective_strategy
         ):
             _invalid("routing_plan.strategy_parameters")
+        passing_count = sum(
+            value.filter_reason in {
+                CandidateFilterReason.ELIGIBLE,
+                CandidateFilterReason.SELECTED,
+            }
+            for value in self.candidates
+        )
+        selected_count = len(self.selected_bindings)
+        if self.effective_strategy is RoutingStrategy.SINGLE:
+            expected_selected_count = 1
+        elif self.effective_strategy is RoutingStrategy.QUORUM:
+            assert self.effective_strategy_parameters.fanout_count is not None
+            expected_selected_count = (
+                self.effective_strategy_parameters.fanout_count
+            )
+        elif self.effective_strategy is RoutingStrategy.WEIGHTED_SUBSET:
+            assert self.effective_strategy_parameters.subset_size is not None
+            expected_selected_count = self.effective_strategy_parameters.subset_size
+        else:
+            expected_selected_count = passing_count
+        if selected_count != expected_selected_count or selected_count < 1:
+            _invalid("routing_plan.strategy_cardinality")
+        if (
+            self.effective_strategy is RoutingStrategy.ALL_REQUIRED
+            and self.filtered_evidence
+        ):
+            _invalid("routing_plan.all_required_filtered")
         if self.requested_rebind_policy is not None and not isinstance(self.requested_rebind_policy, RebindPolicy):
             _invalid("routing_plan.requested_rebind_policy")
         if not isinstance(self.effective_rebind_policy, RebindPolicy):
@@ -724,8 +1057,9 @@ class ResolvedRoutingPlan:
             and self.effective_rebind_policy is not RebindPolicy.FIXED_CONNECTION
         ):
             _invalid("routing_plan.broadcast_rebind")
-        claims_security_override = self.security_override_evidence.endswith(
-            ":no_rebind_for_control",
+        claims_security_override = (
+            self.security_override_evidence
+            is RoutingSecurityOverride.NO_REBIND_FOR_SECURITY
         )
         if (
             decision.security_sensitive
@@ -744,6 +1078,19 @@ class ResolvedRoutingPlan:
             _invalid("routing_plan.flags")
         if self.used_stale_route:
             _invalid("routing_plan.used_stale_route")
+        computed_fingerprint = compute_routing_decision_fingerprint(
+            target=self.original_target,
+            policy_decision=self.policy_decision,
+            authorization_evidence=self.authorization_evidence,
+            scorer_identity=self.scorer_identity,
+            candidates=self.candidates,
+            selected_bindings=self.selected_bindings,
+            index_mutation_sequence=self.index_mutation_sequence,
+            previous_decision_fingerprint=self.previous_decision_fingerprint,
+            used_stale_route=self.used_stale_route,
+        )
+        if self.decision_fingerprint != computed_fingerprint:
+            _invalid("routing_plan.decision_fingerprint_mismatch")
         object.__setattr__(self, "created_at", _utc(self.created_at))
 
     @property
@@ -753,6 +1100,14 @@ class ResolvedRoutingPlan:
     @property
     def strategy_parameters(self) -> StrategyParameters:
         return self.effective_strategy_parameters
+
+    @property
+    def scorer_source(self) -> str:
+        return self.scorer_identity.source
+
+    @property
+    def scorer_version(self) -> str:
+        return self.scorer_identity.version
 
     def previous_context(self) -> PreviousRoutingPlanContext:
         integrity = _previous_context_integrity(
@@ -835,6 +1190,7 @@ class RoutingFailureReport:
             RoutingFailureReason.TARGET_REQUIRED,
             RoutingFailureReason.STRATEGY_NOT_PERMITTED,
             RoutingFailureReason.REBIND_NOT_PERMITTED,
+            RoutingFailureReason.POLICY_DECISION_MISMATCH,
             RoutingFailureReason.PREVIOUS_MESSAGE_MISMATCH,
             RoutingFailureReason.PREVIOUS_PLAN_ID_INVALID,
             RoutingFailureReason.PREVIOUS_PLAN_VERSION_INVALID,
@@ -880,6 +1236,173 @@ def safe_target_reference(target: TargetGroup | None) -> str:
     return _digest(canonical)
 
 
+def compute_routing_decision_fingerprint(
+    *,
+    target: TargetGroup,
+    policy_decision: RoutingPolicyDecision,
+    authorization_evidence: AuthorizationDecisionEvidence,
+    scorer_identity: RoutingScorerIdentity,
+    candidates: tuple[CandidateEvidence, ...],
+    selected_bindings: tuple[SelectedRoutingBinding, ...],
+    index_mutation_sequence: int,
+    previous_decision_fingerprint: str | None,
+    used_stale_route: bool,
+) -> str:
+    if not isinstance(target, TargetGroup):
+        _invalid("routing_fingerprint.target")
+    if not isinstance(policy_decision, RoutingPolicyDecision):
+        _invalid("routing_fingerprint.policy_decision")
+    if not isinstance(authorization_evidence, AuthorizationDecisionEvidence):
+        _invalid("routing_fingerprint.authorization_evidence")
+    if not isinstance(scorer_identity, RoutingScorerIdentity):
+        _invalid("routing_fingerprint.scorer_identity")
+    if not isinstance(candidates, tuple) or any(
+        not isinstance(value, CandidateEvidence) for value in candidates
+    ):
+        _invalid("routing_fingerprint.candidates")
+    if not isinstance(selected_bindings, tuple) or any(
+        not isinstance(value, SelectedRoutingBinding)
+        for value in selected_bindings
+    ):
+        _invalid("routing_fingerprint.selected_bindings")
+    if (
+        isinstance(index_mutation_sequence, bool)
+        or not isinstance(index_mutation_sequence, int)
+        or index_mutation_sequence < 0
+    ):
+        _invalid("routing_fingerprint.index_mutation_sequence")
+    if previous_decision_fingerprint is not None and _DECISION_FINGERPRINT.fullmatch(
+        previous_decision_fingerprint,
+    ) is None:
+        _invalid("routing_fingerprint.previous_decision_fingerprint")
+    if type(used_stale_route) is not bool:
+        _invalid("routing_fingerprint.used_stale_route")
+    scoring = policy_decision.scoring_decision
+    payload = {
+        "target": target.to_dict(),
+        "policy": {
+            "invocation_reference": policy_decision.invocation_reference,
+            "requested_strategy": policy_decision.requested_strategy.value,
+            "effective_strategy": policy_decision.effective_strategy.value,
+            "requested_rebind": (
+                None
+                if policy_decision.requested_rebind_policy is None
+                else policy_decision.requested_rebind_policy.value
+            ),
+            "effective_rebind": policy_decision.effective_rebind_policy.value,
+            "requested_parameters": _strategy_parameters_payload(
+                policy_decision.requested_strategy_parameters,
+            ),
+            "effective_parameters": _strategy_parameters_payload(
+                policy_decision.effective_strategy_parameters,
+            ),
+            "security_override": policy_decision.security_override_evidence.value,
+            "config_version": policy_decision.config_version,
+            "policy_version": policy_decision.policy_version,
+        },
+        "iam": {
+            "semantic_decision_reference": (
+                authorization_evidence.semantic_decision_reference
+            ),
+            "decision_version": authorization_evidence.decision_version,
+            "authorized_target_reference": (
+                authorization_evidence.authorized_target_reference
+            ),
+            "effective_permission_snapshot_ref": (
+                authorization_evidence.effective_permission_snapshot_ref
+            ),
+            "effective_permission_snapshot_version": (
+                authorization_evidence.effective_permission_snapshot_version
+            ),
+        },
+        "scorer": {
+            "source": scorer_identity.source,
+            "version": scorer_identity.version,
+            "input_reference": scoring.scorer_input_reference,
+            "input_version": scoring.scorer_input_version,
+        },
+        "index_mutation_sequence": index_mutation_sequence,
+        "candidates": [
+            {
+                "runtime_id": value.runtime_id,
+                "connection_id": value.connection_id,
+                "session_id": value.session_id,
+                "connection_epoch": value.connection_epoch,
+                "tenant_id": value.tenant_id,
+                "identity": value.identity_reference.value,
+                "component_type": value.component_type,
+                "capabilities": sorted(value.capabilities),
+                "required_capabilities": sorted(value.required_capabilities),
+                "filter_reason": value.filter_reason.value,
+                "score": value.score,
+            }
+            for value in candidates
+        ],
+        "selected_bindings": [
+            {
+                "runtime_id": value.runtime_id,
+                "connection_id": value.connection_id,
+                "session_id": value.session_id,
+                "connection_epoch": value.connection_epoch,
+                "tenant_id": value.tenant_id,
+                "identity": value.identity_reference.value,
+                "component_type": value.component_type,
+                "required_capabilities": sorted(value.required_capabilities),
+                "binding_rebind_policy": value.binding_rebind_policy.value,
+            }
+            for value in selected_bindings
+        ],
+        "previous_decision_fingerprint": previous_decision_fingerprint,
+        "used_stale_route": used_stale_route,
+    }
+    return _canonical_reference(payload)
+
+
+def _strategy_parameters_payload(
+    value: StrategyParameters | None,
+) -> dict[str, object] | None:
+    if value is None:
+        return None
+    return {
+        "strategy": value.strategy.value,
+        "fanout_count": value.fanout_count,
+        "required_count": value.required_count,
+        "subset_size": value.subset_size,
+    }
+
+
+def _intent_reference(intent: RequestedRoutingIntent) -> str:
+    if not isinstance(intent, RequestedRoutingIntent):
+        _invalid("routing_intent.reference")
+    return _canonical_reference({
+        "target": intent.normalized_target.to_dict(),
+        "requested_strategy": intent.requested_strategy.value,
+        "requested_rebind_policy": (
+            None
+            if intent.requested_rebind_policy is None
+            else intent.requested_rebind_policy.value
+        ),
+        "requested_strategy_parameters": _strategy_parameters_payload(
+            intent.requested_strategy_parameters,
+        ),
+    })
+
+
+def _contract_reference(contract: MessageTypeContract) -> str:
+    return _canonical_reference({
+        "message_type": contract.message_type,
+        "category": contract.category.value,
+        "audit_level": contract.audit_level.value,
+        "required_capabilities": tuple(sorted(contract.required_capabilities)),
+        "contract_version": ",".join(sorted(contract.schemas)),
+    })
+
+
+def _canonical_reference(payload: object) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _validate_no_parameter_expansion(
     requested: StrategyParameters,
     effective: StrategyParameters,
@@ -916,6 +1439,7 @@ def _failure_outcome(reason: RoutingFailureReason) -> RoutingFailureOutcome:
         RoutingFailureReason.TARGET_REQUIRED,
         RoutingFailureReason.STRATEGY_NOT_PERMITTED,
         RoutingFailureReason.REBIND_NOT_PERMITTED,
+        RoutingFailureReason.POLICY_DECISION_MISMATCH,
         RoutingFailureReason.AUTHORIZATION_EVIDENCE_MISMATCH,
         RoutingFailureReason.PREVIOUS_MESSAGE_MISMATCH,
         RoutingFailureReason.PREVIOUS_PLAN_ID_INVALID,
@@ -938,6 +1462,41 @@ def _validate_bindings(values: object, name: str) -> None:
     ]
     if len(keys) != len(set(keys)):
         _invalid(f"{name}.duplicate")
+
+
+def _candidate_key(value: CandidateEvidence) -> tuple[str, str, str, int]:
+    return (
+        value.runtime_id,
+        value.connection_id,
+        value.session_id,
+        value.connection_epoch,
+    )
+
+
+def _binding_key(value: SelectedRoutingBinding) -> tuple[str, str, str, int]:
+    return (
+        value.runtime_id,
+        value.connection_id,
+        value.session_id,
+        value.connection_epoch,
+    )
+
+
+def _binding_matches_candidate(
+    binding: SelectedRoutingBinding,
+    candidate: CandidateEvidence,
+) -> bool:
+    return (
+        candidate.filter_reason is CandidateFilterReason.SELECTED
+        and binding.runtime_id == candidate.runtime_id
+        and binding.connection_id == candidate.connection_id
+        and binding.session_id == candidate.session_id
+        and binding.connection_epoch == candidate.connection_epoch
+        and binding.tenant_id == candidate.tenant_id
+        and binding.identity_reference == candidate.identity_reference
+        and binding.component_type == candidate.component_type
+        and binding.required_capabilities == candidate.required_capabilities
+    )
 
 
 def _previous_context_integrity(
@@ -1004,8 +1563,10 @@ __all__ = (
     "PreviousRoutingPlanContext", "RebindPolicy", "RequestedRoutingIntent",
     "ResolvedRoutingPlan", "ResolutionHint", "RoutingDecision",
     "RoutingFailureOutcome", "RoutingFailureReason", "RoutingFailureReport",
-    "RoutingIdentityReference", "RoutingPolicyDecision", "RoutingRequest",
-    "RoutingScoringDecision", "RoutingStrategy", "SafeRoutingProjection",
-    "SelectedRoutingBinding",
-    "StrategyParameters", "safe_target_reference",
+    "RoutingIdentityReference", "RoutingPolicyDecision",
+    "RoutingPolicyInvocation", "RoutingRequest", "RoutingRiskMetadata",
+    "RoutingScorerIdentity", "RoutingScoringDecision",
+    "RoutingSecurityOverride", "RoutingStrategy", "SafeRoutingProjection",
+    "SelectedRoutingBinding", "StrategyParameters",
+    "compute_routing_decision_fingerprint", "safe_target_reference",
 )

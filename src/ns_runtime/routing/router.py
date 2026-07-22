@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import re
 from dataclasses import replace
 
@@ -44,9 +42,10 @@ from .models import (
     RoutingFailureReport,
     RoutingIdentityReference,
     RoutingRequest,
+    RoutingScorerIdentity,
     RoutingStrategy,
     SelectedRoutingBinding,
-    StrategyParameters,
+    compute_routing_decision_fingerprint,
     safe_target_reference,
 )
 
@@ -54,6 +53,7 @@ from .models import (
 RP1_SCHEMA_VERSION = "rp-1"
 FALLBACK_SCORER_SOURCE = "runtime_fallback"
 FALLBACK_SCORER_VERSION = "fallback.v1"
+FALLBACK_SCORER_IDENTITY = RoutingScorerIdentity.fallback()
 
 
 class LocalRouter:
@@ -202,6 +202,7 @@ class LocalRouter:
                 previous=previous,
             )
             candidate = CandidateEvidence(
+                runtime_id=self._runtime_id,
                 connection_id=context.connection_id,
                 session_id=context.session_id,
                 connection_epoch=context.connection_epoch,
@@ -209,6 +210,7 @@ class LocalRouter:
                 tenant_id=context.tenant_id,
                 component_type=context.component_type,
                 capabilities=context.capabilities,
+                required_capabilities=frozenset(target.capabilities or ()),
                 filter_reason=reason or CandidateFilterReason.ELIGIBLE,
             )
             evidence.append(candidate)
@@ -294,12 +296,18 @@ class LocalRouter:
             )
             for candidate in selected_evidence
         )
-        fingerprint = self._fingerprint(
-            request,
-            sequence=snapshot.mutation_sequence,
-            evidence=final_evidence,
-            selected=bindings,
-            previous=previous,
+        fingerprint = compute_routing_decision_fingerprint(
+            target=request.target,
+            policy_decision=request.policy_decision,
+            authorization_evidence=request.authorization_evidence,
+            scorer_identity=FALLBACK_SCORER_IDENTITY,
+            candidates=final_evidence,
+            selected_bindings=bindings,
+            index_mutation_sequence=snapshot.mutation_sequence,
+            previous_decision_fingerprint=(
+                None if previous is None else previous.decision_fingerprint
+            ),
+            used_stale_route=False,
         )
         plan = ResolvedRoutingPlan(
             schema_version=RP1_SCHEMA_VERSION,
@@ -343,8 +351,7 @@ class LocalRouter:
             ),
             config_version=request.config_version,
             policy_version=request.policy_version,
-            scorer_source=FALLBACK_SCORER_SOURCE,
-            scorer_version=FALLBACK_SCORER_VERSION,
+            scorer_identity=FALLBACK_SCORER_IDENTITY,
             scorer_input_reference=(
                 request.scoring_decision.scorer_input_reference
             ),
@@ -529,70 +536,6 @@ class LocalRouter:
             return tuple(eligible[:parameters.subset_size])
         return None
 
-    def _fingerprint(self, request, *, sequence, evidence, selected, previous):
-        target = request.target
-        payload = {
-            "target": {
-                name: getattr(target, name)
-                for name in (
-                    "kind", "connection_id", "connection_epoch", "identity",
-                    "tenant_id", "capabilities", "component_type", "runtime_id",
-                    "scope", "multi_connection_policy", "rebind_policy",
-                    "fanout_count", "required_count", "subset_size",
-                )
-            },
-            "effective_tenant": request.effective_tenant_id,
-            "requested_strategy": request.requested_intent.requested_strategy.value,
-            "effective_strategy": request.effective_strategy.value,
-            "requested_rebind": (
-                None
-                if request.requested_intent.requested_rebind_policy is None
-                else request.requested_intent.requested_rebind_policy.value
-            ),
-            "effective_rebind": request.effective_rebind_policy.value,
-            "requested_parameters": _parameters_payload(
-                request.requested_intent.requested_strategy_parameters,
-            ),
-            "effective_parameters": _parameters_payload(request.strategy_parameters),
-            "config_version": request.config_version,
-            "policy_version": request.policy_version,
-            "iam_decision_reference": request.iam_decision_reference,
-            "iam_decision_version": request.iam_decision_version,
-            "authorized_target_reference": (
-                request.authorization_evidence.authorized_target_reference
-            ),
-            "effective_permission_snapshot_ref": (
-                request.authorization_evidence.effective_permission_snapshot_ref
-            ),
-            "effective_permission_snapshot_version": (
-                request.authorization_evidence.effective_permission_snapshot_version
-            ),
-            "index_sequence": sequence,
-            "scorer": [FALLBACK_SCORER_SOURCE, FALLBACK_SCORER_VERSION],
-            "scorer_input_reference": (
-                request.scoring_decision.scorer_input_reference
-            ),
-            "scorer_input_version": request.scoring_decision.scorer_input_version,
-            "previous_decision_fingerprint": (
-                None if previous is None else previous.decision_fingerprint
-            ),
-            "evidence": [
-                [
-                    item.connection_id, item.session_id, item.connection_epoch,
-                    item.tenant_id, item.identity_reference.value,
-                    item.component_type, sorted(item.capabilities),
-                    item.filter_reason.value, item.score,
-                ]
-                for item in evidence
-            ],
-            "selected": [
-                [item.connection_id, item.session_id, item.connection_epoch]
-                for item in selected
-            ],
-        }
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
     def _failure_reason_from_filtered(self, filtered):
         reasons = {value.filter_reason for value in filtered}
         if CandidateFilterReason.DRAINING in reasons:
@@ -667,15 +610,6 @@ class LocalRouter:
         )
 
 
-def _parameters_payload(parameters: StrategyParameters) -> dict[str, object]:
-    return {
-        "strategy": parameters.strategy.value,
-        "fanout_count": parameters.fanout_count,
-        "required_count": parameters.required_count,
-        "subset_size": parameters.subset_size,
-    }
-
-
 def _invalid(field_name: str) -> None:
     raise NsValidationError(
         "Local Router dependency is invalid.",
@@ -686,6 +620,7 @@ def _invalid(field_name: str) -> None:
 __all__ = (
     "FALLBACK_SCORER_SOURCE",
     "FALLBACK_SCORER_VERSION",
+    "FALLBACK_SCORER_IDENTITY",
     "LocalRouter",
     "RP1_SCHEMA_VERSION",
 )

@@ -4,79 +4,26 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 
 from ns_common.exceptions import NsValidationError
-from ns_runtime.protocol import MessageAuditLevel, MessageCategory, MessageTypeContract
 
 from .models import (
     RebindPolicy,
-    RequestedRoutingIntent,
     RoutingFailureReason,
+    RoutingPolicyInvocation,
     RoutingPolicyDecision,
+    RoutingRiskMetadata,
     RoutingScoringDecision,
+    RoutingSecurityOverride,
     RoutingStrategy,
 )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class RoutingRiskMetadata:
-    message_type: str
-    category: MessageCategory
-    audit_level: MessageAuditLevel
-    security_sensitive: bool
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.message_type, str) or not self.message_type:
-            _invalid("risk.message_type")
-        if not isinstance(self.category, MessageCategory):
-            _invalid("risk.category")
-        if not isinstance(self.audit_level, MessageAuditLevel):
-            _invalid("risk.audit_level")
-        if type(self.security_sensitive) is not bool:
-            _invalid("risk.security_sensitive")
-        if (
-            self.category in {
-                MessageCategory.CONTROL,
-                MessageCategory.MANAGEMENT,
-                MessageCategory.CONFIG,
-                MessageCategory.CLUSTER,
-            }
-            or self.audit_level is MessageAuditLevel.SECURITY
-        ) and not self.security_sensitive:
-            _invalid("risk.security_sensitive_required")
-
-    @classmethod
-    def from_contract(cls, contract: MessageTypeContract) -> "RoutingRiskMetadata":
-        if not isinstance(contract, MessageTypeContract):
-            _invalid("risk.contract")
-        sensitive = (
-            contract.category in {
-                MessageCategory.CONTROL,
-                MessageCategory.MANAGEMENT,
-                MessageCategory.CONFIG,
-                MessageCategory.CLUSTER,
-            }
-            or contract.audit_level is MessageAuditLevel.SECURITY
-            or "runtime.management" in contract.required_capabilities
-        )
-        return cls(
-            message_type=contract.message_type,
-            category=contract.category,
-            audit_level=contract.audit_level,
-            security_sensitive=sensitive,
-        )
 
 
 class RoutingPolicy(ABC):
     @abstractmethod
     def decide(
         self,
-        intent: RequestedRoutingIntent,
-        *,
-        risk: RoutingRiskMetadata,
-        config_version: str,
-        policy_version: str,
+        invocation: RoutingPolicyInvocation,
     ) -> RoutingPolicyDecision:
         raise NotImplementedError
 
@@ -115,50 +62,55 @@ class DefaultLocalRoutingPolicy(RoutingPolicy):
 
     def decide(
         self,
-        intent: RequestedRoutingIntent,
-        *,
-        risk: RoutingRiskMetadata,
-        config_version: str,
-        policy_version: str,
+        invocation: RoutingPolicyInvocation,
     ) -> RoutingPolicyDecision:
-        if not isinstance(intent, RequestedRoutingIntent):
-            _invalid("policy.intent")
-        if not isinstance(risk, RoutingRiskMetadata):
-            _invalid("policy.risk")
-        for value, name in (
-            (config_version, "policy.config_version"),
-            (policy_version, "policy.policy_version"),
-        ):
-            if not isinstance(value, str) or not value:
-                _invalid(name)
+        if not isinstance(invocation, RoutingPolicyInvocation):
+            _invalid("policy.invocation")
+        intent = invocation.requested_intent
+        risk = RoutingRiskMetadata(
+            message_type=invocation.message_type,
+            category=invocation.category,
+            audit_level=invocation.audit_level,
+            security_sensitive=invocation.security_sensitive,
+        )
+        config_version = invocation.config_version
+        policy_version = invocation.policy_version
         if intent.requested_strategy not in self._strategies:
-            return self._reject(intent, RoutingFailureReason.STRATEGY_NOT_PERMITTED, risk, config_version, policy_version)
+            return self._reject(
+                invocation,
+                RoutingFailureReason.STRATEGY_NOT_PERMITTED,
+            )
         requested_rebind = intent.requested_rebind_policy
         if requested_rebind is not None and requested_rebind not in self._rebind:
-            return self._reject(intent, RoutingFailureReason.REBIND_NOT_PERMITTED, risk, config_version, policy_version)
+            return self._reject(
+                invocation,
+                RoutingFailureReason.REBIND_NOT_PERMITTED,
+            )
         if (
             intent.requested_strategy is RoutingStrategy.BROADCAST
             and risk.security_sensitive
         ):
             return self._reject(
-                intent,
+                invocation,
                 RoutingFailureReason.REBIND_NOT_PERMITTED,
-                risk,
-                config_version,
-                policy_version,
             )
         if intent.requested_strategy is RoutingStrategy.BROADCAST:
             effective_rebind = RebindPolicy.FIXED_CONNECTION
-            override = "trusted_contract:broadcast_fixed_binding"
+            override = RoutingSecurityOverride.BROADCAST_FIXED_BINDING
         elif risk.security_sensitive:
             effective_rebind = RebindPolicy.NO_REBIND_FOR_CONTROL
-            override = f"trusted_contract:{risk.message_type}:{risk.category.value}:{risk.audit_level.value}:no_rebind_for_control"
+            override = RoutingSecurityOverride.NO_REBIND_FOR_SECURITY
         else:
             effective_rebind = requested_rebind or RebindPolicy.FIXED_CONNECTION
-            override = "trusted_contract:no_security_override"
+            override = RoutingSecurityOverride.NONE
         if effective_rebind not in self._rebind:
-            return self._reject(intent, RoutingFailureReason.REBIND_NOT_PERMITTED, risk, config_version, policy_version)
+            return self._reject(
+                invocation,
+                RoutingFailureReason.REBIND_NOT_PERMITTED,
+            )
         return RoutingPolicyDecision(
+            invocation=invocation,
+            invocation_reference=invocation.invocation_reference,
             accepted=True,
             requested_strategy=intent.requested_strategy,
             effective_strategy=intent.requested_strategy,
@@ -175,8 +127,14 @@ class DefaultLocalRoutingPolicy(RoutingPolicy):
         )
 
     @staticmethod
-    def _reject(intent, reason, risk, config_version, policy_version) -> RoutingPolicyDecision:
+    def _reject(
+        invocation: RoutingPolicyInvocation,
+        reason: RoutingFailureReason,
+    ) -> RoutingPolicyDecision:
+        intent = invocation.requested_intent
         return RoutingPolicyDecision(
+            invocation=invocation,
+            invocation_reference=invocation.invocation_reference,
             accepted=False,
             requested_strategy=intent.requested_strategy,
             effective_strategy=None,
@@ -185,10 +143,10 @@ class DefaultLocalRoutingPolicy(RoutingPolicy):
             requested_strategy_parameters=intent.requested_strategy_parameters,
             effective_strategy_parameters=None,
             rejection_reason=reason,
-            config_version=config_version,
-            policy_version=policy_version,
-            security_override_evidence=f"trusted_contract:{risk.message_type}:{risk.category.value}:rejected",
-            security_sensitive=risk.security_sensitive,
+            config_version=invocation.config_version,
+            policy_version=invocation.policy_version,
+            security_override_evidence=RoutingSecurityOverride.REJECTED,
+            security_sensitive=invocation.security_sensitive,
             scoring_decision=RoutingScoringDecision.empty(),
         )
 

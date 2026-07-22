@@ -31,10 +31,12 @@ from .models import (
     RoutingFailureReason,
     RoutingFailureOutcome,
     RoutingFailureReport,
+    RoutingPolicyDecision,
+    RoutingPolicyInvocation,
     RoutingRequest,
     safe_target_reference,
 )
-from .policy import DefaultLocalRoutingPolicy, RoutingPolicy, RoutingRiskMetadata
+from .policy import DefaultLocalRoutingPolicy, RoutingPolicy
 from .router import LocalRouter
 
 
@@ -121,12 +123,33 @@ class LocalRoutingPreparation(RoutingPreparation):
                 target=target,
             ))
         intent = RequestedRoutingIntent.from_target(target)
-        policy_decision = self._policy.decide(
-            intent,
-            risk=RoutingRiskMetadata.from_contract(contract),
+        invocation = RoutingPolicyInvocation.from_contract(
+            contract=contract,
+            requested_intent=intent,
             config_version=context.config_version,
             policy_version=context.policy_version,
         )
+        try:
+            policy_decision = self._policy.decide(invocation)
+        except NsValidationError:
+            return RoutingPreparationResult.rejected(_failure(
+                context,
+                reason=RoutingFailureReason.POLICY_DECISION_MISMATCH,
+                message_reference=message_reference,
+                target=target,
+            ))
+        if (
+            not isinstance(policy_decision, RoutingPolicyDecision)
+            or policy_decision.invocation != invocation
+            or policy_decision.invocation_reference
+            != invocation.invocation_reference
+        ):
+            return RoutingPreparationResult.rejected(_failure(
+                context,
+                reason=RoutingFailureReason.POLICY_DECISION_MISMATCH,
+                message_reference=message_reference,
+                target=target,
+            ))
         if not policy_decision.accepted:
             assert policy_decision.rejection_reason is not None
             return RoutingPreparationResult.rejected(_failure(
@@ -147,7 +170,7 @@ class LocalRoutingPreparation(RoutingPreparation):
         except NsValidationError:
             return RoutingPreparationResult.rejected(_failure(
                 context,
-                reason=RoutingFailureReason.AUTHORIZATION_EVIDENCE_MISMATCH,
+                reason=RoutingFailureReason.POLICY_DECISION_MISMATCH,
                 message_reference=message_reference,
                 target=target,
             ))
