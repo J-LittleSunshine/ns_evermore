@@ -12,6 +12,8 @@ from ns_common.exceptions import (
     NsRuntimeProcessorFailedError,
     NsRuntimeProcessorTimeoutError,
     NsRuntimeProtocolViolationError,
+    NsRuntimeRouteRejectedError,
+    NsRuntimeRouteUnavailableError,
     NsValidationError,
 )
 from ns_common.iam import IamPrincipalType
@@ -41,9 +43,12 @@ from ns_runtime.processor import (
     ProcessorRegistry,
     ProcessorStage,
     ProcessorTraceReference,
+    RoutingPreparation,
+    RoutingPreparationResult,
     build_standard_stage_processors,
 )
 from ns_runtime.processor.integration import DeterministicTestProcessorAuthorization
+from ns_runtime.processor.integration import TransportResponseEmitter
 from ns_runtime.protocol import (
     AuthContextGroup,
     Envelope,
@@ -51,6 +56,13 @@ from ns_runtime.protocol import (
     ProtocolGroup,
     ProtocolVersion,
     SourceGroup,
+)
+from tests.test_runtime_connection_accepted import _CaptureTransport
+from ns_runtime.routing import (
+    LaterActionSuggestion,
+    ResolutionHint,
+    RoutingFailureReason,
+    RoutingFailureReport,
 )
 
 
@@ -90,6 +102,16 @@ class _MessageProcessorBinding(MessageProcessor):
         if self.action is not None:
             return await self.action(context, value)
         return "processed"
+
+
+class _RoutingResultPreparation(RoutingPreparation):
+    def __init__(self, result: RoutingPreparationResult, calls: list[str]) -> None:
+        self.result = result
+        self.calls = calls
+
+    async def prepare(self, context, value):
+        self.calls.append("routing")
+        return self.result
 
 
 class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
@@ -295,6 +317,104 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
                     NsRuntimeProcessorFailedError,
                 ))
 
+    async def test_strong_audit_failure_clears_response_before_emission(self) -> None:
+        sink = DeterministicTestAuditSink()
+        sink.failure = RuntimeError("strong-audit-unavailable")
+
+        async def envelope_response(context, value):
+            return _envelope()
+
+        pipeline, context = self._pipeline(
+            calls=[],
+            actions={ProcessorStage.MESSAGE_PROCESSOR: envelope_response},
+            sink=sink,
+        )
+        self.execution_id += 1
+        result = await pipeline.execute(
+            context,
+            feature_flags={"message_family.connection": True},
+            audit_consistency=AuditConsistency.STRONG_REQUIRED,
+            execution_id=str(self.execution_id),
+        )
+        transport = _CaptureTransport()
+        emitted = await TransportResponseEmitter(transport=transport).emit(result)
+
+        self.assertFalse(result.succeeded)
+        self.assertIsNone(result.response)
+        self.assertFalse(emitted)
+        self.assertEqual([], transport.sent)
+        self.assertEqual(PROCESSOR_STAGE_ORDER, result.completed_stages)
+
+    async def test_stage_six_rejected_and_unavailable_short_circuit(self) -> None:
+        for outcome, reason, error_type in (
+            (
+                "rejected",
+                RoutingFailureReason.POLICY_REJECTED,
+                NsRuntimeRouteRejectedError,
+            ),
+            (
+                "unavailable",
+                RoutingFailureReason.NO_CANDIDATE,
+                NsRuntimeRouteUnavailableError,
+            ),
+        ):
+            with self.subTest(outcome=outcome):
+                routing_calls: list[str] = []
+                failure = RoutingFailureReport(
+                    reason=reason,
+                    resolution_hint=ResolutionHint.LOCAL_INDEX,
+                    later_action=LaterActionSuggestion.DO_NOT_RETRY_UNCHANGED,
+                    safe_message_reference="sha256:0123456789abcdef",
+                )
+                contract = (
+                    RoutingPreparationResult.rejected(failure)
+                    if outcome == "rejected"
+                    else RoutingPreparationResult.unavailable(failure)
+                )
+                stage_calls: list[ProcessorStage] = []
+                pipeline, context = self._pipeline(
+                    calls=stage_calls,
+                    routing_dependency=_RoutingResultPreparation(
+                        contract,
+                        routing_calls,
+                    ),
+                    use_standard_routing=True,
+                )
+                execution = await self._execute(pipeline, context)
+                self.assertIsInstance(execution.error, error_type)
+                self.assertEqual(["routing"], routing_calls)
+                self.assertNotIn(ProcessorStage.MESSAGE_PROCESSOR, stage_calls)
+                self.assertNotIn(ProcessorStage.RESPONSE_FINALIZE, stage_calls)
+                self.assertEqual(
+                    tuple(PROCESSOR_STAGE_ORDER[:5]),
+                    execution.completed_stages,
+                )
+
+    async def test_resolved_plan_is_propagated_once_to_message_processor(self) -> None:
+        plan = object()
+        seen: list[object] = []
+
+        async def consume(context, value):
+            self.assertIsInstance(value, RoutingPreparationResult)
+            self.assertIs(plan, value.plan)
+            seen.append(value.plan)
+            return "processed-with-plan"
+
+        calls: list[ProcessorStage] = []
+        pipeline, context = self._pipeline(
+            calls=calls,
+            actions={ProcessorStage.MESSAGE_PROCESSOR: consume},
+            routing_dependency=_RoutingResultPreparation(
+                RoutingPreparationResult.resolved(plan),
+                [],
+            ),
+            use_standard_routing=True,
+        )
+        execution = await self._execute(pipeline, context)
+        self.assertTrue(execution.succeeded)
+        self.assertEqual("processed-with-plan", execution.response)
+        self.assertEqual([plan], seen)
+
     def test_context_exposes_only_explicit_dependencies_and_redacted_repr(self) -> None:
         calls: list[ProcessorStage] = []
         _, context = self._pipeline(calls=calls)
@@ -354,6 +474,8 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         timeout_seconds: float = 1,
         sink: DeterministicTestAuditSink | None = None,
         omit_stage: ProcessorStage | None = None,
+        routing_dependency: RoutingPreparation | None = None,
+        use_standard_routing: bool = False,
     ) -> tuple[ProcessorPipeline, ProcessorContext]:
         registry = ProcessorRegistry()
         version = ProtocolVersion(1, 0, 0)
@@ -369,6 +491,10 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
             processor = (
                 standard[stage]
                 if stage is ProcessorStage.MESSAGE_PROCESSOR
+                or (
+                    stage is ProcessorStage.ROUTING_PREPARATION
+                    and use_standard_routing
+                )
                 else _StageProcessor(
                     stage,
                     calls,
@@ -390,7 +516,7 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
             authorization=DeterministicTestProcessorAuthorization(),
             rate_limit=InterfaceOnlyRateLimitEntry(),
             idempotency=InterfaceOnlyIdempotencyPrecheck(),
-            routing=InterfaceOnlyRoutingPreparation(),
+            routing=routing_dependency or InterfaceOnlyRoutingPreparation(),
             response_finalizer=PassthroughResponseFinalizer(),
             error_mapper=DefaultProcessorErrorMapper(),
             principal_type=IamPrincipalType.CLIENT,

@@ -13,6 +13,7 @@ from ns_common.exceptions import (
     NsRuntimeIamDeniedError,
     NsRuntimeIamTimeoutError,
     NsRuntimeIamUnavailableError,
+    NsRuntimeStateStoreUnavailableError,
     NsRuntimeProtocolViolationError,
     NsStateError,
     NsValidationError,
@@ -150,7 +151,7 @@ class ConnectionResumeCoordinator:
         candidate_terminator: (
             Callable[[LogicalConnectionCloseReason], Awaitable[bool]] | None
         ) = None,
-        audit_boundary: ConnectionLifecycleAuditBoundary | None = None,
+        audit_boundary: ConnectionLifecycleAuditBoundary,
         capability_policy: CapabilityPolicy = P05_CAPABILITY_POLICY,
     ) -> None:
         dependencies = (
@@ -169,10 +170,7 @@ class ConnectionResumeCoordinator:
         for value, expected, name in dependencies:
             if not isinstance(value, expected):
                 _invalid(name)
-        if audit_boundary is not None and not isinstance(
-            audit_boundary,
-            ConnectionLifecycleAuditBoundary,
-        ):
+        if not isinstance(audit_boundary, ConnectionLifecycleAuditBoundary):
             _invalid("audit_boundary")
         if candidate_terminator is not None and not callable(candidate_terminator):
             _invalid("candidate_terminator")
@@ -270,6 +268,11 @@ class ConnectionResumeCoordinator:
                 await self._fail_if_claimed(
                     LogicalConnectionCloseReason.INTERNAL_ERROR,
                 )
+                if isinstance(
+                    outcome.error,
+                    NsRuntimeStateStoreUnavailableError,
+                ):
+                    raise outcome.error from None
                 await self._emit_audit(
                     ConnectionAuditOutcome.REJECTED,
                     connection_epoch=self._current.connection_epoch,
@@ -293,10 +296,6 @@ class ConnectionResumeCoordinator:
                         "reason": "invalid_resume_result",
                     },
                 )
-            await self._emit_audit(
-                ConnectionAuditOutcome.SUCCEEDED,
-                connection_epoch=outcome.session.context.connection_epoch,
-            )
             return outcome
         except asyncio.CancelledError:
             await _cancel_and_join(operation_task)
@@ -427,6 +426,14 @@ class ConnectionResumeCoordinator:
             await self._fail_if_claimed(LogicalConnectionCloseReason.INTERNAL_ERROR)
             raise
 
+        # The accepted response is externally observable.  Strong audit must
+        # commit first; failure leaves the replacement non-target and the
+        # normal claimed-resume cleanup path tears it down without sending.
+        await self._emit_audit(
+            ConnectionAuditOutcome.SUCCEEDED,
+            connection_epoch=negotiated.context.connection_epoch,
+        )
+
         text = self._accepted_builder.serialize(negotiated.context)
         try:
             await self._new_transport.send(text)
@@ -508,8 +515,6 @@ class ConnectionResumeCoordinator:
         connection_epoch: int,
         close_reason: LogicalConnectionCloseReason | None = None,
     ) -> None:
-        if self._audit is None:
-            return
         await self._audit.emit(
             kind=ConnectionAuditKind.RESUME,
             outcome=outcome,

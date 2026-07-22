@@ -37,6 +37,8 @@ from .contracts import (
     IdempotencyPrecheck,
     RateLimitEntry,
     RoutingPreparation,
+    RoutingPreparationOutcome,
+    RoutingPreparationResult,
 )
 from .event_bus import EventBus
 from .pipeline import ProcessorExecutionResult, ProcessorPipeline, build_standard_stage_processors
@@ -140,18 +142,35 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
             )
 
 
-class TransportResponseFinalizer(ResponseFinalizer):
-    def __init__(self, *, transport: TransportSession) -> None:
-        if not isinstance(transport, TransportSession):
-            _invalid("response_finalizer.transport")
-        self._transport = transport
-
+class CanonicalResponseFinalizer(ResponseFinalizer):
+    """Pure stage-eight response construction; it has no transport owner."""
     async def finalize(self, context: ProcessorContext, response: object) -> object:
         if not isinstance(context, ProcessorContext):
             _invalid("response_finalizer.context")
         if isinstance(response, Envelope):
-            await self._transport.send(canonical_serialize(response).decode("utf-8"))
+            canonical_serialize(response)
         return response
+
+
+class TransportResponseEmitter:
+    """Composition-owned transport side effect after final audit succeeds."""
+
+    def __init__(self, *, transport: TransportSession) -> None:
+        if not isinstance(transport, TransportSession):
+            _invalid("response_emitter.transport")
+        self._transport = transport
+
+    async def emit(self, result: ProcessorExecutionResult) -> bool:
+        if not isinstance(result, ProcessorExecutionResult):
+            _invalid("response_emitter.result")
+        if not result.succeeded or result.response is None:
+            return False
+        if not isinstance(result.response, Envelope):
+            return False
+        await self._transport.send(
+            canonical_serialize(result.response).decode("utf-8"),
+        )
+        return True
 
 
 class LifecycleMessageProcessorAdapter(MessageProcessor):
@@ -170,6 +189,11 @@ class LifecycleMessageProcessorAdapter(MessageProcessor):
         return self._contract.processor_key
 
     async def process(self, context: ProcessorContext, value: object) -> object:
+        if (
+            not isinstance(value, RoutingPreparationResult)
+            or value.outcome is not RoutingPreparationOutcome.NO_ROUTING_REQUIRED
+        ):
+            _invalid("lifecycle.routing_result")
         return await self._registry.dispatch(context.envelope)
 
 
@@ -257,7 +281,6 @@ def build_connection_processor_pipeline(
     lifecycle_registry: ConnectionLifecycleProcessorRegistry,
     disabled_processors: Mapping[str, FeatureDisabledProcessor],
     error_context_factory: Callable[[], ErrorEnvelopeContext],
-    transport: TransportSession,
     authorization: ProcessorAuthorization,
     rate_limit: RateLimitEntry,
     idempotency: IdempotencyPrecheck,
@@ -326,7 +349,7 @@ def build_connection_processor_pipeline(
         rate_limit=rate_limit,
         idempotency=idempotency,
         routing=routing,
-        response_finalizer=TransportResponseFinalizer(transport=transport),
+        response_finalizer=CanonicalResponseFinalizer(),
         error_mapper=error_mapper,
         principal_type=principal_type,
         audit_sink=audit_sink,
@@ -426,7 +449,8 @@ __all__ = (
     "FeatureDisabledMessageProcessorAdapter",
     "IamProcessorAuthorization",
     "LifecycleMessageProcessorAdapter",
-    "TransportResponseFinalizer",
+    "CanonicalResponseFinalizer",
+    "TransportResponseEmitter",
     "audit_consistency_for",
     "build_connection_processor_pipeline",
 )

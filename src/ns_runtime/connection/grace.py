@@ -14,7 +14,7 @@ from ns_common.time import Clock
 
 from .binding import LogicalConnectionTransportMap
 from .hello import HelloResumeRequest
-from .index import LocalConnectionIndex
+from .index import ConnectionRoutingEligibility, LocalConnectionIndex
 from .session import SessionContext
 from .state import LogicalConnectionCloseReason, LogicalConnectionState
 
@@ -135,7 +135,10 @@ class ReconnectGraceService:
             deadline = started_at + float(self._policy.timeout_seconds)
             if not math.isfinite(started_at) or not math.isfinite(deadline):
                 _state_error("invalid_grace_deadline")
-            await self._index.suspend_active_target(self._context.connection_id)
+            await self._index.suspend_active_target(
+                self._context.connection_id,
+                reason=ConnectionRoutingEligibility.RECONNECT_GRACE,
+            )
             try:
                 await self._mapping.detach_transport_session(
                     transport_session_id=transport_session_id,

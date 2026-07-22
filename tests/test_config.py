@@ -368,6 +368,36 @@ class NsRuntimeConfigGroupsTestCase(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             config.runtime.worker.concurrency = 1  # type: ignore[misc]
 
+    def test_routing_resource_limits_round_trip_and_validate(self) -> None:
+        config = NsConfig.from_dict({
+            "runtime": {
+                "routing": {
+                    "max_candidate_count": 12_345,
+                    "max_selected_target_count": 6_789,
+                    "max_plan_evidence_count": 20_001,
+                },
+            },
+        })
+        restored = NsConfig.from_dict(config.to_dict())
+        self.assertEqual(config, restored)
+        self.assertEqual(12_345, restored.runtime.routing.max_candidate_count)
+        self.assertEqual(6_789, restored.runtime.routing.max_selected_target_count)
+        self.assertEqual(20_001, restored.runtime.routing.max_plan_evidence_count)
+        for field_name in (
+            "max_candidate_count",
+            "max_selected_target_count",
+            "max_plan_evidence_count",
+        ):
+            with self.subTest(field=field_name):
+                with self.assertRaises(NsConfigError) as caught:
+                    NsConfig.from_dict({
+                        "runtime": {"routing": {field_name: 0}},
+                    })
+                self.assertEqual(
+                    f"runtime.routing.{field_name}",
+                    caught.exception.details["field"],
+                )
+
     def test_unknown_runtime_group_and_nested_adapter_fields_are_rejected(self) -> None:
         with self.assertRaises(NsConfigError) as group_context:
             NsConfig.from_dict({

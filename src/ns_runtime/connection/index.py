@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from enum import Enum
 from types import MappingProxyType
 from typing import Mapping
 
@@ -19,11 +20,20 @@ from .state import (
 )
 
 
+class ConnectionRoutingEligibility(str, Enum):
+    ELIGIBLE = "eligible"
+    RECONNECT_GRACE = "reconnect_grace"
+    DRAINING = "draining"
+    AUTHORITY_SUSPENDED = "authority_suspended"
+    SESSION_EXPIRY_SUSPENDED = "session_expiry_suspended"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ConnectionIndexEntrySnapshot:
     session_context: SessionContext = field(repr=False)
     state: LogicalConnectionState
     active_target_eligible: bool
+    routing_eligibility: ConnectionRoutingEligibility | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.session_context, SessionContext):
@@ -32,8 +42,22 @@ class ConnectionIndexEntrySnapshot:
             _invalid("state")
         if not isinstance(self.active_target_eligible, bool):
             _invalid("active_target_eligible")
+        if self.routing_eligibility is not None and not isinstance(
+            self.routing_eligibility,
+            ConnectionRoutingEligibility,
+        ):
+            _invalid("routing_eligibility")
         if self.active_target_eligible and self.state is not LogicalConnectionState.ACTIVE:
             _invalid("active_target_state")
+        if self.active_target_eligible != (
+            self.routing_eligibility is ConnectionRoutingEligibility.ELIGIBLE
+        ):
+            _invalid("routing_eligibility_active_mismatch")
+        if (
+            self.routing_eligibility is ConnectionRoutingEligibility.DRAINING
+            and self.state is not LogicalConnectionState.DRAINING
+        ):
+            _invalid("routing_eligibility_draining_state")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -53,6 +77,7 @@ class _IndexedConnection:
     context: SessionContext
     state_machine: LogicalConnectionStateMachine
     active_target_eligible: bool = False
+    routing_eligibility: ConnectionRoutingEligibility | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +146,13 @@ class LocalConnectionIndex:
                     active_target_eligible=(
                         requested_state is LogicalConnectionState.ACTIVE
                     ),
+                    routing_eligibility=(
+                        ConnectionRoutingEligibility.ELIGIBLE
+                        if requested_state is LogicalConnectionState.ACTIVE
+                        else ConnectionRoutingEligibility.DRAINING
+                        if requested_state is LogicalConnectionState.DRAINING
+                        else None
+                    ),
                 )
             self._commit(entries)
             return state_snapshot
@@ -128,14 +160,28 @@ class LocalConnectionIndex:
     async def suspend_active_target(
         self,
         connection_id: str,
+        *,
+        reason: ConnectionRoutingEligibility,
     ) -> LocalConnectionIndexSnapshot:
-        return await self._set_target_eligibility(connection_id, eligible=False)
+        if reason not in {
+            ConnectionRoutingEligibility.RECONNECT_GRACE,
+            ConnectionRoutingEligibility.AUTHORITY_SUSPENDED,
+            ConnectionRoutingEligibility.SESSION_EXPIRY_SUSPENDED,
+        }:
+            _invalid("routing_eligibility_suspend_reason")
+        return await self._set_target_eligibility(
+            connection_id,
+            eligibility=reason,
+        )
 
     async def restore_active_target(
         self,
         connection_id: str,
     ) -> LocalConnectionIndexSnapshot:
-        return await self._set_target_eligibility(connection_id, eligible=True)
+        return await self._set_target_eligibility(
+            connection_id,
+            eligibility=ConnectionRoutingEligibility.ELIGIBLE,
+        )
 
     async def replace_session_context(
         self,
@@ -159,6 +205,7 @@ class LocalConnectionIndex:
                 context=session_context,
                 state_machine=entry.state_machine,
                 active_target_eligible=False,
+                routing_eligibility=None,
             )
             self._commit(entries)
             return self._snapshot_unlocked()
@@ -209,6 +256,7 @@ class LocalConnectionIndex:
                 context=session_context,
                 state_machine=entry.state_machine,
                 active_target_eligible=entry.active_target_eligible,
+                routing_eligibility=entry.routing_eligibility,
             )
             self._commit(entries)
             return self._snapshot_unlocked()
@@ -278,20 +326,34 @@ class LocalConnectionIndex:
         self,
         connection_id: str,
         *,
-        eligible: bool,
+        eligibility: ConnectionRoutingEligibility,
     ) -> LocalConnectionIndexSnapshot:
         _validate_connection_id_query(connection_id)
         async with self._lock:
             entry = self._require_entry(connection_id)
             if entry.state_machine.state is not LogicalConnectionState.ACTIVE:
                 _state_error("active_state_required")
-            if entry.active_target_eligible is eligible:
+            eligible = eligibility is ConnectionRoutingEligibility.ELIGIBLE
+            if (
+                not eligible
+                and entry.routing_eligibility in {
+                    ConnectionRoutingEligibility.RECONNECT_GRACE,
+                    ConnectionRoutingEligibility.AUTHORITY_SUSPENDED,
+                    ConnectionRoutingEligibility.SESSION_EXPIRY_SUSPENDED,
+                }
+            ):
+                # Suspension classification is first-reason-wins.  A later
+                # lifecycle action may close or explicitly restore the entry,
+                # but cannot rewrite the reason observed by Router snapshots.
+                return self._snapshot_unlocked()
+            if entry.routing_eligibility is eligibility:
                 return self._snapshot_unlocked()
             entries = dict(self._entries)
             entries[connection_id] = _IndexedConnection(
                 context=entry.context,
                 state_machine=entry.state_machine,
                 active_target_eligible=eligible,
+                routing_eligibility=eligibility,
             )
             self._commit(entries)
             return self._snapshot_unlocked()
@@ -362,6 +424,10 @@ def _build_indexes(entries: Mapping[str, _IndexedConnection]) -> _BuiltIndexes:
             if entry.state_machine.state is not LogicalConnectionState.ACTIVE:
                 _state_error("active_target_state_inconsistent")
             active_targets.add(connection_id)
+        if entry.active_target_eligible != (
+            entry.routing_eligibility is ConnectionRoutingEligibility.ELIGIBLE
+        ):
+            _state_error("routing_eligibility_inconsistent")
     return _BuiltIndexes(
         by_session_id=MappingProxyType(by_session_id),
         by_identity=_freeze_secondary(by_identity),
@@ -390,6 +456,7 @@ def _entry_snapshot(entry: _IndexedConnection) -> ConnectionIndexEntrySnapshot:
         session_context=entry.context,
         state=entry.state_machine.state,
         active_target_eligible=entry.active_target_eligible,
+        routing_eligibility=entry.routing_eligibility,
     )
 
 
@@ -432,6 +499,7 @@ def _state_error(reason: str) -> None:
 
 
 __all__ = (
+    "ConnectionRoutingEligibility",
     "ConnectionIndexEntrySnapshot",
     "LocalConnectionIndex",
     "LocalConnectionIndexSnapshot",

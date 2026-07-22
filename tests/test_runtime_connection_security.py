@@ -9,6 +9,8 @@ from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import NsRuntimeIamDeniedError
 from ns_common.time import ControlledClock
 from ns_runtime.connection import (
+    ConnectionLifecycleAuditBoundary,
+    DeterministicTestConnectionAuditSink,
     DeterministicTestSecurityAuditSink,
     LocalConnectionIndex,
     LogicalConnectionCloseReason,
@@ -262,6 +264,11 @@ async def _active_fixture(
         connection_index=index,
         clock=clock,
         audit_sink=audit,
+        lifecycle_audit=ConnectionLifecycleAuditBoundary(
+            session_context=context,
+            clock=clock,
+            sink=DeterministicTestConnectionAuditSink(),
+        ),
         transport_session=(None if with_grace else actual_transport),
         grace_service=grace,
     )

@@ -8,6 +8,7 @@ import unittest
 from ns_common.exceptions import NsStateError
 from ns_common.time import ControlledClock
 from ns_runtime.connection import (
+    ConnectionRoutingEligibility,
     LocalConnectionIndex,
     LogicalConnectionCloseReason,
     LogicalConnectionState,
@@ -131,14 +132,36 @@ class LocalConnectionIndexTestCase(unittest.IsolatedAsyncioTestCase):
         await self._add_primary()
         await self.index.transition(CONNECTION_ID, LogicalConnectionState.ACTIVE)
 
-        suspended = await self.index.suspend_active_target(CONNECTION_ID)
+        suspended = await self.index.suspend_active_target(
+            CONNECTION_ID,
+            reason=ConnectionRoutingEligibility.AUTHORITY_SUSPENDED,
+        )
         sequence = suspended.mutation_sequence
-        again = await self.index.suspend_active_target(CONNECTION_ID)
+        again = await self.index.suspend_active_target(
+            CONNECTION_ID,
+            reason=ConnectionRoutingEligibility.AUTHORITY_SUSPENDED,
+        )
         self.assertEqual(sequence, again.mutation_sequence)
         self.assertEqual(frozenset(), again.active_target_connection_ids)
 
         restored = await self.index.restore_active_target(CONNECTION_ID)
         self.assertEqual(frozenset({CONNECTION_ID}), restored.active_target_connection_ids)
+
+    async def test_routing_suspension_is_first_reason_wins(self) -> None:
+        await self._add_primary()
+        await self.index.transition(CONNECTION_ID, LogicalConnectionState.ACTIVE)
+        await self.index.suspend_active_target(
+            CONNECTION_ID,
+            reason=ConnectionRoutingEligibility.RECONNECT_GRACE,
+        )
+        snapshot = await self.index.suspend_active_target(
+            CONNECTION_ID,
+            reason=ConnectionRoutingEligibility.AUTHORITY_SUSPENDED,
+        )
+        self.assertIs(
+            ConnectionRoutingEligibility.RECONNECT_GRACE,
+            snapshot.by_connection_id[CONNECTION_ID].routing_eligibility,
+        )
 
     async def test_inactive_connection_cannot_be_restored_as_target(self) -> None:
         await self._add_primary()

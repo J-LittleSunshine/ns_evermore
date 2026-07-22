@@ -190,6 +190,7 @@ def main(
         ConnectionLifecyclePolicy,
         ConnectionLifecycleProcessorRegistryFactory,
         LocalConnectionIndex,
+        UnavailableConnectionLifecycleAuditSink,
     )
     from ns_runtime.iam import (
         AuthorizationMode,
@@ -201,10 +202,10 @@ def main(
         EventBus,
         InterfaceOnlyIdempotencyPrecheck,
         InterfaceOnlyRateLimitEntry,
-        InterfaceOnlyRoutingPreparation,
         LoggingAuditSink,
     )
     from ns_runtime.processor.integration import IamProcessorAuthorization
+    from ns_runtime.routing import LocalRouter, LocalRoutingPreparation
     from ns_runtime.protocol import ErrorEnvelopeBuilder, JsonV1Codec
     from ns_runtime.roles import RuntimeRole
 
@@ -285,9 +286,19 @@ def main(
         task_supervisor=context.task_supervisor,
         default_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
     )
+    connection_index = LocalConnectionIndex()
+    routing_preparation = LocalRoutingPreparation(
+        router=LocalRouter(
+            connection_index=connection_index,
+            clock=context.clock,
+            identifier_factory=identifier_factory,
+            runtime_id=runtime_id,
+            config=config.runtime.routing,
+        ),
+    )
     logical_connection_manager = ConnectionLifecycleManager(
         transport_manager=transport_manager,
-        connection_index=LocalConnectionIndex(),
+        connection_index=connection_index,
         clock=context.clock,
         task_supervisor=context.task_supervisor,
         identifier_factory=identifier_factory,
@@ -332,9 +343,10 @@ def main(
         ),
         processor_rate_limit=InterfaceOnlyRateLimitEntry(),
         processor_idempotency=InterfaceOnlyIdempotencyPrecheck(),
-        processor_routing=InterfaceOnlyRoutingPreparation(),
+        processor_routing=routing_preparation,
         processor_error_mapper=DefaultProcessorErrorMapper(),
         processor_audit_sink=LoggingAuditSink(logger=logger),
+        lifecycle_audit_sink=UnavailableConnectionLifecycleAuditSink(),
         event_bus=processor_event_bus,
         config_version=config.config_version,
         policy_version=config.policy_version,

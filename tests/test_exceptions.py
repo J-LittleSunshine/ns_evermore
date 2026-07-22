@@ -311,6 +311,12 @@ EXCEPTION_SNAPSHOTS = {
         200132,
         "Runtime route is unavailable.",
     ),
+    "NsRuntimeRouteRejectedError": (
+        "NsRuntimeError",
+        "RUNTIME_ROUTE_REJECTED",
+        200177,
+        "Runtime routing policy rejected the request.",
+    ),
     "NsRuntimeRouteLoopError": (
         "NsRuntimeError",
         "RUNTIME_ROUTE_LOOP",
@@ -931,6 +937,11 @@ EXPECTED_ERROR_POLICIES = {
         "retry_route_resolution",
         retryable=True,
     ),
+    exceptions_facade.NsRuntimeRouteRejectedError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.ROUTING,
+        "reject_routing_policy",
+    ),
     exceptions_facade.NsRuntimeRouteLoopError: expected_policy(
         NsErrorSeverity.CRITICAL,
         NsErrorCategory.ROUTING,
@@ -1385,7 +1396,7 @@ class NsExceptionsPackageStructureTestCase(unittest.TestCase):
 class NsExceptionCompatibilityTestCase(unittest.TestCase):
 
     def test_class_metadata_and_inheritance_match_legacy_contract(self) -> None:
-        self.assertEqual(84, len(EXCEPTION_SNAPSHOTS))
+        self.assertEqual(85, len(EXCEPTION_SNAPSHOTS))
         for class_name, snapshot in EXCEPTION_SNAPSHOTS.items():
             with self.subTest(class_name=class_name):
                 base_name, code, numeric_code, default_message = snapshot
@@ -1495,7 +1506,7 @@ class NsExceptionCompatibilityTestCase(unittest.TestCase):
 class NsErrorMetadataRegistryTestCase(unittest.TestCase):
 
     def test_all_current_error_policies_match_explicit_matrix(self) -> None:
-        self.assertEqual(84, len(EXPECTED_ERROR_POLICIES))
+        self.assertEqual(85, len(EXPECTED_ERROR_POLICIES))
         self.assertEqual(
             set(EXPECTED_ERROR_POLICIES),
             {definition.error_type for definition in ALL_ERROR_DEFINITIONS},
@@ -1740,10 +1751,10 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
     def test_registry_is_complete_unique_queryable_and_json_safe(self) -> None:
         definitions = list_error_definitions()
         self.assertIs(ALL_ERROR_DEFINITIONS, definitions)
-        self.assertEqual(84, len(definitions))
-        self.assertEqual(84, len({item.error_type for item in definitions}))
-        self.assertEqual(84, len({item.code for item in definitions}))
-        self.assertEqual(84, len({item.numeric_code for item in definitions}))
+        self.assertEqual(85, len(definitions))
+        self.assertEqual(85, len({item.error_type for item in definitions}))
+        self.assertEqual(85, len({item.code for item in definitions}))
+        self.assertEqual(85, len({item.numeric_code for item in definitions}))
 
         validate_error_registry()
         for definition in definitions:
@@ -1790,7 +1801,7 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             for definition in ALL_ERROR_DEFINITIONS
             if definition.code.startswith("RUNTIME_")
         }
-        self.assertEqual(77, len(covered_codes))
+        self.assertEqual(78, len(covered_codes))
         self.assertEqual(registered_runtime_codes, set(covered_codes))
         self.assertEqual(len(covered_codes), len(set(covered_codes)))
 

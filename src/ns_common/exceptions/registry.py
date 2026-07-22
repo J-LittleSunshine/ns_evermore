@@ -88,6 +88,7 @@ RUNTIME_ERROR_COVERAGE_MATRIX: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "route",
         (
+            "RUNTIME_ROUTE_REJECTED",
             "RUNTIME_ROUTE_UNAVAILABLE",
             "RUNTIME_ROUTE_LOOP",
             "RUNTIME_ROUTE_HOP_LIMIT_EXCEEDED",

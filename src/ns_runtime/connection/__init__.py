@@ -19,6 +19,7 @@ from .audit import (
     ConnectionLifecycleAuditSink,
     ConnectionLifecycleAuditSnapshot,
     DeterministicTestConnectionAuditSink,
+    UnavailableConnectionLifecycleAuditSink,
 )
 from .authentication import (
     AuthenticatedHello,
@@ -77,6 +78,7 @@ from .iam import (
     TestIamOutcome,
 )
 from .index import (
+    ConnectionRoutingEligibility,
     ConnectionIndexEntrySnapshot,
     LocalConnectionIndex,
     LocalConnectionIndexSnapshot,
@@ -173,6 +175,7 @@ __all__ = (
     "ConnectionDrainProcessor",
     "ConnectionEpochGate",
     "ConnectionIndexEntrySnapshot",
+    "ConnectionRoutingEligibility",
     "ConnectionLifecycleAuditBoundary",
     "ConnectionLifecycleAuditEvent",
     "ConnectionLifecycleAuditSink",
@@ -193,6 +196,7 @@ __all__ = (
     "ConnectionSecurityAuditSink",
     "DeterministicTestIamAdapter",
     "DeterministicTestConnectionAuditSink",
+    "UnavailableConnectionLifecycleAuditSink",
     "DeterministicTestSecurityAuditSink",
     "DRAIN_ALLOWED_MESSAGE_TYPES",
     "DrainPolicy",

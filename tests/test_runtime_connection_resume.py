@@ -19,7 +19,9 @@ from ns_common.iam import IamPrincipalType
 from ns_common.time import ControlledClock
 from ns_runtime.connection import (
     ConnectionEpochGate,
+    ConnectionLifecycleAuditBoundary,
     ConnectionResumeCoordinator,
+    DeterministicTestConnectionAuditSink,
     DeterministicTestIamAdapter,
     HandshakeCredential,
     HelloResumeRequest,
@@ -365,6 +367,11 @@ class ConnectionResumeTestCase(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=timeout_seconds,
             expected_principal_type=IamPrincipalType.CLIENT,
             candidate_terminator=candidate_terminator,
+            audit_boundary=ConnectionLifecycleAuditBoundary(
+                session_context=self.current,
+                clock=self.clock,
+                sink=DeterministicTestConnectionAuditSink(),
+            ),
         )
 
     async def _reset_after_terminal_if_needed(self) -> None:

@@ -64,6 +64,7 @@ from .registry import (
     MessageCategory,
     MessageDirection,
     MessageReliability,
+    RoutingRequirement,
     MessageTypeContract,
     MessageTypeRegistry,
 )
@@ -91,7 +92,7 @@ __all__ = (
     "ExtensionNamespaceContract", "ExtensionNamespaceRegistry", "ExtensionObjectSchema",
     "ExtensionValidationResult", "ExtensionsGroup", "InboundEnvelope",
     "InlinePayloadSchema", "MessageGroup", "MessageTypeContract", "MessageTypeRegistry",
-    "MessageAuditLevel", "MessageCategory", "MessageDirection", "MessageReliability", "MessageTypeSchema",
+    "MessageAuditLevel", "MessageCategory", "MessageDirection", "MessageReliability", "RoutingRequirement", "MessageTypeSchema",
     "PayloadGroup", "ProtocolGroup",
     "RouteGroup", "SourceGroup", "StreamGroup", "TargetGroup", "TraceGroup",
     "JSON_V1_PROTOCOL_MATRIX", "JsonResourceLimits", "JsonV1Codec", "NegotiatedProtocol",

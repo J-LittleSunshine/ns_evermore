@@ -36,6 +36,8 @@ from .contracts import (
     RateLimitEntry,
     ResponseFinalizer,
     RoutingPreparation,
+    RoutingPreparationOutcome,
+    RoutingPreparationResult,
     freeze_feature_flags,
 )
 from .registry import PipelineProcessor, ProcessorRegistry
@@ -78,8 +80,13 @@ class InterfaceOnlyIdempotencyPrecheck(IdempotencyPrecheck):
 
 
 class InterfaceOnlyRoutingPreparation(RoutingPreparation):
-    async def prepare(self, context: ProcessorContext) -> None:
+    async def prepare(
+        self,
+        context: ProcessorContext,
+        value: object,
+    ) -> RoutingPreparationResult:
         _context(context)
+        return RoutingPreparationResult.no_routing_required()
 
 
 class PassthroughResponseFinalizer(ResponseFinalizer):
@@ -164,8 +171,22 @@ class RoutingPreparationProcessor(PipelineProcessor):
         return "routing.preparation"
 
     async def process(self, context: ProcessorContext, value: object) -> object:
-        await context.dependencies.routing.prepare(context)
-        return value
+        result = await context.dependencies.routing.prepare(context, value)
+        if not isinstance(result, RoutingPreparationResult):
+            _invalid("routing_result")
+        if result.outcome in {
+            RoutingPreparationOutcome.REJECTED,
+            RoutingPreparationOutcome.UNAVAILABLE,
+        }:
+            failure = result.failure
+            public_error = getattr(failure, "public_error", None)
+            if not callable(public_error):
+                _invalid("routing_failure")
+            error = public_error()
+            if not isinstance(error, Exception):
+                _invalid("routing_failure.public_error")
+            raise error
+        return result
 
 
 class MessageProcessorStageProcessor(

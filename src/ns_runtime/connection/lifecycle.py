@@ -51,10 +51,12 @@ from ns_runtime.processor import (
 from ns_runtime.processor.integration import (
     ConnectionProcessorPipeline,
     build_connection_processor_pipeline,
+    TransportResponseEmitter,
 )
 from ns_runtime.transport import TransportAdapter, TransportManager, TransportMessage, TransportSession
 
 from .accepted import ConnectionAcceptedEnvelopeBuilder, ConnectionAdmissionActivator, _iso_utc
+from .audit import ConnectionLifecycleAuditBoundary, ConnectionLifecycleAuditSink
 from .binding import (
     LogicalConnectionTransportMap,
     LogicalSessionIdentityFactory,
@@ -141,6 +143,7 @@ class _LogicalOwner:
     mapping: LogicalConnectionTransportMap = field(repr=False)
     transport: TransportSession | None = field(repr=False)
     grace: ReconnectGraceService = field(repr=False)
+    lifecycle_audit: ConnectionLifecycleAuditBoundary = field(repr=False)
     heartbeat: ConnectionHeartbeatService | None = field(default=None, repr=False)
     drain: ConnectionDrainService | None = field(default=None, repr=False)
     expiry: SessionExpiryController | None = field(default=None, repr=False)
@@ -199,6 +202,7 @@ class ConnectionLifecycleManager:
         processor_routing: RoutingPreparation,
         processor_error_mapper: ProcessorErrorMapper,
         processor_audit_sink: AuditSink,
+        lifecycle_audit_sink: ConnectionLifecycleAuditSink,
         event_bus: EventBus,
         config_version: str,
         policy_version: str,
@@ -230,6 +234,11 @@ class ConnectionLifecycleManager:
             (processor_routing, RoutingPreparation, "processor_routing"),
             (processor_error_mapper, ProcessorErrorMapper, "processor_error_mapper"),
             (processor_audit_sink, AuditSink, "processor_audit_sink"),
+            (
+                lifecycle_audit_sink,
+                ConnectionLifecycleAuditSink,
+                "lifecycle_audit_sink",
+            ),
             (event_bus, EventBus, "event_bus"),
         )
         for value, expected, name in dependencies:
@@ -275,6 +284,7 @@ class ConnectionLifecycleManager:
         self._processor_routing = processor_routing
         self._processor_error_mapper = processor_error_mapper
         self._processor_audit_sink = processor_audit_sink
+        self._lifecycle_audit_sink = lifecycle_audit_sink
         self._event_bus = event_bus
         self._config_version = config_version
         self._policy_version = policy_version
@@ -591,6 +601,11 @@ class ConnectionLifecycleManager:
                     mapping=mapping,
                     sequence=sequence,
                 ),
+                lifecycle_audit=ConnectionLifecycleAuditBoundary(
+                    session_context=negotiated.context,
+                    clock=self._clock,
+                    sink=self._lifecycle_audit_sink,
+                ),
             )
             self._owners[negotiated.context.connection_id] = owner
             self._candidate_cleanup_owners.pop(candidate.sequence, None)
@@ -673,6 +688,7 @@ class ConnectionLifecycleManager:
                     candidate,
                     reason,
                 ),
+                audit_boundary=owner.lifecycle_audit,
             )
             resumed = await coordinator.resume(parsed)
             previous_expiry = owner.expiry
@@ -825,6 +841,7 @@ class ConnectionLifecycleManager:
             expected_principal_type=owner.principal_type,
             expiry_controller=expiry,
             drain_service=drain,
+            audit_boundary=owner.lifecycle_audit,
         )
         return self._processor_registry_factory.build(
             session_context=owner.context,
@@ -866,6 +883,7 @@ class ConnectionLifecycleManager:
                         )
                         return
                     continue
+                await TransportResponseEmitter(transport=transport).emit(execution)
                 result = execution.response
                 if envelope.message.type == "connection.drain":
                     self._ensure_drain_cleanup_task(owner)
@@ -972,7 +990,6 @@ class ConnectionLifecycleManager:
             lifecycle_registry=processors,
             disabled_processors=self._disabled_processors,
             error_context_factory=lambda: self._error_context(owner.context),
-            transport=transport,
             authorization=self._processor_authorization,
             rate_limit=self._processor_rate_limit,
             idempotency=self._processor_idempotency,

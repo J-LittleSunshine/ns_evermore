@@ -180,7 +180,7 @@ class NonResumableConnectionGuard:
         connection_index: LocalConnectionIndex,
         clock: Clock,
         audit_sink: ConnectionSecurityAuditSink,
-        lifecycle_audit: ConnectionLifecycleAuditBoundary | None = None,
+        lifecycle_audit: ConnectionLifecycleAuditBoundary,
         transport_session: TransportSession | None = None,
         grace_service: ReconnectGraceService | None = None,
     ) -> None:
@@ -192,10 +192,7 @@ class NonResumableConnectionGuard:
             _invalid("clock")
         if not isinstance(audit_sink, ConnectionSecurityAuditSink):
             _invalid("audit_sink")
-        if lifecycle_audit is not None and not isinstance(
-            lifecycle_audit,
-            ConnectionLifecycleAuditBoundary,
-        ):
+        if not isinstance(lifecycle_audit, ConnectionLifecycleAuditBoundary):
             _invalid("lifecycle_audit")
         if transport_session is not None and not isinstance(
             transport_session,
@@ -354,8 +351,6 @@ class NonResumableConnectionGuard:
         self,
         decision: NonResumableCloseDecision,
     ) -> None:
-        if self._lifecycle_audit is None:
-            return
         if decision.kind is NonResumableCloseKind.KICK:
             kind = ConnectionAuditKind.KICK
         elif decision.kind is NonResumableCloseKind.POLICY_NON_RECOVERABLE:

@@ -273,6 +273,9 @@
       "max_hops": 8,
       "route_cache_ttl_seconds": 30,
       "allow_cross_node": false,
+      "max_candidate_count": 10000,
+      "max_selected_target_count": 10000,
+      "max_plan_evidence_count": 20000,
       "metadata": {
         "source": "local_file",
         "config_version": "0",

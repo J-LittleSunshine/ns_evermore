@@ -10,7 +10,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 
-from ns_common.exceptions import NsValidationError
+from ns_common.exceptions import (
+    NsRuntimeStateStoreUnavailableError,
+    NsValidationError,
+)
 from ns_common.time import Clock
 
 from .session import SessionContext
@@ -102,6 +105,21 @@ class DeterministicTestConnectionAuditSink(ConnectionLifecycleAuditSink):
         self._events.append(event)
 
 
+class UnavailableConnectionLifecycleAuditSink(ConnectionLifecycleAuditSink):
+    """Explicit production fail-closed boundary until an authority is wired."""
+
+    async def emit(self, event: ConnectionLifecycleAuditEvent) -> None:
+        if not isinstance(event, ConnectionLifecycleAuditEvent):
+            _invalid("audit.event")
+        raise NsRuntimeStateStoreUnavailableError(
+            details={
+                "component": "logical_connection_audit",
+                "operation": "commit",
+                "reason": "strong_audit_authority_unavailable",
+            },
+        )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ConnectionLifecycleAuditSnapshot:
     attempted_count: int
@@ -126,7 +144,7 @@ class ConnectionLifecycleAuditSnapshot:
 
 
 class ConnectionLifecycleAuditBoundary:
-    """Serialize typed audit attempts while isolating ordinary sink failure."""
+    """Serialize strong audit commits and fail closed on sink failure."""
 
     def __init__(
         self,
@@ -160,7 +178,7 @@ class ConnectionLifecycleAuditBoundary:
         outcome: ConnectionAuditOutcome,
         connection_epoch: int,
         close_reason: LogicalConnectionCloseReason | None = None,
-    ) -> bool:
+    ) -> None:
         if not isinstance(kind, ConnectionAuditKind):
             _invalid("audit.kind")
         if not isinstance(outcome, ConnectionAuditOutcome):
@@ -196,11 +214,20 @@ class ConnectionLifecycleAuditBoundary:
             except asyncio.CancelledError:
                 self._failed += 1
                 raise
+            except NsRuntimeStateStoreUnavailableError:
+                self._failed += 1
+                raise
             except Exception:
                 self._failed += 1
-                return False
+                raise NsRuntimeStateStoreUnavailableError(
+                    details={
+                        "component": "logical_connection_audit",
+                        "operation": "commit",
+                        "reason": "strong_audit_commit_failed",
+                        "enforcement_outcome": outcome.value,
+                    },
+                ) from None
             self._succeeded += 1
-            return True
 
     async def snapshot(self) -> ConnectionLifecycleAuditSnapshot:
         async with self._lock:
@@ -256,5 +283,6 @@ __all__ = (
     "ConnectionLifecycleAuditSink",
     "ConnectionLifecycleAuditSnapshot",
     "DeterministicTestConnectionAuditSink",
+    "UnavailableConnectionLifecycleAuditSink",
     "logical_id_summary",
 )

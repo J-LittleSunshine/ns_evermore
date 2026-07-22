@@ -78,6 +78,11 @@ class MessageDirection(str, Enum):
     BIDIRECTIONAL = "bidirectional"
 
 
+class RoutingRequirement(str, Enum):
+    NONE = "none"
+    TARGET_REQUIRED = "target_required"
+
+
 @dataclass(frozen=True, slots=True)
 class MessageTypeContract:
     message_type: str
@@ -92,6 +97,7 @@ class MessageTypeContract:
     feature_flag: str
     feature_enabled: bool
     response_types: tuple[str, ...]
+    routing_requirement: RoutingRequirement
 
     def __post_init__(self) -> None:
         if not isinstance(self.message_type, str) or not self.message_type:
@@ -114,6 +120,8 @@ class MessageTypeContract:
             raise TypeError("direction must be MessageDirection")
         if type(self.feature_enabled) is not bool:
             raise TypeError("feature_enabled must be a boolean")
+        if not isinstance(self.routing_requirement, RoutingRequirement):
+            raise TypeError("routing_requirement must be RoutingRequirement")
         if not isinstance(self.schemas, Mapping) or not self.schemas:
             raise ValueError("schemas must be a non-empty mapping")
         frozen: dict[str, MessageTypeSchema] = {}
@@ -126,6 +134,14 @@ class MessageTypeContract:
                 raise ValueError("schema message type must match contract")
             frozen[schema_key] = schema
         object.__setattr__(self, "schemas", MappingProxyType(frozen))
+        for schema in frozen.values():
+            required = set(schema.required_groups)
+            forbidden = set(schema.forbidden_groups)
+            if self.routing_requirement is RoutingRequirement.TARGET_REQUIRED:
+                if self.direction is not MessageDirection.OUTBOUND and "target" not in required:
+                    raise ValueError("target-required inbound contracts must require target")
+            elif self.direction is not MessageDirection.OUTBOUND and "target" not in forbidden:
+                raise ValueError("routing-none inbound contracts must forbid target")
 
     def schema_for(self, schema_key: str) -> MessageTypeSchema:
         schema = self.schemas.get(schema_key)
@@ -149,6 +165,7 @@ class MessageTypeContract:
             "feature_flag": self.feature_flag,
             "feature_enabled": self.feature_enabled,
             "response_types": self.response_types,
+            "routing_requirement": self.routing_requirement.value,
         }
 
 
@@ -233,6 +250,18 @@ def _contract(
     payload_optional: tuple[str, ...] = (),
     extension_registry: ExtensionNamespaceRegistry | None = None,
 ) -> MessageTypeContract:
+    direction = _DIRECTION_BY_TYPE.get(message_type, MessageDirection.BIDIRECTIONAL)
+    routing_requirement = (
+        RoutingRequirement.TARGET_REQUIRED
+        if message_type in _TARGET_REQUIRED_MESSAGE_TYPES
+        else RoutingRequirement.NONE
+    )
+    if (
+        routing_requirement is RoutingRequirement.NONE
+        and direction is not MessageDirection.OUTBOUND
+        and "target" not in forbidden_groups
+    ):
+        forbidden_groups = (*forbidden_groups, "target")
     inline_payload = (
         None
         if payload_required is None
@@ -257,13 +286,11 @@ def _contract(
         required_capabilities=_required_capabilities(message_type, family),
         processor_key=message_type,
         audit_level=_audit_level(message_type, family),
-        direction=_DIRECTION_BY_TYPE.get(
-            message_type,
-            MessageDirection.BIDIRECTIONAL,
-        ),
+        direction=direction,
         feature_flag=_FEATURE_FLAG_BY_FAMILY[family],
         feature_enabled=message_type in _ENABLED_MESSAGE_TYPES,
         response_types=_RESPONSE_TYPES.get(message_type, ()),
+        routing_requirement=routing_requirement,
     )
 
 
@@ -322,6 +349,9 @@ _P05_CONNECTION_MESSAGE_TYPES = frozenset({
 _ENABLED_MESSAGE_TYPES = frozenset({
     *_P05_CONNECTION_MESSAGE_TYPES,
     "runtime.error",
+})
+_TARGET_REQUIRED_MESSAGE_TYPES = frozenset({
+    "task.dispatch", "task.result", "task.callback", "stream.start",
 })
 _DIRECTION_BY_TYPE: Mapping[str, MessageDirection] = MappingProxyType({
     "connection.hello": MessageDirection.INBOUND,
@@ -539,6 +569,7 @@ __all__ = (
     "MessageCategory",
     "MessageDirection",
     "MessageReliability",
+    "RoutingRequirement",
     "MessageTypeContract",
     "MessageTypeRegistry",
 )

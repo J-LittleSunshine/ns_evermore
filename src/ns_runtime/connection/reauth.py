@@ -43,7 +43,7 @@ from .audit import (
 from .drain import ConnectionDrainService
 from .hello import HandshakeCredential, PendingHelloClaims
 from .iam import HandshakeIamAdapter, HandshakeIamAuthority, HandshakeIamRequest
-from .index import LocalConnectionIndex
+from .index import ConnectionRoutingEligibility, LocalConnectionIndex
 from .session import (
     CapabilityPolicy,
     HandshakeSessionNegotiator,
@@ -422,6 +422,18 @@ class SessionExpiryController:
             self._context = session_context
             self._generation += 1
             self._reauth_required = False
+            entry = await self._index.lookup_connection(
+                session_context.connection_id,
+            )
+            if (
+                entry is not None
+                and entry.state is LogicalConnectionState.ACTIVE
+                and entry.routing_eligibility
+                is ConnectionRoutingEligibility.SESSION_EXPIRY_SUSPENDED
+            ):
+                await self._index.restore_active_target(
+                    session_context.connection_id,
+                )
             self._schedule_unlocked()
 
     async def stop(self) -> None:
@@ -465,6 +477,22 @@ class SessionExpiryController:
                 if generation != self._generation:
                     return
                 self._reauth_required = True
+                entry = await self._index.lookup_connection(
+                    self._context.connection_id,
+                )
+                if (
+                    entry is not None
+                    and entry.session_context == self._context
+                    and entry.state is LogicalConnectionState.ACTIVE
+                    and entry.routing_eligibility
+                    is ConnectionRoutingEligibility.ELIGIBLE
+                ):
+                    await self._index.suspend_active_target(
+                        self._context.connection_id,
+                        reason=(
+                            ConnectionRoutingEligibility.SESSION_EXPIRY_SUSPENDED
+                        ),
+                    )
             expiry_remaining = max(
                 0.0,
                 self._context.session_expires_at.timestamp()
@@ -540,7 +568,7 @@ class ConnectionReauthCoordinator:
         expected_principal_type: IamPrincipalType | None = None,
         expiry_controller: SessionExpiryController | None = None,
         drain_service: ConnectionDrainService | None = None,
-        audit_boundary: ConnectionLifecycleAuditBoundary | None = None,
+        audit_boundary: ConnectionLifecycleAuditBoundary,
         capability_policy: CapabilityPolicy = P05_CAPABILITY_POLICY,
     ) -> None:
         dependencies = (
@@ -566,10 +594,7 @@ class ConnectionReauthCoordinator:
             ConnectionDrainService,
         ):
             _invalid("drain_service")
-        if audit_boundary is not None and not isinstance(
-            audit_boundary,
-            ConnectionLifecycleAuditBoundary,
-        ):
+        if not isinstance(audit_boundary, ConnectionLifecycleAuditBoundary):
             _invalid("audit_boundary")
         if expected_principal_type is not None and not isinstance(
             expected_principal_type,
@@ -610,6 +635,7 @@ class ConnectionReauthCoordinator:
         self._claimed = False
         self._terminal_handled = False
         self._terminal_close_reason: LogicalConnectionCloseReason | None = None
+        self._authority_suspended = False
 
     async def reauthenticate(self, parsed: ParsedReauth) -> ReauthenticatedSession:
         if not isinstance(parsed, ParsedReauth):
@@ -699,6 +725,15 @@ class ConnectionReauthCoordinator:
             or entry.state not in _REAUTHABLE_STATES
         ):
             _state_error("active_current_session_required")
+        if (
+            entry.state is LogicalConnectionState.ACTIVE
+            and entry.routing_eligibility is ConnectionRoutingEligibility.ELIGIBLE
+        ):
+            await self._index.suspend_active_target(
+                self._current.connection_id,
+                reason=ConnectionRoutingEligibility.AUTHORITY_SUSPENDED,
+            )
+            self._authority_suspended = True
         if self._current.session_expires_at <= self._clock.utc_now():
             await self._reject_and_close(ReauthRejectionReason.SESSION_EXPIRED)
             raise _reauth_denied("session_expired")
@@ -810,6 +845,20 @@ class ConnectionReauthCoordinator:
             )
             if self._expiry is not None:
                 await self._expiry.refresh(updated)
+            if self._authority_suspended:
+                entry = await self._index.lookup_connection(
+                    self._current.connection_id,
+                )
+                if (
+                    entry is not None
+                    and entry.state is LogicalConnectionState.ACTIVE
+                    and entry.routing_eligibility
+                    is ConnectionRoutingEligibility.AUTHORITY_SUSPENDED
+                ):
+                    await self._index.restore_active_target(
+                        self._current.connection_id,
+                    )
+                self._authority_suspended = False
         except Exception:
             self._terminal_handled = True
             await self._close(LogicalConnectionCloseReason.INTERNAL_ERROR)
@@ -853,17 +902,16 @@ class ConnectionReauthCoordinator:
         except Exception:
             pass
         await self._close(LogicalConnectionCloseReason.AUTH_FAILED)
-        if self._audit is not None:
-            try:
-                await self._audit.emit(
-                    kind=ConnectionAuditKind.REAUTH_REJECTION,
-                    outcome=ConnectionAuditOutcome.REJECTED,
-                    connection_epoch=self._current.connection_epoch,
-                    close_reason=close_reason,
-                )
-            except asyncio.CancelledError as error:
-                if cancelled is None:
-                    cancelled = error
+        try:
+            await self._audit.emit(
+                kind=ConnectionAuditKind.REAUTH_REJECTION,
+                outcome=ConnectionAuditOutcome.REJECTED,
+                connection_epoch=self._current.connection_epoch,
+                close_reason=close_reason,
+            )
+        except asyncio.CancelledError as error:
+            if cancelled is None:
+                cancelled = error
         if cancelled is not None:
             raise cancelled
 

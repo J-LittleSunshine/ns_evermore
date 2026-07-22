@@ -165,6 +165,9 @@ class NsRuntimeRoutingConfig:
     max_hops: int = 8
     route_cache_ttl_seconds: int = 30
     allow_cross_node: bool = False
+    max_candidate_count: int = 10_000
+    max_selected_target_count: int = 10_000
+    max_plan_evidence_count: int = 20_000
     metadata: NsConfigGroupMetadata = field(
         default_factory=lambda: NsConfigGroupMetadata(apply_mode="immediate")
     )

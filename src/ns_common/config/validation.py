@@ -739,6 +739,18 @@ class _ConfigValidator:
         routing = runtime.routing
         self._validate_positive_int("runtime.routing.max_hops", routing.max_hops)
         self._validate_non_negative_int("runtime.routing.route_cache_ttl_seconds", routing.route_cache_ttl_seconds)
+        self._validate_positive_int(
+            "runtime.routing.max_candidate_count",
+            routing.max_candidate_count,
+        )
+        self._validate_positive_int(
+            "runtime.routing.max_selected_target_count",
+            routing.max_selected_target_count,
+        )
+        self._validate_positive_int(
+            "runtime.routing.max_plan_evidence_count",
+            routing.max_plan_evidence_count,
+        )
 
         delivery = runtime.delivery
         self._validate_positive_int("runtime.delivery.ack_timeout_seconds", delivery.ack_timeout_seconds)

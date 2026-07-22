@@ -92,6 +92,7 @@ from .routing import (
     ROUTING_ERROR_DEFINITIONS,
     NsRuntimeRouteHopLimitExceededError,
     NsRuntimeRouteLoopError,
+    NsRuntimeRouteRejectedError,
     NsRuntimeRouteUnavailableError,
     NsRuntimeTargetNotFoundError,
 )
@@ -198,6 +199,7 @@ __all__ = [
     "NsRuntimeProtocolVersionError",
     "NsRuntimeRouteHopLimitExceededError",
     "NsRuntimeRouteLoopError",
+    "NsRuntimeRouteRejectedError",
     "NsRuntimeRouteUnavailableError",
     "NsRuntimeRoleAdmissionError",
     "NsRuntimeSourceForgedError",

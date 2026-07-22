@@ -7,7 +7,11 @@ import unittest
 from uuid import UUID
 
 from ns_common.async_runtime import TaskSupervisor
-from ns_common.exceptions import NsRuntimeIamDeniedError, NsStateError
+from ns_common.exceptions import (
+    NsRuntimeIamDeniedError,
+    NsRuntimeStateStoreUnavailableError,
+    NsStateError,
+)
 from ns_common.identifiers import IdentifierFactory
 from ns_common.time import ControlledClock
 from ns_runtime.connection import (
@@ -113,6 +117,11 @@ class SafeConnectionSnapshotTestCase(unittest.IsolatedAsyncioTestCase):
             connection_index=self.index,
             clock=self.clock,
             audit_sink=DeterministicTestSecurityAuditSink(),
+            lifecycle_audit=ConnectionLifecycleAuditBoundary(
+                session_context=self.current,
+                clock=self.clock,
+                sink=DeterministicTestConnectionAuditSink(),
+            ),
             transport_session=self.transport,
         )
 
@@ -299,14 +308,15 @@ class SafeConnectionSnapshotTestCase(unittest.IsolatedAsyncioTestCase):
 
 
 class ConnectionLifecycleAuditTestCase(unittest.IsolatedAsyncioTestCase):
-    async def test_resume_success_is_typed_and_sink_failure_does_not_rollback(self) -> None:
+    async def test_resume_audit_failure_prevents_success_and_transport_send(self) -> None:
         fixture = await _resume_audit_fixture()
         try:
             fixture.sink.failure = RuntimeError("audit-storage-secret")
-            result = await fixture.coordinator.resume(_resume_parsed())
+            with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+                await fixture.coordinator.resume(_resume_parsed())
 
-            self.assertEqual(1, result.session.context.connection_epoch)
-            self.assertIs(LogicalConnectionState.ACTIVE, fixture.machine.state)
+            self.assertEqual([], fixture.transport.sent)
+            self.assertIs(LogicalConnectionState.CLOSED, fixture.machine.state)
             audit = await fixture.boundary.snapshot()
             self.assertEqual(1, audit.attempted_count)
             self.assertEqual(1, audit.failed_count)
@@ -386,6 +396,40 @@ class ConnectionLifecycleAuditTestCase(unittest.IsolatedAsyncioTestCase):
         finally:
             await fixture.supervisor.shutdown(timeout_seconds=1)
 
+    async def test_reauth_audit_unavailable_preserves_enforced_close(self) -> None:
+        fixture = await _active_audit_fixture()
+        try:
+            fixture.sink.failure = RuntimeError("strong-audit-unavailable")
+            coordinator = ConnectionReauthCoordinator(
+                current_context=fixture.current,
+                connection_index=fixture.index,
+                transport_session=fixture.transport,
+                iam_adapter=DeterministicTestIamAdapter(
+                    (TestIamOutcome(action=TestIamAction.DENY),),
+                    clock=fixture.clock,
+                ),
+                response_builder=_response_builder(fixture.clock),
+                clock=fixture.clock,
+                task_supervisor=fixture.supervisor,
+                task_sequence=149,
+                timeout_seconds=10,
+                audit_boundary=fixture.boundary,
+            )
+            parsed = ConnectionReauthEnvelopeHandler(
+                session_context=fixture.current,
+                codec=JsonV1Codec(),
+            ).parse(_reauth_text())
+
+            with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+                await coordinator.reauthenticate(parsed)
+
+            self.assertIs(LogicalConnectionState.CLOSED, fixture.machine.state)
+            self.assertIsNone(await fixture.index.lookup_connection(CONNECTION_ID))
+            audit = await fixture.boundary.snapshot()
+            self.assertEqual(1, audit.failed_count)
+        finally:
+            await fixture.supervisor.shutdown(timeout_seconds=1)
+
     async def test_non_resumable_kinds_map_to_explicit_lifecycle_audit(self) -> None:
         cases = (
             (NonResumableCloseKind.KICK, ConnectionAuditKind.KICK),
@@ -433,10 +477,15 @@ class ConnectionLifecycleAuditTestCase(unittest.IsolatedAsyncioTestCase):
                 transport_session=fixture.transport,
             )
 
-            await guard.close(NonResumableCloseKind.KICK)
+            with self.assertRaises(NsRuntimeStateStoreUnavailableError) as caught:
+                await guard.close(NonResumableCloseKind.KICK)
 
             self.assertIs(LogicalConnectionState.CLOSED, fixture.machine.state)
             self.assertIsNone(await fixture.index.lookup_connection(CONNECTION_ID))
+            self.assertEqual(
+                "enforced",
+                caught.exception.details["enforcement_outcome"],
+            )
             audit = await fixture.boundary.snapshot()
             self.assertEqual(1, audit.failed_count)
         finally:
@@ -533,6 +582,7 @@ async def _active_audit_fixture() -> _ActiveAuditFixture:
 class _ResumeAuditFixture:
     supervisor: TaskSupervisor
     machine: object
+    transport: _ResumeTransport
     sink: DeterministicTestConnectionAuditSink
     boundary: ConnectionLifecycleAuditBoundary
     coordinator: ConnectionResumeCoordinator
@@ -568,12 +618,13 @@ async def _resume_audit_fixture() -> _ResumeAuditFixture:
         clock=clock,
         sink=sink,
     )
+    new_transport = _ResumeTransport()
     coordinator = ConnectionResumeCoordinator(
         current_context=current,
         grace_service=grace,
         connection_index=index,
         transport_mapping=mapping,
-        new_transport_session=_ResumeTransport(),
+        new_transport_session=new_transport,
         iam_adapter=_resume_adapter(clock),
         logical_identity_factory=LogicalSessionIdentityFactory(
             IdentifierFactory(
@@ -592,6 +643,7 @@ async def _resume_audit_fixture() -> _ResumeAuditFixture:
     return _ResumeAuditFixture(
         supervisor=supervisor,
         machine=machine,
+        transport=new_transport,
         sink=sink,
         boundary=boundary,
         coordinator=coordinator,
@@ -612,6 +664,7 @@ async def _snapshot_fixture() -> _SnapshotFixture:
         connection_index=fixture.index,
         clock=fixture.clock,
         audit_sink=DeterministicTestSecurityAuditSink(),
+        lifecycle_audit=fixture.boundary,
         transport_session=fixture.transport,
     )
     return _SnapshotFixture(

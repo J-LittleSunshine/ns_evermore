@@ -27,6 +27,8 @@ from .contracts import (
     RateLimitEntry,
     ResponseFinalizer,
     RoutingPreparation,
+    RoutingPreparationOutcome,
+    RoutingPreparationResult,
 )
 from .event_bus import (
     EventBus,
@@ -92,6 +94,8 @@ __all__ = (
     "RateLimitEntry",
     "ResponseFinalizer",
     "RoutingPreparation",
+    "RoutingPreparationOutcome",
+    "RoutingPreparationResult",
     "RuntimeEvent",
     "SubscriptionHandle",
     "SubscriberOutcome",

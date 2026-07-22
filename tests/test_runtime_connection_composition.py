@@ -23,6 +23,7 @@ from ns_runtime.connection import (
     ConnectionLifecycleManager,
     ConnectionLifecyclePolicy,
     ConnectionLifecycleProcessorRegistryFactory,
+    DeterministicTestConnectionAuditSink,
     DeterministicTestIamAdapter,
     FailClosedHandshakeIamAdapter,
     HandshakeIamAuthority,
@@ -180,6 +181,7 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
             processor_routing=InterfaceOnlyRoutingPreparation(),
             processor_error_mapper=DefaultProcessorErrorMapper(),
             processor_audit_sink=DeterministicTestAuditSink(),
+            lifecycle_audit_sink=DeterministicTestConnectionAuditSink(),
             event_bus=EventBus(task_supervisor=self.supervisor, default_timeout_seconds=1),
             config_version="test-config-v1",
             policy_version="test-policy-v1",
@@ -372,6 +374,7 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
             connection_id = accepted["payload"]["inline"]["connection_id"]
             owner = manager._owners[connection_id]
             assert owner.transport is not None
+            await _wait_until(lambda: owner.drain is not None)
             original_close = owner.transport.close
             first_started = asyncio.Event()
             release_failure = asyncio.Event()

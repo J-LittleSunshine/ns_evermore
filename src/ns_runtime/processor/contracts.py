@@ -132,11 +132,57 @@ class IdempotencyPrecheck(ABC):
 
 
 class RoutingPreparation(ABC):
-    """P07 interface only; it must not select a target or build RoutingPlan."""
+    """Prepare one trusted routing result for the fixed pipeline stage."""
 
     @abstractmethod
-    async def prepare(self, context: "ProcessorContext") -> None:
+    async def prepare(
+        self,
+        context: "ProcessorContext",
+        value: object,
+    ) -> "RoutingPreparationResult":
         raise NotImplementedError
+
+
+class RoutingPreparationOutcome(str, Enum):
+    NO_ROUTING_REQUIRED = "no_routing_required"
+    RESOLVED = "resolved"
+    REJECTED = "rejected"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RoutingPreparationResult:
+    outcome: RoutingPreparationOutcome
+    plan: object | None = field(default=None, repr=False)
+    failure: object | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.outcome, RoutingPreparationOutcome):
+            _invalid("routing_result.outcome")
+        if self.outcome is RoutingPreparationOutcome.NO_ROUTING_REQUIRED:
+            if self.plan is not None or self.failure is not None:
+                _invalid("routing_result.no_routing_payload")
+        elif self.outcome is RoutingPreparationOutcome.RESOLVED:
+            if self.plan is None or self.failure is not None:
+                _invalid("routing_result.resolved_payload")
+        elif self.plan is not None or self.failure is None:
+            _invalid("routing_result.failure_payload")
+
+    @classmethod
+    def no_routing_required(cls) -> "RoutingPreparationResult":
+        return cls(outcome=RoutingPreparationOutcome.NO_ROUTING_REQUIRED)
+
+    @classmethod
+    def resolved(cls, plan: object) -> "RoutingPreparationResult":
+        return cls(outcome=RoutingPreparationOutcome.RESOLVED, plan=plan)
+
+    @classmethod
+    def rejected(cls, failure: object) -> "RoutingPreparationResult":
+        return cls(outcome=RoutingPreparationOutcome.REJECTED, failure=failure)
+
+    @classmethod
+    def unavailable(cls, failure: object) -> "RoutingPreparationResult":
+        return cls(outcome=RoutingPreparationOutcome.UNAVAILABLE, failure=failure)
 
 
 class MessageProcessor(ABC):
@@ -304,5 +350,7 @@ __all__ = (
     "RateLimitEntry",
     "ResponseFinalizer",
     "RoutingPreparation",
+    "RoutingPreparationOutcome",
+    "RoutingPreparationResult",
     "freeze_feature_flags",
 )

@@ -21,9 +21,12 @@ from ns_common.iam import IamPrincipalType
 from ns_common.time import ControlledClock
 from ns_runtime.connection import (
     ConnectionDrainService,
+    ConnectionLifecycleAuditBoundary,
     ConnectionReauthCoordinator,
     ConnectionReauthEnvelopeHandler,
+    ConnectionRoutingEligibility,
     DeterministicTestIamAdapter,
+    DeterministicTestConnectionAuditSink,
     DrainPolicy,
     LocalConnectionIndex,
     LogicalConnectionCloseReason,
@@ -310,6 +313,11 @@ class ConnectionReauthTestCase(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=timeout_seconds,
             expected_principal_type=IamPrincipalType.CLIENT,
             expiry_controller=expiry_controller,
+            audit_boundary=ConnectionLifecycleAuditBoundary(
+                session_context=self.current,
+                clock=self.clock,
+                sink=DeterministicTestConnectionAuditSink(),
+            ),
         )
 
 
@@ -348,6 +356,13 @@ class SessionExpiryControllerTestCase(unittest.IsolatedAsyncioTestCase):
         lead = await self.controller.snapshot()
         self.assertTrue(lead.reauth_required)
         self.assertFalse(lead.expired)
+        entry = await self.index.lookup_connection(CONNECTION_ID)
+        assert entry is not None
+        self.assertFalse(entry.active_target_eligible)
+        self.assertIs(
+            ConnectionRoutingEligibility.SESSION_EXPIRY_SUSPENDED,
+            entry.routing_eligibility,
+        )
 
         self.clock.advance(60)
         await _wait_until(lambda: self.machine.state is LogicalConnectionState.CLOSED)
@@ -383,6 +398,37 @@ class SessionExpiryControllerTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(snapshot.reauth_required)
         self.assertIs(LogicalConnectionState.ACTIVE, self.machine.state)
         self.assertEqual(updated, (await self.index.lookup_connection(CONNECTION_ID)).session_context)  # type: ignore[union-attr]
+
+    async def test_refresh_after_lead_atomically_restores_target(self) -> None:
+        await self.controller.start()
+        await _wait_until(lambda: self.clock.pending_sleep_count == 1)
+        self.clock.advance(240)
+        await _wait_until(lambda: self.clock.pending_sleep_count == 1)
+        suspended = await self.index.lookup_connection(CONNECTION_ID)
+        assert suspended is not None
+        self.assertIs(
+            ConnectionRoutingEligibility.SESSION_EXPIRY_SUSPENDED,
+            suspended.routing_eligibility,
+        )
+        updated = dataclasses.replace(
+            self.current,
+            authorization_issued_at=UTC_START + timedelta(seconds=241),
+            session_expires_at=UTC_START + timedelta(minutes=10),
+            permission_version="version:restored",
+        )
+        await self.index.replace_authority_context(
+            updated,
+            expected_session_context=self.current,
+            allowed_states=frozenset({LogicalConnectionState.ACTIVE}),
+        )
+        await self.controller.refresh(updated)
+        restored = await self.index.lookup_connection(CONNECTION_ID)
+        assert restored is not None
+        self.assertTrue(restored.active_target_eligible)
+        self.assertIs(
+            ConnectionRoutingEligibility.ELIGIBLE,
+            restored.routing_eligibility,
+        )
 
     async def test_expiry_close_failure_is_non_target_and_retryable(self) -> None:
         self.transport.close_failures_remaining = 1
@@ -469,6 +515,11 @@ class _ReauthFixture:
             task_sequence=133,
             timeout_seconds=30,
             expected_principal_type=IamPrincipalType.CLIENT,
+            audit_boundary=ConnectionLifecycleAuditBoundary(
+                session_context=self.current,
+                clock=self.clock,
+                sink=DeterministicTestConnectionAuditSink(),
+            ),
         )
 
 

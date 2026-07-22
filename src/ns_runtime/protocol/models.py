@@ -167,6 +167,7 @@ class TargetGroup(StrictGroup):
     GROUP_NAME: ClassVar[str] = "target"
     kind: str
     connection_id: str | None = None
+    connection_epoch: int | None = None
     identity: str | None = None
     tenant_id: str | None = None
     capabilities: tuple[str, ...] | list[str] | None = None
@@ -174,14 +175,35 @@ class TargetGroup(StrictGroup):
     runtime_id: str | None = None
     scope: str | None = None
     multi_connection_policy: str | None = None
+    rebind_policy: str | None = None
+    fanout_count: int | None = None
+    required_count: int | None = None
+    subset_size: int | None = None
 
     def __post_init__(self) -> None:
         _require_string(self.GROUP_NAME, "kind", self.kind)
         for name in (
             "connection_id", "identity", "tenant_id", "component_type",
-            "runtime_id", "scope", "multi_connection_policy",
+            "runtime_id", "scope", "multi_connection_policy", "rebind_policy",
         ):
             _optional_string(self.GROUP_NAME, name, getattr(self, name))
+        _optional_non_negative_integer(
+            self.GROUP_NAME,
+            "connection_epoch",
+            self.connection_epoch,
+        )
+        for name in ("fanout_count", "required_count", "subset_size"):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+            ):
+                raise _schema_error(
+                    self.GROUP_NAME,
+                    name,
+                    "positive_integer_required",
+                )
         if self.capabilities is not None:
             if not isinstance(self.capabilities, (list, tuple)):
                 raise _schema_error(self.GROUP_NAME, "capabilities", "array_required")
@@ -190,7 +212,139 @@ class TargetGroup(StrictGroup):
                 raise _schema_error(self.GROUP_NAME, "capabilities", "non_empty_array_required")
             for item in normalized:
                 _require_string(self.GROUP_NAME, "capabilities", item)
-            object.__setattr__(self, "capabilities", normalized)
+            if len(set(normalized)) != len(normalized):
+                raise _schema_error(
+                    self.GROUP_NAME,
+                    "capabilities",
+                    "duplicate_capability",
+                )
+            object.__setattr__(self, "capabilities", tuple(sorted(normalized)))
+        _validate_target_contract(self)
+
+
+_TARGET_PRIMARY_FIELD = {
+    "connection": "connection_id",
+    "identity": "identity",
+    "tenant": "tenant_id",
+    "capability": "capabilities",
+    "component_type": "component_type",
+    "runtime": "runtime_id",
+    "broadcast": "scope",
+}
+_TARGET_SELECTOR_FIELDS = frozenset(_TARGET_PRIMARY_FIELD.values())
+_TARGET_ALLOWED_FIELDS = {
+    "connection": frozenset({
+        "connection_id", "connection_epoch", "tenant_id", "capabilities",
+        "component_type", "multi_connection_policy", "rebind_policy",
+    }),
+    "identity": frozenset({
+        "identity", "tenant_id", "capabilities", "component_type",
+        "multi_connection_policy", "rebind_policy", "fanout_count",
+        "required_count", "subset_size",
+    }),
+    "tenant": frozenset({
+        "tenant_id", "capabilities", "component_type",
+        "multi_connection_policy", "rebind_policy", "fanout_count",
+        "required_count", "subset_size",
+    }),
+    "capability": frozenset({
+        "capabilities", "tenant_id", "component_type",
+        "multi_connection_policy", "rebind_policy", "fanout_count",
+        "required_count", "subset_size",
+    }),
+    "component_type": frozenset({
+        "component_type", "tenant_id", "capabilities",
+        "multi_connection_policy", "rebind_policy", "fanout_count",
+        "required_count", "subset_size",
+    }),
+    "runtime": frozenset({
+        "runtime_id", "tenant_id", "capabilities", "component_type",
+        "multi_connection_policy", "rebind_policy", "fanout_count",
+        "required_count", "subset_size",
+    }),
+    "broadcast": frozenset({
+        "scope", "tenant_id", "capabilities", "component_type",
+        "multi_connection_policy",
+    }),
+}
+_TARGET_STRATEGIES = frozenset({
+    "single", "all", "broadcast", "quorum", "all_required",
+    "weighted_subset",
+})
+_TARGET_REBIND_POLICIES = frozenset({
+    "fixed_connection", "same_identity", "same_capability", "same_tenant",
+    "no_rebind_for_control",
+})
+
+
+def _validate_target_contract(target: TargetGroup) -> None:
+    primary = _TARGET_PRIMARY_FIELD.get(target.kind)
+    if primary is None:
+        raise _schema_error("target", "kind", "unsupported_target_kind")
+    if getattr(target, primary) is None:
+        raise _schema_error("target", primary, "required_for_target_kind")
+    values = {
+        name: getattr(target, name)
+        for name in (
+            "connection_id", "connection_epoch", "identity", "tenant_id",
+            "capabilities", "component_type", "runtime_id", "scope",
+            "multi_connection_policy", "rebind_policy", "fanout_count",
+            "required_count", "subset_size",
+        )
+    }
+    unused = {
+        name for name, value in values.items()
+        if value is not None and name not in _TARGET_ALLOWED_FIELDS[target.kind]
+    }
+    if unused:
+        raise _schema_error("target", "$combination", "field_not_allowed_for_kind")
+
+    present_selectors = {
+        name for name in _TARGET_SELECTOR_FIELDS
+        if values.get(name) is not None
+    }
+    allowed_selector_constraints = {
+        name for name in ("tenant_id", "capabilities", "component_type")
+        if name in _TARGET_ALLOWED_FIELDS[target.kind]
+    }
+    conflicting = present_selectors - {primary} - allowed_selector_constraints
+    if conflicting:
+        raise _schema_error("target", "$selector", "multiple_primary_selectors")
+
+    strategy = target.multi_connection_policy or "single"
+    if strategy not in _TARGET_STRATEGIES:
+        raise _schema_error("target", "multi_connection_policy", "unsupported_strategy")
+    if target.rebind_policy is not None and target.rebind_policy not in _TARGET_REBIND_POLICIES:
+        raise _schema_error("target", "rebind_policy", "unsupported_rebind_policy")
+    if target.kind == "connection" and strategy != "single":
+        raise _schema_error("target", "multi_connection_policy", "connection_requires_single")
+    if target.kind == "broadcast":
+        if target.scope != "tenant" or target.tenant_id is None:
+            raise _schema_error("target", "scope", "tenant_broadcast_required")
+        if target.multi_connection_policy != "broadcast":
+            raise _schema_error("target", "multi_connection_policy", "broadcast_strategy_required")
+        if target.rebind_policy is not None:
+            raise _schema_error("target", "rebind_policy", "broadcast_rebind_forbidden")
+    elif strategy == "broadcast":
+        raise _schema_error("target", "multi_connection_policy", "broadcast_kind_required")
+
+    if strategy == "quorum":
+        if target.fanout_count is None or target.required_count is None:
+            raise _schema_error("target", "fanout_count", "quorum_counts_required")
+        if target.required_count > target.fanout_count:
+            raise _schema_error("target", "required_count", "quorum_count_order")
+        if target.subset_size is not None:
+            raise _schema_error("target", "subset_size", "field_not_allowed_for_strategy")
+    elif strategy == "weighted_subset":
+        if target.subset_size is None:
+            raise _schema_error("target", "subset_size", "subset_size_required")
+        if target.fanout_count is not None or target.required_count is not None:
+            raise _schema_error("target", "$strategy", "field_not_allowed_for_strategy")
+    elif any(
+        value is not None
+        for value in (target.fanout_count, target.required_count, target.subset_size)
+    ):
+        raise _schema_error("target", "$strategy", "field_not_allowed_for_strategy")
 
 
 @dataclass(frozen=True, slots=True)

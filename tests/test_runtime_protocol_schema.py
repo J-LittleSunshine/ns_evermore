@@ -99,20 +99,23 @@ class RuntimeProtocolSchemaTestCase(unittest.TestCase):
     def test_base_target_route_and_delivery_invariants_cannot_be_relaxed(self) -> None:
         permissive = MessageTypeSchema(message_type="task.dispatch")
         cases = (
-            (_envelope("task.dispatch", target={"kind": "runtime"}), "required_for_target_kind"),
-            (_envelope("task.dispatch", route={
+            (lambda: _envelope("task.dispatch", target={"kind": "runtime"}), "required_for_target_kind"),
+            (lambda: _envelope("task.dispatch", route={
                 "root_runtime_id": "runtime_1", "current_runtime_id": "runtime_1",
                 "hop": 1, "max_hops": 2,
                 "route_segment": ["runtime_1", "runtime_1"],
             }), "duplicate_route_segment"),
-            (_envelope("task.dispatch", delivery={
+            (lambda: _envelope("task.dispatch", delivery={
                 "delivery_id": "delivery_1", "attempt": 0,
             }), "positive_integer_required"),
         )
-        for envelope, reason in cases:
+        for envelope_factory, reason in cases:
             with self.subTest(reason=reason):
                 with self.assertRaises(NsRuntimeEnvelopeSchemaError) as context:
-                    self.validator.validate(envelope, message_schema=permissive)
+                    self.validator.validate(
+                        envelope_factory(),
+                        message_schema=permissive,
+                    )
                 self.assertEqual(reason, context.exception.details["reason"])
 
     def test_schema_mismatch_is_rejected_without_echoing_message_type(self) -> None:
