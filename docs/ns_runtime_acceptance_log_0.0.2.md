@@ -1140,6 +1140,193 @@
 - 已知限制：handoff marker与candidate collection均为单进程P05 cleanup ownership，不是durable/cluster ownership；P05 processor仍仅处理connection lifecycle。
 - 下一工作包：`P06-B01/P06-R01`继续暂停且为`NOT_STARTED`，等待新的显式恢复指令。
 
+## P06 IAM、安全上下文与 backend 合同验收证据
+
+- 工作包：`P06-B01` 至 `P06-B08`、`P06-R01` 至 `P06-R08`。
+- 状态：`VERIFIED`；P06 仅完成既有实现的证据补验，未扩展 P06 范围，未开始 P07/P08/P09/P10。
+- 验收目标：补齐认证、授权、权限版本/缓存、backend 不可用降级、恢复重验与敏感信息保护的真实负向/安全证据；本记录不修改生产代码或测试代码。
+- 执行日期：`2026-07-22`；完成时间：`2026-07-22T08:09:26+08:00`。
+- 执行环境：Ubuntu `22.04.5 LTS`、WSL2 kernel `6.18.33.2-microsoft-standard-WSL2`、`x86_64`；backend/runtime 均为 Python `3.10.12`（GCC `11.4.0`），解释器分别为 `/home/ns/.virtualenvs/ns_backend/bin/python`、`/home/ns/.virtualenvs/ns_runtime/bin/python`。
+- 修改文件：仅本验收日志 `docs/ns_runtime_acceptance_log_0.0.2.md`；无公共契约变化，无生产代码/测试代码变化。
+
+### 实际测试命令与结果
+
+1. backend 环境 P06 认证与 client 专项：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m unittest -v tests.test_backend_runtime_iam tests.test_runtime_iam_client
+   ```
+
+   结果：`Ran 11 tests in 0.056s`，`OK`；失败 `0`，跳过 `0`。
+
+2. backend 环境 P06 authorization 专项：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m unittest -v tests.test_runtime_iam_authorization
+   ```
+
+   结果：`Ran 6 tests in 0.010s`，`OK`；失败 `0`，跳过 `0`。
+
+3. backend 环境 P06 credential/recovery 专项：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m unittest -v tests.test_runtime_iam_credential_recovery
+   ```
+
+   结果：`Ran 3 tests in 0.028s`，`OK`；失败 `0`，跳过 `0`。
+
+4. backend 环境 P06 四模块联合：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m unittest -v tests.test_backend_runtime_iam tests.test_runtime_iam_client tests.test_runtime_iam_authorization tests.test_runtime_iam_credential_recovery
+   ```
+
+   结果：`Ran 20 tests in 0.074s`，`OK`；失败 `0`，跳过 `0`。
+
+5. runtime 环境初次全量执行：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest discover -s tests -p 'test_*.py'
+   ```
+
+   结果：`Ran 666 tests in 23.808s`，`FAILED (errors=3, skipped=1)`。其中一项为 runtime 环境按 DEP-1 不安装 Django 而无法导入 `test_cache`；另两项 P06 credential cache 错误由 runtime 虚拟环境缺少 requirements 已声明的 `cryptography` 引起。记录为 `ENVIRONMENT FIX REQUIRED（已解决）`，不是实现缺陷。
+
+6. runtime 环境依赖纠正：
+
+   ```bash
+   /home/ns/.virtualenvs/ns_runtime/bin/python -m pip install -r requirements-runtime.txt
+   ```
+
+   结果：安装 `cffi-2.1.0`、`cryptography-49.0.0`、`pycparser-3.0`；其余声明依赖已满足，未修改仓库文件。
+
+7. runtime 环境纠正后 P06 四模块联合：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -v tests.test_backend_runtime_iam tests.test_runtime_iam_client tests.test_runtime_iam_authorization tests.test_runtime_iam_credential_recovery
+   ```
+
+   结果：`Ran 20 tests in 0.063s`，`OK`；失败 `0`，跳过 `0`。
+
+8. backend 根目录全量回归：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m unittest discover -s tests -p 'test_*.py'
+   ```
+
+   结果：`Ran 676 tests in 20.228s`，`OK (skipped=49)`；失败 `0`。verbose 复核为 `Ran 676 tests in 19.439s`、`OK (skipped=49)`；49 项中 1 项为 Windows event-loop policy，48 项因 backend 环境按 DEP-1 不安装 runtime transport 可选依赖 `websockets` 而跳过；P06 的 20 项全部真实执行且无跳过。
+
+9. runtime 边界正确的全量回归（按 DEP-1 排除 Django-only `test_cache`）：
+
+   ```bash
+   set -o pipefail
+   rg --files tests -g 'test_*.py' -g '!test_cache.py' | sort | sed 's#/#.#g; s#\.py$##' | xargs env PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest
+   ```
+
+   结果：`Ran 665 tests in 23.474s`，`OK (skipped=1)`；失败 `0`，唯一跳过项为 Windows event-loop policy。被排除的 `test_cache` 共 11 项，已由含 Django 的 backend 全量回归真实执行。
+
+10. 环境与静态有效性复核：
+
+    ```bash
+    /home/ns/.virtualenvs/ns_runtime/bin/python -m pip check
+    /home/ns/.virtualenvs/ns_backend/bin/python -m pip check
+    /home/ns/.virtualenvs/ns_backend/bin/python -m compileall -q src tests
+    git diff --check
+    ```
+
+    结果：两套环境均为 `No broken requirements found.`；`compileall` 与 `git diff --check` 成功且无输出。
+
+### IAM 负向与安全证据
+
+- A/认证失败：有效 credential 可建立 authority；无效、过期、撤销、签名篡改和密文篡改全部 fail-closed；异常类别稳定为 `RUNTIME_IAM_DENIED`、`RUNTIME_IAM_UNAVAILABLE`、`RUNTIME_IAM_TIMEOUT`。credential 为 single-use，拒绝后已清除。
+- B/主体与越权：`frontend_user`、`backend_service`、`client`、`node`、`runtime_node`、`management` 六类主体均覆盖；客户端伪造 `component_type`、请求超出 IAM 裁决的 capability、tenant 不一致及跨 tenant target 均拒绝，客户端自报不能提权。
+- C/权限版本：permission version mismatch、stale snapshot、`refresh_required` 与 invalidation 均触发刷新或拒绝，不沿用过期授权；实测 `refresh_required` 固定映射为 `RUNTIME_IAM_DENIED/permission_refresh_required`。
+- D/缓存：覆盖 cache hit、TTL 到期、版本失效与 stale snapshot；缓存仅保存最小 `PermissionSnapshot`/decision，不保存原始 IAM 返回体。
+- E/backend 不可用：strict 模式对 timeout、5xx、malformed response 与 unavailable 全部 fail-closed；缓存模式仅允许 snapshot current 的低风险操作，高风险控制、跨 tenant、新配置、全局协调写入四类全部固定拒绝。
+- F/恢复重验：backend 恢复后对 `credential_valid`、`role_valid`、`config_valid`、`lease_valid`、`fencing_valid`、`session_snapshot_valid` 六项逐项重验，任一为 false 均 `RUNTIME_IAM_DENIED`，不会自动沿用旧授权；该合同不实现 P08 lease/fencing 持久权威。
+- 敏感信息：token、内部 service credential 不进入 `repr`、异常文本、日志/audit sink 或返回体；credential cache 只保存 AES-GCM 密文并保持内存边界，无明文落盘路径；普通 Envelope 只注入字段白名单约束的最小 `auth_context` 摘要。
+
+用于汇总稳定错误码、refresh-required、降级矩阵、六项恢复重验和 secret leak 的实际只读验收探针：
+
+```bash
+PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python - <<'PY'
+import asyncio, json
+from ns_common.exceptions import NsRuntimeIamDeniedError, NsRuntimeIamTimeoutError, NsRuntimeIamUnavailableError
+from ns_common.iam import IamAccessDecision
+from ns_common.time import ControlledClock
+from ns_runtime.iam import AuthorizationMode, BackendRecoveryCoordinator, BackendUnavailablePolicy, MessageAuthorizationService, OperationRiskContext, RecoveryRevalidationResult
+from tests.test_runtime_iam_authorization import NOW, _Iam, _request, _snapshot
+from tests.test_runtime_iam_client import SERVICE, TOKEN, _request as handshake_request, RuntimeIamClientTestCase
+
+class Revalidator:
+    def __init__(self, result): self.result = result
+    async def revalidate(self): return self.result
+
+async def main():
+    clock = ControlledClock(utc_start=NOW)
+    evidence = {"stable_codes": [NsRuntimeIamDeniedError.code, NsRuntimeIamUnavailableError.code, NsRuntimeIamTimeoutError.code]}
+    refresh = IamAccessDecision(allowed=True, reason="refresh", permission_version="version:1", decided_at=NOW, refresh_required=True)
+    try:
+        await MessageAuthorizationService(iam_client=_Iam([refresh], clock), clock=clock, mode=AuthorizationMode.STRICT, cache_ttl_seconds=60).authorize(snapshot=_snapshot(), request=_request(), risk=OperationRiskContext())
+    except NsRuntimeIamDeniedError as error:
+        evidence["refresh_required"] = [error.code, error.details["reason"]]
+    try:
+        await MessageAuthorizationService(iam_client=_Iam([NsRuntimeIamUnavailableError(details={"reason": "probe"})], clock), clock=clock, mode=AuthorizationMode.STRICT, cache_ttl_seconds=60).authorize(snapshot=_snapshot(), request=_request(), risk=OperationRiskContext())
+    except NsRuntimeIamUnavailableError as error:
+        evidence["strict_unavailable"] = error.code
+    cached = IamAccessDecision(allowed=True, reason="cached", permission_version="version:1", decided_at=NOW)
+    policy = BackendUnavailablePolicy()
+    evidence["cache_low_risk_allowed"] = policy.decide(cached_decision=cached, snapshot_current=True, risk=OperationRiskContext()).allowed
+    evidence["cache_risk_denials"] = {}
+    for name, risk in {"high_risk_control": OperationRiskContext(high_risk_control=True), "cross_tenant": OperationRiskContext(cross_tenant=True), "new_configuration": OperationRiskContext(new_configuration=True), "global_coordination_write": OperationRiskContext(global_coordination_write=True)}.items():
+        try: policy.decide(cached_decision=cached, snapshot_current=True, risk=risk)
+        except NsRuntimeIamDeniedError as error: evidence["cache_risk_denials"][name] = error.code
+    fields = ("credential_valid", "role_valid", "config_valid", "lease_valid", "fencing_valid", "session_snapshot_valid")
+    evidence["recovery_denials"] = {}
+    for field in fields:
+        values = {name: True for name in fields}; values[field] = False
+        coordinator = BackendRecoveryCoordinator(revalidator=Revalidator(RecoveryRevalidationResult(**values))); coordinator.mark_unavailable()
+        try: await coordinator.recover()
+        except NsRuntimeIamDeniedError as error: evidence["recovery_denials"][field] = error.code
+    client, _ = RuntimeIamClientTestCase()._client([{"active": False, "reason": "TOKEN_INVALID", "authority": None}]); request = handshake_request()
+    try: await client.authenticate(request)
+    except NsRuntimeIamDeniedError as error:
+        public = repr(error) + str(error) + repr(client) + repr(request)
+        evidence["secret_leak"] = {"token": TOKEN in public, "service_credential": SERVICE in public, "credential_cleared": not request.credential.available}
+    print(json.dumps(evidence, sort_keys=True, separators=(",", ":")))
+
+asyncio.run(main())
+PY
+```
+
+实际输出：
+
+```json
+{"cache_low_risk_allowed":true,"cache_risk_denials":{"cross_tenant":"RUNTIME_IAM_DENIED","global_coordination_write":"RUNTIME_IAM_DENIED","high_risk_control":"RUNTIME_IAM_DENIED","new_configuration":"RUNTIME_IAM_DENIED"},"recovery_denials":{"config_valid":"RUNTIME_IAM_DENIED","credential_valid":"RUNTIME_IAM_DENIED","fencing_valid":"RUNTIME_IAM_DENIED","lease_valid":"RUNTIME_IAM_DENIED","role_valid":"RUNTIME_IAM_DENIED","session_snapshot_valid":"RUNTIME_IAM_DENIED"},"refresh_required":["RUNTIME_IAM_DENIED","permission_refresh_required"],"secret_leak":{"credential_cleared":true,"service_credential":false,"token":false},"stable_codes":["RUNTIME_IAM_DENIED","RUNTIME_IAM_UNAVAILABLE","RUNTIME_IAM_TIMEOUT"],"strict_unavailable":"RUNTIME_IAM_UNAVAILABLE"}
+```
+
+### 静态安全与边界检查
+
+实际命令：
+
+```bash
+if rg -n '(logger|audit).*(token|credential|secret)|(token|credential|secret).*(logger|audit)' src/ns_common/iam.py src/ns_backend/iam/runtime_contracts.py src/ns_backend/iam/runtime_django.py src/ns_backend/iam/services/internal.py src/ns_runtime/iam src/ns_runtime/main.py; then exit 11; else echo 'SECURITY_SINK_SCAN=NO_MATCH'; fi
+if rg -n 'from pathlib|import pathlib|builtins\.open|os\.open|write_bytes|write_text|pickle|shelve|sqlite|redis|valkey' src/ns_runtime/iam/credential_cache.py; then exit 12; else echo 'CREDENTIAL_CACHE_PERSISTENCE_SCAN=NO_MATCH'; fi
+PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python - <<'PY'
+import inspect, json
+from ns_common.security import AesGcmSecretBox
+source = inspect.getsource(AesGcmSecretBox).casefold()
+forbidden = ("pathlib", "builtins.open", "os.open", "write_bytes", "write_text", "pickle", "shelve", "sqlite", "redis", "valkey")
+print(json.dumps({"AES_GCM_SECRET_BOX_PERSISTENCE_REFERENCES": [item for item in forbidden if item in source]}))
+PY
+if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_store|class (StateStore|DeliveryRecord|AckRecord|NackRecord|DeferRecord)' src/ns_common/iam.py src/ns_backend/iam/runtime_contracts.py src/ns_backend/iam/runtime_django.py src/ns_runtime/iam src/ns_runtime/main.py; then exit 13; else echo 'FORBIDDEN_BOUNDARY_SCAN=NO_MATCH'; fi
+```
+
+实际输出：`SECURITY_SINK_SCAN=NO_MATCH`、`CREDENTIAL_CACHE_PERSISTENCE_SCAN=NO_MATCH`、`{"AES_GCM_SECRET_BOX_PERSISTENCE_REFERENCES": []}`、`FORBIDDEN_BOUNDARY_SCAN=NO_MATCH`。
+
+- 安全/隔离结论：未发现 token/credential/secret 写入 logger/audit 的路径；credential cache 与 AES-GCM secret box 无文件、pickle、数据库或外部 cache 持久化引用；P06 代码未跨入 global HTTP client/service locator、P07 delivery/ack/nack/defer pipeline 或 P08 StateStore 边界。
+- 已知限制：本验收只证明仓库当前 P06 合同及其单进程本地缓存/恢复重验行为；不声明 durable audit、跨进程缓存一致性、P08 lease/fencing 持久权威或集群协调。首次 runtime 全量的 `ENVIRONMENT FIX REQUIRED` 已通过刷新声明依赖解决，最终实现状态无 `FIX REQUIRED`。
+- 下一工作包：`P07-W01` 保持 `NOT_STARTED`；本次验收在 P06 `VERIFIED` 出口停止。
+
 ## 新记录模板
 
 - 工作包：
