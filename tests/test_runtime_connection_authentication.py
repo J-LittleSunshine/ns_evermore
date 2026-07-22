@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
+from ns_common.iam import IamPrincipalType
 from ns_common.security import Sanitizer
 from ns_common.exceptions import (
     NsRuntimeEnvelopeSchemaError,
@@ -40,6 +41,15 @@ from ns_runtime.connection import (
     TestIamOutcome,
 )
 from ns_runtime.protocol import ErrorEnvelopeBuilder, JsonV1Codec
+from ns_runtime.processor import (
+    DefaultProcessorErrorMapper,
+    DeterministicTestAuditSink,
+    EventBus,
+    InterfaceOnlyIdempotencyPrecheck,
+    InterfaceOnlyRateLimitEntry,
+    InterfaceOnlyRoutingPreparation,
+)
+from ns_runtime.processor.integration import DeterministicTestProcessorAuthorization
 from ns_runtime.roles import RuntimeRole
 from ns_runtime.transport import (
     TransportAdapter,
@@ -546,6 +556,16 @@ def _manager(
         ),
         codec=JsonV1Codec(),
         processor_registry_factory=ConnectionLifecycleProcessorRegistryFactory(),
+        processor_authorization=DeterministicTestProcessorAuthorization(),
+        processor_rate_limit=InterfaceOnlyRateLimitEntry(),
+        processor_idempotency=InterfaceOnlyIdempotencyPrecheck(),
+        processor_routing=InterfaceOnlyRoutingPreparation(),
+        processor_error_mapper=DefaultProcessorErrorMapper(),
+        processor_audit_sink=DeterministicTestAuditSink(),
+        event_bus=EventBus(task_supervisor=supervisor, default_timeout_seconds=1),
+        config_version="test-config-v1",
+        policy_version="test-policy-v1",
+        processor_timeout_seconds=1,
     )
 
 
@@ -567,6 +587,7 @@ def _authority(
         identity="identity:test-user",
         tenant_id="tenant:test",
         component_type=component_type,
+        principal_type=IamPrincipalType.CLIENT,
         capabilities=frozenset({"runtime.connection"}),
         permissions={"runtime.connection": True},
         permission_snapshot_ref="permission:snapshot-test",

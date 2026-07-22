@@ -18,6 +18,7 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.time import Clock
+from ns_common.iam import IamPrincipalType
 
 from .hello import HandshakeCredential, PendingHelloClaims
 
@@ -33,6 +34,7 @@ class HandshakeIamAuthority:
     identity: str = field(repr=False)
     tenant_id: str = field(repr=False)
     component_type: str
+    principal_type: IamPrincipalType
     capabilities: frozenset[str] = field(repr=False)
     permissions: Mapping[str, bool] = field(repr=False)
     permission_snapshot_ref: str = field(repr=False)
@@ -60,6 +62,8 @@ class HandshakeIamAuthority:
             for item in self.capabilities
         ):
             _invalid("capabilities")
+        if not isinstance(self.principal_type, IamPrincipalType):
+            _invalid("principal_type")
         if not isinstance(self.permissions, Mapping):
             _invalid("permissions")
         frozen_permissions: dict[str, bool] = {}
@@ -96,6 +100,7 @@ class HandshakeIamAuthority:
             identity=self.identity,
             tenant_id=self.tenant_id,
             component_type=self.component_type,
+            principal_type=self.principal_type,
             capabilities=frozenset(self.capabilities),
             permissions=dict(self.permissions),
             permission_snapshot_ref=self.permission_snapshot_ref,

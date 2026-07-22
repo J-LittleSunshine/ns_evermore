@@ -17,6 +17,7 @@ from ns_common.exceptions import (
     NsRuntimeSourceForgedError,
 )
 from ns_common.identifiers import IdentifierFactory
+from ns_common.iam import IamPrincipalType
 from ns_common.time import ControlledClock
 from ns_runtime.connection import (
     ConnectionDrainService,
@@ -175,6 +176,10 @@ class ConnectionReauthTestCase(unittest.IsolatedAsyncioTestCase):
             ({"tenant_id": "tenant:other"}, ReauthRejectionReason.IDENTITY_MISMATCH),
             ({"component_type": "node"}, ReauthRejectionReason.IDENTITY_MISMATCH),
             (
+                {"principal_type": IamPrincipalType.BACKEND_SERVICE},
+                ReauthRejectionReason.IDENTITY_MISMATCH,
+            ),
+            (
                 {
                     "issued_at": UTC_START - timedelta(minutes=2),
                     "expires_at": UTC_START - timedelta(minutes=1),
@@ -303,6 +308,7 @@ class ConnectionReauthTestCase(unittest.IsolatedAsyncioTestCase):
             task_supervisor=self.supervisor,
             task_sequence=131,
             timeout_seconds=timeout_seconds,
+            expected_principal_type=IamPrincipalType.CLIENT,
             expiry_controller=expiry_controller,
         )
 
@@ -462,6 +468,7 @@ class _ReauthFixture:
             task_supervisor=self.supervisor,
             task_sequence=133,
             timeout_seconds=30,
+            expected_principal_type=IamPrincipalType.CLIENT,
         )
 
 

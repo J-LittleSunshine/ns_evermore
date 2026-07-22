@@ -12,6 +12,7 @@ from ns_common.exceptions import (
     NsRuntimeTransportCapabilityUnavailableError,
 )
 from ns_common.time import ControlledClock
+from ns_common.iam import IamPrincipalType
 from ns_runtime.connection import (
     CapabilityPolicy,
     CapabilityRule,
@@ -325,6 +326,7 @@ def _authority(
         identity="identity:test-user",
         tenant_id="tenant:test",
         component_type="client",
+        principal_type=IamPrincipalType.CLIENT,
         capabilities=capabilities,
         permissions=(
             {capability: True for capability in capabilities}

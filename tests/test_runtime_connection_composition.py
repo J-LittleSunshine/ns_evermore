@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
+from ns_common.iam import IamPrincipalType
 from ns_common.observability import InMemoryMetricsSink
 from ns_common.security import Sanitizer
 from ns_common.time import SystemClock
@@ -34,6 +35,15 @@ from ns_runtime.connection import (
     TestIamOutcome,
 )
 from ns_runtime.protocol import ErrorEnvelopeBuilder, JsonV1Codec
+from ns_runtime.processor import (
+    DefaultProcessorErrorMapper,
+    DeterministicTestAuditSink,
+    EventBus,
+    InterfaceOnlyIdempotencyPrecheck,
+    InterfaceOnlyRateLimitEntry,
+    InterfaceOnlyRoutingPreparation,
+)
+from ns_runtime.processor.integration import DeterministicTestProcessorAuthorization
 from ns_runtime.roles import RuntimeRole
 from ns_runtime.transport import (
     TransportIdentityFactory,
@@ -164,6 +174,16 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
             ),
             codec=JsonV1Codec(),
             processor_registry_factory=ConnectionLifecycleProcessorRegistryFactory(),
+            processor_authorization=DeterministicTestProcessorAuthorization(),
+            processor_rate_limit=InterfaceOnlyRateLimitEntry(),
+            processor_idempotency=InterfaceOnlyIdempotencyPrecheck(),
+            processor_routing=InterfaceOnlyRoutingPreparation(),
+            processor_error_mapper=DefaultProcessorErrorMapper(),
+            processor_audit_sink=DeterministicTestAuditSink(),
+            event_bus=EventBus(task_supervisor=self.supervisor, default_timeout_seconds=1),
+            config_version="test-config-v1",
+            policy_version="test-policy-v1",
+            processor_timeout_seconds=1,
         )
         await transport_manager.start()
         await manager.start()
@@ -195,6 +215,13 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
                 "RUNTIME_FEATURE_DISABLED",
                 disabled["payload"]["inline"]["error_code"],
             )
+            await client.send(_health())
+            health = json.loads(await asyncio.wait_for(client.recv(), timeout=2))
+            self.assertEqual("runtime.error", health["message"]["type"])
+            self.assertEqual(
+                "RUNTIME_FEATURE_DISABLED",
+                health["payload"]["inline"]["error_code"],
+            )
             await client.send(_drain())
             connection_id = context["connection_id"]
             assert isinstance(connection_id, str)
@@ -222,6 +249,16 @@ class ConnectionLifecycleCompositionLoopbackTestCase(unittest.IsolatedAsyncioTes
                 duplicate_drain.deadline_monotonic,
             )
             self.assertIsNone(client.close_code)
+            sink = manager._processor_audit_sink
+            self.assertIsInstance(sink, DeterministicTestAuditSink)
+            self.assertEqual(6, sink.attempted_count)
+            self.assertEqual(6, len(sink.records))
+            self.assertEqual({
+                "connection.heartbeat",
+                "connection.drain",
+                "task.dispatch",
+                "runtime.control.health",
+            }, {record.safe_summary.message_type for record in sink.records})
             await manager.drain()
             await asyncio.wait_for(client.wait_closed(), timeout=2)
         await _wait_until(lambda: manager.active_connection_count == 0)
@@ -839,6 +876,7 @@ def _authority(clock: SystemClock) -> HandshakeIamAuthority:
         identity="identity:test-client",
         tenant_id="tenant:test",
         component_type="client",
+        principal_type=IamPrincipalType.CLIENT,
         capabilities=frozenset({"runtime.connection"}),
         permissions={"runtime.connection": True},
         permission_snapshot_ref="permission:test",
@@ -991,6 +1029,12 @@ def _disabled_task() -> str:
     )
     value["message"]["category"] = "task"  # type: ignore[index]
     value["target"] = {"kind": "runtime", "runtime_id": "runtime_target"}
+    return json.dumps(value, separators=(",", ":"))
+
+
+def _health() -> str:
+    value = _message("runtime.control.health")
+    value["message"]["category"] = "control"  # type: ignore[index]
     return json.dumps(value, separators=(",", ":"))
 
 

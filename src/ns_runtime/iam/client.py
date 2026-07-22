@@ -130,6 +130,7 @@ class IamClient(HandshakeIamAdapter):
             identity=result.identity,
             tenant_id=result.tenant_id,
             component_type=result.component_type,
+            principal_type=result.principal_type,
             capabilities=result.capabilities,
             permissions={},
             permission_snapshot_ref=result.permission_snapshot_ref,

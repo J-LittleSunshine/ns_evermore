@@ -1327,6 +1327,117 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 已知限制：本验收只证明仓库当前 P06 合同及其单进程本地缓存/恢复重验行为；不声明 durable audit、跨进程缓存一致性、P08 lease/fencing 持久权威或集群协调。首次 runtime 全量的 `ENVIRONMENT FIX REQUIRED` 已通过刷新声明依赖解决，最终实现状态无 `FIX REQUIRED`。
 - 下一工作包：`P07-W01` 保持 `NOT_STARTED`；本次验收在 P06 `VERIFIED` 出口停止。
 
+## P07 Processor 流水线、插件、事件与审计验收证据
+
+- 工作包：`P07-W01` 至 `P07-W10`。
+- 状态：`VERIFIED / F3`。
+- 完成时间：`2026-07-22T09:03:00+08:00`。
+- 环境：WSL2，Ubuntu 22.04.5 LTS，kernel `6.18.33.2-microsoft-standard-WSL2`；工作区 `/mnt/s/PythonProject/ns/ns_evermore`；分支 `codex/ns-runtime-implementation`，未新建分支。
+- 解释器：runtime `/home/ns/.virtualenvs/ns_runtime/bin/python` 与 backend `/home/ns/.virtualenvs/ns_backend/bin/python` 均为 Python `3.10.12`。
+- 修改文件：新增 `src/ns_runtime/processor/{__init__,contracts,registry,pipeline,audit,event_bus,plugins,integration}.py`、`tests/test_runtime_processor_pipeline.py`、`tests/test_runtime_processor_boundaries.py`；修改 `src/ns_runtime/connection/{iam,lifecycle,reauth,resume}.py`、`src/ns_runtime/iam/client.py`、`src/ns_runtime/main.py`、五份 connection/session 测试，以及实施计划、ADR 和本验收日志。
+
+### P07-W01 至 W10 实现证据
+
+- W01：`ProcessorContext` 使用 frozen/slotted/kw-only 类型，精确持有 normalized Envelope、SC-1 session、typed trace、config/policy version、Clock 与有限 `ProcessorDependencies`；normalized context 构造前由 P03 inbound boundary拒绝 forged source/auth_context，再由 runtime authority 注入。context 与 dependency repr 不输出 identity、permission ref、Envelope 或 payload。
+- W02：`PROCESSOR_STAGE_ORDER` 冻结为 security validation、authorization、rate-limit entry、idempotency precheck、audit marker、routing preparation、message processor、response finalize；专项验证 exact 顺序及 reject 后 stop。rate limit、idempotency 与 routing 仅有显式 interface-only 实现，没有真实 store 或 target selection。
+- W03：`ProcessorRegistry` 是显式实例，支持 `register/resolve/freeze`，registration 维度为 message.type、stage、同 major protocol version range、feature flag 和 enabled state；duplicate exact、overlap version、跨 major range、flag mismatch 均拒绝。
+- W04：每次执行只通过既有 TaskSupervisor 创建一个命名 task；timeout 映射 `RUNTIME_PROCESSOR_TIMEOUT`，外部 cancellation 原样穿透，未知普通异常映射不复制原文本的 `RUNTIME_PROCESSOR_FAILED`。error/reject/timeout/cancel 均截断后续 stage；severe protocol violation 保持既有 close policy。
+- W05/W06：`ProcessorAuditRecord` 只接受 typed safe summary、processor、闭集 action、稳定 error code、trace、config/policy version、required consistency 与 UTC time；每条执行消息 final sink attempt 恰好一次。ordinary sink failure不覆盖业务结果；`STRONG_REQUIRED` failure不能返回 pipeline success。当前 logging/test sink不声明 durable，P08 后接 authority store。
+- W07/W08：`EventBus` 支持 typed subscribe/publish、per-subscriber timeout、exception isolation和有序 report；subscriber task复用同一 TaskSupervisor。`RuntimeEvent` 字段精确为 object_id、safe_summary、trace_reference，不存在 token/credential/payload/IAM response 或状态修改入口。
+- W09：本地 trusted plugin metadata 冻结 namespace/schema/permissions/timeout/state namespace/feature flag；duplicate namespace、invalid schema、未授权 permission/namespace/flag均拒绝，批量 registration 冲突时原子失败且不留下部分登记。plugin registration只能进入 message processor stage；无 remote download、plugin runtime、sandbox 或私有 authority store。
+- W10：`ConnectionLifecycleManager._read_loop` 在 P03 decode/schema 后对所有已认证入站消息调用 PC-1；heartbeat/drain/reauth 使用既有 P05 领域 processor adapter，health、task 与其余 disabled contract使用 P03 feature-disabled adapter。真实 WebSocket 测试对 heartbeat、task.disabled、health.disabled、drain、duplicate drain、draining heartbeat 共 6 次执行得到 6 次 final audit；transport callback不再按 enabled/disabled直接执行业务。
+- IAM-R1 衔接：`HandshakeIamAuthority` 显式保留 `principal_type` 并由 production `IamClient` 从 introspection 传入；resume/reauth 固定校验 principal type 与原 logical owner 一致，漂移时 fail-closed；P07 authorization由 `MessageAuthorizationService` 构造当前 PermissionSnapshot/access request，保留 strict/cache、tenant/risk 和 backend unavailable 语义；SC-1 frozen field set未改变。
+
+### 测试命令与结果
+
+1. P07 pipeline/registry/audit/EventBus/plugin 专项：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -v tests.test_runtime_processor_pipeline tests.test_runtime_processor_boundaries
+   ```
+
+   结果：`Ran 14 tests in 0.124s`，`OK`；失败 `0`，跳过 `0`。
+
+2. P07 与 connection/session composition 联合回归：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -v tests.test_runtime_processor_pipeline tests.test_runtime_processor_boundaries tests.test_runtime_connection_composition tests.test_runtime_connection_authentication tests.test_runtime_connection_session
+   ```
+
+   结果：`Ran 60 tests in 6.376s`，`OK`；失败 `0`，跳过 `0`。
+
+3. runtime 依赖边界全量回归，按 DEP-1 排除 Django-only `test_cache.py`：
+
+   ```bash
+   set -o pipefail
+   rg --files tests -g 'test_*.py' -g '!test_cache.py' | sort | sed 's#/#.#g; s#\.py$##' | xargs env PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest
+   ```
+
+   最终结果：`Ran 679 tests in 23.480s`，`OK (skipped=1)`；失败 `0`，唯一跳过项为 Windows event-loop policy。
+
+4. backend/Django/cache 全量回归：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m unittest discover -s tests -p 'test_*.py'
+   ```
+
+   最终结果：`Ran 690 tests in 20.131s`，`OK (skipped=49)`；失败 `0`。49 项为 1 个 Windows event-loop policy 与 backend 环境未安装 runtime transport optional dependency导致的 48 个 transport 跳过；P07 的 14 项专项均真实执行。
+
+5. 环境与静态有效性：
+
+   ```bash
+   /home/ns/.virtualenvs/ns_runtime/bin/python -m pip check
+   /home/ns/.virtualenvs/ns_backend/bin/python -m pip check
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m compileall -q src tests
+   git diff --check
+   ```
+
+   结果：两环境均为 `No broken requirements found.`；compileall 和 diff check 成功。
+
+6. 冷导入与敏感字段探针：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python - <<'PY'
+   import dataclasses, json
+   import ns_runtime.processor
+   from ns_runtime.processor.integration import IamProcessorAuthorization
+   from ns_runtime.processor import ProcessorAuditRecord, RuntimeEvent
+   print("PROCESSOR_IMPORT=OK")
+   print("INTEGRATION_IMPORT=OK")
+   for value in (ProcessorAuditRecord, RuntimeEvent):
+       fields = [item.name for item in dataclasses.fields(value)]
+       forbidden = sorted(set(fields) & {"token", "credential", "payload", "iam_response", "raw_envelope", "raw_payload"})
+       print(json.dumps({"type": value.__name__, "fields": fields, "forbidden_fields": forbidden}, sort_keys=True))
+   PY
+   ```
+
+   最终输出包含 `PROCESSOR_IMPORT=OK`、`INTEGRATION_IMPORT=OK`，两类 `forbidden_fields` 均为 `[]`。首次独立 integration 冷导入曾暴露 processor facade/connection lifecycle circular import；修正为 core facade不急加载 integration、SessionContext 构造期惰性类型校验后，上述冷导入和全部回归均通过。
+
+### 故障与安全验证
+
+- Pipeline：exact 8-stage order；authorization reject后仅前两阶段执行；message processor timeout取消 supervised task并映射稳定 timeout；caller cancellation在 final audit 后原样传播；后续 response finalize均未误执行。
+- Processor isolation：恶意 `RuntimeError("token=processor-secret")` 只映射 `RUNTIME_PROCESSOR_FAILED`，result、audit和公开异常文本中无 secret；下一条消息不受 subscriber 或 processor 原异常对象污染。
+- Audit：success/reject/timeout/cancel/unknown failure均为一次 sink attempt；ordinary sink hostile failure保持原结果，strong-required hostile failure返回 processor failure，sink异常文本不进入 record。
+- EventBus：good/bad/slow 三订阅者同时发布得到 succeeded/failed/timed_out，主 publish正常返回且 TaskSupervisor failures为空；bus无权威状态读写 API，丢失/失败不会改变主链路。
+- Plugin：duplicate namespace、overlap processor version、invalid schema、missing permission与尝试注册 authorization stage均 fail-closed；同批次后项冲突时 registry 保持零部分写入。
+- Integration：真实 WebSocket ingress验证 health和task disabled仍经过 authorization/pipeline/final audit后返回标准 `RUNTIME_FEATURE_DISABLED`；旧 epoch protocol violation经 pipeline安全错误映射后仍按既有 policy关闭；resume/reauth的 principal type漂移均拒绝并关闭 logical connection。
+
+### 静态禁止边界
+
+实际扫描结果：`P08_RELIABLE_BOUNDARY_SCAN=NO_MATCH`、`SECOND_OWNER_SCAN=NO_MATCH`、`PLUGIN_RUNTIME_SCAN=NO_MATCH`、`GLOBAL_RUNTIME_OBJECT_SCAN=NO_MATCH`。
+
+- 未发现 StateStore、Redis/Valkey authority、lease、fencing、CAS、DeliveryRecord/AckRecord/NackRecord/DeferRecord 或 RoutingPlan 类型/import。
+- processor package未构造 TaskSupervisor、event loop、asyncio.run或 shutdown coordinator；所有 execution/subscriber task使用 composition传入的同一 supervisor。
+- plugin边界无 HTTP/download/subprocess/multiprocessing/WASM/sandbox引用；无 global ProcessorRegistry/EventBus/AuditSink 实例。
+- `ProcessorAuditRecord` 和 `RuntimeEvent` 无 token、credential、raw payload、raw IAM response字段；不序列化原始 Envelope。
+
+### 已知限制与下一工作包
+
+- 当前 `STRONG_REQUIRED` 只冻结一致性要求与 fail-closed语义，不声明 durable audit成功；P08未实现前不能把 logging/test sink当作强一致权威。
+- rate limiter、idempotency store、routing/target selection仍只有接口；EventBus只做进程内通知；plugin只声明本地可信边界，不执行远程代码或提供 sandbox。
+- 不存在可靠投递、ACK/NACK/Defer state、retry/dead letter、RoutingPlan、lease/fencing/CAS；health/task/management等未启用能力继续返回稳定 feature-disabled错误。
+- 下一工作包：`P08-W01 StateStoreCapabilities`，保持 `NOT_STARTED`。
+
 ## 新记录模板
 
 - 工作包：

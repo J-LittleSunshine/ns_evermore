@@ -15,6 +15,7 @@ from ns_common.exceptions import (
     NsStateError,
 )
 from ns_common.identifiers import IdentifierFactory
+from ns_common.iam import IamPrincipalType
 from ns_common.time import ControlledClock
 from ns_runtime.connection import (
     ConnectionEpochGate,
@@ -139,6 +140,10 @@ class ConnectionResumeTestCase(unittest.IsolatedAsyncioTestCase):
             ({"identity": "identity:attacker"}, "resume_identity_mismatch"),
             ({"tenant_id": "tenant:other"}, "resume_tenant_mismatch"),
             ({"component_type": "node"}, "resume_component_type_mismatch"),
+            (
+                {"principal_type": IamPrincipalType.BACKEND_SERVICE},
+                "resume_principal_type_mismatch",
+            ),
         )
         for changes, reason in cases:
             with self.subTest(reason=reason):
@@ -358,6 +363,7 @@ class ConnectionResumeTestCase(unittest.IsolatedAsyncioTestCase):
             task_supervisor=self.supervisor,
             task_sequence=task_sequence,
             timeout_seconds=timeout_seconds,
+            expected_principal_type=IamPrincipalType.CLIENT,
             candidate_terminator=candidate_terminator,
         )
 

@@ -21,6 +21,7 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
+from ns_common.iam import IamPrincipalType
 from ns_common.time import Clock
 from ns_runtime.protocol import (
     BUILTIN_MESSAGE_REGISTRY,
@@ -33,8 +34,23 @@ from ns_runtime.protocol import (
     MessageTypeRegistry,
     ProtocolGroup,
     SourceGroup,
+    RuntimeAuthority,
     build_feature_disabled_processors,
     canonical_serialize,
+    normalize_inbound,
+)
+from ns_runtime.processor import (
+    AuditSink,
+    EventBus,
+    IdempotencyPrecheck,
+    ProcessorAuthorization,
+    ProcessorErrorMapper,
+    RateLimitEntry,
+    RoutingPreparation,
+)
+from ns_runtime.processor.integration import (
+    ConnectionProcessorPipeline,
+    build_connection_processor_pipeline,
 )
 from ns_runtime.transport import TransportAdapter, TransportManager, TransportMessage, TransportSession
 
@@ -120,6 +136,7 @@ class ConnectionLifecyclePolicy:
 @dataclass(slots=True)
 class _LogicalOwner:
     context: SessionContext = field(repr=False)
+    principal_type: IamPrincipalType = field(repr=False)
     state_machine: LogicalConnectionStateMachine = field(repr=False)
     mapping: LogicalConnectionTransportMap = field(repr=False)
     transport: TransportSession | None = field(repr=False)
@@ -128,6 +145,7 @@ class _LogicalOwner:
     drain: ConnectionDrainService | None = field(default=None, repr=False)
     expiry: SessionExpiryController | None = field(default=None, repr=False)
     processors: ConnectionLifecycleProcessorRegistry | None = field(default=None, repr=False)
+    pipeline: ConnectionProcessorPipeline | None = field(default=None, repr=False)
     read_task: asyncio.Task[object] | None = field(default=None, repr=False)
     drain_cleanup_task: asyncio.Task[object] | None = field(default=None, repr=False)
     resume_handoff_pending_activation: bool = field(default=False, repr=False)
@@ -175,6 +193,16 @@ class ConnectionLifecycleManager:
         policy: ConnectionLifecyclePolicy,
         codec: JsonV1Codec,
         processor_registry_factory: ConnectionLifecycleProcessorRegistryFactory,
+        processor_authorization: ProcessorAuthorization,
+        processor_rate_limit: RateLimitEntry,
+        processor_idempotency: IdempotencyPrecheck,
+        processor_routing: RoutingPreparation,
+        processor_error_mapper: ProcessorErrorMapper,
+        processor_audit_sink: AuditSink,
+        event_bus: EventBus,
+        config_version: str,
+        policy_version: str,
+        processor_timeout_seconds: float,
         protocol_registry: MessageTypeRegistry = BUILTIN_MESSAGE_REGISTRY,
         schema_key: str = CURRENT_PROTOCOL_SCHEMA_KEY,
     ) -> None:
@@ -196,6 +224,13 @@ class ConnectionLifecycleManager:
                 ConnectionLifecycleProcessorRegistryFactory,
                 "processor_registry_factory",
             ),
+            (processor_authorization, ProcessorAuthorization, "processor_authorization"),
+            (processor_rate_limit, RateLimitEntry, "processor_rate_limit"),
+            (processor_idempotency, IdempotencyPrecheck, "processor_idempotency"),
+            (processor_routing, RoutingPreparation, "processor_routing"),
+            (processor_error_mapper, ProcessorErrorMapper, "processor_error_mapper"),
+            (processor_audit_sink, AuditSink, "processor_audit_sink"),
+            (event_bus, EventBus, "event_bus"),
         )
         for value, expected, name in dependencies:
             if not isinstance(value, expected):
@@ -204,6 +239,19 @@ class ConnectionLifecycleManager:
             _invalid("runtime_id")
         if not isinstance(schema_key, str) or not schema_key:
             _invalid("schema_key")
+        for value, name in (
+            (config_version, "config_version"),
+            (policy_version, "policy_version"),
+        ):
+            if not isinstance(value, str) or not value:
+                _invalid(name)
+        if (
+            isinstance(processor_timeout_seconds, bool)
+            or not isinstance(processor_timeout_seconds, (int, float))
+            or not math.isfinite(float(processor_timeout_seconds))
+            or float(processor_timeout_seconds) <= 0
+        ):
+            _invalid("processor_timeout_seconds")
         self._transport_manager = transport_manager
         self._index = connection_index
         self._clock = clock
@@ -221,6 +269,16 @@ class ConnectionLifecycleManager:
         if processor_registry_factory.protocol_registry is not protocol_registry:
             _invalid("processor_registry_factory.protocol_registry")
         self._processor_registry_factory = processor_registry_factory
+        self._processor_authorization = processor_authorization
+        self._processor_rate_limit = processor_rate_limit
+        self._processor_idempotency = processor_idempotency
+        self._processor_routing = processor_routing
+        self._processor_error_mapper = processor_error_mapper
+        self._processor_audit_sink = processor_audit_sink
+        self._event_bus = event_bus
+        self._config_version = config_version
+        self._policy_version = policy_version
+        self._processor_timeout_seconds = float(processor_timeout_seconds)
         self._schema_key = schema_key
         self._disabled_processors = build_feature_disabled_processors(
             error_builder=error_builder,
@@ -524,6 +582,7 @@ class ConnectionLifecycleManager:
             indexed_connection_id = negotiated.context.connection_id
             owner = _LogicalOwner(
                 context=negotiated.context,
+                principal_type=detached.principal_type,
                 state_machine=machine,
                 mapping=mapping,
                 transport=transport,
@@ -609,6 +668,7 @@ class ConnectionLifecycleManager:
                 task_supervisor=self._supervisor,
                 task_sequence=sequence,
                 timeout_seconds=self._remaining_handshake_budget(budget),
+                expected_principal_type=owner.principal_type,
                 candidate_terminator=lambda reason: self._close_candidate(
                     candidate,
                     reason,
@@ -721,6 +781,7 @@ class ConnectionLifecycleManager:
         owner.drain = drain
         owner.expiry = expiry
         owner.processors = self._build_processors(owner, sequence=sequence)
+        owner.pipeline = self._build_pipeline(owner)
         await heartbeat.start()
         await expiry.start()
         task = self._supervisor.create_task(
@@ -761,6 +822,7 @@ class ConnectionLifecycleManager:
             task_supervisor=self._supervisor,
             task_sequence=sequence,
             timeout_seconds=float(self._policy.handshake_timeout_seconds),
+            expected_principal_type=owner.principal_type,
             expiry_controller=expiry,
             drain_service=drain,
         )
@@ -788,13 +850,23 @@ class ConnectionLifecycleManager:
                 contract = self._registry.require(envelope.message.type)
                 if contract.direction is MessageDirection.OUTBOUND:
                     _protocol_error("outbound_message_received")
-                if not contract.feature_enabled:
-                    await self._send_disabled(owner, envelope)
+                pipeline = owner.pipeline
+                if pipeline is None:
+                    _protocol_error("processor_pipeline_unavailable")
+                execution = await pipeline.execute(
+                    envelope,
+                    execution_id=str(self._next_sequence()),
+                )
+                if execution.error is not None:
+                    await self._send_error_isolated(owner, execution.error)
+                    if isinstance(execution.error, NsRuntimeProtocolViolationError):
+                        await self._close_owner(
+                            owner,
+                            LogicalConnectionCloseReason.PROTOCOL_FAILED,
+                        )
+                        return
                     continue
-                processors = owner.processors
-                if processors is None:
-                    _protocol_error("processor_registry_unavailable")
-                result = await processors.dispatch(envelope)
+                result = execution.response
                 if envelope.message.type == "connection.drain":
                     self._ensure_drain_cleanup_task(owner)
                 if isinstance(result, ReauthenticatedSession):
@@ -805,6 +877,7 @@ class ConnectionLifecycleManager:
                         owner,
                         sequence=self._next_sequence(),
                     )
+                    owner.pipeline = self._build_pipeline(owner)
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -871,21 +944,62 @@ class ConnectionLifecycleManager:
             or validated.protocol.patch != context.protocol_version.patch
         ):
             _protocol_error("session_protocol_mismatch")
-        return validated
-
-    async def _send_disabled(self, owner: _LogicalOwner, envelope: Envelope) -> None:
-        contract = self._registry.require(envelope.message.type)
-        processor = self._disabled_processors.get(contract.processor_key)
-        if processor is None:
-            _protocol_error("disabled_processor_missing")
-        response = await processor.process(
-            envelope,
-            error_context=self._error_context(owner.context),
+        capabilities = "\x00".join(sorted(context.capabilities)).encode("utf-8")
+        return normalize_inbound(
+            inbound,
+            authority=RuntimeAuthority(
+                source=SourceGroup(
+                    runtime_id=self._runtime_id,
+                    connection_id=context.connection_id,
+                    identity_digest=_digest(context.identity),
+                    tenant_id=context.tenant_id,
+                    component_type=context.component_type,
+                    capabilities_digest=(
+                        "sha256:" + hashlib.sha256(capabilities).hexdigest()[:16]
+                    ),
+                ),
+                auth_context=self._permission_auth_context(context),
+            ),
         )
+
+    def _build_pipeline(self, owner: _LogicalOwner) -> ConnectionProcessorPipeline:
         transport = owner.transport
-        if transport is None:
-            _protocol_error("transport_unavailable")
-        await transport.send(canonical_serialize(response).decode("utf-8"))
+        processors = owner.processors
+        if transport is None or processors is None:
+            _invalid("owner_pipeline_dependencies")
+        return build_connection_processor_pipeline(
+            session_context=owner.context,
+            lifecycle_registry=processors,
+            disabled_processors=self._disabled_processors,
+            error_context_factory=lambda: self._error_context(owner.context),
+            transport=transport,
+            authorization=self._processor_authorization,
+            rate_limit=self._processor_rate_limit,
+            idempotency=self._processor_idempotency,
+            routing=self._processor_routing,
+            error_mapper=self._processor_error_mapper,
+            principal_type=owner.principal_type,
+            audit_sink=self._processor_audit_sink,
+            event_bus=self._event_bus,
+            task_supervisor=self._supervisor,
+            clock=self._clock,
+            config_version=self._config_version,
+            policy_version=self._policy_version,
+            timeout_seconds=self._processor_timeout_seconds,
+            protocol_registry=self._registry,
+        )
+
+    @staticmethod
+    def _permission_auth_context(context: SessionContext):
+        from ns_runtime.protocol import AuthContextGroup
+
+        return AuthContextGroup(
+            permission_snapshot_ref=context.permission_snapshot_ref,
+            permission_digest=context.permission_digest,
+            iam_mode=context.iam_mode,
+            issued_at=_iso_utc(context.authorization_issued_at),
+            expires_at=_iso_utc(context.session_expires_at),
+        )
 
     async def _send_error_isolated(self, owner: _LogicalOwner, error: Exception) -> None:
         transport = owner.transport
@@ -935,6 +1049,7 @@ class ConnectionLifecycleManager:
         )
         owner.transport = None
         owner.processors = None
+        owner.pipeline = None
         owner.drain = None
 
     async def _close_owner(

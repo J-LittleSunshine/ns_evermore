@@ -191,7 +191,20 @@ def main(
         ConnectionLifecycleProcessorRegistryFactory,
         LocalConnectionIndex,
     )
-    from ns_runtime.iam import IamClient
+    from ns_runtime.iam import (
+        AuthorizationMode,
+        IamClient,
+        MessageAuthorizationService,
+    )
+    from ns_runtime.processor import (
+        DefaultProcessorErrorMapper,
+        EventBus,
+        InterfaceOnlyIdempotencyPrecheck,
+        InterfaceOnlyRateLimitEntry,
+        InterfaceOnlyRoutingPreparation,
+        LoggingAuditSink,
+    )
+    from ns_runtime.processor.integration import IamProcessorAuthorization
     from ns_runtime.protocol import ErrorEnvelopeBuilder, JsonV1Codec
     from ns_runtime.roles import RuntimeRole
 
@@ -261,6 +274,17 @@ def main(
         clock=context.clock,
         iam_mode=config.runtime.iam.authorization_mode,
     )
+    message_authorization = MessageAuthorizationService(
+        iam_client=iam_client,
+        clock=context.clock,
+        mode=AuthorizationMode(config.runtime.iam.authorization_mode),
+        cache_ttl_seconds=config.runtime.iam.permission_snapshot_ttl_seconds,
+        snapshot_refresher=iam_client.refresh_permission_snapshot,
+    )
+    processor_event_bus = EventBus(
+        task_supervisor=context.task_supervisor,
+        default_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
+    )
     logical_connection_manager = ConnectionLifecycleManager(
         transport_manager=transport_manager,
         connection_index=LocalConnectionIndex(),
@@ -303,6 +327,18 @@ def main(
         ),
         codec=JsonV1Codec(),
         processor_registry_factory=ConnectionLifecycleProcessorRegistryFactory(),
+        processor_authorization=IamProcessorAuthorization(
+            service=message_authorization,
+        ),
+        processor_rate_limit=InterfaceOnlyRateLimitEntry(),
+        processor_idempotency=InterfaceOnlyIdempotencyPrecheck(),
+        processor_routing=InterfaceOnlyRoutingPreparation(),
+        processor_error_mapper=DefaultProcessorErrorMapper(),
+        processor_audit_sink=LoggingAuditSink(logger=logger),
+        event_bus=processor_event_bus,
+        config_version=config.config_version,
+        policy_version=config.policy_version,
+        processor_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
     )
     event_loop_monitor = RuntimeEventLoopMonitor(
         context=context,

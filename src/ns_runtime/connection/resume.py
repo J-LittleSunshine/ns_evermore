@@ -17,6 +17,7 @@ from ns_common.exceptions import (
     NsStateError,
     NsValidationError,
 )
+from ns_common.iam import IamPrincipalType
 from ns_common.time import Clock
 from ns_runtime.protocol import BUILTIN_MESSAGE_REGISTRY, MessageTypeRegistry
 from ns_runtime.transport import TransportSession
@@ -145,6 +146,7 @@ class ConnectionResumeCoordinator:
         task_supervisor: TaskSupervisor,
         task_sequence: int,
         timeout_seconds: float,
+        expected_principal_type: IamPrincipalType | None = None,
         candidate_terminator: (
             Callable[[LogicalConnectionCloseReason], Awaitable[bool]] | None
         ) = None,
@@ -174,6 +176,11 @@ class ConnectionResumeCoordinator:
             _invalid("audit_boundary")
         if candidate_terminator is not None and not callable(candidate_terminator):
             _invalid("candidate_terminator")
+        if expected_principal_type is not None and not isinstance(
+            expected_principal_type,
+            IamPrincipalType,
+        ):
+            _invalid("expected_principal_type")
         if (
             isinstance(task_sequence, bool)
             or not isinstance(task_sequence, int)
@@ -202,6 +209,7 @@ class ConnectionResumeCoordinator:
         self._supervisor = task_supervisor
         self._task_sequence = task_sequence
         self._deadline = deadline
+        self._expected_principal_type = expected_principal_type
         self._capability_policy = capability_policy
         self._audit = audit_boundary
         self._candidate_terminator = candidate_terminator
@@ -457,6 +465,11 @@ class ConnectionResumeCoordinator:
             reason = "resume_tenant_mismatch"
         elif authority.component_type != self._current.component_type:
             reason = "resume_component_type_mismatch"
+        elif (
+            self._expected_principal_type is not None
+            and authority.principal_type is not self._expected_principal_type
+        ):
+            reason = "resume_principal_type_mismatch"
         elif parsed.claims.component_type != self._current.component_type:
             reason = "resume_claim_component_type_mismatch"
         if reason is not None:

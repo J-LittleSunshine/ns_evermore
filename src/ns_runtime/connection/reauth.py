@@ -20,6 +20,7 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
+from ns_common.iam import IamPrincipalType
 from ns_common.time import Clock
 from ns_runtime.protocol import (
     BUILTIN_MESSAGE_REGISTRY,
@@ -536,6 +537,7 @@ class ConnectionReauthCoordinator:
         task_supervisor: TaskSupervisor,
         task_sequence: int,
         timeout_seconds: float,
+        expected_principal_type: IamPrincipalType | None = None,
         expiry_controller: SessionExpiryController | None = None,
         drain_service: ConnectionDrainService | None = None,
         audit_boundary: ConnectionLifecycleAuditBoundary | None = None,
@@ -569,6 +571,11 @@ class ConnectionReauthCoordinator:
             ConnectionLifecycleAuditBoundary,
         ):
             _invalid("audit_boundary")
+        if expected_principal_type is not None and not isinstance(
+            expected_principal_type,
+            IamPrincipalType,
+        ):
+            _invalid("expected_principal_type")
         if (
             isinstance(task_sequence, bool)
             or not isinstance(task_sequence, int)
@@ -594,6 +601,7 @@ class ConnectionReauthCoordinator:
         self._supervisor = task_supervisor
         self._task_sequence = task_sequence
         self._deadline = deadline
+        self._expected_principal_type = expected_principal_type
         self._expiry = expiry_controller
         self._drain = drain_service
         self._audit = audit_boundary
@@ -821,6 +829,11 @@ class ConnectionReauthCoordinator:
             reason = "reauth_tenant_mismatch"
         elif authority.component_type != self._current.component_type:
             reason = "reauth_component_type_mismatch"
+        elif (
+            self._expected_principal_type is not None
+            and authority.principal_type is not self._expected_principal_type
+        ):
+            reason = "reauth_principal_type_mismatch"
         if reason is not None:
             raise _reauth_denied(reason)
 
