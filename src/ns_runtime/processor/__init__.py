@@ -32,8 +32,10 @@ from .event_bus import (
     EventBus,
     EventPublishReport,
     RuntimeEvent,
+    SubscriptionHandle,
     SubscriberOutcome,
     SubscriberResult,
+    UnsubscribeOutcome,
 )
 from .pipeline import (
     DefaultProcessorErrorMapper,
@@ -91,7 +93,9 @@ __all__ = (
     "ResponseFinalizer",
     "RoutingPreparation",
     "RuntimeEvent",
+    "SubscriptionHandle",
     "SubscriberOutcome",
     "SubscriberResult",
+    "UnsubscribeOutcome",
     "build_standard_stage_processors",
 )

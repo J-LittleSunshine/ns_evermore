@@ -1498,6 +1498,94 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - `GLOBAL_PROCESSOR_STATE_SCAN=NO_MATCH`：无 global ProcessorRegistry、EventBus、AuditSink 或 ProcessorPipeline 实例。
 - `TRANSPORT_BYPASS_SCAN=NO_MATCH`：标准 contract、pipeline 与 registry 不直接调用 transport；现有 transport response adapter 仍由 composition 显式注入。
 
+## P07 最终风险关闭与 VERIFIED 测试证据
+
+- 工作包：`P07-W01`、`P07-W02`、`P07-W03`、`P07-W04`、`P07-W05`、`P07-W07`、`P07-W08`。
+- 状态：`VERIFIED / F3`。
+- 完成时间：`2026-07-22T09:30:50+08:00`。
+- 环境：WSL2，Ubuntu 22.04.5 LTS，kernel `6.18.33.2-microsoft-standard-WSL2`；工作区 `/mnt/s/PythonProject/ns/ns_evermore`；分支 `codex/ns-runtime-implementation`，未新建分支。
+- 解释器：runtime `/home/ns/.virtualenvs/ns_runtime/bin/python` 与 backend `/home/ns/.virtualenvs/ns_backend/bin/python` 均为 Python `3.10.12`。
+
+### Risk-01：ProcessorDependencies 类型契约
+
+- `audit_sink: AuditSink` 与 `event_bus: EventBus` 是 dataclass 的静态显式注解；`TYPE_CHECKING` 避免 core contract 导入 audit/EventBus implementation 时形成循环，runtime local import 仅作为错误 composition 的启动期防御，不是主要类型契约。
+- 正确 `DeterministicTestAuditSink/EventBus` 可构造 `ProcessorDependencies`，并保持现有 runtime composition 不变；替换成 `object()` 分别稳定触发 `NsValidationError`。
+- processor facade 与 integration 分别冷导入成功，实际输出 `AUDIT_TYPE=AuditSink`、`EVENT_TYPE=EventBus`；没有 global audit sink 或 global EventBus。
+
+### Risk-02：EventBus subscriber 生命周期
+
+- `subscribe` 返回 frozen/slotted `SubscriptionHandle`；handle 由当前 EventBus 实例登记，不能用伪造或另一 EventBus 的同 ID handle删除当前订阅。
+- `unsubscribe(handle)` 返回闭集 `UnsubscribeOutcome.REMOVED/NOT_FOUND`；不存在订阅和重复退订均为稳定 `NOT_FOUND`，不抛出状态异常。
+- publish 在启动时截取 subscriber snapshot。退订已经进入当前 publish 的订阅不会取消其 supervised task，该次 publish 正常形成 report；后续 publish 不再执行该 subscriber。subscriber timeout/exception 隔离语义保持不变。
+- EventBus 仍为 instance-owned best-effort notification；未增加状态修改接口、global registry、authority storage 或新的 supervisor。
+
+### 测试证据
+
+1. Test：P07 processor/pipeline/registry/audit/EventBus/plugin 专项。
+
+   Environment：runtime Python `3.10.12`。
+
+   Command：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -v tests.test_runtime_processor_pipeline tests.test_runtime_processor_boundaries
+   ```
+
+   Result：`Ran 22 tests in 0.183s`，`OK`；失败 `0`，跳过 `0`。实际覆盖固定八阶段、security/authorization reject、message timeout/cancellation/unknown exception、missing processor、registry resolve/duplicate/version/feature conflict、final audit exactly once/failure/sensitive schema、typed event、subscriber timeout/exception/unsubscribe、plugin duplicate namespace/invalid schema/unauthorized registration。
+
+2. Test：P07 与 connection/session 相关联合回归。
+
+   Environment：runtime Python `3.10.12`。
+
+   Command：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -v tests.test_runtime_processor_pipeline tests.test_runtime_processor_boundaries tests.test_runtime_connection_composition tests.test_runtime_connection_authentication tests.test_runtime_connection_session tests.test_runtime_connection_reauth tests.test_runtime_connection_resume
+   ```
+
+   Result：`Ran 93 tests in 7.286s`，`OK`；失败 `0`，跳过 `0`。
+
+3. Test：runtime 依赖边界全量回归，按 DEP-1 排除 Django-only `test_cache.py`。
+
+   Environment：runtime Python `3.10.12`。
+
+   Command：
+
+   ```bash
+   set -o pipefail
+   rg --files tests -g 'test_*.py' -g '!test_cache.py' | sort | sed 's#/#.#g; s#\.py$##' | xargs env PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest
+   ```
+
+   Result：`Ran 687 tests in 24.254s`，`OK (skipped=1)`；失败 `0`。
+
+4. Test：backend/Django/cache 全量回归。
+
+   Environment：backend Python `3.10.12`。
+
+   Command：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m unittest discover -s tests -p 'test_*.py'
+   ```
+
+   Result：`Ran 698 tests in 19.869s`，`OK (skipped=49)`；失败 `0`。
+
+5. Test：依赖、导入、编译与禁止边界。
+
+   Environment：runtime/backend Python `3.10.12`，Ubuntu 22.04.5 WSL2。
+
+   Command：两环境 `python -m pip check`、backend `python -m compileall -q src tests`、processor/integration 冷导入探针、`git diff --check`，以及 P08/reliable、第二 owner、global processor state 扫描。
+
+   Result：两环境均为 `No broken requirements found.`；`PROCESSOR_IMPORT=OK`、`INTEGRATION_IMPORT=OK`、`AUDIT_TYPE=AuditSink`、`EVENT_TYPE=EventBus`、`SUBSCRIPTION_HANDLE=SubscriptionHandle`、`UNSUBSCRIBE_OUTCOMES=removed,not_found`；`P08_RELIABLE_BOUNDARY_SCAN=NO_MATCH`、`SECOND_OWNER_SCAN=NO_MATCH`、`GLOBAL_PROCESSOR_STATE_SCAN=NO_MATCH`；compileall 与 diff check 通过。
+
+### 最终判断
+
+- 代码完成：是。
+- 测试真实通过：是。
+- acceptance evidence 完整：是。
+- P07 evidence status：`VERIFIED`。
+- 未引入 StateStore、Redis/Valkey authority、DeliveryRecord、ACK/NACK/Defer、retry/dead-letter、RoutingPlan 或 target selection。
+
 ## 新记录模板
 
 - 工作包：

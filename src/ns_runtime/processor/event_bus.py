@@ -46,6 +46,29 @@ class SubscriberOutcome(str, Enum):
     FAILED = "failed"
 
 
+class UnsubscribeOutcome(str, Enum):
+    REMOVED = "removed"
+    NOT_FOUND = "not_found"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SubscriptionHandle:
+    subscription_id: int
+    subscriber: str
+    event_type: str
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.subscription_id, bool)
+            or not isinstance(self.subscription_id, int)
+            or self.subscription_id <= 0
+        ):
+            _invalid("subscription_handle.subscription_id")
+        _subscriber_name(self.subscriber, "subscription_handle.subscriber")
+        if not isinstance(self.event_type, str) or not self.event_type:
+            _invalid("subscription_handle.event_type")
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SubscriberResult:
     subscriber: str
@@ -64,6 +87,7 @@ class EventPublishReport:
 
 @dataclass(frozen=True, slots=True)
 class _Subscription(Generic[EventT]):
+    handle: SubscriptionHandle
     event_type: type[EventT]
     subscriber: EventSubscriber[EventT]
     name: str
@@ -79,7 +103,8 @@ class EventBus:
         _timeout(default_timeout_seconds, "default_timeout_seconds")
         self._supervisor = task_supervisor
         self._default_timeout = float(default_timeout_seconds)
-        self._subscriptions: list[_Subscription[RuntimeEvent]] = []
+        self._subscriptions: dict[int, _Subscription[RuntimeEvent]] = {}
+        self._subscription_sequence = 0
         self._sequence = 0
 
     @property
@@ -93,35 +118,53 @@ class EventBus:
         *,
         name: str,
         timeout_seconds: float | None = None,
-    ) -> None:
+    ) -> SubscriptionHandle:
         if not isinstance(event_type, type) or not issubclass(event_type, RuntimeEvent):
             _invalid("event_type")
         if not callable(subscriber):
             _invalid("subscriber")
-        if (
-            not isinstance(name, str)
-            or re.fullmatch(r"[a-z][a-z0-9_.-]{0,127}", name) is None
-        ):
-            _invalid("subscriber.name")
+        _subscriber_name(name, "subscriber.name")
         timeout = self._default_timeout if timeout_seconds is None else timeout_seconds
         _timeout(timeout, "subscriber.timeout_seconds")
         if any(
             item.event_type is event_type and item.name == name
-            for item in self._subscriptions
+            for item in self._subscriptions.values()
         ):
             _invalid("subscriber.duplicate")
-        self._subscriptions.append(_Subscription(
+        self._subscription_sequence += 1
+        handle = SubscriptionHandle(
+            subscription_id=self._subscription_sequence,
+            subscriber=name,
+            event_type=event_type.__name__,
+        )
+        self._subscriptions[handle.subscription_id] = _Subscription(
+            handle=handle,
             event_type=event_type,
             subscriber=subscriber,
             name=name,
             timeout_seconds=float(timeout),
-        ))
+        )
+        return handle
+
+    def unsubscribe(
+        self,
+        handle: SubscriptionHandle,
+    ) -> UnsubscribeOutcome:
+        if not isinstance(handle, SubscriptionHandle):
+            _invalid("subscription_handle")
+        subscription = self._subscriptions.get(handle.subscription_id)
+        if subscription is None or subscription.handle is not handle:
+            return UnsubscribeOutcome.NOT_FOUND
+        del self._subscriptions[handle.subscription_id]
+        return UnsubscribeOutcome.REMOVED
 
     async def publish(self, event: RuntimeEvent) -> EventPublishReport:
         if not isinstance(event, RuntimeEvent):
             _invalid("event")
         subscriptions = tuple(
-            item for item in self._subscriptions if isinstance(event, item.event_type)
+            item
+            for item in self._subscriptions.values()
+            if isinstance(event, item.event_type)
         )
         if not subscriptions:
             return EventPublishReport(event_type=type(event).__name__, results=())
@@ -214,6 +257,14 @@ def _timeout(value: object, field_name: str) -> None:
         _invalid(field_name)
 
 
+def _subscriber_name(value: object, field_name: str) -> None:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[a-z][a-z0-9_.-]{0,127}", value) is None
+    ):
+        _invalid(field_name)
+
+
 def _invalid(field_name: str) -> None:
     raise NsValidationError(
         "EventBus value is invalid.",
@@ -225,6 +276,8 @@ __all__ = (
     "EventBus",
     "EventPublishReport",
     "RuntimeEvent",
+    "SubscriptionHandle",
     "SubscriberOutcome",
     "SubscriberResult",
+    "UnsubscribeOutcome",
 )

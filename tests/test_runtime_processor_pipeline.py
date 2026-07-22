@@ -11,6 +11,7 @@ from ns_common.exceptions import (
     NsRuntimeIamDeniedError,
     NsRuntimeProcessorFailedError,
     NsRuntimeProcessorTimeoutError,
+    NsRuntimeProtocolViolationError,
     NsValidationError,
 )
 from ns_common.iam import IamPrincipalType
@@ -35,6 +36,7 @@ from ns_runtime.processor import (
     ProcessorDependencies,
     ProcessorExecutionPolicy,
     ProcessorPipeline,
+    ProcessorAuditRecord,
     ProcessorRegistration,
     ProcessorRegistry,
     ProcessorStage,
@@ -147,6 +149,27 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
             ProcessorStage.SECURITY_VALIDATION,
             ProcessorStage.AUTHORIZATION,
         ], calls)
+        self.assertEqual(1, self.sink.attempted_count)
+        self.assertIs(AuditAction.REJECTED, self.sink.records[0].action)
+
+    async def test_security_reject_stops_before_authorization(self) -> None:
+        calls: list[ProcessorStage] = []
+
+        async def reject(context, value):
+            raise NsRuntimeProtocolViolationError(
+                details={"reason": "test_security_reject"},
+            )
+
+        pipeline, context = self._pipeline(
+            calls=calls,
+            actions={ProcessorStage.SECURITY_VALIDATION: reject},
+        )
+
+        result = await self._execute(pipeline, context)
+
+        self.assertIsInstance(result.error, NsRuntimeProtocolViolationError)
+        self.assertEqual([ProcessorStage.SECURITY_VALIDATION], calls)
+        self.assertEqual((), result.completed_stages)
         self.assertEqual(1, self.sink.attempted_count)
         self.assertIs(AuditAction.REJECTED, self.sink.records[0].action)
 
@@ -294,10 +317,34 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
             "EventBus",
             ProcessorDependencies.__annotations__["event_bus"],
         )
+        self.assertIs(context.dependencies.audit_sink, self.sink)
+        self.assertIsInstance(context.dependencies.event_bus, EventBus)
         with self.assertRaises(NsValidationError):
             dataclasses.replace(context.dependencies, audit_sink=object())
         with self.assertRaises(NsValidationError):
             dataclasses.replace(context.dependencies, event_bus=object())
+
+    def test_audit_schema_excludes_sensitive_fields(self) -> None:
+        field_names = {item.name for item in dataclasses.fields(ProcessorAuditRecord)}
+        self.assertEqual({
+            "safe_summary",
+            "processor",
+            "action",
+            "error",
+            "trace",
+            "config_version",
+            "policy_version",
+            "required_consistency",
+            "occurred_at",
+        }, field_names)
+        for forbidden in (
+            "token",
+            "credential",
+            "payload",
+            "iam_response",
+            "raw_envelope",
+        ):
+            self.assertNotIn(forbidden, field_names)
 
     def _pipeline(
         self,

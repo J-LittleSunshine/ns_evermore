@@ -24,7 +24,9 @@ from ns_runtime.processor import (
     ProcessorStage,
     ProcessorTraceReference,
     RuntimeEvent,
+    SubscriptionHandle,
     SubscriberOutcome,
+    UnsubscribeOutcome,
     MessageProcessor,
     MessageProcessorStageProcessor,
     build_standard_stage_processors,
@@ -162,6 +164,90 @@ class EventBusTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(1, report.succeeded_count)
         self.assertEqual((), self.supervisor.failures)
+
+    async def test_subscribe_publish_unsubscribe_and_duplicate_are_stable(self) -> None:
+        bus = EventBus(
+            task_supervisor=self.supervisor,
+            default_timeout_seconds=0.05,
+        )
+        calls: list[str] = []
+
+        async def subscriber(event):
+            calls.append(event.object_id)
+
+        handle = bus.subscribe(RuntimeEvent, subscriber, name="lifecycle")
+        self.assertIsInstance(handle, SubscriptionHandle)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            setattr(handle, "subscriber", "changed")
+        self.assertEqual(1, bus.subscription_count)
+        other_bus = EventBus(
+            task_supervisor=self.supervisor,
+            default_timeout_seconds=0.05,
+        )
+        foreign = other_bus.subscribe(
+            RuntimeEvent,
+            subscriber,
+            name="lifecycle",
+        )
+        self.assertIs(
+            UnsubscribeOutcome.NOT_FOUND,
+            bus.unsubscribe(foreign),
+        )
+        self.assertEqual(1, bus.subscription_count)
+
+        first = await bus.publish(_event())
+        self.assertEqual(1, first.succeeded_count)
+        self.assertEqual([_event().object_id], calls)
+        self.assertIs(
+            UnsubscribeOutcome.REMOVED,
+            bus.unsubscribe(handle),
+        )
+        self.assertEqual(0, bus.subscription_count)
+        self.assertIs(
+            UnsubscribeOutcome.NOT_FOUND,
+            bus.unsubscribe(handle),
+        )
+        missing = SubscriptionHandle(
+            subscription_id=999,
+            subscriber="missing",
+            event_type=RuntimeEvent.__name__,
+        )
+        self.assertIs(
+            UnsubscribeOutcome.NOT_FOUND,
+            bus.unsubscribe(missing),
+        )
+        second = await bus.publish(_event())
+        self.assertEqual((), second.results)
+        self.assertEqual([_event().object_id], calls)
+
+    async def test_unsubscribe_does_not_cancel_in_flight_publish_snapshot(self) -> None:
+        bus = EventBus(
+            task_supervisor=self.supervisor,
+            default_timeout_seconds=0.5,
+        )
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls: list[str] = []
+
+        async def subscriber(event):
+            entered.set()
+            await release.wait()
+            calls.append(event.object_id)
+
+        handle = bus.subscribe(RuntimeEvent, subscriber, name="in_flight")
+        publishing = asyncio.create_task(bus.publish(_event()))
+        await entered.wait()
+
+        self.assertIs(
+            UnsubscribeOutcome.REMOVED,
+            bus.unsubscribe(handle),
+        )
+        release.set()
+        report = await publishing
+
+        self.assertEqual(1, report.succeeded_count)
+        self.assertEqual([_event().object_id], calls)
+        self.assertEqual((), (await bus.publish(_event())).results)
 
     def test_event_schema_has_no_sensitive_or_authority_fields(self) -> None:
         field_names = {item.name for item in dataclasses.fields(RuntimeEvent)}
