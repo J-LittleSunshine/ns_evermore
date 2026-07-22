@@ -1887,7 +1887,7 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 未实现prepared->queued、send worker、claim/send、DeliveryAttempt、ACK/NACK/Defer、retry/timeout、DeadLetterRecord/replay、一般cancel/hold、lease/fencing、master query/remote forwarding、cluster、P14 health/fairness、第二TaskSupervisor/event loop/shutdown owner。`task.dispatch` production feature仍disabled。
 - 下一工作包`P11-W01`保持`BLOCKED`，等待独立授权；P12 ACK闭环完成前不得开启task.dispatch production feature。
 
-## P10-FIX-01 Redis/Valkey StateStore Provider验收证据
+## P10-FIX-01 Redis/Valkey StateStore Provider历史验收证据（由P10-FIX-02重新审查）
 
 - 工作包：`P10-FIX-01`；只补齐P08 contract的standalone Redis/Valkey production provider，不改写DR-1，不修改RP-1，不实施P11/P12。
 - 完成时间：`2026-07-22T21:55:00+08:00`。
@@ -1920,9 +1920,42 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 
 ### 最终判断与限制
 
-- P10保持`VERIFIED/F3 (local only)`；只删除“没有Redis/Valkey production StateStore provider”这一项限制。standalone provider可被production composition创建并注入，但`task.dispatch`仍关闭，不能由provider存在推断可靠发送已启用。
+- 该次验收当时把P10恢复为`VERIFIED/F3 (local only)`；后续review发现trusted-boundary、BaseException lifecycle、端口竞态与恢复证据blocker，因此该状态曾由P10-FIX-02重新降为`IN_PROGRESS`。下节是关闭blocker后的当前权威证据。
 - 未实现或未宣称：Sentinel、Cluster、failover、replica read、lease/fencing、leader election、TLS证书/CA材料验收、跨节点owner、P11 prepared->queued/claim/send、DeliveryAttempt、P12 ACK/NACK/Defer/timeout/retry、P13 dead letter/replay/一般cancel/hold及P14 health/fair scheduling。
 - 下一工作包`P11-W01`保持`BLOCKED`，等待独立授权；P12 ACK闭环完成前不得开启task.dispatch production feature。
+
+## P10-FIX-02 Redis StateStore Trusted-Boundary、Lifecycle与Recovery Closure验收证据
+
+- 审查结论：`REVIEW FAILED`。P10-FIX-01与P10从`VERIFIED/F3 (local only)`降为`IN_PROGRESS/F3 (local only)`，直到trusted-boundary、BaseException lifecycle、端口reservation、跨provider recovery与Valkey证据校准全部通过重新验收。
+- 工作包：`P10-FIX-02 Redis StateStore trusted-boundary、lifecycle 与 recovery closure`；全部blocker与本地重新验收通过后恢复`VERIFIED/F3 (local only)`。
+- 范围边界：不改写P10 DR-1，不修改RP-1，不实施P11/P12；P11-W01继续`BLOCKED`，`task.dispatch`继续关闭。
+- 基线：`c5ba5dfc231c2ef7eea12278c1e523a7c9c5a8ba`，开始时本地HEAD、upstream与worktree一致且干净。
+- 修改文件：`src/ns_common/state_store/redis_provider.py`、`store.py`、`tests/test_redis_state_store_provider.py`、`tests/test_redis_state_store_integration.py`以及implementation plan、ADR-038和本acceptance log；`src/ns_runtime/delivery/`与`src/ns_runtime/routing/`相对基线零diff。
+
+### Blocker closure
+
+- B1 options trusted boundary：`RedisStateStoreOptions.__post_init__`直接复验exact backend、最长128且无NUL/CR/LF的exact username（允许空串default user）、finite positive exact int/float timeout、exact/credential-free/bounded endpoint、exact namespace与source类型。直接构造和`dataclasses.replace()`对backend/username/bool/NaN/±Inf/0/负数/endpoint/namespace/source及str/float subclass使用同一失败字段。
+- B2 custom secret source：provider调用`resolve()`后只接受None或非空exact str；空串、bytes、object、coroutine和str subclass均typed拒绝，不做字符串转换。source异常、非法返回和真实driver认证失败均不输出secret、source repr、endpoint、username或driver文本。
+- B3 lifecycle：`StateStore.open()/close()`对KeyboardInterrupt、SystemExit和任意自定义BaseException先恢复NEW/OPEN再原对象穿透；CancelledError与既有typed/timeout/Exception映射保持。timeout子Task只捕获非取消BaseException并把同一对象交回父Task抛出，避免事件循环提前逃逸且不持久保存异常。恶意password source与使用production `_execute`的恶意client `aclose()`矩阵验证失败后状态可解释，close依赖恢复后同一provider可重试关闭。
+- B4 port ownership：删除bind-port-0后立即关闭的`_free_port`。集成类通过`NsTestResourceFactory.reserve_tcp_port()`持有reservation到Redis配置写完、`Popen`前最后一刻；PING后读取server INFO并核对`process_id == Popen.pid`。清理仍只SCAN+UNLINK当前随机namespace，production provider无FLUSHDB/FLUSHALL/KEYS。
+- B5 recovery：Redis provider A分别完成3-target all accepted和501-target batched initialization，读取root/shard Summary与prepared DeliveryRecord证据后关闭并删除A的provider/service/request/plan/scope/key对象；独立provider B使用全新clock/plan/request/service/scope/key重读相同authority，revision token、state version、document SHA-256与payload evidence digest完全一致。B重复相同message_id+target fingerprint均返回duplicate，前后record key集合不变（分别6与504），没有第二套Summary/DeliveryRecord。
+- B6 Valkey校准：真实server为`redis-server 6.0.16`；redis-py `8.0.1`和valkey-py `6.1.1`都对该Redis server完成协议认证/health。结论严格拆分为Redis standalone provider `VERIFIED`、Valkey driver compatibility `IMPLEMENTED`、Valkey server integration `UNVERIFIED`；本机无`valkey-server`。
+
+### 本次实际命令与原始结果
+
+- Provider专项：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09_rp1_review/bin/python -m unittest tests.test_redis_state_store_provider tests.test_redis_state_store_integration -q`，最终代码复跑`Ran 23 tests in 6.646s`，`OK`。
+- P08/P10/provider联合：`python -m unittest tests.test_state_store tests.test_runtime_state_store tests.test_runtime_delivery_admission tests.test_redis_state_store_provider tests.test_redis_state_store_integration -q`，最终代码复跑`Ran 62 tests in 10.577s`，`OK`。
+- P03-P10联合：`modules=$(rg --files tests -g 'test_*.py' | sort | sed 's#/#.#g; s#\.py$##' | rg '^(tests\.test_runtime_protocol|tests\.test_.*transport|tests\.test_runtime_connection|tests\.test_runtime_session|tests\.test_.*iam|tests\.test_runtime_processor|tests\.test_.*state|tests\.test_runtime_routing|tests\.test_runtime_delivery)' | rg -v '^tests\.test_redis_'); PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09_rp1_review/bin/python -m unittest -q $modules`，加载46个模块，最终代码复跑`Ran 417 tests in 19.900s`，`OK`。
+- Linux runtime标准asyncio：`modules=$(rg --files tests -g 'test_*.py' -g '!test_cache.py' | sort | sed 's#/#.#g; s#\.py$##'); PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09_rp1_review/bin/python -m unittest -q $modules`，最终代码复跑`Ran 791 tests in 42.952s`，`OK (skipped=1)`。
+- Linux runtime uvloop：同一modules执行`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09_rp1_review/bin/python -c 'import asyncio, unittest, uvloop; asyncio.set_event_loop_policy(uvloop.EventLoopPolicy()); unittest.main(module=None, verbosity=0)' $modules`，最终代码复跑`Ran 791 tests in 44.995s`，`OK (skipped=1)`。
+- Linux backend：`PYTHONPATH=src /home/ns/.virtualenvs/ns_backend_p09_rp1_review/bin/python -m unittest discover -s tests -p 'test_*.py' -q`，最终代码复跑`Ran 791 tests in 30.577s`，`OK (skipped=50)`；runtime driver缺失使真实provider integration整类typed skip。
+- 静态/依赖：`compileall -q src tests`、runtime/backend两环境`pip check`、`git diff --check`、cold import、production provider清库命令扫描、delivery/routing driver import AST扫描及相对基线零diff均通过；仅共享`127.0.0.1:6379` Redis进程在测试后保留。
+
+### 当前结论与剩余限制
+
+- P10-FIX-01、P10-FIX-02与P10恢复`VERIFIED/F3 (local only)`；本地证据随本次提交记录，明确属于`commit-recorded local evidence`，没有远程CI证明。
+- 只关闭Redis standalone production provider及本次六项blocker。仍deferred/unverified：Valkey server integration、Sentinel、Cluster、failover、replica read、TLS证书/CA材料、lease/fencing、leader election、跨节点owner、P11 prepared->queued/claim/send、DeliveryAttempt及P12 ACK/NACK/Defer/timeout/retry。
+- P11-W01继续`BLOCKED`；`task.dispatch`不在`_ENABLED_MESSAGE_TYPES`且production processor仍未注册，P12 ACK闭环前不得开启。
 
 ## 新记录模板
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Real standalone Redis integration evidence for P10-FIX-01."""
+"""Real Redis standalone and recovery evidence for P10-FIX-02."""
 
 from __future__ import annotations
 
@@ -9,12 +9,9 @@ import json
 import logging
 import secrets
 import shutil
-import socket
 import subprocess
-import tempfile
 from dataclasses import dataclass, field
 from datetime import timedelta
-from pathlib import Path
 import unittest
 import uuid
 
@@ -36,6 +33,7 @@ from ns_common.exceptions import (
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.config import NsConfig
 from ns_common.observability import InMemoryMetricsSink, InMemoryTraceSink
+from ns_common.testing import NsTestResourceFactory
 from ns_common.state_store import (
     RedisStateStoreOptions,
     RedisValkeyStateStore,
@@ -89,12 +87,6 @@ class _StaticPasswordSource(StateStorePasswordSource):
         return self.value
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
-        candidate.bind(("127.0.0.1", 0))
-        return int(candidate.getsockname()[1])
-
-
 def _scope() -> StateAccessScope:
     namespace = StateNamespace.audit(domain="processor")
     return StateAccessScope(
@@ -143,14 +135,15 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         server = shutil.which("redis-server")
         if server is None:
             raise unittest.SkipTest("local redis-server is unavailable")
-        cls._temporary_directory = tempfile.TemporaryDirectory(
+        cls._resource_factory = NsTestResourceFactory(
             prefix="ns-runtime-redis-state-",
         )
-        cls._directory = Path(cls._temporary_directory.name)
-        cls._port = _free_port()
+        cls.addClassCleanup(cls._resource_factory.close)
+        reservation = cls._resource_factory.reserve_tcp_port()
+        cls._port = reservation.port
         cls._username = ""
         cls._password = secrets.token_urlsafe(32)
-        config = cls._directory / "redis.conf"
+        config = cls._resource_factory.directories.etc / "redis.conf"
         config.write_text(
             "\n".join((
                 "bind 127.0.0.1",
@@ -162,7 +155,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 'save ""',
                 "appendonly no",
                 "databases 1",
-                f"dir {cls._directory}",
+                f"dir {cls._resource_factory.directories.data}",
                 (
                     f"user default on >{cls._password} "
                     "~ns_runtime:test:* +@all -flushdb -flushall -keys"
@@ -170,12 +163,14 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             )) + "\n",
             encoding="utf-8",
         )
+        reservation.release()
         cls._process = subprocess.Popen(
             (server, str(config)),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        cls.addClassCleanup(cls._stop_server)
         client = redis.Redis(
             host="127.0.0.1",
             port=cls._port,
@@ -184,6 +179,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             password=cls._password,
             socket_connect_timeout=0.2,
             socket_timeout=0.2,
+            decode_responses=True,
             protocol=2,
         )
         for _ in range(100):
@@ -198,19 +194,22 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             time.sleep(0.02)
         else:
             raise RuntimeError("isolated redis-server did not become ready")
+        server_info = client.info(section="server")
+        if int(server_info["process_id"]) != cls._process.pid:
+            raise RuntimeError("isolated redis-server did not own reserved port")
         client.close()
 
     @classmethod
-    def tearDownClass(cls) -> None:
+    def _stop_server(cls) -> None:
         process = cls._process
+        if process.poll() is not None:
+            return
         process.terminate()
         try:
             process.wait(timeout=3)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=3)
-        cls._temporary_directory.cleanup()
-        super().tearDownClass()
 
     async def asyncSetUp(self) -> None:
         self.clock = ControlledClock(utc_start=UTC_START)
@@ -259,6 +258,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         password: str | None = None,
         port: int | None = None,
         timeout: float = 1.0,
+        clock: ControlledClock | None = None,
     ) -> RedisValkeyStateStore:
         return RedisValkeyStateStore(
             options=RedisStateStoreOptions(
@@ -272,10 +272,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 operation_timeout_seconds=timeout,
             ),
             capabilities=StateStoreCapabilities.p10_contract(),
-            clock=self.clock,
+            clock=clock or self.clock,
         )
 
-    async def test_authentication_and_secret_redaction_for_both_drivers(self) -> None:
+    async def test_redis_server_authentication_with_both_protocol_drivers(self) -> None:
         for backend in ("redis", "valkey"):
             with self.subTest(backend=backend):
                 store = self._provider(backend=backend)
@@ -484,7 +484,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(StateStoreHealthStatus.CLOSED, (await store.health()).status)
 
     async def test_timeout_and_unavailable_are_typed(self) -> None:
-        unavailable = self._provider(port=_free_port(), timeout=0.05)
+        unavailable_reservation = self._resource_factory.reserve_tcp_port()
+        unavailable_port = unavailable_reservation.port
+        unavailable_reservation.release()
+        unavailable = self._provider(port=unavailable_port, timeout=0.05)
         with self.assertRaises(NsRuntimeStateStoreUnavailableError):
             await unavailable.open()
 
@@ -582,7 +585,201 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(504, len(record_keys))
         await store.close()
 
-    def _admission_service(self, store, plan):
+    async def test_p10_records_survive_independent_provider_reconstruction(self) -> None:
+        for target_count in (3, 501):
+            with self.subTest(target_count=target_count):
+                namespace_prefix = f"{self.namespace}:recovery:{target_count}"
+                clock_a = ControlledClock(utc_start=UTC_START)
+                plan_a = await _plan(target_count)
+                store_a = self._provider(
+                    namespace=namespace_prefix,
+                    clock=clock_a,
+                )
+                await store_a.open()
+                service_a, request_a = self._admission_service(
+                    store_a,
+                    plan_a,
+                    clock=clock_a,
+                )
+                accepted = await service_a.admit(
+                    request_a,
+                    trace=AdmissionTrace(
+                        trace_id=f"redis-recovery-a-{target_count}",
+                    ),
+                )
+                self.assertIs(AdmissionOutcome.ACCEPTED, accepted.outcome)
+                summary_id = accepted.response.summary_id
+                scope, namespace = self._delivery_scope(request_a.tenant_id)
+                record_keys = {
+                    "root": StateKey(
+                        namespace=namespace,
+                        object_type="summary",
+                        object_id=self._delivery_object_id(summary_id),
+                    ),
+                    "shard": StateKey(
+                        namespace=namespace,
+                        object_type="summary",
+                        object_id=self._delivery_object_id("shard:0"),
+                    ),
+                    "delivery": StateKey(
+                        namespace=namespace,
+                        object_type="delivery",
+                        object_id=self._delivery_object_id("delivery:0"),
+                    ),
+                }
+                evidence: dict[str, tuple[str, int, str, str]] = {}
+                for name, key in record_keys.items():
+                    observed = await store_a.read(
+                        scope=scope,
+                        key=key,
+                        consistency=StateConsistency.LINEARIZABLE,
+                    )
+                    assert observed.record is not None
+                    payload = json.loads(observed.record.document.payload)
+                    evidence[name] = (
+                        observed.record.revision._provider_token(),
+                        observed.record.document.state_version,
+                        hashlib.sha256(
+                            observed.record.document.payload,
+                        ).hexdigest(),
+                        payload["payload_evidence"]["digest"],
+                    )
+                raw = self._raw_client()
+                keys_before_restart = await self._scan(
+                    raw,
+                    namespace_prefix + ":record:*",
+                )
+                await raw.aclose()
+                self.assertEqual(target_count + 3, len(keys_before_restart))
+                await store_a.close()
+                del store_a, service_a, request_a, plan_a, scope, record_keys
+
+                clock_b = ControlledClock(utc_start=UTC_START)
+                store_b = self._provider(
+                    namespace=namespace_prefix,
+                    clock=clock_b,
+                )
+                await store_b.open()
+                plan_b = await _plan(target_count)
+                service_b, request_b = self._admission_service(
+                    store_b,
+                    plan_b,
+                    clock=clock_b,
+                )
+                scope_b, namespace_b = self._delivery_scope(
+                    request_b.tenant_id,
+                )
+                recovered_keys = {
+                    "root": StateKey(
+                        namespace=namespace_b,
+                        object_type="summary",
+                        object_id=self._delivery_object_id(summary_id),
+                    ),
+                    "shard": StateKey(
+                        namespace=namespace_b,
+                        object_type="summary",
+                        object_id=self._delivery_object_id("shard:0"),
+                    ),
+                    "delivery": StateKey(
+                        namespace=namespace_b,
+                        object_type="delivery",
+                        object_id=self._delivery_object_id("delivery:0"),
+                    ),
+                }
+                for name, key in recovered_keys.items():
+                    recovered = await store_b.read(
+                        scope=scope_b,
+                        key=key,
+                        consistency=StateConsistency.LINEARIZABLE,
+                    )
+                    assert recovered.record is not None
+                    revision, state_version, document_digest, payload_digest = evidence[name]
+                    self.assertEqual(
+                        revision,
+                        recovered.record.revision._provider_token(),
+                    )
+                    self.assertEqual(
+                        state_version,
+                        recovered.record.document.state_version,
+                    )
+                    self.assertEqual(
+                        document_digest,
+                        hashlib.sha256(
+                            recovered.record.document.payload,
+                        ).hexdigest(),
+                    )
+                    recovered_payload = json.loads(
+                        recovered.record.document.payload,
+                    )
+                    self.assertEqual(
+                        payload_digest,
+                        recovered_payload["payload_evidence"]["digest"],
+                    )
+                    if name in {"root", "shard"}:
+                        self.assertEqual("accepted", recovered_payload["status"])
+                        self.assertEqual(
+                            target_count,
+                            recovered_payload["prepared_count"],
+                        )
+                    else:
+                        self.assertEqual("prepared", recovered_payload["status"])
+                self.assertEqual(
+                    2 if target_count <= 500 else 3,
+                    evidence["root"][1],
+                )
+                self.assertEqual(1, evidence["delivery"][1])
+
+                duplicate = await service_b.admit(
+                    request_b,
+                    trace=AdmissionTrace(
+                        trace_id=f"redis-recovery-b-{target_count}",
+                    ),
+                )
+                self.assertIs(AdmissionOutcome.DUPLICATE, duplicate.outcome)
+                self.assertEqual(summary_id, duplicate.response.summary_id)
+                raw = self._raw_client()
+                keys_after_duplicate = await self._scan(
+                    raw,
+                    namespace_prefix + ":record:*",
+                )
+                await raw.aclose()
+                self.assertEqual(
+                    set(keys_before_restart),
+                    set(keys_after_duplicate),
+                )
+                await store_b.close()
+
+    @staticmethod
+    def _delivery_object_id(identifier: str) -> str:
+        return "sha256:" + hashlib.sha256(identifier.encode()).hexdigest()
+
+    @staticmethod
+    def _delivery_scope(tenant_id: str) -> tuple[StateAccessScope, StateNamespace]:
+        namespace = StateNamespace.tenant(
+            tenant_id=tenant_id,
+            domain="delivery",
+        )
+        return StateAccessScope(
+            atomic_scope=StateAtomicScope(
+                namespace=namespace,
+                partition="admission",
+            ),
+            authority=StateAuthorityKind.DELIVERY_ADMISSION,
+            caller="delivery.admission",
+            capabilities=frozenset({
+                StateCallerCapability.READ,
+                StateCallerCapability.TRANSACT,
+            }),
+        ), namespace
+
+    def _admission_service(
+        self,
+        store,
+        plan,
+        *,
+        clock: ControlledClock | None = None,
+    ):
+        service_clock = clock or self.clock
         service = DeliveryAdmissionService(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
@@ -590,8 +787,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 policy_version="p1",
             ),
             store=StateStoreDeliveryAdmissionStore(store),
-            payload_ref_client=_PayloadClient(self.clock),
-            clock=self.clock,
+            payload_ref_client=_PayloadClient(service_clock),
+            clock=service_clock,
             identifier_factory=_ids,
         )
         stage_six = StageSixAdmissionInput.from_result(
@@ -613,7 +810,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             requested_priority=None,
             requested_reliability=None,
-            requested_expires_at=self.clock.utc_now() + timedelta(seconds=30),
+            requested_expires_at=service_clock.utc_now() + timedelta(seconds=30),
             requested_ack_timeout_seconds=30,
             requested_target_strategy=plan.requested_strategy,
         )

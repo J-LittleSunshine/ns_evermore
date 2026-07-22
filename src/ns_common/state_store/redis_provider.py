@@ -6,7 +6,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
+import math
 import os
 import re
 from abc import ABC, abstractmethod
@@ -47,6 +49,9 @@ from .store import StateStore
 _NAMESPACE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}")
 _ENVIRONMENT_PATTERN = re.compile(r"[A-Z_][A-Z0-9_]{0,127}")
 _DOMAIN_ERROR_PREFIX = "NS_STATE|"
+_MAX_ENDPOINT_LENGTH = 2048
+_MAX_USERNAME_LENGTH = 128
+_FORBIDDEN_TEXT_CHARACTERS = frozenset({"\0", "\r", "\n"})
 
 
 class StateStorePasswordSource(ABC):
@@ -73,7 +78,7 @@ class EnvironmentStateStorePassword(StateStorePasswordSource):
 
     def __post_init__(self) -> None:
         if (
-            not isinstance(self.variable_name, str)
+            type(self.variable_name) is not str
             or _ENVIRONMENT_PATTERN.fullmatch(self.variable_name) is None
         ):
             _invalid("password_source.environment")
@@ -123,6 +128,8 @@ class FileStateStorePassword(StateStorePasswordSource):
 
 
 def password_source_from_reference(reference: str) -> StateStorePasswordSource:
+    if type(reference) is not str:
+        _invalid("password_source.reference")
     if reference == "none":
         return NoStateStorePassword()
     if isinstance(reference, str) and reference.startswith("env:"):
@@ -142,18 +149,24 @@ class RedisStateStoreOptions:
     operation_timeout_seconds: float
 
     def __post_init__(self) -> None:
-        if self.backend not in {"redis", "valkey"}:
+        if type(self.backend) is not str or self.backend not in {"redis", "valkey"}:
             _invalid("options.backend")
+        if (
+            type(self.username) is not str
+            or len(self.username) > _MAX_USERNAME_LENGTH
+            or any(character in self.username for character in _FORBIDDEN_TEXT_CHARACTERS)
+        ):
+            _invalid("options.username")
         if not isinstance(self.password_source, StateStorePasswordSource):
             _invalid("options.password_source")
         if (
-            not isinstance(self.namespace, str)
+            type(self.namespace) is not str
             or _NAMESPACE_PATTERN.fullmatch(self.namespace) is None
         ):
             _invalid("options.namespace")
         if (
-            isinstance(self.operation_timeout_seconds, bool)
-            or not isinstance(self.operation_timeout_seconds, (int, float))
+            type(self.operation_timeout_seconds) not in {int, float}
+            or not math.isfinite(self.operation_timeout_seconds)
             or self.operation_timeout_seconds <= 0
         ):
             _invalid("options.operation_timeout_seconds")
@@ -326,6 +339,21 @@ class RedisValkeyStateStore(StateStore):
         parsed = _parse_endpoint(self._options.backend, self._options.endpoint)
         try:
             password = self._options.password_source.resolve()
+            if inspect.iscoroutine(password):
+                try:
+                    password.close()
+                except BaseException:
+                    pass
+            if password is not None and (
+                type(password) is not str or not password
+            ):
+                raise NsRuntimeStateStoreUnavailableError(
+                    details={
+                        "component": "state_store_provider",
+                        "operation": "resolve_secret",
+                        "reason": "secret_value_invalid",
+                    },
+                )
             client = client_type(
                 host=parsed.hostname,
                 port=parsed.port or 6379,
@@ -352,7 +380,7 @@ class RedisValkeyStateStore(StateStore):
             if client is not None:
                 try:
                     await client.aclose()  # type: ignore[attr-defined]
-                except Exception:
+                except BaseException:
                     pass
             raise
 
@@ -493,10 +521,13 @@ class RedisValkeyStateStore(StateStore):
 
     async def _execute(self, awaitable: object) -> object:
         try:
-            return await asyncio.wait_for(  # type: ignore[misc]
-                awaitable,
+            completed, value = await asyncio.wait_for(
+                _capture_non_cancel_baseexception(awaitable),
                 timeout=self._options.operation_timeout_seconds,
             )
+            if not completed:
+                raise value  # type: ignore[misc]
+            return value
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
@@ -609,9 +640,19 @@ class RedisValkeyStateStore(StateStore):
 
 
 def _parse_endpoint(backend: str, endpoint: object):
-    if not isinstance(endpoint, str) or not endpoint:
+    if (
+        type(endpoint) is not str
+        or not endpoint
+        or len(endpoint) > _MAX_ENDPOINT_LENGTH
+        or endpoint != endpoint.strip()
+        or any(character in endpoint for character in _FORBIDDEN_TEXT_CHARACTERS)
+    ):
         _invalid("options.endpoint")
-    parsed = urlparse(endpoint)
+    try:
+        parsed = urlparse(endpoint)
+        hostname = parsed.hostname
+    except ValueError:
+        _invalid("options.endpoint")
     allowed = (
         {"redis", "rediss"}
         if backend == "redis"
@@ -619,7 +660,7 @@ def _parse_endpoint(backend: str, endpoint: object):
     )
     if (
         parsed.scheme not in allowed
-        or not parsed.hostname
+        or not hostname
         or parsed.username is not None
         or parsed.password is not None
         or parsed.query
@@ -629,7 +670,10 @@ def _parse_endpoint(backend: str, endpoint: object):
         _invalid("options.endpoint")
     try:
         port = parsed.port
-        database = int((parsed.path or "/0").removeprefix("/"))
+        path = parsed.path or "/0"
+        if not re.fullmatch(r"/[0-9]+", path):
+            raise ValueError
+        database = int(path[1:])
     except (TypeError, ValueError):
         _invalid("options.endpoint")
     if port is not None and not 0 < port <= 65535:
@@ -637,6 +681,17 @@ def _parse_endpoint(backend: str, endpoint: object):
     if database < 0:
         _invalid("options.endpoint")
     return parsed
+
+
+async def _capture_non_cancel_baseexception(
+    awaitable: object,
+) -> tuple[bool, object]:
+    try:
+        return True, await awaitable  # type: ignore[misc]
+    except asyncio.CancelledError:
+        raise
+    except BaseException as error:
+        return False, error
 
 
 def _state_key_digest(key: StateKey) -> str:

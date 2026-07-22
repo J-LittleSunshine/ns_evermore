@@ -109,6 +109,9 @@ class StateStore(ABC):
                 raise NsRuntimeStateStoreUnavailableError(
                     details={"component": "state_store", "operation": "open"},
                 ) from None
+            except BaseException:
+                self._state = StateStoreLifecycleState.NEW
+                raise
             self._state = StateStoreLifecycleState.OPEN
 
     async def close(self) -> None:
@@ -141,6 +144,9 @@ class StateStore(ABC):
                 raise NsRuntimeStateStoreUnavailableError(
                     details={"component": "state_store", "operation": "close"},
                 ) from None
+            except BaseException:
+                self._state = StateStoreLifecycleState.OPEN
+                raise
             self._state = StateStoreLifecycleState.CLOSED
 
     async def read(
