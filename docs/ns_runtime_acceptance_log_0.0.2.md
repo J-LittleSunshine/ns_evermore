@@ -1586,6 +1586,117 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - P07 evidence status：`VERIFIED`。
 - 未引入 StateStore、Redis/Valkey authority、DeliveryRecord、ACK/NACK/Defer、retry/dead-letter、RoutingPlan 或 target selection。
 
+## P08 StateStore 抽象契约与 Authority Boundary 最终证据
+
+- 工作包：`P08-W01` 至 `P08-W08`。
+- 状态：`VERIFIED / F3`。
+- 完成时间：`2026-07-22T10:31:58+08:00`。
+- 环境：WSL2，kernel `6.18.33.2-microsoft-standard-WSL2`，`x86_64`；工作区 `/mnt/s/PythonProject/ns/ns_evermore`；分支 `codex/ns-runtime-implementation`，未创建新分支。
+- 解释器：runtime `/home/ns/.virtualenvs/ns_runtime/bin/python` 与 backend `/home/ns/.virtualenvs/ns_backend/bin/python` 均为 Python `3.10.12`。
+
+### 实现与契约证据
+
+- W01：`StateAuthorityKind` 与不可变 boundary map 明确 connection/session 为 local、permission snapshot/credential 为 external、processor execution 为 transient、strong audit 为唯一 active StateStore authority、future authority 为 reserved；`StateStoreCapabilities` 与 caller capability 分离，非 Store authority 无法构造 access scope。
+- W02：新增 backend-neutral `StateStore`、`StateNamespace`、`StateKey`、`StateDocument`、`StateRevision`、`StateRecord`、`StateAssertion`、`StateMutation`、`StateTransaction`、`StateStoreHealth`，公开操作精确为 `open/close/capabilities/read/compare_and_set/transact/append/health`；无 `put`、`set` 或 last-write-wins。
+- W03：tenant/system/runtime/plugin/audit 使用闭集 namespace 类型；所有访问同时绑定 authority、caller capability、atomic scope、namespace/domain/tenant；裸字符串 key 与跨 namespace/domain/tenant 在 provider mutation 前拒绝。
+- W04：schema version、state version、opaque provider-issued revision 与 epoch 分离；create 强制 absent assertion，replace/delete 强制 expected revision，可附加 expected state version/epoch；冲突、schema mismatch 和 epoch mismatch 均保持零 mutation；未实现 epoch allocation、lease 或 fencing。
+- W05：`RuntimeDependencySlots` 新增显式类型化 StateStore slot；RuntimeService 在 start hook/admission 前验证 injected Store 已 open/ready；既有 RuntimeShutdownCoordinator 在唯一 TaskSupervisor 关闭后、sink flush 前关闭 Store，未新增 owner、supervisor、loop 或 coordinator。
+- W06：读取一致性闭集为 LINEARIZABLE、AT_LEAST_REVISION、STALE_ALLOWED；新增 11 个稳定 StateStore 错误并登记到 ERR-1。read timeout 返回 TIMEOUT；任何无法证明未提交的 write timeout/未知异常返回 INDETERMINATE_WRITE，公共层不自动 retry。
+- W07：新增 `StrongAuditAuthorityService` 与 provider-neutral StateStore binding，固定 `Processor -> AuditSink -> StrongAuditAuthorityService -> StateStore`；Processor 类型和 package 不导入 StateStore。ordinary logging sink拒绝声称 strong success，strong append失败阻断 pipeline success。
+- W08：仅在 `tests/` 建立 deterministic semantic model/conformance subject，覆盖 lifecycle、CAS、并发 CAS、transaction atomicity、minimum revision、namespace、failure/recovery、multiple RuntimeContext isolation、ownership 与 strong audit；生产 `src/` 不包含任何具体 provider subclass。
+
+### 修改文件
+
+- 设计与账本：`docs/ns_runtime_architecture_decisions_0.0.2.md`、`docs/ns_runtime_implementation_plan_for_design_0.0.2.md`、`docs/ns_runtime_acceptance_log_0.0.2.md`。
+- 公共契约：`src/ns_common/state_store/__init__.py`、`authority.py`、`model.py`、`store.py`。
+- 稳定错误：`src/ns_common/exceptions/state_store.py`、`src/ns_common/exceptions/__init__.py`、`src/ns_common/exceptions/registry.py`。
+- runtime composition/authority：`src/ns_runtime/context.py`、`service.py`、`shutdown.py`、`state_authority.py`、`processor/audit.py`。
+- 验证：`tests/_state_store_contract_model.py`、`tests/test_state_store.py`、`tests/test_runtime_state_store.py`、`tests/test_exceptions.py`。
+
+### 实际测试命令与结果
+
+1. P08 contract/runtime/audit/错误与既有 lifecycle 联合专项。
+
+   Environment：runtime Python `3.10.12`。
+
+   Command：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest tests.test_state_store tests.test_runtime_state_store tests.test_runtime_processor_pipeline tests.test_runtime_context tests.test_runtime_shutdown tests.test_runtime_service tests.test_exceptions -v
+   ```
+
+   Result：最终 `Ran 102 tests in 1.779s`，`OK`；失败 `0`，跳过 `0`。覆盖 close cancellation ownership 与稳定 write-timeout 映射修复后同一组重新执行通过；后续全量回归也包含相同测试。
+
+2. runtime 依赖边界全量回归，按 DEP-1 排除 Django-only `test_cache.py`。
+
+   Environment：runtime Python `3.10.12`。
+
+   Command：
+
+   ```bash
+   set -o pipefail
+   rg --files tests -g 'test_*.py' -g '!test_cache.py' | sort | sed 's#/#.#g; s#\.py$##' | xargs env PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest
+   ```
+
+   Result：`Ran 709 tests in 25.201s`，`OK (skipped=1)`；失败 `0`。唯一跳过项为 real Windows event-loop policy。
+
+3. backend/Django/cache 根目录全量回归。
+
+   Environment：backend Python `3.10.12`。
+
+   Command：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+   ```
+
+   Result：`Ran 720 tests in 20.711s`，`OK (skipped=49)`；失败 `0`。49 项为 1 个 Windows event-loop policy 与 backend 环境未安装 runtime transport optional dependency导致的 48 个 transport 跳过；P08 测试均真实执行。
+
+4. 环境边界探针。
+
+   Environment：runtime Python `3.10.12`。
+
+   Command：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+   ```
+
+   Result：该不符合 DEP-1 的直接 discovery 按预期不能作为 runtime 全量入口：`test_cache.py` import 因 runtime 环境无 Django 产生唯一 loader error；其余已加载测试均通过。改用第 2 项规定入口后 709 项通过。未安装依赖、未修改环境、未把该探针伪记为通过。
+
+5. 依赖、编译、冷导入与 diff 有效性。
+
+   Command：
+
+   ```bash
+   /home/ns/.virtualenvs/ns_runtime/bin/python -m pip check
+   /home/ns/.virtualenvs/ns_backend/bin/python -m pip check
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m compileall -q src tests
+   git diff --check
+   ```
+
+   Result：两环境均为 `No broken requirements found.`；compileall 与 diff check 成功。StateStore 冷导入探针输出 `state_store cold import: OK`，并验证无新 thread、event-loop policy变化、Redis/Valkey driver、runtime反向依赖、global getter 或 StateStoreOwner。
+
+### State ownership 与禁止项检查
+
+- connection/session 未迁移，仍由 P05 logical owner 管理；permission snapshot/credential 未迁移，仍由 P06 IAM authority 管理；processor execution state 未迁移，仍由 P07 pipeline/registry实例管理。
+- Processor package 对 `StateStore/state_store` 源码扫描为零；strong audit只经 AuditSink 和 authority service访问 Store。
+- P08 新增生产源码中无 `StateStore` concrete subclass；具体 Redis、Valkey、SQLite adapter，Lua/Sentinel，lease/fencing、leader/cluster，Delivery/Ack/Nack/Retry/Dead Letter，RoutingPlan/Target Selection扫描均为零。
+- 无 StateStore registry/service locator/ambient getter/hidden dependency；无第二 TaskSupervisor、event loop、shutdown coordinator 或 StateStoreOwner。
+
+### 已知限制与下一工作包
+
+- P08 只冻结 contract 和 strong audit authority chain；没有生产 StateStore provider，因此默认 production composition仍不注入 Store。不得把 deterministic test model当作 adapter或生产持久化证据。
+- 未执行真实 Redis/Valkey/SQLite/cluster 集成；这些能力及 lease/fencing/reliable delivery/routing均未实现，不能由 P08 VERIFIED 推断完成。
+- 下一工作包：`P09-W01`；P09 开始前继续以当前源码、docs 与 ADR重做基线，不从本记录推断实现。
+
+### 最终判断
+
+- 实现完成：是。
+- 测试通过：是。
+- evidence 完整：是。
+- P08 evidence status：`VERIFIED`。
+
 ## 新记录模板
 
 - 工作包：

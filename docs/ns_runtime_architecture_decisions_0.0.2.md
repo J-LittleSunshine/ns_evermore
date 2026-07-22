@@ -417,3 +417,36 @@
 - 最终风险关闭：`ProcessorDependencies.audit_sink/event_bus` 以 `TYPE_CHECKING` 保持 `AuditSink/EventBus` 静态显式类型，runtime local import 只用于构造期防御，不改变 composition，也不引入 import cycle 或 global sink/bus；EventBus 补齐上述 subscription lifecycle。
 - 阶段冻结：`P07-W01` 至 `P07-W10` 经最终证据专项 22 项、processor/connection/session 相关联合 93 项、runtime 687 项和 backend 698 项全量回归，以及 cold import、compileall、pip check、显式类型与禁止边界扫描后达到 `VERIFIED/F3`；P08 StateStore/Redis/Valkey authority/lease/fencing/CAS、DeliveryRecord/AckRecord/NackRecord/DeferRecord/retry/dead-letter、RoutingPlan/target selection/reliable dispatch 均未实现。
 - 关联阶段/工作包：`P07-W01` 至 `P07-W10`、`P08`、`P09`、`P10`、`P12`、`P16`、`P20`。
+
+## ADR-033
+
+- ADR 编号：`ADR-033`
+- 状态：`ACCEPTED`（P08 authority boundary）
+- 背景：P08 需要为后续强一致状态建立统一权威入口，但当前普通 cache 采用 soft-failure 语义，P05 connection/session、P06 IAM 和 P07 processor 又已经分别冻结自己的 owner。若把 StateStore 设计成 Redis 命令包装、全局 registry 或向 processor 暴露的通用字典，会同时破坏状态所有权、依赖隔离和后端中立性。
+- 决策：冻结 `SS-1`。`ns_common.state_store` 只定义 backend-neutral 权威状态契约、类型化 namespace/key、caller capability、authority classification 和 scoped access。P08 当前唯一可激活的 StateStore authority 是 strong audit；connection、session、permission snapshot、credential 和 processor execution state 分别保持 P05/P06/P07 的既有 owner，future authority 仅作为保留分类，不能在 P08 创建领域记录。
+- 决策：StateStore 不是 cache、数据库 wrapper、ORM 或 Redis client，不提供无条件 `put(key, value)` 或 last-write-wins。直接调用者只能是 composition 注入的 authority service/repository；Processor、插件、EventBus subscriber 和 connection handler不得直接访问 StateStore。强审计调用链固定为 `Processor -> AuditSink -> StrongAuditAuthorityService -> StateStore`。
+- 决策：namespace 闭集为 tenant、system、runtime、plugin、audit；所有操作必须携带精确 `StateAccessScope`，同时校验 caller capability、authority、namespace、tenant 和 domain。API 不接受裸字符串 key，不允许跨 namespace、跨 tenant 或跨 domain transaction。P08 不建立 backend discovery、global StateStore registry、service locator 或 hidden dependency。
+- 后果：后续 delivery、routing、cluster 等模块必须先定义各自窄 authority service 和状态 owner，再显式扩展可激活 authority；不得因为 StateStore contract 已存在就提前创建 DeliveryRecord、RoutingPlan、lease 或 cluster state。具体 Redis/Valkey/SQLite adapter、Lua 和拓扑能力不属于 P08。
+- 关联阶段/工作包：`P08-W01`、`P08-W02`、`P08-W03`、`P08-W07`、`P09` 至 `P18`。
+
+## ADR-034
+
+- ADR 编号：`ADR-034`
+- 状态：`ACCEPTED`（P08 version/CAS contract）
+- 背景：schema 兼容版本、领域状态版本、存储提交 revision 和 owner generation 描述不同事实。若业务代码自行递增 revision、混用 epoch 与 fencing token，或允许无断言覆盖，就无法可靠识别 stale write、lost update 和旧 owner 写入。
+- 决策：冻结 `SVC-1`。`schema_version` 由领域 schema 管理；`state_version` 是领域对象成功迁移后的单调版本；`StateRevision` 只能由 StateStore provider 生成并对调用方保持不透明；`epoch` 是由未来 authority 管理的 generation，P08 只允许存储和比较，不负责分配 leader epoch、lease 或 fencing token。
+- 决策：create 使用 absent assertion；replace/delete 必须携带 expected revision，并可同时断言 expected state version 与 expected epoch。断言不满足统一返回 conflict，且不能执行任何 mutation。read-modify-write 必须把读取所得 revision 交回 CAS；多对象更新必须位于同一 `StateAtomicScope` transaction，全部 assertion 先通过后才允许同成同败。
+- 决策：一致性读取闭集为 `LINEARIZABLE`、`AT_LEAST_REVISION` 和 `STALE_ALLOWED`。minimum revision 只能由 Store 解释；调用方不能解析或比较 revision token。跨 atomic scope、跨 namespace、跨 tenant 或跨 domain 的请求必须在 mutation 前拒绝，不能用应用层补写伪装事务。
+- 后果：P08 contract 可以拒绝旧 revision/epoch，但不能阻止旧 owner 已经发出的外部副作用，也不能宣称已经解决 split-brain。真正的 lease、leader epoch allocation 和 fencing token 校验仍属于后续集群/owner 阶段。
+- 关联阶段/工作包：`P08-W02`、`P08-W04`、`P08-W06`、`P10` 至 `P18`。
+
+## ADR-035
+
+- ADR 编号：`ADR-035`
+- 状态：`ACCEPTED`（P08 lifecycle/failure contract）
+- 背景：StateStore 是强状态依赖；若初始化、关闭、timeout 和恢复由各 caller 自行处理，会产生第二套生命周期 owner、隐藏自动重试和写入结果不确定时的重复提交。当前 runtime 已冻结唯一 RuntimeContext、TaskSupervisor、event loop 和 RuntimeShutdownCoordinator。
+- 决策：冻结 `SFL-1`。StateStore 生命周期为 `new -> opening -> open -> closing -> closed`；同步 startup preflight 不连接 Store，composition root 在 preflight 成功后创建并 open 显式实例，启用强状态 capability 时必须在 admission 前 ready。RuntimeContext 只增加一个有限类型 slot，不增加 registry；Store 自身不创建 TaskSupervisor、event loop 或 shutdown coordinator。
+- 决策：RuntimeService 在存在显式 StateStore 时只接受 `open/ready` 实例。所有 P08 background coroutine 必须复用既有 TaskSupervisor。shutdown 继续由同一个 RuntimeShutdownCoordinator 编排：停止 admission、drain/close transport、停止 supervised tasks、关闭 StateStore、再 flush/close sinks 和其他 client；StateStore close 必须幂等，普通失败进入安全 shutdown report 且不能跳过后续资源。
+- 决策：稳定失败语义至少包括 not ready、closed、unavailable、timeout、conflict、stale read、capability unavailable、namespace violation、version mismatch 和 indeterminate write。read timeout 可以由上层按明确策略有界重试；write timeout 若无法证明未提交，必须返回 indeterminate write，禁止 StateStore 或 caller 自动重试。unavailable/recovery 期间依赖强状态的 gate 保持关闭；恢复必须重新验证 health、capability 和 contract generation，不自动触发 replay、owner takeover 或权限恢复。
+- 后果：普通本地 connection lifecycle、heartbeat、关闭和观测可以按既有策略继续，但 strong audit 或未来 authority mutation 不能在 Store 不可用时返回伪成功。P08 只冻结抽象和 deterministic contract verification，不实现具体 provider。
+- 关联阶段/工作包：`P08-W05`、`P08-W06`、`P08-W08`、`P20`。

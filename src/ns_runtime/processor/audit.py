@@ -10,7 +10,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 
-from ns_common.exceptions import NsValidationError
+from ns_common.exceptions import (
+    NsStateError,
+    NsValidationError,
+)
 
 from .contracts import ProcessorSafeSummary, ProcessorTraceReference
 
@@ -98,7 +101,7 @@ class DeterministicTestAuditSink(AuditSink):
 
 
 class LoggingAuditSink(AuditSink):
-    """Ordinary local sink; records retain strong-required as a requirement only."""
+    """Ordinary local sink; it cannot satisfy strong authority semantics."""
 
     def __init__(self, *, logger: logging.Logger) -> None:
         if not isinstance(logger, logging.Logger):
@@ -108,6 +111,15 @@ class LoggingAuditSink(AuditSink):
     async def emit(self, record: ProcessorAuditRecord) -> None:
         if not isinstance(record, ProcessorAuditRecord):
             _invalid("record")
+        if record.required_consistency is AuditConsistency.STRONG_REQUIRED:
+            raise NsStateError(
+                "Strong audit authority is unavailable.",
+                details={
+                    "component": "processor_audit",
+                    "operation": "emit",
+                    "reason": "strong_audit_authority_required",
+                },
+            )
         self._logger.info(
             "Runtime processor final audit.",
             extra={

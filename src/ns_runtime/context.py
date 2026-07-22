@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         MetricsSink,
         TraceSink,
     )
+    from ns_common.state_store import StateStore
     from ns_common.time import Clock
 
 
@@ -87,6 +88,7 @@ class RuntimeDependencySlots:
 
     diagnostic_snapshot_sink: DiagnosticSnapshotSink | None = None
     http_client_owner: NsHttpClientOwner | None = None
+    state_store: StateStore | None = None
 
     def __post_init__(self) -> None:
         if self.diagnostic_snapshot_sink is not None:
@@ -102,6 +104,13 @@ class RuntimeDependencySlots:
                 dependency="dependencies.http_client_owner",
                 module_name="ns_common.http_client",
                 expected_type_name="NsHttpClientOwner",
+            )
+        if self.state_store is not None:
+            _require_loaded_dependency(
+                self.state_store,
+                dependency="dependencies.state_store",
+                module_name="ns_common.state_store",
+                expected_type_name="StateStore",
             )
 
 
@@ -187,6 +196,10 @@ class RuntimeContext:
     @property
     def http_client_owner(self) -> NsHttpClientOwner | None:
         return self.dependencies.http_client_owner
+
+    @property
+    def state_store(self) -> StateStore | None:
+        return self.dependencies.state_store
 
 
 __all__ = [

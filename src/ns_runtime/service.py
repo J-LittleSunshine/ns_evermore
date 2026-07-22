@@ -194,6 +194,7 @@ class RuntimeService:
         async with self._lifecycle_lock:
             self._transition(RuntimeServiceState.STARTING, operation="start")
             try:
+                await self._require_state_store_ready()
                 await self._on_start()
                 if self._event_loop_monitor is not None:
                     monitor_task = self._event_loop_monitor.start()
@@ -204,6 +205,38 @@ class RuntimeService:
                 self._transition(RuntimeServiceState.FAILED, operation="start")
                 raise
             self._transition(RuntimeServiceState.RUNNING, operation="start")
+
+    async def _require_state_store_ready(self) -> None:
+        state_store = self._context.state_store
+        if state_store is None:
+            return
+        from ns_common.state_store import (
+            StateStoreHealthStatus,
+            StateStoreLifecycleState,
+        )
+
+        if state_store.state is not StateStoreLifecycleState.OPEN:
+            from ns_common.exceptions import NsRuntimeStateStoreNotReadyError
+
+            raise NsRuntimeStateStoreNotReadyError(
+                details={
+                    "component": "runtime_service",
+                    "operation": "start",
+                    "reason": "state_store_not_open",
+                },
+            )
+        health = await state_store.health()
+        if health.status is not StateStoreHealthStatus.READY:
+            from ns_common.exceptions import NsRuntimeStateStoreUnavailableError
+
+            raise NsRuntimeStateStoreUnavailableError(
+                details={
+                    "component": "runtime_service",
+                    "operation": "start",
+                    "reason": "state_store_not_ready",
+                    "status": health.status.value,
+                },
+            )
 
     async def stop(self) -> None:
         loop = asyncio.get_running_loop()

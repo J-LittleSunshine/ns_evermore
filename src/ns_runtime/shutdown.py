@@ -37,6 +37,7 @@ class RuntimeShutdownPhase(str, Enum):
     DRAIN_TRANSPORT = "drain_transport"
     CLOSE_TRANSPORT = "close_transport"
     CANCEL_TASKS = "cancel_tasks"
+    CLOSE_STATE_STORE = "close_state_store"
     FLUSH_SINKS = "flush_sinks"
     CLOSE_SINKS = "close_sinks"
     CLOSE_CLIENTS = "close_clients"
@@ -334,6 +335,16 @@ class RuntimeShutdownCoordinator:
 
             phases.append(RuntimeShutdownPhase.CANCEL_TASKS)
             task_report = await self._shutdown_tasks(failures)
+
+            phases.append(RuntimeShutdownPhase.CLOSE_STATE_STORE)
+            state_store = self._context.state_store
+            if state_store is not None:
+                await self._attempt_async(
+                    state_store.close,
+                    phase=RuntimeShutdownPhase.CLOSE_STATE_STORE,
+                    resource="state_store",
+                    failures=failures,
+                )
 
             sinks = self._sinks()
             phases.append(RuntimeShutdownPhase.FLUSH_SINKS)
