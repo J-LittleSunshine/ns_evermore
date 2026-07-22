@@ -18,7 +18,8 @@ from ns_common.exceptions import NsValidationError
 from ns_runtime.routing import ResolvedRoutingPlan, RoutingStrategy, SelectedRoutingBinding
 
 
-DR1_SCHEMA_VERSION = "dr-1"
+LEGACY_DR1_SCHEMA_VERSION = "dr-1"
+DR1_SCHEMA_VERSION = "dr-2"
 PAYLOAD_EVIDENCE_VERSION = "payload-evidence-1"
 DEDUP_EVIDENCE_VERSION = "dedup-evidence-1"
 ADMISSION_RESPONSE_VERSION = "delivery-admission-response-1"
@@ -27,19 +28,19 @@ ATOMIC_ADMISSION_VERSION = "delivery-admission-atomic-1"
 P11_ATTEMPT_SCHEMA_VERSION = "delivery-attempt-1"
 P11_ACTIVATION_SCHEMA_VERSION = "delivery-activation-1"
 P11_OWNER_SCHEMA_VERSION = "delivery-owner-1"
-MAX_UNSHARDED_TARGETS = 5000
-DEFAULT_SHARD_BUCKET_SIZE = 1000
-DEFAULT_INITIALIZATION_BATCH_SIZE = 500
+MAX_ACTIVATION_BATCH_SIZE = 1000
 _TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,511}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class DeliverySummaryStatus(str, Enum):
     INITIALIZING = "initializing"
-    ACCEPTED = "accepted"
-    PARTIAL = "partial"
+    PENDING = "pending"
+    PARTIAL_ACKED = "partial_acked"
+    ALL_ACKED = "all_acked"
+    PARTIAL_FAILED = "partial_failed"
     FAILED = "failed"
-    CANCELLED_INITIALIZING = "cancelled_initializing"
+    CANCELLED = "cancelled"
 
 
 class DeliveryRecordStatus(str, Enum):
@@ -48,9 +49,13 @@ class DeliveryRecordStatus(str, Enum):
     SENDING = "sending"
     ACK_WAITING = "ack_waiting"
     WRITE_FAILED = "write_failed"
+    EXPIRED = "expired"
+    PAYLOAD_REJECTED = "payload_rejected"
+    TARGET_WAITING = "target_waiting"
+    WRITE_UNCERTAIN = "write_uncertain"
     # Contract placeholder only. P11 has no production transition into retry.
     RETRY_SCHEDULED = "retry_scheduled"
-    CANCELLED_INITIALIZING = "cancelled_initializing"
+    CANCELLED = "cancelled"
 
 
 class DeliveryOwnerRisk(str, Enum):
@@ -62,6 +67,7 @@ class DeliveryAttemptStatus(str, Enum):
     WRITING = "writing"
     WRITE_SUCCEEDED = "write_succeeded"
     WRITE_FAILED = "write_failed"
+    WRITE_UNCERTAIN = "write_uncertain"
 
 
 class DeliveryWriteFailure(str, Enum):
@@ -74,6 +80,7 @@ class DeliveryWriteFailure(str, Enum):
     TRANSPORT_WRITE_FAILED = "transport_write_failed"
     TRANSPORT_WRITE_TIMEOUT = "transport_write_timeout"
     SHUTDOWN_INTERRUPTED = "shutdown_interrupted"
+    AUTHORITY_CONFLICT_AFTER_WRITE = "authority_conflict_after_write"
 
 
 class PayloadKind(str, Enum):
@@ -96,16 +103,17 @@ class AdmissionReliability(str, Enum):
 
 class PayloadDependencyDisposition(str, Enum):
     REJECT = "reject"
-    WAIT = "wait"
-    DEAD_LETTER = "dead_letter"
+    WAIT_REQUIRED = "wait_required"
+    DEAD_LETTER_REQUIRED = "dead_letter_required"
+    DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
 
 
 class AdmissionOutcome(str, Enum):
     ACCEPTED = "accepted"
     REJECTED = "rejected"
     DUPLICATE = "duplicate"
-    WAIT = "wait"
-    DEAD_LETTER = "dead_letter"
+    WAIT_REQUIRED = "wait_required"
+    DEAD_LETTER_REQUIRED = "dead_letter_required"
     UNAVAILABLE = "unavailable"
 
 
@@ -147,6 +155,28 @@ class AdmissionTrace:
         if self.correlation_id is not None:
             result["correlation_id"] = self.correlation_id
         return result
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DeliveryEnvelopeAuthority:
+    message_type: str
+    source_identity: str = field(repr=False)
+    authorization_binding_reference: str = field(repr=False)
+    permission_snapshot_ref: str = field(repr=False)
+    permission_snapshot_version: str
+    iam_decision_reference: str = field(repr=False)
+    iam_decision_version: str
+    trace: AdmissionTrace
+
+    def __post_init__(self) -> None:
+        for name in (
+            "message_type", "source_identity", "authorization_binding_reference",
+            "permission_snapshot_ref", "permission_snapshot_version",
+            "iam_decision_reference", "iam_decision_version",
+        ):
+            _text(getattr(self, name), f"envelope_authority.{name}")
+        if not isinstance(self.trace, AdmissionTrace):
+            _invalid("envelope_authority.trace")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -199,6 +229,9 @@ class PayloadEvidence:
     tenant_id: str | None = field(default=None, repr=False)
     validated_at: datetime | None = None
     expires_at: datetime | None = None
+    body_ref: str | None = field(default=None, repr=False)
+    request_binding_fingerprint: str = ""
+    target_binding_fingerprint: str = ""
 
     def __post_init__(self) -> None:
         if self.schema_version != PAYLOAD_EVIDENCE_VERSION:
@@ -210,15 +243,18 @@ class PayloadEvidence:
         _digest(self.digest, "payload_evidence.digest")
         _text(self.checksum, "payload_evidence.checksum")
         _digest(self.evidence_fingerprint, "payload_evidence.evidence_fingerprint")
+        _digest(self.request_binding_fingerprint, "payload_evidence.request_binding_fingerprint")
+        _digest(self.target_binding_fingerprint, "payload_evidence.target_binding_fingerprint")
         refs = (self.object_id, self.object_version, self.tenant_id,
                 self.validated_at, self.expires_at)
         if self.kind is PayloadKind.INLINE:
             if any(value is not None for value in refs):
                 _invalid("payload_evidence.inline_reference")
+            _text(self.body_ref, "payload_evidence.body_ref")
             if self.checksum != self.digest:
                 _invalid("payload_evidence.inline_checksum")
         else:
-            if any(value is None for value in refs):
+            if any(value is None for value in refs) or self.body_ref is not None:
                 _invalid("payload_evidence.reference_metadata")
             for name in ("object_id", "object_version", "tenant_id"):
                 _text(getattr(self, name), f"payload_evidence.{name}")
@@ -232,6 +268,9 @@ class PayloadEvidence:
             checksum=self.checksum, object_id=self.object_id,
             object_version=self.object_version, tenant_id=self.tenant_id,
             validated_at=self.validated_at, expires_at=self.expires_at,
+            body_ref=self.body_ref,
+            request_binding_fingerprint=self.request_binding_fingerprint,
+            target_binding_fingerprint=self.target_binding_fingerprint,
         ):
             _invalid("payload_evidence.evidence_fingerprint")
 
@@ -244,6 +283,8 @@ class PayloadEvidence:
             "digest": self.digest,
             "checksum": self.checksum,
             "evidence_fingerprint": self.evidence_fingerprint,
+            "request_binding_fingerprint": self.request_binding_fingerprint,
+            "target_binding_fingerprint": self.target_binding_fingerprint,
         }
         if self.kind is PayloadKind.REFERENCE:
             result.update({
@@ -253,6 +294,8 @@ class PayloadEvidence:
                 "validated_at": self.validated_at.isoformat(),  # type: ignore[union-attr]
                 "expires_at": self.expires_at.isoformat(),  # type: ignore[union-attr]
             })
+        else:
+            result["body_ref"] = self.body_ref
         return result
 
 
@@ -271,6 +314,10 @@ class AdmissionPolicyDecision:
     max_inline_bytes: int
     max_json_depth: int
     payload_dependency_disposition: PayloadDependencyDisposition
+    fanout_shard_threshold: int
+    shard_bucket_size: int
+    initialization_batch_size: int
+    activation_batch_size: int
     rejection_reason: RejectionReason | None = None
 
     def __post_init__(self) -> None:
@@ -286,8 +333,12 @@ class AdmissionPolicyDecision:
             if not isinstance(getattr(self, name), typ):
                 _invalid(f"policy_decision.{name}")
         object.__setattr__(self, "expires_at", _utc(self.expires_at, "policy_decision.expires_at"))
-        for name in ("ack_timeout_seconds", "dedup_ttl_seconds", "max_inline_bytes", "max_json_depth"):
+        for name in ("ack_timeout_seconds", "dedup_ttl_seconds", "max_inline_bytes", "max_json_depth",
+                     "fanout_shard_threshold", "shard_bucket_size",
+                     "initialization_batch_size", "activation_batch_size"):
             _positive(getattr(self, name), f"policy_decision.{name}")
+        if self.activation_batch_size > MAX_ACTIVATION_BATCH_SIZE:
+            _invalid("policy_decision.activation_batch_size")
         if self.accepted is (self.rejection_reason is not None):
             _invalid("policy_decision.rejection_reason")
         if self.rejection_reason is not None and not isinstance(self.rejection_reason, RejectionReason):
@@ -335,6 +386,7 @@ class DeliveryOwner:
     lease_expires_at: datetime
     renew_failures: int
     risk: DeliveryOwnerRisk
+    fencing: int
     risk_since: datetime | None = None
     protection_until: datetime | None = None
 
@@ -348,6 +400,7 @@ class DeliveryOwner:
         if self.lease_expires_at <= self.claimed_at:
             _invalid("owner.lease_expires_at")
         _nonnegative(self.renew_failures, "owner.renew_failures")
+        _positive(self.fencing, "owner.fencing")
         if not isinstance(self.risk, DeliveryOwnerRisk):
             _invalid("owner.risk")
         if self.risk is DeliveryOwnerRisk.HEALTHY:
@@ -370,6 +423,10 @@ class DeliveryAttempt:
     owner_runtime_id: str
     owner_worker_id: str
     owner_claim_token: str = field(repr=False)
+    owner_fencing: int
+    config_version: str
+    policy_version: str
+    target_fingerprint: str
     status: DeliveryAttemptStatus
     started_at: datetime
     ack_deadline: datetime
@@ -385,6 +442,10 @@ class DeliveryAttempt:
         ):
             _text(getattr(self, name), f"attempt.{name}")
         _positive(self.attempt_number, "attempt.attempt_number")
+        _positive(self.owner_fencing, "attempt.owner_fencing")
+        _text(self.config_version, "attempt.config_version")
+        _text(self.policy_version, "attempt.policy_version")
+        _digest(self.target_fingerprint, "attempt.target_fingerprint")
         if not isinstance(self.status, DeliveryAttemptStatus):
             _invalid("attempt.status")
         object.__setattr__(self, "started_at", _utc(self.started_at, "attempt.started_at"))
@@ -454,7 +515,9 @@ class MessageDeliverySummary:
                 _invalid("summary.shard_identity")
         elif self.summary_id != self.root_summary_id:
             _invalid("summary.root_identity")
-        _positive(self.shard_count, "summary.shard_count")
+        _nonnegative(self.shard_count, "summary.shard_count")
+        if self.shard_index is not None and self.shard_count == 0:
+            _invalid("summary.shard_count")
         counts = (self.total_count, self.accepted_count, self.rejected_count,
                   self.prepared_count, self.cancelled_count,
                   self.not_initialized_count, self.active_count, self.inflight_count,
@@ -467,7 +530,7 @@ class MessageDeliverySummary:
         if (
             self.prepared_count + self.queued_count + self.sending_count
             + self.ack_waiting_count + self.write_failed_count
-            + self.cancelled_count > self.accepted_count
+            + self.cancelled_count != self.accepted_count
         ):
             _invalid("summary.delivery_count")
         if self.active_count != self.sending_count:
@@ -478,6 +541,13 @@ class MessageDeliverySummary:
             _invalid("summary.payload_evidence")
         if not isinstance(self.policy_decision, AdmissionPolicyDecision):
             _invalid("summary.policy_decision")
+        if self.payload_evidence is not None and (
+            self.payload_evidence.request_binding_fingerprint
+            != self.policy_decision.request_fingerprint
+            or self.payload_evidence.target_binding_fingerprint
+            != self.target_fingerprint
+        ):
+            _invalid("summary.payload_binding")
         if not isinstance(self.rejection_evidence, tuple) or any(
             not isinstance(value, TargetRejection) for value in self.rejection_evidence
         ):
@@ -496,18 +566,20 @@ class DeliveryRecord:
     delivery_id: str = field(repr=False)
     summary_id: str = field(repr=False)
     root_summary_id: str = field(repr=False)
-    shard_index: int
+    shard_index: int | None
     message_id: str
     tenant_id: str = field(repr=False)
     plan_id: str = field(repr=False)
     plan_version: int
     plan_decision_fingerprint: str
     target_fingerprint: str
+    target_set_fingerprint: str
     target_index: int
     binding: SelectedRoutingBinding = field(repr=False)
     status: DeliveryRecordStatus
     payload_evidence: PayloadEvidence
     policy_decision: AdmissionPolicyDecision
+    envelope_authority: DeliveryEnvelopeAuthority
     state_version: int
     created_at: datetime
     updated_at: datetime
@@ -525,9 +597,12 @@ class DeliveryRecord:
             _text(getattr(self, name), f"delivery.{name}")
         for name in ("plan_version", "state_version"):
             _positive(getattr(self, name), f"delivery.{name}")
-        for name in ("shard_index", "target_index"):
-            _nonnegative(getattr(self, name), f"delivery.{name}")
-        for name in ("plan_decision_fingerprint", "target_fingerprint"):
+        if self.shard_index is not None:
+            _nonnegative(self.shard_index, "delivery.shard_index")
+        _nonnegative(self.target_index, "delivery.target_index")
+        if (self.shard_index is None) is not (self.summary_id == self.root_summary_id):
+            _invalid("delivery.summary_binding")
+        for name in ("plan_decision_fingerprint", "target_fingerprint", "target_set_fingerprint"):
             _digest(getattr(self, name), f"delivery.{name}")
         if not isinstance(self.binding, SelectedRoutingBinding):
             _invalid("delivery.binding")
@@ -537,6 +612,13 @@ class DeliveryRecord:
             _invalid("delivery.payload_evidence")
         if not isinstance(self.policy_decision, AdmissionPolicyDecision):
             _invalid("delivery.policy_decision")
+        if not isinstance(self.envelope_authority, DeliveryEnvelopeAuthority):
+            _invalid("delivery.envelope_authority")
+        if (self.payload_evidence.request_binding_fingerprint
+                != self.policy_decision.request_fingerprint
+                or self.payload_evidence.target_binding_fingerprint
+                != self.target_set_fingerprint):
+            _invalid("delivery.payload_binding")
         object.__setattr__(self, "created_at", _utc(self.created_at, "delivery.created_at"))
         object.__setattr__(self, "updated_at", _utc(self.updated_at, "delivery.updated_at"))
         if self.updated_at < self.created_at:
@@ -620,6 +702,8 @@ def compute_payload_evidence_fingerprint(
     digest: str, checksum: str, object_id: str | None = None,
     object_version: str | None = None, tenant_id: str | None = None,
     validated_at: datetime | None = None, expires_at: datetime | None = None,
+    body_ref: str | None = None, request_binding_fingerprint: str,
+    target_binding_fingerprint: str,
 ) -> str:
     if not isinstance(kind, PayloadKind):
         _invalid("payload_fingerprint.kind")
@@ -630,6 +714,9 @@ def compute_payload_evidence_fingerprint(
         "tenant_id": tenant_id,
         "validated_at": (validated_at.isoformat() if validated_at else None),
         "expires_at": (expires_at.isoformat() if expires_at else None),
+        "body_ref": body_ref,
+        "request_binding_fingerprint": request_binding_fingerprint,
+        "target_binding_fingerprint": target_binding_fingerprint,
     })
 
 
@@ -660,25 +747,45 @@ def validate_initialization_graph(
             or dedup.target_fingerprint != target_fingerprint
             or dedup.summary_id != root.summary_id):
         _invalid("initialization.authority_chain")
-    expected_shards = 1 if root.total_count <= MAX_UNSHARDED_TARGETS else (
-        root.total_count + DEFAULT_SHARD_BUCKET_SIZE - 1
-    ) // DEFAULT_SHARD_BUCKET_SIZE
+    threshold = root.policy_decision.fanout_shard_threshold
+    bucket_size = root.policy_decision.shard_bucket_size
+    expected_shards = 0 if root.total_count <= threshold else (
+        root.total_count + bucket_size - 1
+    ) // bucket_size
     if root.shard_count != expected_shards or len(shards) != expected_shards:
         _invalid("initialization.shard_count")
     if tuple(value.shard_index for value in shards) != tuple(range(expected_shards)):
         _invalid("initialization.shard_order")
     if any(value.root_summary_id != root.summary_id for value in shards):
         _invalid("initialization.shard_root")
-    if sum(value.total_count for value in shards) != root.total_count:
+    if expected_shards and sum(value.total_count for value in shards) != root.total_count:
         _invalid("initialization.shard_totals")
+    root_fields = (
+        "schema_version", "root_summary_id", "shard_count", "message_id",
+        "tenant_id", "plan_id", "plan_version", "plan_decision_fingerprint",
+        "target_fingerprint", "payload_evidence", "policy_decision",
+    )
+    if any(
+        any(getattr(value, field_name) != getattr(root, field_name)
+            for field_name in root_fields)
+        for value in shards
+    ):
+        _invalid("initialization.shard_authority_chain")
     if len(deliveries) != root.prepared_count:
         _invalid("initialization.delivery_count")
-    accepted_bindings = tuple(
-        value.binding for value in sorted(deliveries, key=lambda item: item.target_index)
-    )
+    selected = plan.selected_bindings
+    delivery_indexes = tuple(value.target_index for value in deliveries)
+    if (
+        len(set(delivery_indexes)) != len(delivery_indexes)
+        or any(index >= len(selected) for index in delivery_indexes)
+        or any(selected[value.target_index] != value.binding for value in deliveries)
+    ):
+        _invalid("initialization.delivery_target_index")
     if any(
         value.status is not DeliveryRecordStatus.PREPARED
         or value.root_summary_id != root.summary_id
+        or (expected_shards == 0 and value.summary_id != root.summary_id)
+        or (expected_shards > 0 and value.summary_id == root.summary_id)
         or value.message_id != root.message_id
         or value.tenant_id != root.tenant_id
         or value.plan_id != root.plan_id
@@ -687,12 +794,49 @@ def validate_initialization_graph(
         or value.payload_evidence != root.payload_evidence
         or value.policy_decision != root.policy_decision
         or value.target_fingerprint != compute_binding_fingerprint(value.binding)
+        or value.target_set_fingerprint != root.target_fingerprint
         for value in deliveries
     ):
         _invalid("initialization.delivery_authority_chain")
-    selected_set = set(plan.selected_bindings)
-    if any(value not in selected_set for value in accepted_bindings):
-        _invalid("initialization.delivery_not_selected")
+    selected_fingerprints = tuple(compute_binding_fingerprint(value) for value in selected)
+    fingerprint_indexes = {
+        value: index for index, value in enumerate(selected_fingerprints)
+    }
+    rejected_fingerprints = tuple(value.target_fingerprint for value in root.rejection_evidence)
+    if (
+        len(fingerprint_indexes) != len(selected_fingerprints)
+        or
+        root.rejected_count != len(rejected_fingerprints)
+        or len(set(rejected_fingerprints)) != len(rejected_fingerprints)
+        or any(value not in fingerprint_indexes for value in rejected_fingerprints)
+        or set(delivery_indexes) | {
+            fingerprint_indexes[value] for value in rejected_fingerprints
+        } != set(range(root.total_count))
+        or set(delivery_indexes) & {
+            fingerprint_indexes[value] for value in rejected_fingerprints
+        }
+    ):
+        _invalid("initialization.target_partition")
+    for shard in shards:
+        start = shard.shard_index * bucket_size
+        end = min(root.total_count, start + bucket_size)
+        indexes = set(range(start, end))
+        shard_deliveries = tuple(value for value in deliveries if value.target_index in indexes)
+        shard_rejections = tuple(
+            value for value in root.rejection_evidence
+            if fingerprint_indexes[value.target_fingerprint] in indexes
+        )
+        if (
+            shard.total_count != end - start
+            or shard.accepted_count != len(shard_deliveries)
+            or shard.prepared_count != len(shard_deliveries)
+            or shard.rejected_count != len(shard_rejections)
+            or shard.rejection_evidence != shard_rejections
+            or any(value.shard_index != shard.shard_index
+                   or value.summary_id != shard.summary_id
+                   for value in shard_deliveries)
+        ):
+            _invalid("initialization.shard_partition")
 
 
 def _validate_summary_status(value: MessageDeliverySummary) -> None:
@@ -704,16 +848,13 @@ def _validate_summary_status(value: MessageDeliverySummary) -> None:
                     value.ack_waiting_count, value.write_failed_count))
         ):
             _invalid("summary.initializing_counts")
-    elif value.status is DeliverySummaryStatus.ACCEPTED:
-        if value.accepted_count != value.total_count or value.rejected_count or value.not_initialized_count:
-            _invalid("summary.accepted_counts")
-    elif value.status is DeliverySummaryStatus.PARTIAL:
-        if not value.accepted_count or not (value.rejected_count or value.not_initialized_count):
-            _invalid("summary.partial_counts")
+    elif value.status is DeliverySummaryStatus.PENDING:
+        if not value.accepted_count:
+            _invalid("summary.pending_counts")
     elif value.status is DeliverySummaryStatus.FAILED:
         if value.accepted_count or value.prepared_count or value.cancelled_count:
             _invalid("summary.failed_counts")
-    elif value.status is DeliverySummaryStatus.CANCELLED_INITIALIZING:
+    elif value.status is DeliverySummaryStatus.CANCELLED:
         if (
             value.prepared_count
             or value.cancelled_count != value.accepted_count
@@ -727,7 +868,7 @@ def _validate_delivery_dispatch_state(value: DeliveryRecord) -> None:
     status = value.status
     if status in {
         DeliveryRecordStatus.PREPARED,
-        DeliveryRecordStatus.CANCELLED_INITIALIZING,
+        DeliveryRecordStatus.CANCELLED,
     }:
         if any((value.activation, value.owner, value.current_attempt_id,
                 value.ack_deadline, value.last_failure)) or value.attempt_count:
@@ -756,7 +897,15 @@ def _validate_delivery_dispatch_state(value: DeliveryRecord) -> None:
         ):
             _invalid("delivery.inflight_fields")
         return
-    if status is DeliveryRecordStatus.WRITE_FAILED:
+    if status in {DeliveryRecordStatus.EXPIRED, DeliveryRecordStatus.PAYLOAD_REJECTED,
+                  DeliveryRecordStatus.TARGET_WAITING}:
+        if (value.owner is not None or value.current_attempt_id is not None
+                or value.attempt_count or value.ack_deadline is not None
+                or not isinstance(value.last_failure, DeliveryWriteFailure)):
+            _invalid("delivery.precheck_terminal_fields")
+        return
+    if status in {DeliveryRecordStatus.WRITE_FAILED,
+                  DeliveryRecordStatus.WRITE_UNCERTAIN}:
         if (
             value.owner is not None
             or value.current_attempt_id is None
@@ -810,7 +959,8 @@ def cancel_initializing_graph(
         _invalid("initializing_cancel.deliveries")
     by_shard: dict[int, int] = {}
     for value in created_deliveries:
-        by_shard[value.shard_index] = by_shard.get(value.shard_index, 0) + 1
+        shard_key = value.shard_index if value.shard_index is not None else -1
+        by_shard[shard_key] = by_shard.get(shard_key, 0) + 1
     cancelled_shards = []
     for shard in shards:
         created = by_shard.get(shard.shard_index or 0, 0)
@@ -818,7 +968,7 @@ def cancel_initializing_graph(
         if created > intended:
             _invalid("initializing_cancel.shard_created_count")
         cancelled_shards.append(dataclasses.replace(
-            shard, status=DeliverySummaryStatus.CANCELLED_INITIALIZING,
+            shard, status=DeliverySummaryStatus.CANCELLED,
             accepted_count=created, prepared_count=0, cancelled_count=created,
             not_initialized_count=intended - created,
             state_version=shard.state_version + 1, updated_at=cancelled_at,
@@ -828,13 +978,13 @@ def cancel_initializing_graph(
     if created != sum(by_shard.values()) or created > intended:
         _invalid("initializing_cancel.created_count")
     cancelled_root = dataclasses.replace(
-        root, status=DeliverySummaryStatus.CANCELLED_INITIALIZING,
+        root, status=DeliverySummaryStatus.CANCELLED,
         accepted_count=created, prepared_count=0, cancelled_count=created,
         not_initialized_count=intended - created,
         state_version=root.state_version + 1, updated_at=cancelled_at,
     )
     cancelled_deliveries = tuple(dataclasses.replace(
-        value, status=DeliveryRecordStatus.CANCELLED_INITIALIZING,
+        value, status=DeliveryRecordStatus.CANCELLED,
         state_version=value.state_version + 1, updated_at=cancelled_at,
     ) for value in created_deliveries)
     return cancelled_root, tuple(cancelled_shards), cancelled_deliveries
@@ -927,8 +1077,7 @@ def _invalid(field_name: str) -> None:
 __all__ = (
     "ADMISSION_RESPONSE_VERSION", "ADMISSION_RESULT_VERSION",
     "ATOMIC_ADMISSION_VERSION", "DEDUP_EVIDENCE_VERSION",
-    "DEFAULT_INITIALIZATION_BATCH_SIZE", "DEFAULT_SHARD_BUCKET_SIZE",
-    "DR1_SCHEMA_VERSION", "MAX_UNSHARDED_TARGETS",
+    "DR1_SCHEMA_VERSION", "MAX_ACTIVATION_BATCH_SIZE",
     "PAYLOAD_EVIDENCE_VERSION", "P11_ACTIVATION_SCHEMA_VERSION",
     "P11_ATTEMPT_SCHEMA_VERSION", "P11_OWNER_SCHEMA_VERSION",
     "AdmissionOutcome", "AdmissionPriority",

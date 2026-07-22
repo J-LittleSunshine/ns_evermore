@@ -10,8 +10,15 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from ns_common.exceptions import NsValidationError
+from ns_runtime.protocol import Envelope, PayloadGroup, canonical_checksum, canonical_serialize
 
-from .models import DeliveryAttempt, DeliveryRecord, DeliveryWriteFailure, PayloadKind
+from .models import (
+    MAX_ACTIVATION_BATCH_SIZE,
+    DeliveryAttempt,
+    DeliveryRecord,
+    DeliveryWriteFailure,
+    PayloadKind,
+)
 
 
 class ActivationSkipReason(str, Enum):
@@ -68,6 +75,8 @@ class DeliverySchedulingPolicy:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 _invalid(f"policy.{name}")
+        if self.activation_batch_size > MAX_ACTIVATION_BATCH_SIZE:
+            _invalid("policy.activation_batch_size")
         for name in (
             "lease_ttl_seconds", "renew_interval_seconds",
             "owner_risk_window_seconds", "write_timeout_seconds",
@@ -157,10 +166,13 @@ class DeliveryClaim:
     runtime_id: str
     worker_id: str
     claim_token: str = field(repr=False)
+    fencing: int
 
     def __post_init__(self) -> None:
         for name in ("tenant_id", "delivery_id", "runtime_id", "worker_id", "claim_token"):
             _text(getattr(self, name), f"claim.{name}")
+        if isinstance(self.fencing, bool) or not isinstance(self.fencing, int) or self.fencing <= 0:
+            _invalid("claim.fencing")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -205,21 +217,31 @@ class PayloadValidationResult:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class OutboundDeliveryPayload:
-    wire_text: str = field(repr=False)
-    message_id: str
-    target_fingerprint: str
+class OutboundDeliveryMaterial:
+    payload: PayloadGroup = field(repr=False)
     evidence_fingerprint: str
-    content_digest: str
 
     def __post_init__(self) -> None:
-        if type(self.wire_text) is not str or not self.wire_text:
-            _invalid("outbound_payload.wire_text")
-        for name in (
-            "message_id", "target_fingerprint", "evidence_fingerprint",
-            "content_digest",
-        ):
-            _text(getattr(self, name), f"outbound_payload.{name}")
+        if not isinstance(self.payload, PayloadGroup):
+            _invalid("outbound_material.payload")
+        _text(self.evidence_fingerprint, "outbound_material.evidence_fingerprint")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OutboundDeliveryPayload:
+    envelope: Envelope = field(repr=False)
+    canonical_bytes: bytes = field(repr=False)
+    envelope_digest: str
+    evidence_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.envelope, Envelope) or not isinstance(self.canonical_bytes, bytes):
+            _invalid("outbound_payload.envelope")
+        if self.canonical_bytes != canonical_serialize(self.envelope):
+            _invalid("outbound_payload.canonical_bytes")
+        if self.envelope_digest != canonical_checksum(self.envelope):
+            _invalid("outbound_payload.envelope_digest")
+        _text(self.evidence_fingerprint, "outbound_payload.evidence_fingerprint")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -296,7 +318,7 @@ class DeliveryPayloadValidator(ABC):
 
 class DeliveryPayloadResolver(ABC):
     @abstractmethod
-    async def resolve(self, delivery: DeliveryRecord) -> OutboundDeliveryPayload:
+    async def resolve(self, delivery: DeliveryRecord) -> OutboundDeliveryMaterial:
         raise NotImplementedError
 
 
@@ -368,10 +390,14 @@ def validate_outbound_payload(
     if not isinstance(delivery, DeliveryRecord) or not isinstance(payload, OutboundDeliveryPayload):
         _invalid("outbound_authority")
     return (
-        payload.message_id == delivery.message_id
-        and payload.target_fingerprint == delivery.target_fingerprint
+        payload.envelope.message.message_id == delivery.message_id
+        and payload.envelope.delivery is not None
+        and payload.envelope.delivery.delivery_id == delivery.delivery_id
+        and payload.envelope.delivery.attempt == delivery.attempt_count
+        and payload.envelope.target is not None
+        and payload.envelope.target.connection_id == delivery.binding.connection_id
+        and payload.envelope.target.connection_epoch == delivery.binding.connection_epoch
         and payload.evidence_fingerprint == delivery.payload_evidence.evidence_fingerprint
-        and payload.content_digest == delivery.payload_evidence.digest
     )
 
 
@@ -404,7 +430,7 @@ __all__ = (
     "DeliveryResourceCounts", "DeliverySchedulingPolicy", "DeliveryTargetResolver",
     "DeliveryTransportWriter",
     "LeaseRenewOutcome", "LeaseRenewResult", "LocalDeliveryTarget",
-    "OutboundDeliveryPayload", "OwnerRiskGuard",
+    "OutboundDeliveryMaterial", "OutboundDeliveryPayload", "OwnerRiskGuard",
     "PayloadValidationResult", "SendOutcome", "SendResult", "SendingTransition",
     "validate_outbound_payload", "validate_payload_authority",
 )

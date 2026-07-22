@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from abc import ABC, abstractmethod
 from enum import Enum
 
@@ -26,6 +27,7 @@ from .authority import (
     StateCallerCapability,
     StateStoreCapabilities,
     StateStoreCapability,
+    StateNamespaceKind,
 )
 from .model import (
     StateAppendResult,
@@ -34,6 +36,8 @@ from .model import (
     StateDocument,
     StateKey,
     StateMutation,
+    StateOrderedIndexKey,
+    StateOrderedIndexReadResult,
     StateReadResult,
     StateRecord,
     StateRevision,
@@ -309,8 +313,24 @@ class StateStore(ABC):
         self._require_caller_capability(scope, StateCallerCapability.TRANSACT)
         self._require_authority(scope)
         self._require_store_capability(StateStoreCapability.TRANSACTION)
+        if transaction.ordered_index_mutations:
+            self._require_caller_capability(
+                scope, StateCallerCapability.ORDERED_INDEX,
+            )
+            self._require_store_capability(StateStoreCapability.ORDERED_INDEX)
+        if transaction.log_appends:
+            self._require_caller_capability(scope, StateCallerCapability.APPEND)
+            self._require_store_capability(StateStoreCapability.APPEND)
         for mutation in transaction.mutations:
             self._validate_key_scope(scope, mutation.key)
+        for mutation in transaction.ordered_index_mutations:
+            if (mutation.index.namespace != scope.namespace
+                    and mutation.index.namespace.kind is not StateNamespaceKind.SYSTEM):
+                raise NsRuntimeStateStoreNamespaceViolationError(details={
+                    "component": "state_store", "reason": "namespace_scope_mismatch",
+                })
+        for append in transaction.log_appends:
+            self._validate_key_scope(scope, append.key)
         await self._enter_operation("transact")
         try:
             return await self._run_write(
@@ -318,6 +338,49 @@ class StateStore(ABC):
                 self._transact(transaction),
                 expected_type=StateTransactionResult,
             )
+        finally:
+            await self._exit_operation()
+
+    async def read_ordered_index(
+        self, *, scope: StateAccessScope, index: StateOrderedIndexKey,
+        limit: int, max_score: float | None = None,
+    ) -> StateOrderedIndexReadResult:
+        if (not isinstance(index, StateOrderedIndexKey)
+                or (index.namespace != scope.namespace
+                    and index.namespace.kind is not StateNamespaceKind.SYSTEM)):
+            _invalid("ordered_index.index")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= 1000:
+            _invalid("ordered_index.limit")
+        if max_score is not None and (
+            type(max_score) not in {int, float} or not math.isfinite(max_score)
+        ):
+            _invalid("ordered_index.max_score")
+        self._require_caller_capability(scope, StateCallerCapability.ORDERED_INDEX)
+        self._require_authority(scope)
+        self._require_store_capability(StateStoreCapability.ORDERED_INDEX)
+        await self._enter_operation("read_ordered_index")
+        try:
+            try:
+                result = await self._read_ordered_index(
+                    scope=scope, index=index, limit=limit, max_score=max_score,
+                )
+            except asyncio.CancelledError:
+                raise
+            except NsRuntimeStateStoreError:
+                raise
+            except asyncio.TimeoutError:
+                raise NsRuntimeStateStoreTimeoutError(details={
+                    "component": "state_store", "operation": "read_ordered_index",
+                }) from None
+            except Exception:
+                raise NsRuntimeStateStoreUnavailableError(details={
+                    "component": "state_store", "operation": "read_ordered_index",
+                }) from None
+            if not isinstance(result, StateOrderedIndexReadResult):
+                raise NsRuntimeStateStoreError(details={
+                    "component": "state_store", "operation": "read_ordered_index",
+                })
+            return result
         finally:
             await self._exit_operation()
 
@@ -555,6 +618,13 @@ class StateStore(ABC):
         self,
         transaction: StateTransaction,
     ) -> StateTransactionResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _read_ordered_index(
+        self, *, scope: StateAccessScope, index: StateOrderedIndexKey,
+        limit: int, max_score: float | None,
+    ) -> StateOrderedIndexReadResult:
         raise NotImplementedError
 
     @abstractmethod

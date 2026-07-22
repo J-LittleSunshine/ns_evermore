@@ -67,6 +67,7 @@ class StateStoreCapability(str, Enum):
     MINIMUM_REVISION_READ = "minimum_revision_read"
     STALE_READ = "stale_read"
     SCAN = "scan"
+    ORDERED_INDEX = "ordered_index"
 
 
 class StateCallerCapability(str, Enum):
@@ -75,6 +76,7 @@ class StateCallerCapability(str, Enum):
     TRANSACT = "transact"
     APPEND = "append"
     SCAN = "scan"
+    ORDERED_INDEX = "ordered_index"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

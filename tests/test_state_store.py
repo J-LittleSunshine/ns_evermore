@@ -33,6 +33,10 @@ from ns_common.state_store import (
     StateMutationKind,
     StateNamespace,
     StateNamespaceKind,
+    StateOrderedIndexEntry,
+    StateOrderedIndexKey,
+    StateOrderedIndexMutation,
+    StateOrderedIndexMutationKind,
     StateScanResult,
     StateStoreCapabilities,
     StateStoreCapability,
@@ -115,6 +119,28 @@ def _replace(
 
 
 class StateAuthorityContractTestCase(unittest.TestCase):
+
+    def test_ordered_index_public_values_reject_forgery_and_nonfinite_scores(self) -> None:
+        namespace = StateNamespace.tenant(tenant_id="tenant-1", domain="delivery")
+        index = StateOrderedIndexKey(
+            namespace=namespace,
+            name="delivery.ready",
+            bucket="tenant-1",
+        )
+        mutation = StateOrderedIndexMutation(
+            index=index,
+            kind=StateOrderedIndexMutationKind.ADD,
+            member="delivery:1",
+            score=1.0,
+        )
+        for score in (float("nan"), float("inf"), float("-inf"), True):
+            with self.subTest(score=score):
+                with self.assertRaises(NsValidationError):
+                    dataclasses.replace(mutation, score=score)
+                with self.assertRaises(NsValidationError):
+                    StateOrderedIndexEntry(member="delivery:1", score=score)
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(mutation, kind="add")
 
     def test_authority_boundaries_preserve_p05_p06_and_p07_owners(self) -> None:
         self.assertEqual(

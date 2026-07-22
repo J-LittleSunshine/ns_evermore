@@ -387,7 +387,14 @@ class ConnectionLifecycleManager:
                     "reason": "target_inactive",
                 },
             )
-        await owner.transport.send(payload.wire_text)
+        try:
+            wire_text = payload.canonical_bytes.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            raise NsValidationError(
+                "P11 outbound canonical envelope is invalid.",
+                details={"component": "connection_lifecycle", "field": "payload"},
+            ) from None
+        await owner.transport.send(wire_text)
 
     async def start(self) -> None:
         async with self._lifecycle_lock:

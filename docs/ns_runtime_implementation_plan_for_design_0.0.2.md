@@ -109,14 +109,14 @@
 
 | 字段 | 当前值 |
 |---|---|
-| 当前阶段 | `P12 ACK、NACK、Defer、Timeout 与自动 Retry` |
-| 当前工作包 | `P12-W01` |
-| 当前工作包状态 | `BLOCKED`（未获独立授权） |
-| 当前阶段状态 | `BLOCKED / F0` |
-| 最近已验证阶段 | `P11 本地可靠投递调度与发送`（`F3 / local only`） |
-| 最近已验证工作包 | `P11-W11 本地 task.dispatch 实验组合边界` |
-| 下一阶段 | `P12 ACK、NACK、Defer、Timeout 与自动 Retry`（`P12-W01`，`BLOCKED`，等待独立授权） |
-| 当前阻塞项 | P12未获授权；task.dispatch production feature继续关闭，transport write只到ack_waiting，不等于delivery成功 |
+| 当前阶段 | `P11 本地可靠投递调度与发送`（联合修复已关闭） |
+| 当前工作包 | `P12-W01`（未授权） |
+| 当前工作包状态 | `BLOCKED` |
+| 当前阶段状态 | `P10/P11 VERIFIED / F3 (local only)` |
+| 最近已验证阶段 | `P11 本地可靠投递调度与发送` |
+| 最近已验证工作包 | `P10-FIX-03 + P11-FIX-01` |
+| 下一阶段 | `P12-W01`继续`BLOCKED`等待独立授权 |
+| 当前阻塞项 | P12未授权；production task.dispatch继续关闭，transport write只允许到ack_waiting，不等于delivery成功 |
 | 设计基线版本 | `0.0.2` |
 | wire codec | `json.v1` |
 | 当前正式 transport | `websocket_tcp` adapter 为 `VERIFIED/F2`；P05 logical connection composition 保持冻结；P06 已把 production `IamClient` 与同一 P01 HTTP owner 显式接入握手、reauth 和 resume，IAM 异常继续 fail-closed |
@@ -967,7 +967,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 
 ## P10 受理、Summary、去重与 Payload Reference
 
-**阶段状态：`VERIFIED`（`F3 local only`）**
+**阶段状态：`VERIFIED/F3 (local only)`**
 **目标完成度：`F3`**  
 **前置阶段：P09 `VERIFIED`**
 
@@ -981,20 +981,21 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 |---|---|---|---|
 | `P10-W01` | `VERIFIED` | 定义 MessageDeliverySummary 和 DeliveryRecord 权威字段、状态和版本 | DR-1公共构造、replace、跨对象图与状态闭集fail-closed |
 | `P10-W02` | `VERIFIED` | 受理时裁决 priority、reliability、expires_at、ack timeout、target strategy 和 policy version | sender字段只作请求，可信config/policy复验，过期/短窗口拒绝 |
-| `P10-W03` | `VERIFIED` | inline payload 执行大小、深度和摘要校验；完整 payload 不写强一致状态 | canonical bytes、三重size限制、depth/type/digest/evidence fingerprint，StateStore无明文 |
+| `P10-W03` | `VERIFIED` | inline payload执行大小、深度、canonical摘要与request fingerprint绑定；可靠inline正文写入独立durable payload-body authority | DeliveryRecord/transition log/audit只存引用与摘要，不含业务正文；发送时按body_ref重读并复验size/digest |
 | `P10-W04` | `VERIFIED` | PayloadRefClient 实时调用 backend IAM/object validation 合同 | typed IAM endpoint实时逐target校验tenant/permission/object/integrity metadata |
 | `P10-W05` | `VERIFIED` | 校验服务不可用时按消息策略进入 reject、wait 或 dead letter，不允许绕过 | best_effort/at_least_once/critical分别typed reject/wait/dead_letter；不创建P13记录 |
 | `P10-W06` | `VERIFIED` | 建立 `message_id + target_fingerprint` tenant 去重登记 | dedup与initializing Summary/首批delivery同一StateStore transaction，并发唯一winner |
 | `P10-W07` | `VERIFIED` | 重复命中 acked、in_progress、dead/expired/cancelled 分别返回稳定语义 | DuplicateLifecycle闭集稳定返回，任何终态不触发重投 |
 | `P10-W08` | `VERIFIED` | 全部 rejected 仍创建 failed summary，不创建 DeliveryRecord | all/partial/none accepted计数与脱敏原因专项通过 |
 | `P10-W09` | `VERIFIED` | 关键消息 summary + 初始 prepared delivery 原子写入 | dedup、initializing root/shard与首批最多500条prepared同成同败；后续批次CAS推进，indeterminate单独表达 |
-| `P10-W10` | `VERIFIED` | 大 fanout超过5000 targets时分片；bucket 1000、初始化批次500 | 每批最多500条并以root/shard state version CAS推进；4999/5000/5001真实RP-1 plan边界验证，仅5001产生6 shard |
+| `P10-W10` | `VERIFIED` | 普通fanout只建一个Summary；超过typed policy阈值才按typed bucket分片，初始化批量同属AdmissionPolicyConfig | 每条decision冻结阈值/bucket/初始化/激活批量；普通fanout无冗余shard，大fanout按policy分批CAS推进 |
 | `P10-W11` | `VERIFIED` | initializing期间delivery只处于prepared，禁止发送和占active/inflight | DR-1无queued/claim/send API，prepared计数不占active/inflight |
 | `P10-W12` | `VERIFIED` | 初始化失败批量取消已prepared，记录not_initialized | 后续批次/终态CAS冲突触发单次原子取消：关闭created、记录未创建target并把dedup置cancelled；终态不可重复取消 |
 | `P10-W13` | `VERIFIED` | delivery.accepted只返回message_id、summary_id、accepted_at、status_query_hint、trace | exact lightweight typed response，不含delivery_id数组 |
 | `P10-W14` | `VERIFIED` | 受理响应发送失败不回滚已受理状态 | post-commit emitter失败只向bounded observer记录outcome，不接收store依赖 |
 | `P10-FIX-01` | `VERIFIED` | Redis standalone production StateStore provider | 经P10-FIX-02重新验收恢复；Valkey仅driver compatibility `IMPLEMENTED`，server integration `UNVERIFIED` |
 | `P10-FIX-02` | `VERIFIED` | Redis StateStore trusted-boundary、lifecycle 与 recovery closure | options/source/BaseException/port reservation/PID gate/3与501 target跨provider恢复全部关闭；DR-1/RP-1/P11/P12零扩展 |
+| `P10-FIX-03` | `VERIFIED` | 修正Summary状态/普通fanout单Summary、统一typed fanout/批量配置、trusted payload admission与fingerprint绑定、可靠inline持久权威、dependency outcome和DR schema迁移 | DR contract family的持久schema升级为dr-2并显式拒绝未迁移dr-1；源码、真实Redis、全量回归与恢复证据见联合验收记录 |
 
 ### 测试矩阵
 
@@ -1018,7 +1019,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 
 ## P11 本地可靠投递调度与发送
 
-**阶段状态：`VERIFIED`**
+**阶段状态：`VERIFIED/F3 (local only)`**
 **目标完成度：`F3`**  
 **前置阶段：P10 `VERIFIED/F3 (local only)`；本阶段仅形成local write -> ack_waiting，不包含ACK闭环**
 
@@ -1030,17 +1031,18 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 
 | ID | 状态 | 实施内容 | 完成判定 |
 |---|---|---|---|
-| `P11-W01` | `VERIFIED` | 从StateStore scan权威prepared记录；按critical/high/normal/low、tenant、target、runtime global水位和batch执行prepared -> queued，并记录config/policy version、原因、候选数和时间 | 大fanout分批；prepared激活不依赖内存状态缓存 |
-| `P11-W02` | `VERIFIED` | ClaimWorker以provider revision CAS原子claim queued delivery并写入local runtime/worker/token/lease owner | 内存模型8 worker和真实Redis 16 worker均只有一个owner；duplicate claim不写transport |
-| `P11-W03` | `VERIFIED` | LeaseRenewWorker提供15s lease/5s renew边界；CAS/依赖失败进入process risk gate，连续失败超过2次把authority owner标为at_risk | 只允许同一local runtime owner；过期/旧owner不能写；没有P17 fencing或transfer |
+| `P11-W01` | `VERIFIED` | 从StateStore权威prepared有序索引分页读取；按priority、tenant/target/global水位及record policy batch执行prepared -> queued并记录版本/原因 | 无全record scan、内存known-tenant或应用层全量排序；过期prepared原子终结，大fanout分批 |
+| `P11-W02` | `VERIFIED` | ClaimWorker通过record+ready/claimed/lease/target/global索引+transition log同一provider-neutral事务原子claim | 多worker仅一个owner；duplicate claim不写transport；owner带单调per-delivery fencing |
+| `P11-W03` | `VERIFIED` | LeaseRenewWorker在P01唯一TaskSupervisor下运行真实续约循环并通过authority事务续期 | 只允许同一local runtime；过期owner仅以更高per-delivery fencing本地恢复，sending歧义转write_uncertain；没有P17 leader fencing或remote transfer |
 | `P11-W04` | `VERIFIED` | SendWorker每次从StateStore重读并校验status、owner/lease、config/policy、expires_at、P05 active session/epoch/identity以及payload authority/content evidence | target断连、identity错配、非法payload_ref、过期与恶意dependency均在transport前fail closed；不调用Router |
 | `P11-W05` | `VERIFIED` | queued -> sending、DeliveryAttempt create、root/shard Summary queued/sending计数在同一StateStore事务中提交 | fake transport观测到write前authority已是sending且attempt为writing；不存在sending无attempt |
 | `P11-W06` | `VERIFIED` | 进入sending时记录ack_deadline；transport write使用低于lease TTL的可配置timeout | 本阶段只记录deadline；没有timeout scanner或retry |
 | `P11-W07` | `VERIFIED` | transport write返回None后原子把attempt标记write_succeeded并把DeliveryRecord转ack_waiting | 无sent/sent_success；transport success不等于acked或delivery success |
 | `P11-W08` | `VERIFIED` | write error、timeout和shutdown interruption只形成typed failure outcome并原子进入write_failed | retry_scheduled仅为拒绝构造的reserved enum placeholder；无production transition、retry worker或dead letter |
-| `P11-W09` | `VERIFIED` | owner risk窗口默认4s（配置限定正值）只允许既已sending的完成提交；at_risk禁止开始新write并停止同轮放大 | 不续出新lease、不转移owner、不实现fencing |
+| `P11-W09` | `VERIFIED` | owner risk窗口默认4s（配置限定正值）只允许既已sending的完成提交；at_risk禁止开始新write并停止同轮放大 | 不形成P17 leader lease或跨runtime转移；旧per-delivery fencing不能写 |
 | `P11-W10` | `VERIFIED` | root/shard Summary与DeliveryRecord同事务维护prepared/queued/sending/ack_waiting/write_failed；额外从authority重算并比对资源计数 | prepared不占active/inflight，queued只占队列名额，sending占active/write，ack_waiting占inflight |
 | `P11-W11` | `VERIFIED` | 提供显式注入的LocalTaskDispatchExperimentalProcessor与bounded coordinator，复用唯一TaskSupervisor和P05 connection owner | 默认config false且protocol production contract仍disabled；P12完成前不得production enable |
+| `P11-FIX-01` | `VERIFIED` | typed完整Envelope重建、provider-neutral原子投递投影、权威ready/lease/ack索引、per-delivery fencing、真实renew任务、typed precheck handoff与重启恢复 | 标准asyncio/uvloop/backend全量、真实Redis冲突回滚与provider A/B恢复通过；仍不实现P12 ACK/retry或P17 leader fencing |
 
 ### 测试矩阵
 
@@ -1619,7 +1621,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `SVC-1` | schema_version、state_version、opaque provider-issued revision与epoch分离；create absent assertion、replace/delete expected revision、可选state/epoch assertion、同atomic scope transaction与三种read consistency；无unconditional put、lease/fencing或epoch allocation | P08 | `VERIFIED` |
 | `SFL-1` | StateStore new/opening/open/closing/closed生命周期、strict failure、ready gate与既有shutdown composition；write outcome未知统一INDETERMINATE_WRITE且禁止自动retry；无第二TaskSupervisor、loop、shutdown owner | P08 | `VERIFIED` |
 | `RP-1` | `RequestedRoutingIntent -> RoutingPolicyDecision -> trusted RoutingRequest`显式policy authority、per-message AuthorizationDecisionEvidence、单快照本地target expansion、IAM tenant boundary、静态/动态过滤、single/all/broadcast/quorum/all_required/weighted_subset、五种rebind、broadcast fixed binding、`runtime_fallback/fallback.v1`确定性评分，以及deeply immutable ResolvedRoutingPlan/RoutingFailureReport/SafeRoutingProjection。plan version只来自已验证previous message/fingerprint context；ordinary recorder为安全摘要接口；strong authority仅冻结接口且无provider时unavailable；无StateStore直连、transport写入、delivery/ACK/retry、stale/remote/master routing | P09 | `VERIFIED` |
-| `DR-1` | typed stage-six admission、可信policy、payload/dedup evidence、Summary/prepared DeliveryRecord、原子StateStore初始化、initializing-scope取消及轻量response；schema/version/count/fingerprint/跨对象不变量均由公共构造复验 | P10 | `FROZEN / VERIFIED` |
+| `DR-1` | typed stage-six admission contract family；当前持久schema为`dr-2`，普通fanout单Summary、policy-owned fanout/batch、payload request/target binding与独立durable inline body authority；legacy `dr-1`必须显式迁移，schema/version/count/fingerprint/跨对象不变量均由公共构造复验 | P10 | `FROZEN / VERIFIED` |
 | `ACK-1` | ACK/NACK/Defer 和 retry 状态机 | P12 | `NOT_STARTED` |
 | `ST-1` | StreamDeliveryState 和窗口 | P15 | `NOT_STARTED` |
 | `MG-1` | 管理控制和状态查询 | P16 | `NOT_STARTED` |

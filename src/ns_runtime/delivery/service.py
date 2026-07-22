@@ -21,8 +21,7 @@ from ns_common.time import Clock
 
 from .models import (
     ADMISSION_RESPONSE_VERSION, DEDUP_EVIDENCE_VERSION,
-    DEFAULT_INITIALIZATION_BATCH_SIZE, DEFAULT_SHARD_BUCKET_SIZE,
-    DR1_SCHEMA_VERSION, MAX_UNSHARDED_TARGETS, PAYLOAD_EVIDENCE_VERSION,
+    DR1_SCHEMA_VERSION, PAYLOAD_EVIDENCE_VERSION,
     AdmissionOutcome, AdmissionTrace, DedupEvidence, DeliveryRecord,
     DeliveryRecordStatus, DeliverySummaryStatus, DuplicateLifecycle,
     InlinePayload, MessageDeliverySummary, PayloadDependencyDisposition,
@@ -30,6 +29,7 @@ from .models import (
     TargetRejection, canonical_inline_payload, compute_binding_fingerprint,
     compute_dedup_evidence_fingerprint, compute_payload_evidence_fingerprint,
     compute_target_fingerprint,
+    DeliveryEnvelopeAuthority,
 )
 from .policy import (
     AdmissionPolicy, AdmissionPolicyConfig, AdmissionRequest,
@@ -48,9 +48,42 @@ from .store import (
 class PayloadRefClient(ABC):
     @abstractmethod
     async def validate_payload_ref(
-        self, request: PayloadRefValidationRequest,
-    ) -> PayloadRefValidationResult:
+        self, request: "BoundPayloadRefValidationRequest",
+    ) -> "BoundPayloadRefValidationResult":
         raise NotImplementedError
+
+
+@dataclass(frozen=True, kw_only=True)
+class BoundPayloadRefValidationRequest:
+    iam_request: PayloadRefValidationRequest
+    request_binding_fingerprint: str
+    target_binding_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.iam_request, PayloadRefValidationRequest):
+            _invalid("payload_ref_bound.request")
+        if not _full_digest(self.request_binding_fingerprint):
+            _invalid("payload_ref_bound.request_fingerprint")
+        if not _full_digest(self.target_binding_fingerprint):
+            _invalid("payload_ref_bound.target_fingerprint")
+
+    def __getattr__(self, name: str):
+        return getattr(self.iam_request, name)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BoundPayloadRefValidationResult:
+    result: PayloadRefValidationResult
+    request_binding_fingerprint: str
+    target_binding_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.result, PayloadRefValidationResult):
+            _invalid("payload_ref_bound.result")
+        if not _full_digest(self.request_binding_fingerprint):
+            _invalid("payload_ref_bound.result_request_fingerprint")
+        if not _full_digest(self.target_binding_fingerprint):
+            _invalid("payload_ref_bound.result_target_fingerprint")
 
 
 class IamPayloadRefClient(PayloadRefClient):
@@ -63,25 +96,30 @@ class IamPayloadRefClient(PayloadRefClient):
         self._iam = iam_client
 
     async def validate_payload_ref(
-        self, request: PayloadRefValidationRequest,
-    ) -> PayloadRefValidationResult:
-        if not isinstance(request, PayloadRefValidationRequest):
+        self, request: BoundPayloadRefValidationRequest,
+    ) -> BoundPayloadRefValidationResult:
+        if not isinstance(request, BoundPayloadRefValidationRequest):
             _invalid("iam_payload_ref_client.request")
-        result = await self._iam.validate_payload_ref(request)
+        result = await self._iam.validate_payload_ref(request.iam_request)
         if not isinstance(result, PayloadRefValidationResult):
             _invalid("iam_payload_ref_client.result")
-        return result
+        return BoundPayloadRefValidationResult(
+            result=result,
+            request_binding_fingerprint=request.request_binding_fingerprint,
+            target_binding_fingerprint=request.target_binding_fingerprint,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AdmissionServiceLimits:
-    shard_bucket_size: int = DEFAULT_SHARD_BUCKET_SIZE
-    initialization_batch_size: int = DEFAULT_INITIALIZATION_BATCH_SIZE
+    """Compatibility view; authoritative values live in AdmissionPolicyConfig."""
+    shard_bucket_size: int | None = None
+    initialization_batch_size: int | None = None
 
     def __post_init__(self) -> None:
-        if self.shard_bucket_size != DEFAULT_SHARD_BUCKET_SIZE:
+        if self.shard_bucket_size is not None:
             _invalid("limits.shard_bucket_size")
-        if self.initialization_batch_size != DEFAULT_INITIALIZATION_BATCH_SIZE:
+        if self.initialization_batch_size is not None:
             _invalid("limits.initialization_batch_size")
 
 
@@ -127,6 +165,14 @@ class DeliveryAdmissionService:
         if compute_target_fingerprint(plan) != compute_target_fingerprint(request.plan):
             _invalid("admit.plan")
         now = self._clock.utc_now()
+        inline_raw: bytes | None = None
+        if isinstance(request.payload, InlinePayload):
+            # Build the trusted canonical descriptor before invoking policy.
+            # Policy therefore never fingerprints sender-provided object identity.
+            try:
+                inline_raw = canonical_inline_payload(request.payload, max_depth=4096)
+            except (NsValidationError, ValueError):
+                inline_raw = None
         decision = validate_policy_decision(
             self._policy.decide(request, now=now, config=self._config),
             request=request, config=self._config, now=now,
@@ -164,14 +210,23 @@ class DeliveryAdmissionService:
                     payload_evidence=None,
                 )
             digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+            body_ref = self._id("payload_body", 0)
+            request_binding = decision.request_fingerprint
+            target_binding = compute_target_fingerprint(plan)
             payload_evidence = PayloadEvidence(
                 schema_version=PAYLOAD_EVIDENCE_VERSION,
                 kind=PayloadKind.INLINE, media_type=request.payload.media_type,
                 size_bytes=len(raw), digest=digest, checksum=digest,
+                body_ref=body_ref,
+                request_binding_fingerprint=request_binding,
+                target_binding_fingerprint=target_binding,
                 evidence_fingerprint=compute_payload_evidence_fingerprint(
                     kind=PayloadKind.INLINE,
                     media_type=request.payload.media_type, size_bytes=len(raw),
                     digest=digest, checksum=digest,
+                    body_ref=body_ref,
+                    request_binding_fingerprint=request_binding,
+                    target_binding_fingerprint=target_binding,
                 ),
             )
             accepted = list(enumerate(bindings))
@@ -187,6 +242,7 @@ class DeliveryAdmissionService:
             request=request, decision=decision, trace=trace, now=now,
             accepted=accepted, rejections=rejections,
             payload_evidence=payload_evidence,
+            payload_body=inline_raw,
         )
 
     async def _validate_payload_reference(self, *, request, decision, trace):
@@ -196,7 +252,7 @@ class DeliveryAdmissionService:
         rejections: list[TargetRejection] = []
         valid_results: list[PayloadRefValidationResult] = []
         for index, binding in enumerate(request.plan.selected_bindings):
-            contract = PayloadRefValidationRequest(
+            iam_contract = PayloadRefValidationRequest(
                 object_id=payload.object_id, version=payload.version,
                 checksum=payload.checksum, tenant_id=request.tenant_id,
                 owner_identity=payload.owner_identity,
@@ -206,6 +262,12 @@ class DeliveryAdmissionService:
                     reference=binding.connection_id,
                 ),
                 callback_message_type=payload.callback_message_type,
+            )
+            fingerprint = compute_binding_fingerprint(binding)
+            contract = BoundPayloadRefValidationRequest(
+                iam_request=iam_contract,
+                request_binding_fingerprint=decision.request_fingerprint,
+                target_binding_fingerprint=fingerprint,
             )
             try:
                 result = await self._payload_refs.validate_payload_ref(contract)
@@ -221,9 +283,12 @@ class DeliveryAdmissionService:
                     now=self._clock.utc_now(), reason=RejectionReason.PAYLOAD_REF_UNAVAILABLE,
                     trace=trace,
                 )
-            if not isinstance(result, PayloadRefValidationResult):
+            if not isinstance(result, BoundPayloadRefValidationResult):
                 _invalid("payload_ref.result")
-            fingerprint = compute_binding_fingerprint(binding)
+            if (result.request_binding_fingerprint != decision.request_fingerprint
+                    or result.target_binding_fingerprint != fingerprint):
+                _invalid("payload_ref.result_binding")
+            result = result.result
             if result.valid:
                 if (result.object_id != payload.object_id
                         or result.version != payload.version
@@ -273,6 +338,8 @@ class DeliveryAdmissionService:
                 checksum=payload.checksum, object_id=payload.object_id,
                 object_version=payload.version, tenant_id=request.tenant_id,
                 validated_at=validated_at, expires_at=expires_at,
+                request_binding_fingerprint=decision.request_fingerprint,
+                target_binding_fingerprint=compute_target_fingerprint(request.plan),
                 evidence_fingerprint=compute_payload_evidence_fingerprint(
                     kind=PayloadKind.REFERENCE,
                     media_type="application/octet-stream",
@@ -281,6 +348,8 @@ class DeliveryAdmissionService:
                     object_version=payload.version,
                     tenant_id=request.tenant_id,
                     validated_at=validated_at, expires_at=expires_at,
+                    request_binding_fingerprint=decision.request_fingerprint,
+                    target_binding_fingerprint=compute_target_fingerprint(request.plan),
                 ),
             )
         return accepted, rejections, evidence
@@ -289,8 +358,9 @@ class DeliveryAdmissionService:
         disposition = decision.payload_dependency_disposition
         outcome = {
             PayloadDependencyDisposition.REJECT: AdmissionOutcome.REJECTED,
-            PayloadDependencyDisposition.WAIT: AdmissionOutcome.WAIT,
-            PayloadDependencyDisposition.DEAD_LETTER: AdmissionOutcome.DEAD_LETTER,
+            PayloadDependencyDisposition.WAIT_REQUIRED: AdmissionOutcome.WAIT_REQUIRED,
+            PayloadDependencyDisposition.DEAD_LETTER_REQUIRED: AdmissionOutcome.DEAD_LETTER_REQUIRED,
+            PayloadDependencyDisposition.DEPENDENCY_UNAVAILABLE: AdmissionOutcome.UNAVAILABLE,
         }[disposition]
         return AdmissionResult(
             outcome=outcome, commit_state=AdmissionCommitState.NOT_COMMITTED,
@@ -316,12 +386,15 @@ class DeliveryAdmissionService:
 
     async def _commit(
         self, *, request, decision, trace, now,
-        accepted, rejections, payload_evidence,
+        accepted, rejections, payload_evidence, payload_body=None,
     ) -> AdmissionResult:
         initialization = self._build_initialization(
             request=request, decision=decision, now=now,
             accepted=accepted, rejections=rejections,
             payload_evidence=payload_evidence,
+            payload_body=(payload_body if payload_evidence is not None
+                          and payload_evidence.body_ref is not None else None),
+            trace=trace,
         )
         try:
             result = await self._store.initialize(initialization)
@@ -339,7 +412,7 @@ class DeliveryAdmissionService:
                     message_id=request.message_id, summary_id=None,
                     rejected_at=self._clock.utc_now(),
                     reason=RejectionReason.INITIALIZATION_FAILED,
-                    disposition=PayloadDependencyDisposition.WAIT, trace=trace,
+                    disposition=PayloadDependencyDisposition.DEPENDENCY_UNAVAILABLE, trace=trace,
                 ),
             )
         if not isinstance(result, AtomicAdmissionResult):
@@ -363,7 +436,7 @@ class DeliveryAdmissionService:
         if result.outcome is AtomicAdmissionOutcome.CANCELLED_INITIALIZATION:
             if (result.root_summary is None
                     or result.root_summary.status
-                    is not DeliverySummaryStatus.CANCELLED_INITIALIZING
+                    is not DeliverySummaryStatus.CANCELLED
                     or result.dedup.lifecycle is not DuplicateLifecycle.CANCELLED):
                 _invalid("store.cancelled_initialization")
             return AdmissionResult(
@@ -410,6 +483,7 @@ class DeliveryAdmissionService:
 
     def _build_initialization(
         self, *, request, decision, now, accepted, rejections, payload_evidence,
+        payload_body=None, trace,
     ) -> AdmissionInitialization:
         plan = request.plan
         total = len(plan.selected_bindings)
@@ -422,13 +496,15 @@ class DeliveryAdmissionService:
         summary_id = self._id("summary", 0)
         target_fingerprint = compute_target_fingerprint(plan)
         status = _summary_status(total, accepted_count, rejected_count)
-        shard_count = 1 if total <= MAX_UNSHARDED_TARGETS else (
-            total + self._limits.shard_bucket_size - 1
-        ) // self._limits.shard_bucket_size
+        threshold = decision.fanout_shard_threshold
+        bucket_size = decision.shard_bucket_size
+        shard_count = 0 if total <= threshold else (
+            total + bucket_size - 1
+        ) // bucket_size
         final_state_version = (
             1 if accepted_count == 0
-            else ((accepted_count + self._limits.initialization_batch_size - 1)
-                  // self._limits.initialization_batch_size) + 1
+            else ((accepted_count + decision.initialization_batch_size - 1)
+                  // decision.initialization_batch_size) + 1
         )
         common = dict(
             schema_version=DR1_SCHEMA_VERSION, root_summary_id=summary_id,
@@ -453,10 +529,8 @@ class DeliveryAdmissionService:
         shards = []
         deliveries = []
         for shard_index in range(shard_count):
-            start = (0 if total <= MAX_UNSHARDED_TARGETS
-                     else shard_index * self._limits.shard_bucket_size)
-            end = (total if total <= MAX_UNSHARDED_TARGETS
-                   else min(total, start + self._limits.shard_bucket_size))
+            start = shard_index * bucket_size
+            end = min(total, start + bucket_size)
             shard_bindings = plan.selected_bindings[start:end]
             shard_accepted = sum(index in accepted_by_index for index in range(start, end))
             shard_rejections = tuple(
@@ -476,22 +550,30 @@ class DeliveryAdmissionService:
             ))
         shard_ids = {value.shard_index: value.summary_id for value in shards}
         for index, binding in accepted:
-            shard_index = (
-                0 if total <= MAX_UNSHARDED_TARGETS
-                else index // self._limits.shard_bucket_size
-            )
+            shard_index = None if shard_count == 0 else index // bucket_size
             deliveries.append(DeliveryRecord(
                 schema_version=DR1_SCHEMA_VERSION,
                 delivery_id=self._id("delivery", index),
-                summary_id=shard_ids[shard_index], root_summary_id=summary_id,
+                summary_id=(summary_id if shard_index is None else shard_ids[shard_index]), root_summary_id=summary_id,
                 shard_index=shard_index, message_id=request.message_id,
                 tenant_id=request.tenant_id, plan_id=plan.plan_id,
                 plan_version=plan.plan_version,
                 plan_decision_fingerprint=plan.decision_fingerprint,
                 target_fingerprint=compute_binding_fingerprint(binding),
+                target_set_fingerprint=target_fingerprint,
                 target_index=index, binding=binding,
                 status=DeliveryRecordStatus.PREPARED,
                 payload_evidence=payload_evidence, policy_decision=decision,
+                envelope_authority=DeliveryEnvelopeAuthority(
+                    message_type=plan.authorization_evidence.message_type,
+                    source_identity=request.source_identity,
+                    authorization_binding_reference=request.authorization_binding_reference,
+                    permission_snapshot_ref=plan.effective_permission_snapshot_ref,
+                    permission_snapshot_version=plan.effective_permission_snapshot_version,
+                    iam_decision_reference=plan.iam_decision_reference,
+                    iam_decision_version=plan.iam_decision_version,
+                    trace=trace,
+                ),
                 state_version=1, created_at=now, updated_at=now,
             ))
         dedup_expires = now + timedelta(seconds=decision.dedup_ttl_seconds)
@@ -509,7 +591,9 @@ class DeliveryAdmissionService:
         return AdmissionInitialization(
             plan=plan, root_summary=root, shard_summaries=tuple(shards),
             deliveries=tuple(deliveries), dedup=dedup,
-            initialization_batch_size=self._limits.initialization_batch_size,
+            initialization_batch_size=decision.initialization_batch_size,
+            payload_body_ref=(payload_evidence.body_ref if payload_evidence is not None else None),
+            payload_body=payload_body,
         )
 
     def _id(self, kind: str, index: int) -> str:
@@ -520,11 +604,9 @@ class DeliveryAdmissionService:
 
 
 def _summary_status(total, accepted, rejected):
-    if accepted == total:
-        return DeliverySummaryStatus.ACCEPTED
     if accepted == 0:
         return DeliverySummaryStatus.FAILED
-    return DeliverySummaryStatus.PARTIAL
+    return DeliverySummaryStatus.PENDING
 
 
 def _payload_ref_reason(reason: str, revoked: bool) -> RejectionReason:
@@ -549,6 +631,7 @@ def _invalid(field: str) -> None:
 
 
 __all__ = (
-    "AdmissionServiceLimits", "DeliveryAdmissionService", "IamPayloadRefClient",
+    "AdmissionServiceLimits", "BoundPayloadRefValidationRequest",
+    "BoundPayloadRefValidationResult", "DeliveryAdmissionService", "IamPayloadRefClient",
     "PayloadRefClient",
 )

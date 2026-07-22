@@ -2000,6 +2000,60 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - inline payload正文按P10冻结规则不进入StateStore；P11 payload validator/resolver是显式可信依赖，local experiment必须提供能按DeliveryRecord evidence返回内容的authority adapter。本阶段不把内存cache升级为可靠payload authority。
 - 下一工作包：`P12-W01`保持`BLOCKED`，等待独立授权。ACK闭环完成并重新验收前，可靠投递只能陈述为“写入目标并进入ack_waiting”，不得陈述为成功送达。
 
+## P10-FIX-03 + P11-FIX-01 联合修复启动记录
+
+- 工作包：`P10-FIX-03 + P11-FIX-01`。
+- 状态：`IN_PROGRESS`；既有P10/P11 `VERIFIED`结论在修复及联合复验期间撤回。
+- 开始时间：`2026-07-23`（Asia/Shanghai）。
+- 基线：分支`codex/ns-runtime-implementation`，启动HEAD `61d7bee21b6589493d1cfae9751feee3e7ba107c`，worktree启动时干净且与upstream一致。
+- 复核发现：普通fanout仍强制root+shard、阈值/批量参数分散硬编码；inline请求fingerprint未绑定canonical内容且可靠inline无durable body authority；payload_ref验证未绑定目标；P11仍依赖全scan/app排序、进程known tenants、CAS claim无fencing、调用者布尔renew和raw wire_text信任，未提供Hash+ready/lease/ack ZSet+Summary+append-only log同原子事务。
+- 冻结边界：ENV-1、PC-1、IAM-R1、RP-1与P08 authority boundary不改；不调用Router、不重选target、不修改RoutingPlan；production `task.dispatch`保持disabled。
+- 明确不实施：P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay/cancel/hold、P14健康评分/公平调度、P17 leader/cluster fencing、remote/master/cluster，以及第二TaskSupervisor/event loop/shutdown owner。
+- 恢复条件：完成源码与新增测试、真实Redis原子/恢复证据、P03-P11和全树标准asyncio/uvloop/backend回归、compile/pip/diff/cold-import/banned-scan，并更新ADR/plan/acceptance log；任一失败则保持`IN_PROGRESS`。
+
+## P10-FIX-03 + P11-FIX-01 联合修复最终验收证据
+
+- 工作包：`P10-FIX-03 + P11-FIX-01`；状态：`VERIFIED/F3 (local only)`。
+- 完成时间：`2026-07-23T01:32:00+08:00`。
+- 基线：分支`codex/ns-runtime-implementation`，启动HEAD `61d7bee21b6589493d1cfae9751feee3e7ba107c`，启动worktree干净且与upstream一致。
+- 修改文件：`src/ns_common/state_store/{__init__,authority,model,store,redis_provider}.py`；`src/ns_runtime/connection/lifecycle.py`；`src/ns_runtime/delivery/{__init__,dispatch,models,payload_authority,policy,response,scheduling,scheduling_store,serde,service,store,workers}.py`；`tests/{_state_store_contract_model,test_state_store,test_redis_state_store_integration,test_runtime_delivery_admission,test_runtime_delivery_scheduling}.py`；implementation plan、ADR-040和本日志。
+
+### P10-FIX-03关闭映射
+
+- Summary与fanout：合同家族保持DR-1，持久schema显式升级为`dr-2`；legacy `dr-1`读取返回`migration_required`。状态闭集纠正为initializing/pending/ACK后续终态；普通fanout只有一个Summary且DeliveryRecord直接指向root，只有超过每条policy decision冻结阈值的大fanout才产生root+shard。
+- typed policy：fanout threshold、shard bucket、initialization batch和activation batch统一由`AdmissionPolicyConfig`裁决并写入`AdmissionPolicyDecision`；公共构造、`dataclasses.replace()`和自定义policy返回的非法组合全部复验。
+- payload authority：inline request fingerprint绑定canonical正文、digest、size与policy limits；可靠inline正文独立写入`payload_body` durable authority，record/log/audit只存body_ref与摘要，发送前重读并复验。payload_ref请求/结果绑定request fingerprint和具体target fingerprint，旧result、错target、mapping/object/subclass均fail closed。
+- dependency/迁移：dependency outcome闭集为reject、wait_required、dead_letter_required、dependency_unavailable，只表达P10受理裁决，不创建P13 record；serde对dr-2严格重算跨对象authority和payload/target binding。
+
+### P11-FIX-01与P11-W01至W11关闭映射
+
+- W01：prepared activation只分页读StateStore有序索引，按priority、tenant/target/global水位及record policy snapshot分批；无record全scan、known-tenant集合或应用层全量排序。过期prepared原子转expired并移出prepared索引，activation evidence记录版本与原因。
+- W02：claim把DeliveryRecord、ready/claimed/lease、target/global索引和transition log放入同一provider-neutral transaction；多worker只有一个owner，duplicate claim不触发transport，owner含单调per-delivery fencing。
+- W03：LeaseRenewWorker在既有唯一TaskSupervisor下运行真实Clock续约；旧fencing拒绝。expired queued只允许同local runtime以更高fencing恢复，expired sending转write_uncertain且不重写，ack_waiting只恢复owner、不重发；没有P17 leader fencing或ownership transfer。
+- W04：SendWorker每次重读authority并核对status、owner/fencing、active connection/session/epoch/tenant/identity、payload evidence、record config/policy snapshot和expires_at；不修改RoutingPlan、不调用Router、不重选target、不绕过IAM/payload validation。
+- W05：queued -> sending、DeliveryAttempt create、Summary计数和索引/log在同一事务；attempt绑定owner fencing、config/policy、target。fake transport只能在权威sending+writing attempt之后被调用，不存在sending无attempt。
+- W06-W07：进入sending时只记录ack_deadline；完整typed Envelope由冻结authority重建并canonicalize。transport write success只原子进入ack_waiting/write_succeeded，不产生sent_success，也不解释为delivery success。
+- W08：precheck按expired/payload_rejected/target_waiting形成typed权威终态；write error/timeout/shutdown形成typed failure。write后提交冲突转write_uncertain，禁止盲目重写；retry_scheduled无production transition，dead letter/retry均未实现。
+- W09：owner risk与保护窗口阻止新write和风险放大；旧per-delivery fencing不能写。它不是P17 lease/fencing，不允许跨runtime transfer。
+- W10：prepared/ready+claimed/sending/ack/failed索引与Summary在每次迁移同步；prepared不占active/inflight，sending占active，ack_waiting占inflight。Redis事务冲突验证无record/index/log孤儿。
+- W11：local experimental processor仍只接受显式注入并复用P01唯一TaskSupervisor/P05 connection owner；builtin production `task.dispatch`继续disabled，P12完成前不得production enable。
+
+### 实际测试命令与真实结果
+
+- P10/P11定向：`PYTHONPATH=src python3 -m unittest tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling -q`，最终`Ran 37 tests in 3.793s`，`OK`。覆盖公共构造/replace、typed policy、dr-1迁移拒绝、请求与target replay、prepared batch/水位/过期终结、并发/duplicate claim、真实renew、fencing恢复、disconnect/payload/expiry/config snapshot、durable inline authority与完整Envelope、write success/failure/uncertain、shutdown与资源计数。
+- Redis provider/integration：`PYTHONPATH=src python3 -m unittest tests.test_redis_state_store_provider tests.test_redis_state_store_integration -q`，最终`Ran 25 tests in 7.680s`，`OK`；uvloop同组`Ran 25 tests in 10.254s`，`OK`。真实隔离`redis-server`覆盖原子投影claim、冲突零record/index/log孤儿，以及关闭provider A后由独立provider B重建claim和计数。
+- 标准asyncio全树：`python3 -m compileall -q src tests && PYTHONPATH=src python3 -m unittest discover -s tests -t . -q`，最终`Ran 826 tests in 45.750s`，`OK (skipped=1)`。
+- runtime uvloop：按DEP-1排除Django-only `test_cache.py`，最终`Ran 815 tests in 44.465s`，`OK (skipped=1)`。首次运行的真实Redis 16-worker压力用例触发测试provider的1s typed timeout；未记为通过。将该测试预算校准为5s后，先复跑Redis 25项通过，再完整复跑通过。
+- backend/Django全树：`PYTHONPATH=src /home/ns/.virtualenvs/ns_backend_p09_rp1_review/bin/python -m unittest discover -s tests -p 'test_*.py' -q`，最终`Ran 813 tests in 28.418s`，`OK (skipped=50)`；skips为backend清单未安装runtime可选依赖等既有边界。
+- 依赖与静态：runtime/backend两环境`python -m pip check`均输出`No broken requirements found.`；`compileall`通过。最终`git diff --check`、cold-import与禁止项扫描在提交前执行，只有成功才保留本记录的VERIFIED状态。
+- 全部证据仅为当前WSL/local verification；没有远程CI，不能据此声明远程环境或production可靠可用。
+
+### 未实现限制
+
+- P11只完成`prepared -> queued -> sending -> ack_waiting`及失败/歧义保护；ACK闭环仍属于P12。未实现ACK/NACK/Defer、AckRecord、ACK timeout scanner、retry worker/budget或delivery success终态。
+- 未实现P13 DeadLetterRecord/replay/一般cancel/hold、P14 health scoring/fair scheduling、P17 leader lease/cluster fencing、master query、remote forwarding、cluster/跨runtime ownership，未创建第二TaskSupervisor/event loop/shutdown owner。
+- Redis证据只覆盖standalone；Valkey仍只是driver对Redis server兼容，未声明valkey-server、Sentinel、Cluster、failover或replica read。production `task.dispatch`继续disabled。
+
 ## 新记录模板
 
 - 工作包：

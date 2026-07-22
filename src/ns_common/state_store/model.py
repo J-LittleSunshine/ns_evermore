@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -161,6 +162,84 @@ class StateMutationKind(str, Enum):
     DELETE = "delete"
 
 
+class StateOrderedIndexMutationKind(str, Enum):
+    ADD = "add"
+    REMOVE = "remove"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StateOrderedIndexKey:
+    namespace: StateNamespace
+    name: str
+    bucket: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.namespace, StateNamespace):
+            _invalid("ordered_index.namespace")
+        _validate_name(self.name, "ordered_index.name")
+        _validate_name(self.bucket, "ordered_index.bucket")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StateOrderedIndexMutation:
+    index: StateOrderedIndexKey
+    kind: StateOrderedIndexMutationKind
+    member: str
+    score: float | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.index, StateOrderedIndexKey):
+            _invalid("ordered_index_mutation.index")
+        if not isinstance(self.kind, StateOrderedIndexMutationKind):
+            _invalid("ordered_index_mutation.kind")
+        if not isinstance(self.member, str) or _OBJECT_ID_PATTERN.fullmatch(self.member) is None:
+            _invalid("ordered_index_mutation.member")
+        if self.kind is StateOrderedIndexMutationKind.ADD:
+            if type(self.score) not in {int, float} or not math.isfinite(self.score):
+                _invalid("ordered_index_mutation.score")
+        elif self.score is not None:
+            _invalid("ordered_index_mutation.score")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StateTransitionLogAppend:
+    key: StateKey
+    document: StateDocument = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, StateKey) or not isinstance(self.document, StateDocument):
+            _invalid("transition_log_append")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StateOrderedIndexEntry:
+    member: str
+    score: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.member, str) or _OBJECT_ID_PATTERN.fullmatch(self.member) is None:
+            _invalid("ordered_index_entry.member")
+        if type(self.score) not in {int, float} or not math.isfinite(self.score):
+            _invalid("ordered_index_entry.score")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StateOrderedIndexReadResult:
+    entries: tuple[StateOrderedIndexEntry, ...]
+    observed_at: datetime
+    total_count: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.entries, tuple) or any(
+            not isinstance(value, StateOrderedIndexEntry) for value in self.entries
+        ):
+            _invalid("ordered_index_result.entries")
+        object.__setattr__(self, "observed_at", _utc(self.observed_at, "ordered_index_result.observed_at"))
+        _non_negative_int(self.total_count, "ordered_index_result.total_count")
+        if self.total_count < len(self.entries):
+            _invalid("ordered_index_result.total_count")
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StateMutation:
     key: StateKey
@@ -190,22 +269,33 @@ class StateMutation:
 class StateTransaction:
     scope: StateAccessScope
     mutations: tuple[StateMutation, ...]
+    ordered_index_mutations: tuple[StateOrderedIndexMutation, ...] = ()
+    log_appends: tuple[StateTransitionLogAppend, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, StateAccessScope):
             _invalid("transaction.scope")
-        if not isinstance(self.mutations, tuple) or not self.mutations:
+        if (not isinstance(self.mutations, tuple)
+                or not isinstance(self.ordered_index_mutations, tuple)
+                or not isinstance(self.log_appends, tuple)
+                or not (self.mutations or self.ordered_index_mutations or self.log_appends)):
             _invalid("transaction.mutations")
         if any(not isinstance(value, StateMutation) for value in self.mutations):
             _invalid("transaction.mutations")
         keys = tuple(value.key for value in self.mutations)
         if len(set(keys)) != len(keys):
             _invalid("transaction.duplicate_key")
+        if any(not isinstance(value, StateOrderedIndexMutation)
+               for value in self.ordered_index_mutations):
+            _invalid("transaction.ordered_index_mutations")
+        if any(not isinstance(value, StateTransitionLogAppend) for value in self.log_appends):
+            _invalid("transaction.log_appends")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StateTransactionResult:
     records: tuple[StateRecord | None, ...]
+    log_positions: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.records, tuple) or any(
@@ -213,6 +303,11 @@ class StateTransactionResult:
             for value in self.records
         ):
             _invalid("transaction_result.records")
+        if not isinstance(self.log_positions, tuple) or any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in self.log_positions
+        ):
+            _invalid("transaction_result.log_positions")
 
 
 class StateConsistency(str, Enum):
@@ -349,6 +444,11 @@ __all__ = (
     "StateKey",
     "StateMutation",
     "StateMutationKind",
+    "StateOrderedIndexEntry",
+    "StateOrderedIndexKey",
+    "StateOrderedIndexMutation",
+    "StateOrderedIndexMutationKind",
+    "StateOrderedIndexReadResult",
     "StateReadResult",
     "StateRecord",
     "StateRevision",
@@ -356,5 +456,6 @@ __all__ = (
     "StateStoreHealth",
     "StateStoreHealthStatus",
     "StateTransaction",
+    "StateTransitionLogAppend",
     "StateTransactionResult",
 )

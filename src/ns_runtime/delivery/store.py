@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from abc import ABC, abstractmethod
 import dataclasses
@@ -19,11 +21,14 @@ from ns_common.state_store import (
     StateCallerCapability, StateConsistency, StateDocument, StateKey,
     StateMutation, StateMutationKind, StateNamespace, StateStore,
     StateRecord, StateTransaction, StateTransactionResult,
+    StateOrderedIndexKey, StateOrderedIndexMutation,
+    StateOrderedIndexMutationKind, StateTransitionLogAppend,
 )
 
 from .models import (
     ATOMIC_ADMISSION_VERSION, DEDUP_EVIDENCE_VERSION, DR1_SCHEMA_VERSION, DedupEvidence,
     DeliveryRecord, DeliverySummaryStatus, DuplicateLifecycle,
+    DeliveryRecordStatus, AdmissionPriority,
     MessageDeliverySummary, cancel_initializing_graph,
     compute_dedup_evidence_fingerprint, validate_initialization_graph,
 )
@@ -40,6 +45,8 @@ class AdmissionInitialization:
     deliveries: tuple[DeliveryRecord, ...]
     dedup: DedupEvidence
     initialization_batch_size: int
+    payload_body_ref: str | None = None
+    payload_body: bytes | None = dataclasses.field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.schema_version != ATOMIC_ADMISSION_VERSION:
@@ -48,6 +55,27 @@ class AdmissionInitialization:
                 or not isinstance(self.initialization_batch_size, int)
                 or self.initialization_batch_size <= 0):
             _invalid("initialization.batch_size")
+        if (self.payload_body_ref is None) is not (self.payload_body is None):
+            _invalid("initialization.payload_body")
+        if self.payload_body_ref is not None:
+            if type(self.payload_body_ref) is not str or not self.payload_body_ref:
+                _invalid("initialization.payload_body_ref")
+            if not isinstance(self.payload_body, bytes) or not self.payload_body:
+                _invalid("initialization.payload_body")
+            if any(
+                delivery.payload_evidence.body_ref != self.payload_body_ref
+                for delivery in self.deliveries
+            ):
+                _invalid("initialization.payload_body_binding")
+            evidence = self.root_summary.payload_evidence
+            if (
+                evidence is None
+                or evidence.body_ref != self.payload_body_ref
+                or evidence.size_bytes != len(self.payload_body)
+                or evidence.digest
+                != "sha256:" + hashlib.sha256(self.payload_body).hexdigest()
+            ):
+                _invalid("initialization.payload_body_evidence")
         validate_initialization_graph(
             plan=self.plan, root=self.root_summary,
             shards=self.shard_summaries, deliveries=self.deliveries,
@@ -85,7 +113,7 @@ class AtomicAdmissionResult:
                 _invalid("atomic_result.summary_dedup")
             if (self.outcome is AtomicAdmissionOutcome.CANCELLED_INITIALIZATION
                     and (self.root_summary.status
-                         is not DeliverySummaryStatus.CANCELLED_INITIALIZING
+                         is not DeliverySummaryStatus.CANCELLED
                          or self.dedup.lifecycle is not DuplicateLifecycle.CANCELLED)):
                 _invalid("atomic_result.cancelled_initialization")
         elif self.root_summary is not None:
@@ -130,6 +158,7 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
             caller="delivery.admission",
             capabilities=frozenset({
                 StateCallerCapability.READ, StateCallerCapability.TRANSACT,
+                StateCallerCapability.ORDERED_INDEX, StateCallerCapability.APPEND,
             }),
         )
         if not value.deliveries:
@@ -138,9 +167,7 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
                 value.shard_summaries, (),
             )
             try:
-                result = await self._store.transact(StateTransaction(
-                    scope=scope, mutations=mutations,
-                ))
+                result = await self._transact(scope, mutations)
             except NsRuntimeStateStoreConflictError:
                 existing = await self._read_dedup(scope, namespace, value.dedup)
                 return AtomicAdmissionResult(
@@ -165,9 +192,7 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
             namespace, value, current_root, current_shards, created,
         )
         try:
-            result = await self._store.transact(StateTransaction(
-                scope=scope, mutations=mutations,
-            ))
+            result = await self._transact(scope, mutations)
         except NsRuntimeStateStoreConflictError:
             existing = await self._read_dedup(scope, namespace, value.dedup)
             return AtomicAdmissionResult(
@@ -192,9 +217,7 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
                 namespace, records, next_root, next_shards,
             )
             try:
-                result = await self._store.transact(StateTransaction(
-                    scope=scope, mutations=mutations,
-                ))
+                result = await self._transact(scope, mutations)
             except NsRuntimeStateStoreConflictError:
                 return await self._cancel_after_failure(
                     scope=scope, namespace=namespace, value=value,
@@ -210,9 +233,7 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
             namespace, records, value.root_summary, value.shard_summaries,
         )
         try:
-            result = await self._store.transact(StateTransaction(
-                scope=scope, mutations=mutations,
-            ))
+            result = await self._transact(scope, mutations)
         except NsRuntimeStateStoreConflictError:
             return await self._cancel_after_failure(
                 scope=scope, namespace=namespace, value=value,
@@ -232,6 +253,22 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
         shards: tuple[MessageDeliverySummary, ...],
         deliveries: tuple[DeliveryRecord, ...],
     ) -> tuple[StateMutation, ...]:
+        payload_mutations = (() if value.payload_body_ref is None else (
+            self._create_mutation(
+                namespace, "payload_body", value.payload_body_ref, 1,
+                {
+                    "schema_version": "delivery-payload-body-1",
+                    "body_ref": value.payload_body_ref,
+                    "size_bytes": len(value.payload_body or b""),
+                    "digest": "sha256:" + hashlib.sha256(
+                        value.payload_body or b""
+                    ).hexdigest(),
+                    "body_base64": base64.b64encode(
+                        value.payload_body or b""
+                    ).decode("ascii"),
+                },
+            ),
+        ))
         return (
             self._create_mutation(
                 namespace, "dedup", _key_digest(
@@ -239,7 +276,7 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
                     value.dedup.target_fingerprint,
                 ), 1, _dedup_dict(value.dedup), object_id_is_digest=True,
             ),
-        ) + tuple(
+        ) + payload_mutations + tuple(
             self._create_mutation(
                 namespace, "summary", summary.summary_id,
                 summary.state_version, _summary_dict(summary),
@@ -278,7 +315,7 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
         value: AdmissionInitialization, *, created: tuple[DeliveryRecord, ...],
         state_version: int,
     ) -> tuple[MessageDeliverySummary, tuple[MessageDeliverySummary, ...]]:
-        by_shard: dict[int, int] = {}
+        by_shard: dict[int | None, int] = {}
         for delivery in created:
             by_shard[delivery.shard_index] = by_shard.get(delivery.shard_index, 0) + 1
 
@@ -396,14 +433,74 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
             )
             for delivery in cancelled_deliveries
         )
-        result = await self._store.transact(StateTransaction(
-            scope=scope, mutations=mutations,
-        ))
+        result = await self._transact(scope, mutations)
         self._validate_commit(result, mutations)
         return AtomicAdmissionResult(
             outcome=AtomicAdmissionOutcome.CANCELLED_INITIALIZATION,
             root_summary=cancelled_root, dedup=cancelled_dedup,
         )
+
+    async def _transact(
+        self, scope: StateAccessScope, mutations: tuple[StateMutation, ...],
+    ) -> StateTransactionResult:
+        index = StateOrderedIndexKey(
+            namespace=scope.namespace, name="delivery.prepared", bucket="delivery",
+        )
+        index_mutations: list[StateOrderedIndexMutation] = []
+        changed_ids: list[str] = []
+        root_summary_id: str | None = None
+        for mutation in mutations:
+            if mutation.key.object_type != "delivery" or mutation.document is None:
+                continue
+            try:
+                payload = json.loads(mutation.document.payload)
+                delivery_id = payload["delivery_id"]
+                status = DeliveryRecordStatus(payload["status"])
+                root_summary_id = payload["root_summary_id"]
+                created_at = datetime.fromisoformat(payload["created_at"])
+                priority = AdmissionPriority(payload["policy_decision"]["priority"])
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                _invalid("transaction.delivery_projection")
+            changed_ids.append(delivery_id)
+            if status is DeliveryRecordStatus.PREPARED:
+                rank = {
+                    AdmissionPriority.CRITICAL: 0,
+                    AdmissionPriority.HIGH: 1,
+                    AdmissionPriority.NORMAL: 2,
+                    AdmissionPriority.LOW: 3,
+                }[priority]
+                score = rank * 10_000_000_000_000.0 + created_at.timestamp()
+                index_mutations.append(StateOrderedIndexMutation(
+                    index=index, kind=StateOrderedIndexMutationKind.ADD,
+                    member=delivery_id, score=score,
+                ))
+            else:
+                index_mutations.append(StateOrderedIndexMutation(
+                    index=index, kind=StateOrderedIndexMutationKind.REMOVE,
+                    member=delivery_id,
+                ))
+        logs = ()
+        if changed_ids and root_summary_id is not None:
+            logs = (StateTransitionLogAppend(
+                key=StateKey(
+                    namespace=scope.namespace,
+                    object_type="delivery_transition_log",
+                    object_id=_key_digest(root_summary_id),
+                ),
+                document=StateDocument(
+                    schema_name="delivery_transition_event", schema_version=1,
+                    state_version=1,
+                    payload=json.dumps({
+                        "schema_version": "delivery-transition-event-1",
+                        "operation": "admission_initialize",
+                        "delivery_ids": changed_ids,
+                    }, sort_keys=True, separators=(",", ":")).encode(),
+                ),
+            ),)
+        return await self._store.transact(StateTransaction(
+            scope=scope, mutations=mutations,
+            ordered_index_mutations=tuple(index_mutations), log_appends=logs,
+        ))
 
     @staticmethod
     def _record_map(result: StateTransactionResult) -> dict[StateKey, StateRecord]:

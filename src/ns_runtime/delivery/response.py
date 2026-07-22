@@ -122,8 +122,8 @@ class AdmissionResult:
         expected = {
             AdmissionOutcome.ACCEPTED: DeliveryAcceptedResponse,
             AdmissionOutcome.REJECTED: DeliveryRejectedResponse,
-            AdmissionOutcome.WAIT: DeliveryRejectedResponse,
-            AdmissionOutcome.DEAD_LETTER: DeliveryRejectedResponse,
+            AdmissionOutcome.WAIT_REQUIRED: DeliveryRejectedResponse,
+            AdmissionOutcome.DEAD_LETTER_REQUIRED: DeliveryRejectedResponse,
             AdmissionOutcome.UNAVAILABLE: DeliveryRejectedResponse,
             AdmissionOutcome.DUPLICATE: DeliveryDuplicateResponse,
         }[self.outcome]

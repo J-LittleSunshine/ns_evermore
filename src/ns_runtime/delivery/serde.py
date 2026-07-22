@@ -26,12 +26,15 @@ from .models import (
     DeliveryRecordStatus,
     DeliverySummaryStatus,
     DeliveryWriteFailure,
+    DeliveryEnvelopeAuthority,
+    AdmissionTrace,
     MessageDeliverySummary,
     PayloadDependencyDisposition,
     PayloadEvidence,
     PayloadKind,
     RejectionReason,
     TargetRejection,
+    LEGACY_DR1_SCHEMA_VERSION,
 )
 
 
@@ -50,11 +53,22 @@ def delivery_to_dict(value: DeliveryRecord) -> dict[str, object]:
         "plan_version": value.plan_version,
         "plan_decision_fingerprint": value.plan_decision_fingerprint,
         "target_fingerprint": value.target_fingerprint,
+        "target_set_fingerprint": value.target_set_fingerprint,
         "target_index": value.target_index,
         "binding": _binding_to_dict(value.binding),
         "status": value.status.value,
         "payload_evidence": payload_evidence_to_dict(value.payload_evidence),
         "policy_decision": policy_decision_to_dict(value.policy_decision),
+        "envelope_authority": {
+            "message_type": value.envelope_authority.message_type,
+            "source_identity": value.envelope_authority.source_identity,
+            "authorization_binding_reference": value.envelope_authority.authorization_binding_reference,
+            "permission_snapshot_ref": value.envelope_authority.permission_snapshot_ref,
+            "permission_snapshot_version": value.envelope_authority.permission_snapshot_version,
+            "iam_decision_reference": value.envelope_authority.iam_decision_reference,
+            "iam_decision_version": value.envelope_authority.iam_decision_version,
+            "trace": value.envelope_authority.trace.to_wire(),
+        },
         "state_version": value.state_version,
         "created_at": value.created_at.isoformat(),
         "updated_at": value.updated_at.isoformat(),
@@ -75,6 +89,8 @@ def delivery_to_dict(value: DeliveryRecord) -> dict[str, object]:
 
 def delivery_from_dict(raw: object) -> DeliveryRecord:
     values = _mapping(raw, "delivery")
+    if values.get("schema_version") == LEGACY_DR1_SCHEMA_VERSION:
+        _invalid("delivery.schema_migration_required")
     try:
         return DeliveryRecord(
             schema_version=values["schema_version"],
@@ -88,11 +104,13 @@ def delivery_from_dict(raw: object) -> DeliveryRecord:
             plan_version=values["plan_version"],
             plan_decision_fingerprint=values["plan_decision_fingerprint"],
             target_fingerprint=values["target_fingerprint"],
+            target_set_fingerprint=values["target_set_fingerprint"],
             target_index=values["target_index"],
             binding=_binding_from_dict(values["binding"]),
             status=DeliveryRecordStatus(values["status"]),
             payload_evidence=payload_evidence_from_dict(values["payload_evidence"]),
             policy_decision=policy_decision_from_dict(values["policy_decision"]),
+            envelope_authority=_envelope_authority_from_dict(values["envelope_authority"]),
             state_version=values["state_version"],
             created_at=_time(values["created_at"], "delivery.created_at"),
             updated_at=_time(values["updated_at"], "delivery.updated_at"),
@@ -167,6 +185,8 @@ def summary_to_dict(value: MessageDeliverySummary) -> dict[str, object]:
 
 def summary_from_dict(raw: object) -> MessageDeliverySummary:
     values = _mapping(raw, "summary")
+    if values.get("schema_version") == LEGACY_DR1_SCHEMA_VERSION:
+        _invalid("summary.schema_migration_required")
     try:
         rejection_values = values["rejection_evidence"]
         if not isinstance(rejection_values, list):
@@ -228,6 +248,10 @@ def attempt_to_dict(value: DeliveryAttempt) -> dict[str, object]:
         "owner_runtime_id": value.owner_runtime_id,
         "owner_worker_id": value.owner_worker_id,
         "owner_claim_token": value.owner_claim_token,
+        "owner_fencing": value.owner_fencing,
+        "config_version": value.config_version,
+        "policy_version": value.policy_version,
+        "target_fingerprint": value.target_fingerprint,
         "status": value.status.value,
         "started_at": value.started_at.isoformat(),
         "ack_deadline": value.ack_deadline.isoformat(),
@@ -250,6 +274,10 @@ def attempt_from_dict(raw: object) -> DeliveryAttempt:
             owner_runtime_id=values["owner_runtime_id"],
             owner_worker_id=values["owner_worker_id"],
             owner_claim_token=values["owner_claim_token"],
+            owner_fencing=values["owner_fencing"],
+            config_version=values["config_version"],
+            policy_version=values["policy_version"],
+            target_fingerprint=values["target_fingerprint"],
             status=DeliveryAttemptStatus(values["status"]),
             started_at=_time(values["started_at"], "attempt.started_at"),
             ack_deadline=_time(values["ack_deadline"], "attempt.ack_deadline"),
@@ -283,6 +311,10 @@ def policy_decision_to_dict(value: AdmissionPolicyDecision) -> dict[str, object]
         "max_inline_bytes": value.max_inline_bytes,
         "max_json_depth": value.max_json_depth,
         "payload_dependency_disposition": value.payload_dependency_disposition.value,
+        "fanout_shard_threshold": value.fanout_shard_threshold,
+        "shard_bucket_size": value.shard_bucket_size,
+        "initialization_batch_size": value.initialization_batch_size,
+        "activation_batch_size": value.activation_batch_size,
         "rejection_reason": (
             None if value.rejection_reason is None else value.rejection_reason.value
         ),
@@ -308,6 +340,10 @@ def policy_decision_from_dict(raw: object) -> AdmissionPolicyDecision:
             payload_dependency_disposition=PayloadDependencyDisposition(
                 values["payload_dependency_disposition"]
             ),
+            fanout_shard_threshold=values["fanout_shard_threshold"],
+            shard_bucket_size=values["shard_bucket_size"],
+            initialization_batch_size=values["initialization_batch_size"],
+            activation_batch_size=values["activation_batch_size"],
             rejection_reason=(
                 None if values["rejection_reason"] is None
                 else RejectionReason(values["rejection_reason"])
@@ -345,6 +381,9 @@ def payload_evidence_from_dict(raw: object) -> PayloadEvidence:
                 None if values.get("expires_at") is None
                 else _time(values["expires_at"], "payload_evidence.expires_at")
             ),
+            body_ref=values.get("body_ref"),
+            request_binding_fingerprint=values["request_binding_fingerprint"],
+            target_binding_fingerprint=values["target_binding_fingerprint"],
         )
     except (KeyError, TypeError, ValueError):
         _invalid("payload_evidence.fields")
@@ -362,6 +401,27 @@ def _binding_to_dict(value: SelectedRoutingBinding) -> dict[str, object]:
         "component_type": value.component_type,
         "binding_rebind_policy": value.binding_rebind_policy.value,
     }
+
+
+def _envelope_authority_from_dict(raw: object) -> DeliveryEnvelopeAuthority:
+    values = _mapping(raw, "envelope_authority")
+    trace_values = _mapping(values.get("trace"), "envelope_authority.trace")
+    try:
+        return DeliveryEnvelopeAuthority(
+            message_type=values["message_type"],
+            source_identity=values["source_identity"],
+            authorization_binding_reference=values["authorization_binding_reference"],
+            permission_snapshot_ref=values["permission_snapshot_ref"],
+            permission_snapshot_version=values["permission_snapshot_version"],
+            iam_decision_reference=values["iam_decision_reference"],
+            iam_decision_version=values["iam_decision_version"],
+            trace=AdmissionTrace(
+                trace_id=trace_values["trace_id"],
+                correlation_id=trace_values.get("correlation_id"),
+            ),
+        )
+    except (KeyError, TypeError, ValueError):
+        _invalid("envelope_authority.fields")
 
 
 def _binding_from_dict(raw: object) -> SelectedRoutingBinding:
@@ -423,6 +483,7 @@ def _owner_to_dict(value: DeliveryOwner) -> dict[str, object]:
         "lease_expires_at": value.lease_expires_at.isoformat(),
         "renew_failures": value.renew_failures,
         "risk": value.risk.value,
+        "fencing": value.fencing,
         "risk_since": None if value.risk_since is None else value.risk_since.isoformat(),
         "protection_until": (
             None if value.protection_until is None else value.protection_until.isoformat()
@@ -442,6 +503,7 @@ def _owner_from_dict(raw: object) -> DeliveryOwner:
             lease_expires_at=_time(values["lease_expires_at"], "owner.lease_expires_at"),
             renew_failures=values["renew_failures"],
             risk=DeliveryOwnerRisk(values["risk"]),
+            fencing=values["fencing"],
             risk_since=(
                 None if values["risk_since"] is None
                 else _time(values["risk_since"], "owner.risk_since")

@@ -18,6 +18,10 @@ from ns_common.state_store import (
     StateKey,
     StateMutation,
     StateMutationKind,
+    StateOrderedIndexEntry,
+    StateOrderedIndexKey,
+    StateOrderedIndexMutationKind,
+    StateOrderedIndexReadResult,
     StateReadResult,
     StateRecord,
     StateRevision,
@@ -61,6 +65,7 @@ class DeterministicStateStoreContractModel(StateStore):
         self.release_read: asyncio.Event | None = None
         self._records: dict[StateKey, StateRecord] = {}
         self._logs: dict[StateKey, list[tuple[StateDocument, StateRevision]]] = {}
+        self._ordered_indexes: dict[StateOrderedIndexKey, dict[str, float]] = {}
         self._revision_order: dict[StateRevision, int] = {}
         self._revision_sequence = 0
         self._lock = asyncio.Lock()
@@ -75,6 +80,10 @@ class DeterministicStateStoreContractModel(StateStore):
             key: tuple(document for document, _ in entries)
             for key, entries in self._logs.items()
         }
+
+    @property
+    def ordered_indexes(self) -> dict[StateOrderedIndexKey, dict[str, float]]:
+        return {key: dict(values) for key, values in self._ordered_indexes.items()}
 
     async def _open(self) -> None:
         self.open_count += 1
@@ -177,7 +186,40 @@ class DeterministicStateStoreContractModel(StateStore):
                 self._apply_mutation(mutation)
                 for mutation in transaction.mutations
             )
-            return StateTransactionResult(records=records)
+            for mutation in transaction.ordered_index_mutations:
+                values = self._ordered_indexes.setdefault(mutation.index, {})
+                if mutation.kind is StateOrderedIndexMutationKind.ADD:
+                    assert mutation.score is not None
+                    values[mutation.member] = float(mutation.score)
+                else:
+                    values.pop(mutation.member, None)
+            positions: list[int] = []
+            for append in transaction.log_appends:
+                entries = self._logs.setdefault(append.key, [])
+                revision = self._next_revision()
+                entries.append((append.document, revision))
+                positions.append(len(entries))
+            return StateTransactionResult(records=records, log_positions=tuple(positions))
+
+    async def _read_ordered_index(
+        self, *, scope: StateAccessScope, index: StateOrderedIndexKey,
+        limit: int, max_score: float | None,
+    ) -> StateOrderedIndexReadResult:
+        del scope
+        self.read_count += 1
+        async with self._lock:
+            values = sorted(
+                self._ordered_indexes.get(index, {}).items(),
+                key=lambda item: (item[1], item[0]),
+            )
+            if max_score is not None:
+                values = [item for item in values if item[1] <= max_score]
+            return StateOrderedIndexReadResult(
+                entries=tuple(StateOrderedIndexEntry(member=member, score=score)
+                              for member, score in values[:limit]),
+                observed_at=self.clock.utc_now(),
+                total_count=len(values),
+            )
 
     async def _append(
         self,

@@ -15,7 +15,7 @@ from ns_runtime.routing import ResolvedRoutingPlan, RoutingStrategy
 from .models import (
     AdmissionPolicyDecision, AdmissionPriority, AdmissionReliability,
     InlinePayload, PayloadDependencyDisposition, PayloadReference,
-    RejectionReason,
+    RejectionReason, MAX_ACTIVATION_BATCH_SIZE, canonical_inline_payload,
 )
 
 
@@ -30,6 +30,10 @@ class AdmissionPolicyConfig:
     dedup_ttl_seconds: int = 86_400
     default_priority: AdmissionPriority = AdmissionPriority.NORMAL
     default_reliability: AdmissionReliability = AdmissionReliability.AT_LEAST_ONCE
+    fanout_shard_threshold: int = 5000
+    shard_bucket_size: int = 1000
+    initialization_batch_size: int = 500
+    activation_batch_size: int = 200
 
     def __post_init__(self) -> None:
         for name in ("config_version", "policy_version"):
@@ -38,10 +42,14 @@ class AdmissionPolicyConfig:
                 _invalid(f"config.{name}")
         for name in ("max_inline_bytes", "max_json_depth",
                      "min_delivery_window_seconds", "max_ack_timeout_seconds",
-                     "dedup_ttl_seconds"):
+                     "dedup_ttl_seconds", "fanout_shard_threshold",
+                     "shard_bucket_size", "initialization_batch_size",
+                     "activation_batch_size"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 _invalid(f"config.{name}")
+        if self.activation_batch_size > MAX_ACTIVATION_BATCH_SIZE:
+            _invalid("config.activation_batch_size")
         if not isinstance(self.default_priority, AdmissionPriority):
             _invalid("config.default_priority")
         if not isinstance(self.default_reliability, AdmissionReliability):
@@ -155,17 +163,24 @@ class AdmissionRequest:
 
     @property
     def fingerprint(self) -> str:
+        return self.fingerprint_for_config(None)
+
+    def fingerprint_for_config(self, config: AdmissionPolicyConfig | None) -> str:
         payload = self.payload
-        descriptor = (
-            {"kind": "inline", "media_type": payload.media_type,
-             "application_limit": payload.application_limit_bytes,
-             "transport_limit": payload.transport_limit_bytes}
-            if isinstance(payload, InlinePayload)
-            else {"kind": "payload_ref", "object_id": payload.object_id,
-                  "version": payload.version, "checksum": payload.checksum,
-                  "owner_identity": payload.owner_identity,
-                  "callback_message_type": payload.callback_message_type}
-        )
+        if isinstance(payload, InlinePayload):
+            raw = canonical_inline_payload(payload, max_depth=4096)
+            descriptor = {"kind": "inline", "media_type": payload.media_type,
+                          "size_bytes": len(raw),
+                          "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+                          "application_limit": payload.application_limit_bytes,
+                          "transport_limit": payload.transport_limit_bytes}
+        else:
+            descriptor = (
+                {"kind": "payload_ref", "object_id": payload.object_id,
+                 "version": payload.version, "checksum": payload.checksum,
+                 "owner_identity": payload.owner_identity,
+                 "callback_message_type": payload.callback_message_type}
+            )
         values = {
             "plan_id": self.plan.plan_id,
             "plan_message_reference": self.plan.message_reference,
@@ -180,6 +195,14 @@ class AdmissionRequest:
             "requested_expires_at": self.requested_expires_at.isoformat(),
             "requested_ack_timeout_seconds": self.requested_ack_timeout_seconds,
             "requested_target_strategy": self.requested_target_strategy.value,
+            "delivery_policy": (None if config is None else {
+                "config_version": config.config_version,
+                "policy_version": config.policy_version,
+                "fanout_shard_threshold": config.fanout_shard_threshold,
+                "shard_bucket_size": config.shard_bucket_size,
+                "initialization_batch_size": config.initialization_batch_size,
+                "activation_batch_size": config.activation_batch_size,
+            }),
         }
         raw = json.dumps(values, sort_keys=True, separators=(",", ":")).encode()
         return "sha256:" + hashlib.sha256(raw).hexdigest()
@@ -215,11 +238,11 @@ class DefaultAdmissionPolicy(AdmissionPolicy):
         reliability = request.requested_reliability or config.default_reliability
         dependency = {
             AdmissionReliability.BEST_EFFORT: PayloadDependencyDisposition.REJECT,
-            AdmissionReliability.AT_LEAST_ONCE: PayloadDependencyDisposition.WAIT,
-            AdmissionReliability.CRITICAL: PayloadDependencyDisposition.DEAD_LETTER,
+            AdmissionReliability.AT_LEAST_ONCE: PayloadDependencyDisposition.WAIT_REQUIRED,
+            AdmissionReliability.CRITICAL: PayloadDependencyDisposition.DEAD_LETTER_REQUIRED,
         }[reliability]
         return AdmissionPolicyDecision(
-            request_fingerprint=request.fingerprint,
+            request_fingerprint=request.fingerprint_for_config(config),
             config_version=config.config_version,
             policy_version=config.policy_version,
             accepted=reason is None,
@@ -235,6 +258,10 @@ class DefaultAdmissionPolicy(AdmissionPolicy):
             max_inline_bytes=config.max_inline_bytes,
             max_json_depth=config.max_json_depth,
             payload_dependency_disposition=dependency,
+            fanout_shard_threshold=config.fanout_shard_threshold,
+            shard_bucket_size=config.shard_bucket_size,
+            initialization_batch_size=config.initialization_batch_size,
+            activation_batch_size=config.activation_batch_size,
             rejection_reason=reason,
         )
 
@@ -247,13 +274,17 @@ def validate_policy_decision(
     if not isinstance(decision, AdmissionPolicyDecision):
         _invalid("policy_result.type")
     now = _utc(now, "policy_result.now")
-    if (decision.request_fingerprint != request.fingerprint
+    if (decision.request_fingerprint != request.fingerprint_for_config(config)
             or decision.config_version != config.config_version
             or decision.policy_version != config.policy_version
             or decision.target_strategy is not request.plan.effective_strategy
             or decision.dedup_ttl_seconds != config.dedup_ttl_seconds
             or decision.max_inline_bytes != config.max_inline_bytes
             or decision.max_json_depth != config.max_json_depth
+            or decision.fanout_shard_threshold != config.fanout_shard_threshold
+            or decision.shard_bucket_size != config.shard_bucket_size
+            or decision.initialization_batch_size != config.initialization_batch_size
+            or decision.activation_batch_size != config.activation_batch_size
             or decision.ack_timeout_seconds > config.max_ack_timeout_seconds
             or decision.ack_timeout_seconds > request.requested_ack_timeout_seconds
             or decision.expires_at != request.requested_expires_at):

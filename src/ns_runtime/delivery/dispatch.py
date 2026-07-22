@@ -20,7 +20,7 @@ from .scheduling import (
     OwnerRiskGuard,
 )
 from .scheduling_store import StateStoreDeliveryScheduler
-from .workers import ClaimWorker, PreparedActivationCoordinator, SendWorker
+from .workers import ClaimWorker, LeaseRenewWorker, PreparedActivationCoordinator, SendWorker
 
 
 class LocalDeliveryDispatchCoordinator:
@@ -72,13 +72,11 @@ class LocalDeliveryDispatchCoordinator:
             scheduler=scheduler,
             policy=policy,
         )
-        self._known_tenants: set[str] = set()
 
     def schedule(self, *, tenant_id: str) -> bool:
         """Register one bounded turn with the runtime's existing supervisor."""
 
         _text(tenant_id, "schedule.tenant_id")
-        self._known_tenants.add(tenant_id)
         task_id = self._identifier("dispatch_task")
         try:
             self._supervisor.create_task(
@@ -95,7 +93,6 @@ class LocalDeliveryDispatchCoordinator:
     async def _run_once(self, *, tenant_id: str) -> None:
         await self._activation.run_once(
             tenant_id=tenant_id,
-            known_tenant_ids=tuple(sorted(self._known_tenants)),
         )
         for _ in range(self._policy.activation_batch_size):
             worker_id = self._identifier("claim_worker")
@@ -108,6 +105,10 @@ class LocalDeliveryDispatchCoordinator:
             ).run_once(tenant_id=tenant_id)
             if claim.outcome is not ClaimOutcome.CLAIMED:
                 return
+            LeaseRenewWorker(
+                scheduler=self._scheduler, policy=self._policy,
+                risk_guard=self._risk_guard,
+            ).schedule(claim=claim.claim, supervisor=self._supervisor)
             result = await SendWorker(
                 scheduler=self._scheduler,
                 policy=self._policy,

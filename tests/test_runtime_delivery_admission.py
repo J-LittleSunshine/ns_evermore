@@ -26,6 +26,8 @@ from ns_runtime.delivery import (
     RejectionReason, StageSixAdmissionInput, StateStoreDeliveryAdmissionStore,
     cancel_initializing_graph, compute_dedup_evidence_fingerprint,
     emit_admission_result,
+    BoundPayloadRefValidationResult,
+    delivery_from_dict, delivery_to_dict,
 )
 from ns_runtime.protocol import TargetGroup
 from ns_runtime.routing import ResolvedRoutingPlan
@@ -75,16 +77,22 @@ class _PayloadClient(PayloadRefClient):
             raise self.error
         index = len(self.calls) - 1
         if index in self.invalid_indexes:
-            return PayloadRefValidationResult(
+            value = PayloadRefValidationResult(
                 valid=False, reason="unauthorized", revoked=False,
                 expires_at=self.clock.utc_now() + timedelta(seconds=30),
             )
-        return PayloadRefValidationResult(
-            valid=True, reason="valid", revoked=False,
-            expires_at=self.clock.utc_now() + timedelta(minutes=10),
-            object_id=("wrong" if self.malicious else request.object_id),
-            version=request.version, checksum=request.checksum,
-            tenant_id=request.tenant_id, size_bytes=128,
+        else:
+            value = PayloadRefValidationResult(
+                valid=True, reason="valid", revoked=False,
+                expires_at=self.clock.utc_now() + timedelta(minutes=10),
+                object_id=("wrong" if self.malicious else request.object_id),
+                version=request.version, checksum=request.checksum,
+                tenant_id=request.tenant_id, size_bytes=128,
+            )
+        return BoundPayloadRefValidationResult(
+            result=value,
+            request_binding_fingerprint=request.request_binding_fingerprint,
+            target_binding_fingerprint=request.target_binding_fingerprint,
         )
 
 
@@ -191,7 +199,12 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(AdmissionOutcome.ACCEPTED, result.outcome)
         initialization = self.store.values[0]
         root = initialization.root_summary
-        self.assertEqual(DeliverySummaryStatus.ACCEPTED, root.status)
+        self.assertEqual(DeliverySummaryStatus.PENDING, root.status)
+        self.assertEqual(0, root.shard_count)
+        self.assertFalse(initialization.shard_summaries)
+        self.assertTrue(all(item.summary_id == root.summary_id
+                            and item.shard_index is None
+                            for item in initialization.deliveries))
         self.assertEqual((3, 3, 0, 3, 0, 0), (
             root.total_count, root.accepted_count, root.rejected_count,
             root.prepared_count, root.active_count, root.inflight_count,
@@ -288,14 +301,14 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             self._request(payload=ref), trace=AdmissionTrace(trace_id="trace-ref")
         )
         self.assertEqual(AdmissionOutcome.ACCEPTED, partial.outcome)
-        self.assertEqual(DeliverySummaryStatus.PARTIAL,
+        self.assertEqual(DeliverySummaryStatus.PENDING,
                          store.values[0].root_summary.status)
         self.assertEqual(2, len(store.values[0].deliveries))
         self.assertEqual(3, len(client.calls))
         for reliability, outcome in (
             (AdmissionReliability.BEST_EFFORT, AdmissionOutcome.REJECTED),
-            (AdmissionReliability.AT_LEAST_ONCE, AdmissionOutcome.WAIT),
-            (AdmissionReliability.CRITICAL, AdmissionOutcome.DEAD_LETTER),
+            (AdmissionReliability.AT_LEAST_ONCE, AdmissionOutcome.WAIT_REQUIRED),
+            (AdmissionReliability.CRITICAL, AdmissionOutcome.DEAD_LETTER_REQUIRED),
         ):
             failed = await self._service(
                 store=_Store(), payload_client=_PayloadClient(
@@ -374,7 +387,7 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.committed)
 
     async def test_w10_fanout_boundaries_4999_5000_5001(self):
-        for count, expected_shards in ((4999, 1), (5000, 1), (5001, 6)):
+        for count, expected_shards in ((4999, 0), (5000, 0), (5001, 6)):
             plan = await _plan(count)
             self.plan = plan
             store = _Store()
@@ -386,6 +399,82 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(expected_shards, len(initialization.shard_summaries))
             self.assertEqual(500, initialization.initialization_batch_size)
             self.assertEqual(count, len(initialization.deliveries))
+
+    async def test_fix03_custom_fanout_policy_and_inline_fingerprint(self):
+        plan = await _plan(3)
+        self.plan = plan
+        config = dataclasses.replace(
+            self.config, fanout_shard_threshold=2, shard_bucket_size=2,
+            initialization_batch_size=2, activation_batch_size=1,
+        )
+        first_store = _Store()
+        first = DeliveryAdmissionService(
+            policy=DefaultAdmissionPolicy(), policy_config=config,
+            store=first_store, payload_ref_client=self.payload_client,
+            clock=self.clock, identifier_factory=_ids,
+        )
+        await first.admit(
+            self._request(payload=InlinePayload(
+                value={"content": "one"}, media_type="application/json",
+                application_limit_bytes=128, transport_limit_bytes=128,
+            )), trace=AdmissionTrace(trace_id="trace-custom-one"),
+        )
+        graph = first_store.values[0]
+        self.assertEqual(2, len(graph.shard_summaries))
+        self.assertEqual(2, graph.initialization_batch_size)
+        self.assertEqual((2, 2, 2, 1), (
+            graph.root_summary.policy_decision.fanout_shard_threshold,
+            graph.root_summary.policy_decision.shard_bucket_size,
+            graph.root_summary.policy_decision.initialization_batch_size,
+            graph.root_summary.policy_decision.activation_batch_size,
+        ))
+        second_store = _Store()
+        second = DeliveryAdmissionService(
+            policy=DefaultAdmissionPolicy(), policy_config=config,
+            store=second_store, payload_ref_client=self.payload_client,
+            clock=self.clock, identifier_factory=_ids,
+        )
+        await second.admit(
+            self._request(payload=InlinePayload(
+                value={"content": "two"}, media_type="application/json",
+                application_limit_bytes=128, transport_limit_bytes=128,
+            )), trace=AdmissionTrace(trace_id="trace-custom-two"),
+        )
+        self.assertNotEqual(
+            graph.root_summary.policy_decision.request_fingerprint,
+            second_store.values[0].root_summary.policy_decision.request_fingerprint,
+        )
+
+    async def test_fix03_target_replay_and_legacy_schema_fail_closed(self):
+        class ReplayClient(_PayloadClient):
+            async def validate_payload_ref(self, request):
+                result = await super().validate_payload_ref(request)
+                return dataclasses.replace(
+                    result, target_binding_fingerprint="sha256:" + "0" * 64,
+                )
+
+        ref = PayloadReference(
+            object_id="object:1", version="version:1", checksum="sha256:abcd",
+            owner_identity="identity-source",
+        )
+        with self.assertRaises(NsValidationError):
+            await self._service(
+                store=_Store(), payload_client=ReplayClient(self.clock),
+            ).admit(
+                self._request(payload=ref),
+                trace=AdmissionTrace(trace_id="trace-replay"),
+            )
+        await self.service.admit(
+            self._request(), trace=AdmissionTrace(trace_id="trace-schema"),
+        )
+        legacy = delivery_to_dict(self.store.values[0].deliveries[0])
+        legacy["schema_version"] = "dr-1"
+        with self.assertRaises(NsValidationError) as context:
+            delivery_from_dict(legacy)
+        self.assertEqual(
+            "delivery.schema_migration_required",
+            context.exception.details["field"],
+        )
 
     async def test_w11_w12_prepared_never_active_and_cancel_scope_is_closed_enum(self):
         await self.service.admit(
@@ -403,28 +492,23 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             root, status=DeliverySummaryStatus.INITIALIZING,
             accepted_count=2, prepared_count=2, not_initialized_count=1,
         )
-        initializing_shard = dataclasses.replace(
-            initialization.shard_summaries[0],
-            status=DeliverySummaryStatus.INITIALIZING,
-            accepted_count=2, prepared_count=2, not_initialized_count=1,
-        )
         cancelled_root, cancelled_shards, cancelled_deliveries = (
             cancel_initializing_graph(
-                root=initializing_root, shards=(initializing_shard,),
+                root=initializing_root, shards=(),
                 created_deliveries=initialization.deliveries[:2],
                 cancelled_at=self.clock.utc_now(),
             )
         )
-        self.assertEqual(DeliverySummaryStatus.CANCELLED_INITIALIZING,
+        self.assertEqual(DeliverySummaryStatus.CANCELLED,
                          cancelled_root.status)
         self.assertEqual((2, 1, 0), (
             cancelled_root.cancelled_count,
             cancelled_root.not_initialized_count,
             cancelled_root.prepared_count,
         ))
-        self.assertTrue(all(item.status is DeliveryRecordStatus.CANCELLED_INITIALIZING
+        self.assertTrue(all(item.status is DeliveryRecordStatus.CANCELLED
                             for item in cancelled_deliveries))
-        self.assertEqual(1, cancelled_shards[0].not_initialized_count)
+        self.assertFalse(cancelled_shards)
         with self.assertRaises(NsValidationError):
             cancel_initializing_graph(
                 root=cancelled_root, shards=cancelled_shards,
@@ -452,6 +536,21 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             dataclasses.replace(accepted_result, schema_version="forged")
         with self.assertRaises(NsValidationError):
             dataclasses.replace(self.store.values[0], schema_version="forged")
+        initialization = self.store.values[0]
+        duplicate_target = dataclasses.replace(
+            initialization.deliveries[1],
+            target_index=initialization.deliveries[0].target_index,
+        )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                initialization,
+                deliveries=(initialization.deliveries[0], duplicate_target)
+                + initialization.deliveries[2:],
+            )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(initialization, payload_body=b'{}')
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(self.config, activation_batch_size=1001)
         bad_policy = _Policy(lambda value: dataclasses.replace(
             value, target_strategy=self.plan.requested_strategy
             if self.plan.requested_strategy is not self.plan.effective_strategy
@@ -577,11 +676,11 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
         root = next(item for item in documents
                     if item.get("summary_id") == "summary:0"
                     and "status" in item)
-        self.assertEqual("cancelled_initializing", root["status"])
+        self.assertEqual("cancelled", root["status"])
         self.assertEqual(500, root["cancelled_count"])
         self.assertEqual(1, root["not_initialized_count"])
         self.assertEqual(500, sum(
-            item.get("status") == "cancelled_initializing"
+            item.get("status") == "cancelled"
             and "delivery_id" in item for item in documents
         ))
         dedup = next(item for item in documents if "lifecycle" in item)

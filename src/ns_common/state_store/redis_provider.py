@@ -35,6 +35,10 @@ from .model import (
     StateKey,
     StateMutation,
     StateMutationKind,
+    StateOrderedIndexEntry,
+    StateOrderedIndexKey,
+    StateOrderedIndexMutationKind,
+    StateOrderedIndexReadResult,
     StateReadResult,
     StateRecord,
     StateRevision,
@@ -316,6 +320,103 @@ return cjson.encode({revision = revision, position = tostring(position), committ
 """
 
 
+_PROJECTION_TRANSACTION_SCRIPT = r"""
+local mutations = cjson.decode(ARGV[1])
+local index_ops = cjson.decode(ARGV[2])
+local logs = cjson.decode(ARGV[3])
+local committed_at = ARGV[4]
+
+local function domain_error(kind, reason, index)
+    return redis.error_reply('NS_STATE|' .. kind .. '|' .. reason .. '|' .. index)
+end
+
+for index, mutation in ipairs(mutations) do
+    local key = KEYS[mutation.record_key_index]
+    local exists = redis.call('EXISTS', key) == 1
+    if mutation.kind == 'create' then
+        if exists then return domain_error('conflict', 'expected_absent', index) end
+        if mutation.document.state_version ~= '1' then
+            return domain_error('version', 'initial_state_version', index)
+        end
+    else
+        if not exists then return domain_error('conflict', 'missing', index) end
+        if redis.call('HGET', key, 'revision') ~= mutation.expected_revision then
+            return domain_error('conflict', 'revision', index)
+        end
+        if mutation.expected_state_version ~= '' and
+           redis.call('HGET', key, 'state_version') ~= mutation.expected_state_version then
+            return domain_error('conflict', 'state_version', index)
+        end
+        if mutation.expected_epoch ~= '' and
+           redis.call('HGET', key, 'epoch') ~= mutation.expected_epoch then
+            return domain_error('conflict', 'epoch', index)
+        end
+        if mutation.kind == 'replace' then
+            if redis.call('HGET', key, 'schema_name') ~= mutation.document.schema_name or
+               redis.call('HGET', key, 'schema_version') ~= mutation.document.schema_version then
+                return domain_error('version', 'schema', index)
+            end
+            if tonumber(mutation.document.state_version) ~=
+               tonumber(redis.call('HGET', key, 'state_version')) + 1 then
+                return domain_error('version', 'state_version', index)
+            end
+        end
+    end
+end
+
+local results = {}
+for index, mutation in ipairs(mutations) do
+    local key = KEYS[mutation.record_key_index]
+    local scan_key = KEYS[mutation.scan_key_index]
+    if mutation.kind == 'delete' then
+        redis.call('DEL', key)
+        redis.call('ZREM', scan_key, key)
+        results[index] = {present = '0'}
+    else
+        local revision = tostring(redis.call('INCR', KEYS[1]))
+        local document = mutation.document
+        redis.call('HSET', key,
+            'schema_name', document.schema_name,
+            'schema_version', document.schema_version,
+            'state_version', document.state_version,
+            'epoch', document.epoch,
+            'payload', document.payload,
+            'revision', revision,
+            'committed_at', committed_at,
+            'namespace_digest', mutation.key.namespace_digest,
+            'object_type', mutation.key.object_type,
+            'object_id', mutation.key.object_id)
+        redis.call('ZADD', scan_key, 0, key)
+        results[index] = {
+            present = '1', schema_name = document.schema_name,
+            schema_version = document.schema_version,
+            state_version = document.state_version, epoch = document.epoch,
+            payload = document.payload, revision = revision,
+            committed_at = committed_at
+        }
+    end
+end
+
+for _, operation in ipairs(index_ops) do
+    local key = KEYS[operation.key_index]
+    if operation.kind == 'add' then
+        redis.call('ZADD', key, operation.score, operation.member)
+    else
+        redis.call('ZREM', key, operation.member)
+    end
+end
+
+local positions = {}
+for index, item in ipairs(logs) do
+    local revision = tostring(redis.call('INCR', KEYS[1]))
+    local entry = cjson.encode({document = item.document,
+        revision = revision, committed_at = committed_at})
+    positions[index] = redis.call('RPUSH', KEYS[item.key_index], entry)
+end
+return cjson.encode({records = results, log_positions = positions})
+"""
+
+
 class RedisValkeyStateStore(StateStore):
     """One-client standalone provider; cluster/Sentinel/lease semantics are absent."""
 
@@ -494,9 +595,37 @@ class RedisValkeyStateStore(StateStore):
         self,
         transaction: StateTransaction,
     ) -> StateTransactionResult:
-        return await self._execute_transaction(
-            scope=transaction.scope,
-            mutations=transaction.mutations,
+        if transaction.ordered_index_mutations or transaction.log_appends:
+            return await self._execute_projection_transaction(transaction)
+        return await self._execute_transaction(scope=transaction.scope, mutations=transaction.mutations)
+
+    async def _read_ordered_index(
+        self, *, scope: StateAccessScope, index: StateOrderedIndexKey,
+        limit: int, max_score: float | None,
+    ) -> StateOrderedIndexReadResult:
+        client = self._require_client()
+        key = self._ordered_index_key(index)
+        pipeline = client.pipeline(transaction=True)  # type: ignore[attr-defined]
+        if max_score is None:
+            pipeline.zrange(key, 0, limit - 1, withscores=True)
+        else:
+            pipeline.zrangebyscore(key, "-inf", max_score, start=0, num=limit, withscores=True)
+        pipeline.zcard(key)
+        response = await self._execute(pipeline.execute())
+        if not isinstance(response, (list, tuple)) or len(response) != 2:
+            raise RuntimeError("provider ordered index result invalid")
+        raw, total = response
+        if not isinstance(raw, (list, tuple)):
+            raise RuntimeError("provider ordered index result invalid")
+        entries: list[StateOrderedIndexEntry] = []
+        for item in raw:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                raise RuntimeError("provider ordered index entry invalid")
+            entries.append(StateOrderedIndexEntry(member=_as_text(item[0]), score=float(item[1])))
+        if isinstance(total, bool) or not isinstance(total, int):
+            raise RuntimeError("provider ordered index count invalid")
+        return StateOrderedIndexReadResult(
+            entries=tuple(entries), observed_at=self._clock.utc_now(), total_count=total,
         )
 
     async def _append(
@@ -583,6 +712,60 @@ class RedisValkeyStateStore(StateStore):
                 else self._record_from_wire(mutation.key, value)
             )
         return StateTransactionResult(records=tuple(records))
+
+    async def _execute_projection_transaction(
+        self, transaction: StateTransaction,
+    ) -> StateTransactionResult:
+        client = self._require_client()
+        committed_at = self._clock.utc_now()
+        keys: list[str] = [self._revision_key]
+        key_positions: dict[str, int] = {keys[0]: 1}
+
+        def position(key: str) -> int:
+            if key not in key_positions:
+                keys.append(key)
+                key_positions[key] = len(keys)
+            return key_positions[key]
+
+        mutations = []
+        for mutation in transaction.mutations:
+            value = _mutation_payload(mutation)
+            value["record_key_index"] = position(self._record_key(mutation.key))
+            value["scan_key_index"] = position(self._index_key(
+                mutation.key.namespace, mutation.key.object_type,
+            ))
+            mutations.append(value)
+        index_ops = [{
+            "key_index": position(self._ordered_index_key(value.index)),
+            "kind": value.kind.value,
+            "member": value.member,
+            "score": value.score,
+        } for value in transaction.ordered_index_mutations]
+        logs = [{
+            "key_index": position(self._transition_log_key(value.key)),
+            "document": _document_payload(value.document),
+        } for value in transaction.log_appends]
+        raw = await self._execute(client.eval(  # type: ignore[attr-defined]
+            _PROJECTION_TRANSACTION_SCRIPT, len(keys), *keys,
+            _canonical_json(mutations), _canonical_json(index_ops),
+            _canonical_json(logs), committed_at.isoformat(),
+        ))
+        values = _decode_json_result(raw)
+        if not isinstance(values, dict):
+            raise RuntimeError("provider projection transaction result invalid")
+        record_values = values.get("records")
+        positions = values.get("log_positions")
+        if not isinstance(record_values, list) or not isinstance(positions, list):
+            raise RuntimeError("provider projection transaction result invalid")
+        records: list[StateRecord | None] = []
+        for mutation, value in zip(transaction.mutations, record_values):
+            if not isinstance(value, dict) or value.get("present") not in {"0", "1"}:
+                raise RuntimeError("provider projection mutation result invalid")
+            records.append(None if value["present"] == "0" else self._record_from_wire(mutation.key, value))
+        return StateTransactionResult(
+            records=tuple(records),
+            log_positions=tuple(int(value) for value in positions),
+        )
 
     async def _execute(self, awaitable: object) -> object:
         try:
@@ -676,6 +859,15 @@ class RedisValkeyStateStore(StateStore):
 
     def _append_meta_key(self, key: StateKey) -> str:
         return self._prefix + "append-meta:" + _state_key_digest(key)
+
+    def _ordered_index_key(self, index: StateOrderedIndexKey) -> str:
+        tag = _namespace_digest(index.namespace) + ":" + index.bucket
+        return (self._prefix + "ordered:{" + tag + "}:"
+                + hashlib.sha256(index.name.encode("utf-8")).hexdigest())
+
+    def _transition_log_key(self, key: StateKey) -> str:
+        tag = _namespace_digest(key.namespace) + ":delivery"
+        return self._prefix + "transition:{" + tag + "}:" + _state_key_digest(key)
 
     @staticmethod
     def _record_from_hash(key: StateKey, raw: object) -> StateRecord:

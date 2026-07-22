@@ -48,10 +48,14 @@ from ns_common.state_store import (
     StateMutation,
     StateMutationKind,
     StateNamespace,
+    StateOrderedIndexKey,
+    StateOrderedIndexMutation,
+    StateOrderedIndexMutationKind,
     StateStoreCapabilities,
     StateStoreHealthStatus,
     StateStorePasswordSource,
     StateTransaction,
+    StateTransitionLogAppend,
 )
 from ns_common.time import ControlledClock
 from ns_runtime.delivery import (
@@ -365,8 +369,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(advanced, observed.record)
         await store.close()
 
-    async def test_p11_real_redis_scan_activation_and_atomic_claim_conflict(self) -> None:
-        store = self._provider()
+    async def test_p11_real_redis_index_activation_claim_and_provider_recovery(self) -> None:
+        store = self._provider(timeout=5.0)
         await store.open()
         plan = await _plan()
         service, request = self._admission_service(store, plan)
@@ -406,14 +410,25 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             )
             for worker in workers
         ))
-        self.assertEqual(1, sum(
-            result.outcome is ClaimOutcome.CLAIMED for result in results
-        ))
+        claimed = next(
+            result for result in results
+            if result.outcome is ClaimOutcome.CLAIMED
+        )
         self.assertEqual(15, sum(
             result.outcome in {ClaimOutcome.CONTENDED, ClaimOutcome.EMPTY}
             for result in results
         ))
         await store.close()
+        store_b = self._provider(timeout=5.0)
+        await store_b.open()
+        scheduler_b = StateStoreDeliveryScheduler(store=store_b, clock=self.clock)
+        recovered = await scheduler_b.load_claimed(claim=claimed.claim)
+        self.assertEqual(claimed.claim.fencing, recovered.owner.fencing)
+        counts = await scheduler_b.resource_counts(
+            tenant_id=plan.authorization_evidence.effective_tenant_id,
+        )
+        self.assertEqual((2, 1), (counts.prepared, counts.queued))
+        await store_b.close()
 
     async def test_revision_order_and_schema_version_contract(self) -> None:
         store = self._provider()
@@ -487,6 +502,51 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 consistency=StateConsistency.LINEARIZABLE,
             )
             self.assertIsNone(observed.record)
+        await store.close()
+
+    async def test_failed_projection_batch_leaves_no_index_or_log_orphan(self) -> None:
+        store = self._provider()
+        await store.open()
+        scope = _scope()
+        existing_key = _key(scope, "projection-existing")
+        orphan_key = _key(scope, "projection-orphan")
+        index = StateOrderedIndexKey(
+            namespace=scope.namespace,
+            name="delivery.ready",
+            bucket="contract",
+        )
+        await store.compare_and_set(scope=scope, mutation=_create(existing_key))
+        with self.assertRaises(NsRuntimeStateStoreConflictError):
+            await store.transact(StateTransaction(
+                scope=scope,
+                mutations=(_create(orphan_key), _create(existing_key)),
+                ordered_index_mutations=(StateOrderedIndexMutation(
+                    index=index,
+                    kind=StateOrderedIndexMutationKind.ADD,
+                    member="projection-orphan",
+                    score=1.0,
+                ),),
+                log_appends=(StateTransitionLogAppend(
+                    key=orphan_key,
+                    document=_document(1, b'{"operation":"must-not-commit"}'),
+                ),),
+            ))
+        observed = await store.read(
+            scope=scope,
+            key=orphan_key,
+            consistency=StateConsistency.LINEARIZABLE,
+        )
+        self.assertIsNone(observed.record)
+        index_result = await store.read_ordered_index(
+            scope=scope, index=index, limit=10,
+        )
+        self.assertEqual((0, ()), (index_result.total_count, index_result.entries))
+        raw = self._raw_client()
+        transition_keys = await self._scan(
+            raw, self.namespace + ":transition:*",
+        )
+        await raw.aclose()
+        self.assertEqual([], transition_keys)
         await store.close()
 
     async def test_append_and_lifecycle_cleanup(self) -> None:
@@ -627,7 +687,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         )
         assert root.record is not None
         values = json.loads(root.record.document.payload)
-        self.assertEqual("accepted", values["status"])
+        self.assertEqual("pending", values["status"])
+        self.assertEqual(0, values["shard_count"])
         self.assertEqual(501, values["accepted_count"])
         self.assertEqual(501, values["prepared_count"])
         self.assertEqual(3, root.record.document.state_version)
@@ -670,10 +731,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                         object_type="summary",
                         object_id=self._delivery_object_id(summary_id),
                     ),
-                    "shard": StateKey(
+                    "payload_body": StateKey(
                         namespace=namespace,
-                        object_type="summary",
-                        object_id=self._delivery_object_id("shard:0"),
+                        object_type="payload_body",
+                        object_id=self._delivery_object_id("payload_body:0"),
                     ),
                     "delivery": StateKey(
                         namespace=namespace,
@@ -690,13 +751,15 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                     )
                     assert observed.record is not None
                     payload = json.loads(observed.record.document.payload)
+                    digest = (payload["payload_evidence"]["digest"]
+                              if "payload_evidence" in payload else payload["digest"])
                     evidence[name] = (
                         observed.record.revision._provider_token(),
                         observed.record.document.state_version,
                         hashlib.sha256(
                             observed.record.document.payload,
                         ).hexdigest(),
-                        payload["payload_evidence"]["digest"],
+                        digest,
                     )
                 raw = self._raw_client()
                 keys_before_restart = await self._scan(
@@ -729,10 +792,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                         object_type="summary",
                         object_id=self._delivery_object_id(summary_id),
                     ),
-                    "shard": StateKey(
+                    "payload_body": StateKey(
                         namespace=namespace_b,
-                        object_type="summary",
-                        object_id=self._delivery_object_id("shard:0"),
+                        object_type="payload_body",
+                        object_id=self._delivery_object_id("payload_body:0"),
                     ),
                     "delivery": StateKey(
                         namespace=namespace_b,
@@ -765,17 +828,19 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                     recovered_payload = json.loads(
                         recovered.record.document.payload,
                     )
-                    self.assertEqual(
-                        payload_digest,
-                        recovered_payload["payload_evidence"]["digest"],
+                    recovered_digest = (
+                        recovered_payload["payload_evidence"]["digest"]
+                        if "payload_evidence" in recovered_payload
+                        else recovered_payload["digest"]
                     )
-                    if name in {"root", "shard"}:
-                        self.assertEqual("accepted", recovered_payload["status"])
+                    self.assertEqual(payload_digest, recovered_digest)
+                    if name == "root":
+                        self.assertEqual("pending", recovered_payload["status"])
                         self.assertEqual(
                             target_count,
                             recovered_payload["prepared_count"],
                         )
-                    else:
+                    elif name == "delivery":
                         self.assertEqual("prepared", recovered_payload["status"])
                 self.assertEqual(
                     2 if target_count <= 500 else 3,

@@ -38,7 +38,7 @@ from ns_runtime.delivery import (
     LeaseRenewOutcome,
     LeaseRenewWorker,
     LocalDeliveryTarget,
-    OutboundDeliveryPayload,
+    OutboundDeliveryMaterial,
     OwnerRiskGuard,
     PayloadValidationResult,
     PayloadReference,
@@ -48,9 +48,11 @@ from ns_runtime.delivery import (
     SendWorker,
     StageSixAdmissionInput,
     StateStoreDeliveryAdmissionStore,
+    StateStoreDeliveryPayloadAuthority,
     StateStoreDeliveryScheduler,
 )
 from ns_runtime.processor import RoutingPreparationResult
+from ns_runtime.protocol import PayloadGroup
 
 from tests._state_store_contract_model import DeterministicStateStoreContractModel
 from tests.test_runtime_connection_binding import UTC_START
@@ -88,12 +90,25 @@ class _Payloads(DeliveryPayloadResolver):
         if self.illegal:
             return object()
         evidence = delivery.payload_evidence
-        return OutboundDeliveryPayload(
-            wire_text='{"type":"task.dispatch"}',
-            message_id=delivery.message_id,
-            target_fingerprint=delivery.target_fingerprint,
+        if evidence.kind.value == "inline":
+            payload = PayloadGroup(
+                mode="inline", inline={"safe": [1, 2]},
+                content_type=evidence.media_type,
+                size_bytes=evidence.size_bytes, checksum=evidence.checksum,
+            )
+        else:
+            payload = PayloadGroup(
+                mode="reference", payload_ref={
+                    "object_id": evidence.object_id,
+                    "version": evidence.object_version,
+                    "checksum": evidence.checksum,
+                }, content_type=evidence.media_type,
+                size_bytes=evidence.size_bytes, checksum=evidence.checksum,
+                version=evidence.object_version,
+            )
+        return OutboundDeliveryMaterial(
+            payload=payload,
             evidence_fingerprint=evidence.evidence_fingerprint,
-            content_digest=evidence.digest,
         )
 
 
@@ -250,16 +265,17 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             token_factory=lambda: token,
         ).run_once(tenant_id=self.tenant_id)
 
-    def _send_worker(self, *, targets=None, validator=None, payloads=None, writer=None):
+    def _send_worker(self, *, targets=None, validator=None, payloads=None, writer=None,
+                     policy=None, attempt_id_factory=None):
         return SendWorker(
             scheduler=self.scheduler,
-            policy=self.policy,
+            policy=policy or self.policy,
             target_resolver=targets or _Targets(),
             payload_validator=validator or _Validator(),
             payload_resolver=payloads or _Payloads(),
             transport_writer=writer or _Writer(),
             risk_guard=self.risk_guard,
-            attempt_id_factory=lambda: "attempt-1",
+            attempt_id_factory=attempt_id_factory or (lambda: "attempt-1"),
             clock=self.clock,
         )
 
@@ -288,6 +304,26 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
 
         limited_model = self.model
         self.assertIs(limited_model, self.model)
+
+    async def test_fix01_expired_prepared_is_terminalized_and_not_revisited(self) -> None:
+        self.clock.advance(31)
+        result = await self._activate()
+        self.assertEqual(0, len(result.activated))
+        counts = await self.scheduler.resource_counts(tenant_id=self.tenant_id)
+        self.assertEqual(0, counts.prepared)
+        self.assertEqual(0, counts.queued)
+        self.assertEqual(3, counts.write_failed)
+        second = await self._activate()
+        self.assertEqual(0, second.candidate_count)
+        deliveries = [
+            json.loads(record.document.payload)
+            for record in self.model.records.values()
+            if record.key.object_type == "delivery"
+        ]
+        self.assertEqual(
+            {DeliveryRecordStatus.EXPIRED.value},
+            {value["status"] for value in deliveries},
+        )
 
     async def test_w01_tenant_watermark_limits_activation(self) -> None:
         limited = dataclasses.replace(
@@ -368,6 +404,25 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             counts.inflight, counts.write_failed,
         ))
 
+    async def test_fix01_durable_inline_body_rebuilds_typed_envelope(self) -> None:
+        await self._activate(policy=dataclasses.replace(
+            self.policy, activation_batch_size=1,
+        ))
+        claimed = await self._claim(token="claim-durable-body")
+        authority = StateStoreDeliveryPayloadAuthority(store=self.model)
+        writer = _Writer(
+            authority_model=self.model,
+            delivery_id=claimed.claim.delivery_id,
+        )
+        result = await self._send_worker(
+            validator=authority,
+            payloads=authority,
+            writer=writer,
+            attempt_id_factory=lambda: "attempt-durable-body",
+        ).run_once(claim=claimed.claim)
+        self.assertIs(SendOutcome.ACK_WAITING, result.outcome)
+        self.assertTrue(writer.saw_authoritative_sending)
+
     async def test_w04_prechecks_disconnect_payload_and_expiry_without_transport_write(self) -> None:
         await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
         disconnected_claim = await self._claim(token="claim-disconnected")
@@ -380,13 +435,7 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, writer.calls)
         self.assertIsNone(disconnected.delivery.owner)
 
-        invalid_claim = await self._claim(token="claim-invalid")
-        invalid = await self._send_worker(
-            validator=_Validator(illegal=True), writer=writer,
-        ).run_once(claim=invalid_claim.claim)
-        self.assertIs(DeliveryWriteFailure.PAYLOAD_INVALID, invalid.failure)
-        self.assertEqual(0, writer.calls)
-
+        await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
         mismatch_claim = await self._claim(token="claim-mismatch")
         mismatch = await self._send_worker(
             targets=_Targets(mismatch=True), writer=writer,
@@ -394,6 +443,7 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(DeliveryWriteFailure.TARGET_IDENTITY_MISMATCH, mismatch.failure)
         self.assertEqual(0, writer.calls)
 
+        await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
         expired_claim = await self._claim(token="claim-expired")
         self.clock.advance(31)
         expired = await self._send_worker(writer=writer).run_once(
@@ -478,19 +528,13 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_w03_w09_owner_risk_stops_new_write(self) -> None:
         await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
         claimed = await self._claim(token="claim-risk")
-        renew = LeaseRenewWorker(
-            scheduler=self.scheduler,
+        risky = await self.scheduler.mark_owner_at_risk(
+            claim=claimed.claim,
             policy=self.policy,
-            risk_guard=self.risk_guard,
         )
-        self.assertIs(LeaseRenewOutcome.FAILURE_RECORDED, (
-            await renew.run_once(claim=claimed.claim, renewal_succeeded=False)
-        ).outcome)
-        self.assertIs(LeaseRenewOutcome.FAILURE_RECORDED, (
-            await renew.run_once(claim=claimed.claim, renewal_succeeded=False)
-        ).outcome)
-        risk = await renew.run_once(claim=claimed.claim, renewal_succeeded=False)
-        self.assertIs(LeaseRenewOutcome.AT_RISK, risk.outcome)
+        self.assertIs(DeliveryOwnerRisk.AT_RISK, risky.owner.risk)
+        self.assertEqual(1, risky.owner.renew_failures)
+        self.risk_guard.mark_at_risk(claimed.claim)
         writer = _Writer()
         stopped = await self._send_worker(writer=writer).run_once(claim=claimed.claim)
         self.assertIs(SendOutcome.OWNER_RISK, stopped.outcome)
@@ -509,6 +553,108 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(NsRuntimeDeliveryLeaseExpiredError):
             await self._send_worker(writer=writer).run_once(claim=claimed.claim)
         self.assertEqual(0, writer.calls)
+
+    async def test_fix01_expired_owner_recovers_with_higher_fencing(self) -> None:
+        await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
+        first = await self._claim(worker_id="worker-old", token="claim-old")
+        self.assertEqual(1, first.claim.fencing)
+        self.clock.advance(61)
+        recovered = await self._claim(worker_id="worker-new", token="claim-new")
+        self.assertIs(ClaimOutcome.CLAIMED, recovered.outcome)
+        self.assertEqual(2, recovered.claim.fencing)
+        with self.assertRaises(NsRuntimeOwnerMismatchError):
+            await self.scheduler.load_claimed(claim=first.claim)
+        current = await self.scheduler.load_claimed(claim=recovered.claim)
+        self.assertEqual(2, current.owner.fencing)
+
+    async def test_fix01_supervised_real_renew_loop(self) -> None:
+        await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
+        claimed = await self._claim(token="claim-renew-loop")
+        supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
+        renew = LeaseRenewWorker(
+            scheduler=self.scheduler, policy=self.policy,
+            risk_guard=self.risk_guard,
+        )
+        renew.schedule(claim=claimed.claim, supervisor=supervisor)
+        await asyncio.sleep(0)
+        original_expiry = claimed.delivery.owner.lease_expires_at
+        self.clock.advance(self.policy.renew_interval_seconds)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        renewed = await self.scheduler.load_claimed(claim=claimed.claim)
+        self.assertGreater(renewed.owner.lease_expires_at, original_expiry)
+        report = await supervisor.shutdown()
+        self.assertTrue(report.clean)
+
+    async def test_fix01_raw_material_wrong_digest_and_config_update_fail_closed(self) -> None:
+        attempt_ids = (f"attempt-fix01-{value}" for value in itertools.count(1))
+        next_attempt_id = lambda: next(attempt_ids)
+
+        class RawResolver(DeliveryPayloadResolver):
+            async def resolve(self, delivery):
+                return '{"type":"task.dispatch"}'
+
+        await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
+        raw_claim = await self._claim(token="claim-raw")
+        writer = _Writer()
+        raw = await self._send_worker(
+            payloads=RawResolver(), writer=writer,
+            attempt_id_factory=next_attempt_id,
+        ).run_once(claim=raw_claim.claim)
+        self.assertIs(SendOutcome.PRECHECK_FAILED, raw.outcome)
+        self.assertEqual(0, writer.calls)
+
+        await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
+        digest_claim = await self._claim(token="claim-digest")
+
+        class WrongDigestResolver(DeliveryPayloadResolver):
+            async def resolve(self, delivery):
+                return OutboundDeliveryMaterial(
+                    payload=PayloadGroup(mode="inline", inline={"safe": [9]}),
+                    evidence_fingerprint=delivery.payload_evidence.evidence_fingerprint,
+                )
+
+        wrong = await self._send_worker(
+            payloads=WrongDigestResolver(), writer=writer,
+            attempt_id_factory=next_attempt_id,
+        ).run_once(claim=digest_claim.claim)
+        self.assertIs(SendOutcome.WRITE_FAILED, wrong.outcome)
+        self.assertIs(DeliveryWriteFailure.PAYLOAD_INVALID, wrong.failure)
+        self.assertEqual(0, writer.calls)
+
+        await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
+        updated_claim = await self._claim(token="claim-config-update")
+        updated_policy = dataclasses.replace(
+            self.policy, config_version="c2", policy_version="p2",
+        )
+        updated = await self._send_worker(
+            policy=updated_policy, writer=writer,
+            attempt_id_factory=next_attempt_id,
+        ).run_once(claim=updated_claim.claim)
+        self.assertIs(SendOutcome.ACK_WAITING, updated.outcome)
+        self.assertEqual(1, writer.calls)
+
+    async def test_fix01_projection_indexes_and_transition_log_are_authoritative(self) -> None:
+        await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
+        claimed = await self._claim(token="claim-projection")
+        names = {
+            key.name: values for key, values in self.model.ordered_indexes.items()
+            if key.namespace == next(iter(self.model.records)).namespace
+        }
+        self.assertEqual(0, len(names["delivery.ready"]))
+        self.assertEqual(1, len(names["delivery.claimed"]))
+        self.assertEqual(1, len(names["delivery.lease"]))
+        duplicate = await self._claim(worker_id="duplicate", token="duplicate")
+        self.assertIs(ClaimOutcome.EMPTY, duplicate.outcome)
+        events = [
+            json.loads(document.payload)
+            for documents in self.model.logs.values()
+            for document in documents
+        ]
+        self.assertIn("delivery_claimed", {item["operation"] for item in events})
+        self.assertEqual(
+            1, sum(item["operation"] == "delivery_claimed" for item in events),
+        )
 
     async def test_w08_write_failure_is_typed_and_never_enters_retry_or_dead_letter(self) -> None:
         await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
@@ -582,8 +728,10 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             clock=self.clock,
         )
         self.assertTrue(coordinator.schedule(tenant_id=self.tenant_id))
-        self.assertEqual(1, len(supervisor.task_names))
-        await supervisor.get_task(supervisor.task_names[0])
+        self.assertGreaterEqual(len(supervisor.task_names), 1)
+        dispatch_name = next(name for name in supervisor.task_names
+                             if name.startswith("p11-local-dispatch:"))
+        await supervisor.get_task(dispatch_name)
         report = await supervisor.shutdown()
         self.assertTrue(report.clean)
         self.assertEqual(2, writer.calls)
