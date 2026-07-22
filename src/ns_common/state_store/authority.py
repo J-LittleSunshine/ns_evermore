@@ -23,6 +23,7 @@ class StateAuthorityKind(str, Enum):
     CREDENTIAL = "credential"
     PROCESSOR_EXECUTION = "processor_execution"
     STRONG_AUDIT = "strong_audit"
+    DELIVERY_ADMISSION = "delivery_admission"
     FUTURE_AUTHORITY = "future_authority"
 
 
@@ -44,6 +45,7 @@ STATE_AUTHORITY_BOUNDARIES: Mapping[
     StateAuthorityKind.CREDENTIAL: StateAuthorityClassification.EXTERNAL,
     StateAuthorityKind.PROCESSOR_EXECUTION: StateAuthorityClassification.TRANSIENT,
     StateAuthorityKind.STRONG_AUDIT: StateAuthorityClassification.STATE_STORE,
+    StateAuthorityKind.DELIVERY_ADMISSION: StateAuthorityClassification.STATE_STORE,
     StateAuthorityKind.FUTURE_AUTHORITY: StateAuthorityClassification.RESERVED,
 })
 
@@ -113,6 +115,17 @@ class StateStoreCapabilities:
         return cls(
             features=frozenset(StateStoreCapability),
             authorities=frozenset({StateAuthorityKind.STRONG_AUDIT}),
+        )
+
+    @classmethod
+    def p10_contract(cls) -> "StateStoreCapabilities":
+        """Capabilities required by the DR-1 admission authority."""
+        return cls(
+            features=frozenset(StateStoreCapability),
+            authorities=frozenset({
+                StateAuthorityKind.STRONG_AUDIT,
+                StateAuthorityKind.DELIVERY_ADMISSION,
+            }),
         )
 
 
@@ -243,11 +256,14 @@ class StateAccessScope:
             _invalid("access_scope.capabilities")
         if not self.capabilities:
             _invalid("access_scope.capabilities")
-        if (
-            self.authority is StateAuthorityKind.STRONG_AUDIT
-            and self.atomic_scope.namespace.kind is not StateNamespaceKind.AUDIT
-        ):
-            _invalid("access_scope.strong_audit_namespace")
+        if self.authority is StateAuthorityKind.STRONG_AUDIT:
+            if self.atomic_scope.namespace.kind is not StateNamespaceKind.AUDIT:
+                _invalid("access_scope.strong_audit_namespace")
+        elif self.authority is StateAuthorityKind.DELIVERY_ADMISSION:
+            if self.atomic_scope.namespace.kind is not StateNamespaceKind.TENANT:
+                _invalid("access_scope.delivery_admission_namespace")
+            if self.atomic_scope.namespace.domain != "delivery":
+                _invalid("access_scope.delivery_admission_domain")
 
     @property
     def namespace(self) -> StateNamespace:

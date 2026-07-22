@@ -1851,6 +1851,42 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - P09-FIX-04全部要求关闭；P09恢复`VERIFIED/F3 (local only)`。
 - strong RoutingPlan persistence、remote/master routing、cluster/lease/fencing、P14 health scoring、Delivery/Summary/ACK/retry仍未实现。`P10-W01`保持`BLOCKED`，等待独立授权。
 
+## P10-W01至W14 DR-1 admission、Summary、dedup与Payload Reference验收证据
+
+- 工作包：`P10-W01`至`P10-W14`；用户独立授权解除P10阻塞后连续实施，全部源码、测试、文档和阶段出口证据通过后标记`VERIFIED/F3 (local only)`。
+- 完成时间：`2026-07-22T20:31:00+08:00`。
+- 基线：开始时worktree clean，分支`codex/ns-runtime-implementation`，HEAD/用户指定P09复核基线均为`2d6e0083c4ce05d81aa612db9c839219aa5c4a57`。
+- 修改范围：新增`src/ns_runtime/delivery/`的DR-1 models/policy/store/service/response/PC-1 integration；扩展StateStore delivery authority、IAM payload_ref完整性result与runtime live client；新增/更新P10、IAM/backend测试及ADR-037、implementation plan和本日志。
+
+### W01-W14关闭映射
+
+- W01/DR-1：冻结Summary、prepared/cancelled-initializing DeliveryRecord、payload/dedup evidence、policy/result/response和atomic initialization。公共构造、伪造enum/string、schema/state version、count、fingerprint、`dataclasses.replace()`及跨plan/message/tenant/shard/binding图均同步复验。
+- W02：sender priority/reliability/expires/ack timeout/target strategy只进入`AdmissionRequest`；trusted config/policy裁决后由service复验request fingerprint、config/policy版本、RP-1 effective strategy、TTL与资源上限。expired和剩余窗口不足创建failed Summary。
+- W03：inline只在内存canonicalize，JSON/bytes类型、depth和policy/application/transport三重size限制全部校验；StateStore只保存size/digest/checksum/schema/fingerprint，无完整业务payload，且不自动转换payload_ref。
+- W04-W05：`IamPayloadRefClient -> IamClient -> internal/payload_ref/validate/`逐selected target实时调用；result必须回显object/version/checksum/tenant/size/expiry。invalid/unauthorized/tenant mismatch不建DeliveryRecord；timeout/exception按best-effort/at-least-once/critical分别形成typed reject/wait/dead-letter disposition，不创建P13 record或授权cache。
+- W06-W07：tenant + raw message_id + selected target fingerprint形成dedup key；StateStore absent transaction给并发请求唯一winner，冲突linearizable读typed evidence。in_progress/acked/dead/expired/cancelled全闭集稳定duplicate，不触发重投。
+- W08-W09：all/partial/none accepted的Summary/Delivery计数与脱敏reason准确；all rejected仍原子创建dedup + failed Summary且零DeliveryRecord。真实P08 deterministic StateStore证明dedup/root/shard/prepared delivery一次transaction同成同败；malformed store result拒绝，indeterminate write不伪装未提交或成功。
+- W10：真实RP-1 plan的4999/5000/5001边界通过；前两者各1 shard，5001为6 shard，bucket固定1000、构造batch固定500，root/shard/dedup/delivery图一致。
+- W11-W12：P10仅有prepared与cancelled_initializing，无queued/claim/send API，active/inflight恒零。唯一initializing-scope cancel把已创建prepared批量取消，把未创建target计入not_initialized，重复或一般cancel输入拒绝。
+- W13-W14：accepted wire投影exact为message_id、summary_id、accepted_at、status_query_hint、trace，不含delivery_id数组；rejected/duplicate同为typed response。post-commit response发送异常只记录bounded outcome并返回false，没有Store依赖且不回滚已提交authority。
+
+### 实际测试命令与原始结果
+
+- P10 targeted：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09_rp1_review/bin/python -m unittest tests.test_runtime_delivery_admission -q`，`Ran 16 tests in 2.962s`，`OK`。覆盖正向、16并发、真实Store并发、atomic/indeterminate failure、all/partial/rejected、terminal duplicate、public replace、恶意policy/payload/store、4999/5000/5001、initializing cancel、lightweight response和response send failure。
+- P08/P09/PC-1/P10联合：`python -m unittest tests.test_runtime_state_store tests.test_state_store tests.test_runtime_routing tests.test_runtime_routing_contracts tests.test_runtime_processor_pipeline tests.test_runtime_processor_boundaries tests.test_runtime_delivery_admission -q`，`Ran 97 tests in 4.175s`，`OK`。
+- P03-P10联合：加载44个`test_runtime_protocol*`、`transport*`、`connection*`、`iam*`、`processor*`、`state*`、`routing*`、`delivery*`模块，`Ran 398 tests in 15.995s`，`OK`。
+- Linux runtime标准asyncio：按DEP-1排除Django-only `test_cache.py`，`Ran 767 tests in 30.318s`，`OK (skipped=1)`。
+- Linux runtime uvloop：同一767项在显式`uvloop.EventLoopPolicy()`下执行，`Ran 767 tests in 31.365s`，`OK (skipped=1)`。
+- Linux backend：`PYTHONPATH=src /home/ns/.virtualenvs/ns_backend_p09_rp1_review/bin/python -m unittest discover -s tests -p 'test_*.py'`，`Ran 778 tests in 25.420s`，`OK (skipped=49)`。
+- 静态与依赖：最终`compileall -q src tests`、runtime/backend两环境`pip check`、`git diff --check`与P11+禁止项源码扫描均在本记录后执行；只有最终命令实际成功才保留本阶段`VERIFIED`状态。
+
+### 限制与下一阶段
+
+- 本次只在本地WSL隔离环境验证，无远程CI证据；仓库仍没有Redis/Valkey production StateStore provider，因此production没有strong provider时P10明确typed unavailable，F3标记为`local only`。
+- RP-1未修改；P10不从dict/wire/JSON反序列化RoutingPlan、不调用Router、不重选target，也不把routing/response/transport成功解释为delivery success。
+- 未实现prepared->queued、send worker、claim/send、DeliveryAttempt、ACK/NACK/Defer、retry/timeout、DeadLetterRecord/replay、一般cancel/hold、lease/fencing、master query/remote forwarding、cluster、P14 health/fairness、第二TaskSupervisor/event loop/shutdown owner。`task.dispatch` production feature仍disabled。
+- 下一工作包`P11-W01`保持`BLOCKED`，等待独立授权；P12 ACK闭环完成前不得开启task.dispatch production feature。
+
 ## 新记录模板
 
 - 工作包：

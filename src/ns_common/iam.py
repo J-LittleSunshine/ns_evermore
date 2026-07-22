@@ -324,6 +324,20 @@ class PayloadRefValidationRequest:
         if self.callback_message_type is not None:
             _name(self.callback_message_type, "payload_ref.callback_message_type")
 
+    def to_wire(self) -> dict[str, object]:
+        result: dict[str, object] = {
+            "object_id": self.object_id,
+            "version": self.version,
+            "checksum": self.checksum,
+            "tenant_id": self.tenant_id,
+            "owner_identity": self.owner_identity,
+            "source_identity": self.source_identity,
+            "target": self.target.to_wire(),
+        }
+        if self.callback_message_type is not None:
+            result["callback_message_type"] = self.callback_message_type
+        return result
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PayloadRefValidationResult:
@@ -331,6 +345,11 @@ class PayloadRefValidationResult:
     reason: str
     expires_at: datetime
     revoked: bool
+    object_id: str | None = None
+    version: str | None = None
+    checksum: str | None = None
+    tenant_id: str | None = field(default=None, repr=False)
+    size_bytes: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.valid, bool) or not isinstance(self.revoked, bool):
@@ -339,6 +358,57 @@ class PayloadRefValidationResult:
         object.__setattr__(self, "expires_at", _utc(self.expires_at, "payload_ref.expires_at"))
         if self.valid and self.revoked:
             _invalid("payload_ref.revoked")
+        metadata = (self.object_id, self.version, self.checksum, self.tenant_id,
+                    self.size_bytes)
+        if self.valid:
+            if any(value is None for value in metadata):
+                _invalid("payload_ref.integrity_metadata")
+            for value, name in zip(metadata[:4], (
+                "object_id", "version", "checksum", "tenant_id",
+            )):
+                _name(value, f"payload_ref.result.{name}")
+            if isinstance(self.size_bytes, bool) or not isinstance(self.size_bytes, int) or self.size_bytes < 0:
+                _invalid("payload_ref.result.size_bytes")
+        elif any(value is not None for value in metadata):
+            if any(value is None for value in metadata):
+                _invalid("payload_ref.integrity_metadata")
+            for value, name in zip(metadata[:4], (
+                "object_id", "version", "checksum", "tenant_id",
+            )):
+                _name(value, f"payload_ref.result.{name}")
+            if isinstance(self.size_bytes, bool) or not isinstance(self.size_bytes, int) or self.size_bytes < 0:
+                _invalid("payload_ref.result.size_bytes")
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "valid": self.valid,
+            "reason": self.reason,
+            "expires_at": _iso(self.expires_at),
+            "revoked": self.revoked,
+            "object_id": self.object_id,
+            "version": self.version,
+            "checksum": self.checksum,
+            "tenant_id": self.tenant_id,
+            "size_bytes": self.size_bytes,
+        }
+
+    @classmethod
+    def from_wire(cls, value: object) -> "PayloadRefValidationResult":
+        data = _exact_mapping(value, {
+            "valid", "reason", "expires_at", "revoked", "object_id",
+            "version", "checksum", "tenant_id", "size_bytes",
+        }, "payload_ref_result")
+        return cls(
+            valid=data["valid"],  # type: ignore[arg-type]
+            reason=data["reason"],  # type: ignore[arg-type]
+            expires_at=_parse_time(data["expires_at"], "expires_at"),
+            revoked=data["revoked"],  # type: ignore[arg-type]
+            object_id=data["object_id"],  # type: ignore[arg-type]
+            version=data["version"],  # type: ignore[arg-type]
+            checksum=data["checksum"],  # type: ignore[arg-type]
+            tenant_id=data["tenant_id"],  # type: ignore[arg-type]
+            size_bytes=data["size_bytes"],  # type: ignore[arg-type]
+        )
 
 
 def freeze_metadata(value: Mapping[str, str]) -> Mapping[str, str]:

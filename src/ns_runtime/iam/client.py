@@ -19,6 +19,8 @@ from ns_common.iam import (
     IamCredentialStatus,
     IamIntrospectionRequest,
     IamIntrospectionResult,
+    PayloadRefValidationRequest,
+    PayloadRefValidationResult,
 )
 from ns_common.time import Clock
 from ns_runtime.connection.iam import (
@@ -177,6 +179,22 @@ class IamClient(HandshakeIamAdapter):
         except NsValidationError:
             raise _malformed("permission_snapshot") from None
         return PermissionSnapshot.from_introspection(result, iam_mode=self._iam_mode)
+
+    async def validate_payload_ref(
+        self,
+        request: PayloadRefValidationRequest,
+    ) -> PayloadRefValidationResult:
+        """Perform one live backend validation; no authorization cache is used."""
+        if not isinstance(request, PayloadRefValidationRequest):
+            _invalid("payload_ref_request")
+        data = await self._post(
+            "internal/payload_ref/validate/",
+            request.to_wire(),
+        )
+        try:
+            return PayloadRefValidationResult.from_wire(data)
+        except NsValidationError:
+            raise _malformed("payload_ref") from None
 
     async def _post(
         self,

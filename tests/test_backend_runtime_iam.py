@@ -71,6 +71,11 @@ class _PayloadPolicy:
             reason="valid" if request.object_id == "object:1" else "object_unknown",
             expires_at=self.clock.utc_now() + timedelta(minutes=5),
             revoked=False,
+            object_id=request.object_id if request.object_id == "object:1" else None,
+            version=request.version if request.object_id == "object:1" else None,
+            checksum=request.checksum if request.object_id == "object:1" else None,
+            tenant_id=request.tenant_id if request.object_id == "object:1" else None,
+            size_bytes=123 if request.object_id == "object:1" else None,
         )
 
 

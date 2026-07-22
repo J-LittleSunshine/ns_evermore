@@ -13,7 +13,10 @@ from ns_common.exceptions import (
     NsRuntimeIamUnavailableError,
 )
 from ns_common.http_client import NsAsyncHttpClient, NsHttpResponse
-from ns_common.iam import IamCredentialStatus, IamIntrospectionResult, IamPrincipalType
+from ns_common.iam import (
+    IamCredentialStatus, IamIntrospectionResult, IamPrincipalType,
+    IamTargetContext, PayloadRefValidationRequest, PayloadRefValidationResult,
+)
 from ns_common.time import ControlledClock
 from ns_common.config import NsConfig
 from ns_runtime.connection import (
@@ -122,6 +125,26 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
         combined = repr(client) + repr(request) + repr(authority)
         self.assertNotIn(TOKEN, combined)
         self.assertNotIn(SERVICE, combined)
+
+    async def test_payload_ref_validation_is_live_typed_and_integrity_bound(self) -> None:
+        expected = PayloadRefValidationResult(
+            valid=True, reason="valid", revoked=False,
+            expires_at=NOW + timedelta(minutes=2), object_id="object:1",
+            version="version:1", checksum="sha256:abcd",
+            tenant_id="tenant:1", size_bytes=123,
+        )
+        client, http = self._client([expected.to_wire()])
+        request = PayloadRefValidationRequest(
+            object_id="object:1", version="version:1", checksum="sha256:abcd",
+            tenant_id="tenant:1", owner_identity="user:1",
+            source_identity="user:1",
+            target=IamTargetContext(
+                kind="connection", tenant_id="tenant:1", reference="connection:1",
+            ),
+        )
+        self.assertEqual(expected, await client.validate_payload_ref(request))
+        self.assertEqual("internal/payload_ref/validate/", http.calls[0]["url"])
+        self.assertEqual(request.to_wire(), http.calls[0]["json_data"])
 
     async def test_invalid_expired_and_revoked_credentials_are_denied(self) -> None:
         cases = (

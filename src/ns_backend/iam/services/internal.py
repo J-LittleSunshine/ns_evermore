@@ -350,12 +350,7 @@ class InternalIamService:
             expires_at=timezone.now(),
             revoked=False,
         )
-        return {
-            "valid": result.valid,
-            "reason": result.reason,
-            "expires_at": result.expires_at.isoformat(),
-            "revoked": result.revoked,
-        }
+        return result.to_wire()
 
     @staticmethod
     def _runtime_node_authority() -> RuntimeNodeCredentialAuthority:
