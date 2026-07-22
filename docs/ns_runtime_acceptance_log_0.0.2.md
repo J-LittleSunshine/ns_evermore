@@ -1697,6 +1697,37 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - evidence 完整：是。
 - P08 evidence status：`VERIFIED`。
 
+## P09 RoutingPlan 与本地路由验收证据
+
+- 工作包：P09 Phase A跨阶段合同修复与`P09-W01`至`P09-W10`。
+- 状态：`VERIFIED/F3`，仅指单进程本地routing。
+- 完成时间：`2026-07-22T13:51:02+08:00`。
+- 修改文件：扩展`ns_common.config` routing limits与`ns_common.exceptions`精确route reject；更新`ns_runtime.protocol` TargetGroup/registry、`processor` routing propagation与audit-before-send、`connection` lifecycle strong audit/routing eligibility、production composition；新增`src/ns_runtime/routing/{models,authority,router,integration,__init__}.py`和两套routing测试；更新配置示例、既有Phase A回归、实施计划、ADR-036与本日志。design checklist未修改。
+- 公共契约变化：ENV-1冻结七种target kind、六种strategy、五种rebind、epoch/count与capability AND矩阵；ERR-1新增唯一`RUNTIME_ROUTE_REJECTED/200177`；SC-1 index snapshot增加五态routing eligibility并保持单mutation发布；PC-1新增`RoutingRequirement`和四态`RoutingPreparationResult`，response finalization变为纯边界且composition emitter只消费final-audit后的成功结果；RP-1冻结单快照本地Router、deterministic fallback.v1、deeply immutable plan/failure/safe projection和接口级consistency boundary。
+- W01/W02：TargetGroup到trusted RoutingRequest严格转换；每个决策只读取一次LocalConnectionIndex snapshot，同一mutation sequence收集候选。remote runtime返回typed unavailable/resolution hint，不查询master。
+- W03/W04/W05：按tenant boundary、intended universe、static、dynamic、score、select顺序处理；实现single/all/broadcast/quorum/all_required/weighted_subset与fixed/same_identity/same_capability/same_tenant/no_rebind_for_control。无implicit broadcast、same_component或ACK quorum。
+- W06/W07/W08：`runtime_fallback/fallback.v1`只使用受信任稳定输入和canonical tie-break；fingerprint排除plan ID/time/message ref。ResolvedRoutingPlan与RoutingFailureReport显式分离、深度不可变、安全repr/projection；version只来自显式previous context。
+- W09：只冻结`RoutingConsistencyPolicy`、`RoutingPlanRecorder`和`StrongRoutingPlanAuthority`接口。Router不接收StateStore，ordinary recorder只收safe projection；未激活FUTURE/ROUTING_PLAN authority，默认production strong authority unavailable，不声明durability。
+- W10：policy reject、authoritative missing、tenant/IAM与其余unavailable使用稳定精确公共映射；later action为纯数据。候选/选择/证据默认上限10000/10000/20000，超限不截断；5001 selected bindings通过。
+
+### 测试命令与结果
+
+- P09专项：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09/bin/python -m unittest tests.test_runtime_routing tests.test_runtime_routing_contracts`，最终`Ran 15 tests in 0.412s, OK`；subtest矩阵覆盖全部target/strategy/rebind、determinism、score evidence、immutable/version/security、limit与5001 fanout。同一最终代码在Windows运行`Ran 15 tests in 0.511s, OK`。
+- Phase A专项：同一解释器执行`tests.test_runtime_protocol_schema tests.test_runtime_processor_pipeline tests.test_runtime_connection_index tests.test_runtime_connection_resume tests.test_runtime_connection_reauth tests.test_runtime_connection_security tests.test_runtime_connection_snapshot_audit`，`Ran 78 tests in 0.920s, OK`。覆盖stage-six short-circuit、feature-disabled隔离、strong audit send=0、resume/reauth/security unavailable与eligibility原子性。
+- P03-P08联合：按`test_runtime_protocol*`、`transport*`、`connection*`、`session*`、`iam*`、`processor*`、`state*`加载41个模块，`Ran 347 tests in 8.714s, OK`。
+- Linux runtime标准asyncio：`/home/ns/.virtualenvs/ns_runtime_p09`加载全部`test_*.py`但按DEP-1排除唯一Django专属`test_cache.py`，最终`Ran 731 tests in 20.182s, OK (skipped=2)`。未排除运行实际执行732项，唯一error为该环境按清单不安装Django；没有实现或测试失败。
+- Linux runtime uvloop：同一最终731项在`uvloop.EventLoopPolicy()`下，`Ran 731 tests in 19.912s, OK (skipped=2)`。
+- Linux backend：`PYTHONPATH=src /home/ns/.virtualenvs/ns_backend_p09/bin/python -m unittest discover -s tests`，最终`Ran 742 tests in 16.981s, OK (skipped=50)`；skips为backend清单不安装的runtime可选依赖路径。
+- Windows标准asyncio：`F:\Python310\python.exe -m unittest discover -s tests -p "test_runtime_*.py"`，`Ran 454 tests in 7.125s, OK`。机器PATH无OpenSSL CLI，测试进程临时使用已安装`cryptography`生成等价localhost自签名夹具；临时helper和证书均已删除，仓库无残留。
+- 依赖/静态：`/home/ns/.virtualenvs/ns_runtime_p09/bin/python -m pip check`与`/home/ns/.virtualenvs/ns_backend_p09/bin/python -m pip check`均输出`No broken requirements found.`；Windows Python `pip check`同样通过。`python -m compileall -q src tests`与`git diff --check`通过。
+- 冷导入/禁止项：cold import `ns_runtime.routing`未加载Django/rest_framework/ns_backend；routing源码扫描无transport/send、DeliveryRecord/worker、ACK、backend/Django、FUTURE authority activation。Router不直接依赖StateStore API，不创建registry、supervisor、loop、shutdown owner、retry/queue/timer/task/subscription。
+
+### 安全、限制与下一工作包
+
+- 原始target、identity、connection/session/tenant与IAM证据仅存在于执行plan且`repr=False`；日志、指标与ordinary recorder只消费SafeRoutingProjection。feature-disabled消息在authorization后直接NO_ROUTING_REQUIRED，不调用Router，不泄露目标存在性。
+- strong RoutingPlan persistence未启用；无production StateStore provider、Redis/Valkey/SQLite adapter、Lua、lease/fencing。master query、remote forwarding、stale topology、DeliveryRecord/attempt、ACK/NACK/Defer、retry/queue/timer/dead-letter、delivery quorum和P14 health scoring均未实现。
+- 下一工作包：`P10-W01`保持`NOT_STARTED`；P10只能消费ResolvedRoutingPlan并独立冻结受理、Summary、去重与payload reference权威。
+
 ## 新记录模板
 
 - 工作包：
