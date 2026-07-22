@@ -360,6 +360,25 @@ class DeliveryAdmissionService:
                     trace=trace,
                 ),
             )
+        if result.outcome is AtomicAdmissionOutcome.CANCELLED_INITIALIZATION:
+            if (result.root_summary is None
+                    or result.root_summary.status
+                    is not DeliverySummaryStatus.CANCELLED_INITIALIZING
+                    or result.dedup.lifecycle is not DuplicateLifecycle.CANCELLED):
+                _invalid("store.cancelled_initialization")
+            return AdmissionResult(
+                outcome=AdmissionOutcome.REJECTED,
+                commit_state=AdmissionCommitState.COMMITTED,
+                response=DeliveryRejectedResponse(
+                    schema_version=ADMISSION_RESPONSE_VERSION,
+                    message_id=request.message_id,
+                    summary_id=result.root_summary.summary_id,
+                    rejected_at=self._clock.utc_now(),
+                    reason=RejectionReason.INITIALIZATION_FAILED,
+                    disposition=PayloadDependencyDisposition.REJECT,
+                    trace=trace,
+                ),
+            )
         if (result.root_summary != initialization.root_summary
                 or result.dedup != initialization.dedup):
             _invalid("store.created_evidence")
@@ -406,6 +425,11 @@ class DeliveryAdmissionService:
         shard_count = 1 if total <= MAX_UNSHARDED_TARGETS else (
             total + self._limits.shard_bucket_size - 1
         ) // self._limits.shard_bucket_size
+        final_state_version = (
+            1 if accepted_count == 0
+            else ((accepted_count + self._limits.initialization_batch_size - 1)
+                  // self._limits.initialization_batch_size) + 1
+        )
         common = dict(
             schema_version=DR1_SCHEMA_VERSION, root_summary_id=summary_id,
             shard_count=shard_count, message_id=request.message_id,
@@ -414,7 +438,7 @@ class DeliveryAdmissionService:
             plan_decision_fingerprint=plan.decision_fingerprint,
             target_fingerprint=target_fingerprint,
             payload_evidence=payload_evidence, policy_decision=decision,
-            state_version=1, created_at=now, updated_at=now,
+            state_version=final_state_version, created_at=now, updated_at=now,
             active_count=0, inflight_count=0, cancelled_count=0,
             not_initialized_count=0,
         )

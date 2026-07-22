@@ -4,10 +4,12 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from datetime import timedelta
+import json
 import unittest
 
 from ns_common.exceptions import (
-    NsRuntimeStateStoreUnavailableError, NsValidationError,
+    NsRuntimeStateStoreConflictError, NsRuntimeStateStoreUnavailableError,
+    NsValidationError,
 )
 from ns_common.iam import PayloadRefValidationResult
 from ns_common.state_store import StateStoreCapabilities
@@ -111,6 +113,20 @@ class _Store(DeliveryAdmissionStore):
                 outcome=AtomicAdmissionOutcome.DUPLICATE,
                 root_summary=None, dedup=self._winner.dedup,
             )
+
+
+class _FailSecondTransactionStore(DeterministicStateStoreContractModel):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.transaction_calls = 0
+
+    async def _transact(self, transaction):
+        self.transaction_calls += 1
+        if self.transaction_calls == 2:
+            raise NsRuntimeStateStoreConflictError(details={
+                "component": "p10_test", "reason": "second_batch_failure",
+            })
+        return await super()._transact(transaction)
 
 
 class _Policy(AdmissionPolicy):
@@ -514,7 +530,62 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
         persisted = b" ".join(record.document.payload for record in model.records.values())
         self.assertNotIn(b"never-store-me", persisted)
         self.assertNotIn(b"business_secret", persisted)
-        self.assertEqual(1, model.write_count)
+        self.assertEqual(2, model.write_count)
+        await model.close()
+
+    async def test_w10_w12_real_second_batch_failure_cancels_prepared(self):
+        clock = ControlledClock(utc_start=UTC_START)
+        plan = await _plan(501)
+        model = _FailSecondTransactionStore(
+            clock=clock, capabilities=StateStoreCapabilities.p10_contract(),
+        )
+        await model.open()
+        service = DeliveryAdmissionService(
+            policy=DefaultAdmissionPolicy(),
+            policy_config=AdmissionPolicyConfig(
+                config_version="c1", policy_version="p1",
+            ),
+            store=StateStoreDeliveryAdmissionStore(model),
+            payload_ref_client=_PayloadClient(clock), clock=clock,
+            identifier_factory=_ids,
+        )
+        stage_six = StageSixAdmissionInput.from_result(
+            RoutingPreparationResult.resolved(plan)
+        )
+        request = AdmissionRequest.from_stage_six(
+            stage_six=stage_six, message_id=MESSAGE_ID,
+            tenant_id=plan.authorization_evidence.effective_tenant_id,
+            source_identity="identity-source",
+            authorization_binding_reference=plan.authorization_evidence.message_binding_reference,
+            payload=InlinePayload(
+                value={"v": 1}, media_type="application/json",
+                application_limit_bytes=4096, transport_limit_bytes=4096,
+            ),
+            requested_priority=None, requested_reliability=None,
+            requested_expires_at=clock.utc_now() + timedelta(seconds=30),
+            requested_ack_timeout_seconds=30,
+            requested_target_strategy=plan.requested_strategy,
+        )
+        result = await service.admit(
+            request, trace=AdmissionTrace(trace_id="trace-batch-failure")
+        )
+        self.assertEqual(AdmissionOutcome.REJECTED, result.outcome)
+        self.assertTrue(result.committed)
+        self.assertEqual(3, model.transaction_calls)
+        documents = [json.loads(record.document.payload)
+                     for record in model.records.values()]
+        root = next(item for item in documents
+                    if item.get("summary_id") == "summary:0"
+                    and "status" in item)
+        self.assertEqual("cancelled_initializing", root["status"])
+        self.assertEqual(500, root["cancelled_count"])
+        self.assertEqual(1, root["not_initialized_count"])
+        self.assertEqual(500, sum(
+            item.get("status") == "cancelled_initializing"
+            and "delivery_id" in item for item in documents
+        ))
+        dedup = next(item for item in documents if "lifecycle" in item)
+        self.assertEqual("cancelled", dedup["lifecycle"])
         await model.close()
 
     async def test_w06_w09_real_state_store_concurrency_and_atomic_failure(self):

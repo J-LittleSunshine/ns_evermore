@@ -1864,20 +1864,20 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - W02：sender priority/reliability/expires/ack timeout/target strategy只进入`AdmissionRequest`；trusted config/policy裁决后由service复验request fingerprint、config/policy版本、RP-1 effective strategy、TTL与资源上限。expired和剩余窗口不足创建failed Summary。
 - W03：inline只在内存canonicalize，JSON/bytes类型、depth和policy/application/transport三重size限制全部校验；StateStore只保存size/digest/checksum/schema/fingerprint，无完整业务payload，且不自动转换payload_ref。
 - W04-W05：`IamPayloadRefClient -> IamClient -> internal/payload_ref/validate/`逐selected target实时调用；result必须回显object/version/checksum/tenant/size/expiry。invalid/unauthorized/tenant mismatch不建DeliveryRecord；timeout/exception按best-effort/at-least-once/critical分别形成typed reject/wait/dead-letter disposition，不创建P13 record或授权cache。
-- W06-W07：tenant + raw message_id + selected target fingerprint形成dedup key；StateStore absent transaction给并发请求唯一winner，冲突linearizable读typed evidence。in_progress/acked/dead/expired/cancelled全闭集稳定duplicate，不触发重投。
-- W08-W09：all/partial/none accepted的Summary/Delivery计数与脱敏reason准确；all rejected仍原子创建dedup + failed Summary且零DeliveryRecord。真实P08 deterministic StateStore证明dedup/root/shard/prepared delivery一次transaction同成同败；malformed store result拒绝，indeterminate write不伪装未提交或成功。
-- W10：真实RP-1 plan的4999/5000/5001边界通过；前两者各1 shard，5001为6 shard，bucket固定1000、构造batch固定500，root/shard/dedup/delivery图一致。
-- W11-W12：P10仅有prepared与cancelled_initializing，无queued/claim/send API，active/inflight恒零。唯一initializing-scope cancel把已创建prepared批量取消，把未创建target计入not_initialized，重复或一般cancel输入拒绝。
+- W06-W07：tenant + raw message_id + selected target fingerprint形成dedup key；StateStore首个absent transaction给并发请求唯一winner，冲突linearizable读typed evidence。in_progress/acked/dead/expired/cancelled全闭集稳定duplicate，不触发重投。
+- W08-W09：all/partial/none accepted的Summary/Delivery计数与脱敏reason准确；all rejected仍原子创建dedup + failed Summary且零DeliveryRecord。真实P08 deterministic StateStore证明dedup、initializing root/shard与首批最多500条prepared同成同败，后续批次用revision/state version CAS推进；malformed store result拒绝，indeterminate write不伪装未提交或成功。
+- W10：真实RP-1 plan的4999/5000/5001边界通过；前两者各1 shard，5001为6 shard，bucket固定1000、每个初始化事务最多创建500条DeliveryRecord，root/shard进度与终态逐批CAS一致。
+- W11-W12：P10仅有prepared与cancelled_initializing，无queued/claim/send API，active/inflight恒零。真实501-target第二批CAS冲突触发原子取消：500条已创建prepared全部转cancelled_initializing，1条计入not_initialized，dedup转cancelled；重复或一般cancel输入拒绝。
 - W13-W14：accepted wire投影exact为message_id、summary_id、accepted_at、status_query_hint、trace，不含delivery_id数组；rejected/duplicate同为typed response。post-commit response发送异常只记录bounded outcome并返回false，没有Store依赖且不回滚已提交authority。
 
 ### 实际测试命令与原始结果
 
-- P10 targeted：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09_rp1_review/bin/python -m unittest tests.test_runtime_delivery_admission -q`，`Ran 16 tests in 2.962s`，`OK`。覆盖正向、16并发、真实Store并发、atomic/indeterminate failure、all/partial/rejected、terminal duplicate、public replace、恶意policy/payload/store、4999/5000/5001、initializing cancel、lightweight response和response send failure。
-- P08/P09/PC-1/P10联合：`python -m unittest tests.test_runtime_state_store tests.test_state_store tests.test_runtime_routing tests.test_runtime_routing_contracts tests.test_runtime_processor_pipeline tests.test_runtime_processor_boundaries tests.test_runtime_delivery_admission -q`，`Ran 97 tests in 4.175s`，`OK`。
-- P03-P10联合：加载44个`test_runtime_protocol*`、`transport*`、`connection*`、`iam*`、`processor*`、`state*`、`routing*`、`delivery*`模块，`Ran 398 tests in 15.995s`，`OK`。
-- Linux runtime标准asyncio：按DEP-1排除Django-only `test_cache.py`，`Ran 767 tests in 30.318s`，`OK (skipped=1)`。
-- Linux runtime uvloop：同一767项在显式`uvloop.EventLoopPolicy()`下执行，`Ran 767 tests in 31.365s`，`OK (skipped=1)`。
-- Linux backend：`PYTHONPATH=src /home/ns/.virtualenvs/ns_backend_p09_rp1_review/bin/python -m unittest discover -s tests -p 'test_*.py'`，`Ran 778 tests in 25.420s`，`OK (skipped=49)`。
+- P10 targeted：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09_rp1_review/bin/python -m unittest tests.test_runtime_delivery_admission -q`，`Ran 17 tests in 3.173s`，`OK`。覆盖正向、16并发、真实Store并发、atomic/indeterminate failure、all/partial/rejected、terminal duplicate、public replace、恶意policy/payload/store、4999/5000/5001分批CAS、501第二批失败原子取消、lightweight response和response send failure。
+- P08/P09/PC-1/P10联合：`python -m unittest tests.test_runtime_state_store tests.test_state_store tests.test_runtime_routing tests.test_runtime_routing_contracts tests.test_runtime_processor_pipeline tests.test_runtime_processor_boundaries tests.test_runtime_delivery_admission -q`，`Ran 98 tests in 4.354s`，`OK`。
+- P03-P10联合：加载45个`test_runtime_protocol*`、`transport*`、`connection*`、`iam*`、`processor*`、`state*`、`routing*`、`delivery*`模块，`Ran 412 tests in 16.312s`，`OK`。
+- Linux runtime标准asyncio：按DEP-1排除Django-only `test_cache.py`，`Ran 768 tests in 27.358s`，`OK (skipped=1)`。
+- Linux runtime uvloop：同一768项在显式`uvloop.EventLoopPolicy()`下执行，`Ran 768 tests in 27.951s`，`OK (skipped=1)`。
+- Linux backend：`PYTHONPATH=src /home/ns/.virtualenvs/ns_backend_p09_rp1_review/bin/python -m unittest discover -s tests -p 'test_*.py'`，`Ran 779 tests in 25.446s`，`OK (skipped=49)`。
 - 静态与依赖：最终`compileall -q src tests`、runtime/backend两环境`pip check`、`git diff --check`与P11+禁止项源码扫描均在本记录后执行；只有最终命令实际成功才保留本阶段`VERIFIED`状态。
 
 ### 限制与下一阶段

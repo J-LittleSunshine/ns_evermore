@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -17,13 +18,14 @@ from ns_common.state_store import (
     StateAccessScope, StateAssertion, StateAtomicScope, StateAuthorityKind,
     StateCallerCapability, StateConsistency, StateDocument, StateKey,
     StateMutation, StateMutationKind, StateNamespace, StateStore,
-    StateTransaction, StateTransactionResult,
+    StateRecord, StateTransaction, StateTransactionResult,
 )
 
 from .models import (
     ATOMIC_ADMISSION_VERSION, DEDUP_EVIDENCE_VERSION, DR1_SCHEMA_VERSION, DedupEvidence,
-    DeliveryRecord, DuplicateLifecycle, MessageDeliverySummary,
-    validate_initialization_graph,
+    DeliveryRecord, DeliverySummaryStatus, DuplicateLifecycle,
+    MessageDeliverySummary, cancel_initializing_graph,
+    compute_dedup_evidence_fingerprint, validate_initialization_graph,
 )
 from ns_runtime.routing import ResolvedRoutingPlan
 
@@ -55,6 +57,7 @@ class AdmissionInitialization:
 class AtomicAdmissionOutcome(str, Enum):
     CREATED = "created"
     DUPLICATE = "duplicate"
+    CANCELLED_INITIALIZATION = "cancelled_initialization"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -71,11 +74,19 @@ class AtomicAdmissionResult:
             _invalid("atomic_result.outcome")
         if not isinstance(self.dedup, DedupEvidence):
             _invalid("atomic_result.dedup")
-        if self.outcome is AtomicAdmissionOutcome.CREATED:
+        if self.outcome in {
+            AtomicAdmissionOutcome.CREATED,
+            AtomicAdmissionOutcome.CANCELLED_INITIALIZATION,
+        }:
             if not isinstance(self.root_summary, MessageDeliverySummary):
                 _invalid("atomic_result.root_summary")
             if self.root_summary.summary_id != self.dedup.summary_id:
                 _invalid("atomic_result.summary_dedup")
+            if (self.outcome is AtomicAdmissionOutcome.CANCELLED_INITIALIZATION
+                    and (self.root_summary.status
+                         is not DeliverySummaryStatus.CANCELLED_INITIALIZING
+                         or self.dedup.lifecycle is not DuplicateLifecycle.CANCELLED)):
+                _invalid("atomic_result.cancelled_initialization")
         elif self.root_summary is not None:
             _invalid("atomic_result.duplicate_summary")
 
@@ -120,7 +131,38 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
                 StateCallerCapability.READ, StateCallerCapability.TRANSACT,
             }),
         )
-        mutations = self._mutations(namespace, value)
+        if not value.deliveries:
+            mutations = self._initial_mutations(
+                namespace, value, value.root_summary,
+                value.shard_summaries, (),
+            )
+            try:
+                result = await self._store.transact(StateTransaction(
+                    scope=scope, mutations=mutations,
+                ))
+            except NsRuntimeStateStoreConflictError:
+                existing = await self._read_dedup(scope, namespace, value.dedup)
+                return AtomicAdmissionResult(
+                    outcome=AtomicAdmissionOutcome.DUPLICATE,
+                    root_summary=None, dedup=existing,
+                )
+            self._validate_commit(result, mutations)
+            return AtomicAdmissionResult(
+                outcome=AtomicAdmissionOutcome.CREATED,
+                root_summary=value.root_summary, dedup=value.dedup,
+            )
+
+        batches = tuple(
+            value.deliveries[offset:offset + value.initialization_batch_size]
+            for offset in range(0, len(value.deliveries), value.initialization_batch_size)
+        )
+        created = batches[0]
+        current_root, current_shards = self._progress_summaries(
+            value, created=created, state_version=1,
+        )
+        mutations = self._initial_mutations(
+            namespace, value, current_root, current_shards, created,
+        )
         try:
             result = await self._store.transact(StateTransaction(
                 scope=scope, mutations=mutations,
@@ -132,38 +174,242 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
                 root_summary=None, dedup=existing,
             )
         self._validate_commit(result, mutations)
+        records = self._record_map(result)
+
+        for batch_number, batch in enumerate(batches[1:], start=2):
+            next_created = created + batch
+            next_root, next_shards = self._progress_summaries(
+                value, created=next_created, state_version=batch_number,
+            )
+            mutations = tuple(
+                self._create_mutation(namespace, "delivery",
+                                      delivery.delivery_id,
+                                      delivery.state_version,
+                                      _delivery_dict(delivery))
+                for delivery in batch
+            ) + self._summary_replacements(
+                namespace, records, next_root, next_shards,
+            )
+            try:
+                result = await self._store.transact(StateTransaction(
+                    scope=scope, mutations=mutations,
+                ))
+            except NsRuntimeStateStoreConflictError:
+                return await self._cancel_after_failure(
+                    scope=scope, namespace=namespace, value=value,
+                    current_root=current_root, current_shards=current_shards,
+                    created=created, records=records,
+                )
+            self._validate_commit(result, mutations)
+            records.update(self._record_map(result))
+            created = next_created
+            current_root, current_shards = next_root, next_shards
+
+        mutations = self._summary_replacements(
+            namespace, records, value.root_summary, value.shard_summaries,
+        )
+        try:
+            result = await self._store.transact(StateTransaction(
+                scope=scope, mutations=mutations,
+            ))
+        except NsRuntimeStateStoreConflictError:
+            return await self._cancel_after_failure(
+                scope=scope, namespace=namespace, value=value,
+                current_root=current_root, current_shards=current_shards,
+                created=created, records=records,
+            )
+        self._validate_commit(result, mutations)
         return AtomicAdmissionResult(
             outcome=AtomicAdmissionOutcome.CREATED,
             root_summary=value.root_summary,
             dedup=value.dedup,
         )
 
-    @staticmethod
-    def _mutations(
-        namespace: StateNamespace, value: AdmissionInitialization,
+    def _initial_mutations(
+        self, namespace: StateNamespace, value: AdmissionInitialization,
+        root: MessageDeliverySummary,
+        shards: tuple[MessageDeliverySummary, ...],
+        deliveries: tuple[DeliveryRecord, ...],
     ) -> tuple[StateMutation, ...]:
-        items: list[tuple[str, str, int, dict[str, object]]] = []
-        items.append(("dedup", _key_digest(
-            value.dedup.tenant_id, value.dedup.message_id,
-            value.dedup.target_fingerprint,
-        ), 1, _dedup_dict(value.dedup)))
-        for summary in (value.root_summary,) + value.shard_summaries:
-            items.append(("summary", _key_digest(summary.summary_id),
-                          summary.state_version, _summary_dict(summary)))
-        # Build in bounded batches but submit one provider transaction.
-        for offset in range(0, len(value.deliveries), value.initialization_batch_size):
-            for delivery in value.deliveries[offset:offset + value.initialization_batch_size]:
-                items.append(("delivery", _key_digest(delivery.delivery_id),
-                              delivery.state_version, _delivery_dict(delivery)))
-        return tuple(StateMutation(
-            key=StateKey(namespace=namespace, object_type=kind, object_id=object_id),
+        return (
+            self._create_mutation(
+                namespace, "dedup", _key_digest(
+                    value.dedup.tenant_id, value.dedup.message_id,
+                    value.dedup.target_fingerprint,
+                ), 1, _dedup_dict(value.dedup), object_id_is_digest=True,
+            ),
+        ) + tuple(
+            self._create_mutation(
+                namespace, "summary", summary.summary_id,
+                summary.state_version, _summary_dict(summary),
+            )
+            for summary in (root,) + shards
+        ) + tuple(
+            self._create_mutation(
+                namespace, "delivery", delivery.delivery_id,
+                delivery.state_version, _delivery_dict(delivery),
+            )
+            for delivery in deliveries
+        )
+
+    @staticmethod
+    def _create_mutation(
+        namespace: StateNamespace, kind: str, identifier: str,
+        state_version: int, payload: dict[str, object],
+        *, object_id_is_digest: bool = False,
+    ) -> StateMutation:
+        return StateMutation(
+            key=StateKey(
+                namespace=namespace, object_type=kind,
+                object_id=(identifier if object_id_is_digest
+                           else _key_digest(identifier)),
+            ),
             assertion=StateAssertion.absent(), kind=StateMutationKind.CREATE,
             document=StateDocument(
                 schema_name=f"delivery_{kind}", schema_version=1,
                 state_version=state_version,
                 payload=json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
             ),
-        ) for kind, object_id, state_version, payload in items)
+        )
+
+    @staticmethod
+    def _progress_summaries(
+        value: AdmissionInitialization, *, created: tuple[DeliveryRecord, ...],
+        state_version: int,
+    ) -> tuple[MessageDeliverySummary, tuple[MessageDeliverySummary, ...]]:
+        by_shard: dict[int, int] = {}
+        for delivery in created:
+            by_shard[delivery.shard_index] = by_shard.get(delivery.shard_index, 0) + 1
+
+        def progress(summary: MessageDeliverySummary) -> MessageDeliverySummary:
+            created_count = (
+                len(created) if summary.shard_index is None
+                else by_shard.get(summary.shard_index, 0)
+            )
+            intended = summary.accepted_count
+            return dataclasses.replace(
+                summary, status=DeliverySummaryStatus.INITIALIZING,
+                accepted_count=created_count, prepared_count=created_count,
+                not_initialized_count=intended - created_count,
+                state_version=state_version,
+            )
+
+        return progress(value.root_summary), tuple(
+            progress(summary) for summary in value.shard_summaries
+        )
+
+    def _summary_replacements(
+        self, namespace: StateNamespace,
+        records: dict[StateKey, StateRecord],
+        root: MessageDeliverySummary,
+        shards: tuple[MessageDeliverySummary, ...],
+    ) -> tuple[StateMutation, ...]:
+        return tuple(
+            self._replace_mutation(
+                records, StateKey(
+                    namespace=namespace, object_type="summary",
+                    object_id=_key_digest(summary.summary_id),
+                ), summary.state_version, _summary_dict(summary),
+            )
+            for summary in (root,) + shards
+        )
+
+    @staticmethod
+    def _replace_mutation(
+        records: dict[StateKey, StateRecord], key: StateKey,
+        state_version: int, payload: dict[str, object],
+    ) -> StateMutation:
+        record = records.get(key)
+        if record is None:
+            raise NsRuntimeStateStoreUnavailableError(details={
+                "component": "delivery_admission",
+                "operation": "initialize_progress",
+                "reason": "commit_record_missing",
+            })
+        return StateMutation(
+            key=key,
+            assertion=StateAssertion.matches(
+                record.revision,
+                state_version=record.document.state_version,
+            ),
+            kind=StateMutationKind.REPLACE,
+            document=StateDocument(
+                schema_name=record.document.schema_name,
+                schema_version=record.document.schema_version,
+                state_version=state_version,
+                payload=json.dumps(payload, sort_keys=True,
+                                   separators=(",", ":")).encode(),
+            ),
+        )
+
+    async def _cancel_after_failure(
+        self, *, scope: StateAccessScope, namespace: StateNamespace,
+        value: AdmissionInitialization, current_root: MessageDeliverySummary,
+        current_shards: tuple[MessageDeliverySummary, ...],
+        created: tuple[DeliveryRecord, ...],
+        records: dict[StateKey, StateRecord],
+    ) -> AtomicAdmissionResult:
+        cancelled_root, cancelled_shards, cancelled_deliveries = (
+            cancel_initializing_graph(
+                root=current_root, shards=current_shards,
+                created_deliveries=created,
+                cancelled_at=value.root_summary.updated_at,
+            )
+        )
+        dedup_values = {
+            "tenant_id": value.dedup.tenant_id,
+            "message_id": value.dedup.message_id,
+            "target_fingerprint": value.dedup.target_fingerprint,
+            "summary_id": value.dedup.summary_id,
+            "lifecycle": DuplicateLifecycle.CANCELLED,
+            "registered_at": value.dedup.registered_at,
+            "expires_at": value.dedup.expires_at,
+        }
+        cancelled_dedup = dataclasses.replace(
+            value.dedup, lifecycle=DuplicateLifecycle.CANCELLED,
+            evidence_fingerprint=compute_dedup_evidence_fingerprint(
+                **dedup_values,
+            ),
+        )
+        dedup_key = StateKey(
+            namespace=namespace, object_type="dedup",
+            object_id=_key_digest(
+                value.dedup.tenant_id, value.dedup.message_id,
+                value.dedup.target_fingerprint,
+            ),
+        )
+        mutations = (
+            self._replace_mutation(
+                records, dedup_key, 2, _dedup_dict(cancelled_dedup),
+            ),
+        ) + self._summary_replacements(
+            namespace, records, cancelled_root, cancelled_shards,
+        ) + tuple(
+            self._replace_mutation(
+                records,
+                StateKey(
+                    namespace=namespace, object_type="delivery",
+                    object_id=_key_digest(delivery.delivery_id),
+                ),
+                delivery.state_version, _delivery_dict(delivery),
+            )
+            for delivery in cancelled_deliveries
+        )
+        result = await self._store.transact(StateTransaction(
+            scope=scope, mutations=mutations,
+        ))
+        self._validate_commit(result, mutations)
+        return AtomicAdmissionResult(
+            outcome=AtomicAdmissionOutcome.CANCELLED_INITIALIZATION,
+            root_summary=cancelled_root, dedup=cancelled_dedup,
+        )
+
+    @staticmethod
+    def _record_map(result: StateTransactionResult) -> dict[StateKey, StateRecord]:
+        return {
+            record.key: record for record in result.records
+            if isinstance(record, StateRecord)
+        }
 
     async def _read_dedup(
         self, scope: StateAccessScope, namespace: StateNamespace,
