@@ -20,6 +20,8 @@ from ns_runtime.protocol import Envelope, ProtocolVersion
 
 if TYPE_CHECKING:
     from ns_runtime.connection.session import SessionContext
+    from .audit import AuditSink
+    from .event_bus import EventBus
 
 
 _NAME = re.compile(r"[a-z][a-z0-9_]*(?:[.:-][a-z0-9_]+)*")
@@ -36,7 +38,16 @@ class ProcessorStage(str, Enum):
     RESPONSE_FINALIZE = "response_finalize"
 
 
-PROCESSOR_STAGE_ORDER: tuple[ProcessorStage, ...] = tuple(ProcessorStage)
+PROCESSOR_STAGE_ORDER: tuple[ProcessorStage, ...] = (
+    ProcessorStage.SECURITY_VALIDATION,
+    ProcessorStage.AUTHORIZATION,
+    ProcessorStage.RATE_LIMIT_ENTRY,
+    ProcessorStage.IDEMPOTENCY_PRECHECK,
+    ProcessorStage.AUDIT_MARKER,
+    ProcessorStage.ROUTING_PREPARATION,
+    ProcessorStage.MESSAGE_PROCESSOR,
+    ProcessorStage.RESPONSE_FINALIZE,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -128,6 +139,32 @@ class RoutingPreparation(ABC):
         raise NotImplementedError
 
 
+class MessageProcessor(ABC):
+    """Message-specific binding executed only by the fixed pipeline stage."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def process(self, context: "ProcessorContext", value: object) -> object:
+        raise NotImplementedError
+
+
+class MessageProcessorExecutionBoundary(ABC):
+    """Marker contract required for MESSAGE_PROCESSOR registry entries."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def process(self, context: "ProcessorContext", value: object) -> object:
+        raise NotImplementedError
+
+
 class ResponseFinalizer(ABC):
     @abstractmethod
     async def finalize(self, context: "ProcessorContext", response: object) -> object:
@@ -149,8 +186,8 @@ class ProcessorDependencies:
     response_finalizer: ResponseFinalizer
     error_mapper: ProcessorErrorMapper
     principal_type: IamPrincipalType
-    audit_sink: object = field(repr=False)
-    event_bus: object = field(repr=False)
+    audit_sink: AuditSink = field(repr=False)
+    event_bus: EventBus = field(repr=False)
     task_supervisor: TaskSupervisor = field(repr=False)
 
     def __post_init__(self) -> None:
@@ -253,6 +290,8 @@ def _invalid(field_name: str) -> None:
 
 __all__ = (
     "IdempotencyPrecheck",
+    "MessageProcessor",
+    "MessageProcessorExecutionBoundary",
     "PROCESSOR_STAGE_ORDER",
     "ProcessorAuthorization",
     "ProcessorContext",

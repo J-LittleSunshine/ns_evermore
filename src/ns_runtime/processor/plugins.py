@@ -63,6 +63,8 @@ class LocalTrustedPlugin:
     registrations: tuple[ProcessorRegistration, ...] = field(repr=False)
 
     def __post_init__(self) -> None:
+        from .pipeline import MessageProcessorStageProcessor
+
         if not isinstance(self.metadata, PluginMetadata):
             _invalid("plugin.metadata")
         if (
@@ -74,6 +76,11 @@ class LocalTrustedPlugin:
         for registration in self.registrations:
             if registration.stage is not ProcessorStage.MESSAGE_PROCESSOR:
                 _invalid("plugin.stage")
+            if not isinstance(
+                registration.processor,
+                MessageProcessorStageProcessor,
+            ):
+                _invalid("plugin.message_processor_boundary")
             if registration.feature_flag != self.metadata.feature_flag:
                 _invalid("plugin.feature_flag")
 

@@ -10,7 +10,12 @@ from typing import Iterable, Mapping
 from ns_common.exceptions import NsStateError, NsValidationError
 from ns_runtime.protocol import ProtocolVersion
 
-from .contracts import ProcessorContext, ProcessorStage, freeze_feature_flags
+from .contracts import (
+    MessageProcessorExecutionBoundary,
+    ProcessorContext,
+    ProcessorStage,
+    freeze_feature_flags,
+)
 
 
 class PipelineProcessor(ABC):
@@ -54,6 +59,14 @@ class ProcessorRegistration:
             _invalid("registration.feature_enabled")
         if not isinstance(self.processor, PipelineProcessor):
             _invalid("registration.processor")
+        if (
+            self.stage is ProcessorStage.MESSAGE_PROCESSOR
+            and not isinstance(
+                self.processor,
+                MessageProcessorExecutionBoundary,
+            )
+        ):
+            _invalid("registration.message_processor_boundary")
 
     def supports(self, version: ProtocolVersion) -> bool:
         return self.minimum_version <= version <= self.maximum_version

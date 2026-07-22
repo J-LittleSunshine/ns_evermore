@@ -26,6 +26,8 @@ from .audit import (
 from .contracts import (
     PROCESSOR_STAGE_ORDER,
     IdempotencyPrecheck,
+    MessageProcessor,
+    MessageProcessorExecutionBoundary,
     ProcessorContext,
     ProcessorErrorMapper,
     ProcessorExecutionPolicy,
@@ -166,6 +168,26 @@ class RoutingPreparationProcessor(PipelineProcessor):
         return value
 
 
+class MessageProcessorStageProcessor(
+    PipelineProcessor,
+    MessageProcessorExecutionBoundary,
+):
+    """Fixed MESSAGE_PROCESSOR stage around one registry-selected binding."""
+
+    def __init__(self, *, binding: MessageProcessor) -> None:
+        if not isinstance(binding, MessageProcessor):
+            _invalid("message_processor.binding")
+        self._binding = binding
+
+    @property
+    def name(self) -> str:
+        return self._binding.name
+
+    async def process(self, context: ProcessorContext, value: object) -> object:
+        _context(context)
+        return await self._binding.process(context, value)
+
+
 class ResponseFinalizeProcessor(PipelineProcessor):
     @property
     def name(self) -> str:
@@ -175,7 +197,12 @@ class ResponseFinalizeProcessor(PipelineProcessor):
         return await context.dependencies.response_finalizer.finalize(context, value)
 
 
-def build_standard_stage_processors() -> Mapping[ProcessorStage, PipelineProcessor]:
+def build_standard_stage_processors(
+    *,
+    message_processor: MessageProcessor,
+) -> Mapping[ProcessorStage, PipelineProcessor]:
+    if not isinstance(message_processor, MessageProcessor):
+        _invalid("message_processor")
     return MappingProxyType({
         ProcessorStage.SECURITY_VALIDATION: SecurityValidationProcessor(),
         ProcessorStage.AUTHORIZATION: AuthorizationProcessor(),
@@ -183,6 +210,9 @@ def build_standard_stage_processors() -> Mapping[ProcessorStage, PipelineProcess
         ProcessorStage.IDEMPOTENCY_PRECHECK: IdempotencyPrecheckProcessor(),
         ProcessorStage.AUDIT_MARKER: AuditMarkerProcessor(),
         ProcessorStage.ROUTING_PREPARATION: RoutingPreparationProcessor(),
+        ProcessorStage.MESSAGE_PROCESSOR: MessageProcessorStageProcessor(
+            binding=message_processor,
+        ),
         ProcessorStage.RESPONSE_FINALIZE: ResponseFinalizeProcessor(),
     })
 
@@ -251,6 +281,7 @@ class ProcessorPipeline:
         cancelled = False
         try:
             for stage in PROCESSOR_STAGE_ORDER:
+                processor_name = f"{stage.value}.unresolved"
                 processor = self._registry.resolve(
                     message_type=context.envelope.message.type,
                     stage=stage,
@@ -261,6 +292,7 @@ class ProcessorPipeline:
                 response = await processor.process(context, response)
                 completed.append(stage)
         except asyncio.CancelledError:
+            response = None
             if cancellation.timeout_requested:
                 error = NsRuntimeProcessorTimeoutError()
                 action = AuditAction.TIMED_OUT
@@ -268,6 +300,7 @@ class ProcessorPipeline:
                 cancelled = True
                 action = AuditAction.CANCELLED
         except Exception as caught:
+            response = None
             error = context.dependencies.error_mapper.map_error(caught)
             action = (
                 AuditAction.REJECTED
@@ -340,6 +373,7 @@ __all__ = (
     "InterfaceOnlyIdempotencyPrecheck",
     "InterfaceOnlyRateLimitEntry",
     "InterfaceOnlyRoutingPreparation",
+    "MessageProcessorStageProcessor",
     "PassthroughResponseFinalizer",
     "ProcessorExecutionResult",
     "ProcessorPipeline",

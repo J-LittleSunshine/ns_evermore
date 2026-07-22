@@ -11,6 +11,7 @@ from ns_common.exceptions import (
     NsRuntimeIamDeniedError,
     NsRuntimeProcessorFailedError,
     NsRuntimeProcessorTimeoutError,
+    NsValidationError,
 )
 from ns_common.iam import IamPrincipalType
 from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
@@ -25,6 +26,8 @@ from ns_runtime.processor import (
     InterfaceOnlyIdempotencyPrecheck,
     InterfaceOnlyRateLimitEntry,
     InterfaceOnlyRoutingPreparation,
+    MessageProcessor,
+    MessageProcessorStageProcessor,
     PROCESSOR_STAGE_ORDER,
     PassthroughResponseFinalizer,
     PipelineProcessor,
@@ -36,6 +39,7 @@ from ns_runtime.processor import (
     ProcessorRegistry,
     ProcessorStage,
     ProcessorTraceReference,
+    build_standard_stage_processors,
 )
 from ns_runtime.processor.integration import DeterministicTestProcessorAuthorization
 from ns_runtime.protocol import (
@@ -70,6 +74,22 @@ class _StageProcessor(PipelineProcessor):
         return value
 
 
+class _MessageProcessorBinding(MessageProcessor):
+    def __init__(self, calls: list[ProcessorStage], action=None) -> None:
+        self.calls = calls
+        self.action = action
+
+    @property
+    def name(self) -> str:
+        return "test.message_processor"
+
+    async def process(self, context: ProcessorContext, value: object) -> object:
+        self.calls.append(ProcessorStage.MESSAGE_PROCESSOR)
+        if self.action is not None:
+            return await self.action(context, value)
+        return "processed"
+
+
 class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
@@ -94,6 +114,22 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(AuditAction.SUCCEEDED, record.action)
         self.assertEqual("config-v7", record.config_version)
         self.assertEqual("policy-v7", record.policy_version)
+
+    def test_standard_stage_contract_contains_exact_fixed_order(self) -> None:
+        binding = _MessageProcessorBinding([])
+        standard = build_standard_stage_processors(
+            message_processor=binding,
+        )
+
+        self.assertEqual(PROCESSOR_STAGE_ORDER, tuple(standard))
+        self.assertIsInstance(
+            standard[ProcessorStage.MESSAGE_PROCESSOR],
+            MessageProcessorStageProcessor,
+        )
+        self.assertEqual(
+            binding.name,
+            standard[ProcessorStage.MESSAGE_PROCESSOR].name,
+        )
 
     async def test_reject_stops_later_stages_and_maps_stable_error(self) -> None:
         calls: list[ProcessorStage] = []
@@ -177,6 +213,41 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("RUNTIME_PROCESSOR_FAILED", self.sink.records[0].error)
         self.assertNotIn(ProcessorStage.RESPONSE_FINALIZE, calls)
 
+    async def test_missing_message_processor_maps_stable_failure(self) -> None:
+        calls: list[ProcessorStage] = []
+
+        async def partial_routing_value(context, value):
+            return "routing-partial-must-not-escape"
+
+        pipeline, context = self._pipeline(
+            calls=calls,
+            actions={
+                ProcessorStage.ROUTING_PREPARATION: partial_routing_value,
+            },
+            omit_stage=ProcessorStage.MESSAGE_PROCESSOR,
+        )
+
+        result = await self._execute(pipeline, context)
+
+        self.assertFalse(result.succeeded)
+        self.assertIsNone(result.response)
+        self.assertIsInstance(result.error, NsRuntimeProcessorFailedError)
+        self.assertEqual(
+            tuple(PROCESSOR_STAGE_ORDER[:6]),
+            result.completed_stages,
+        )
+        self.assertEqual(list(PROCESSOR_STAGE_ORDER[:6]), calls)
+        self.assertNotIn(ProcessorStage.RESPONSE_FINALIZE, calls)
+        self.assertEqual(1, self.sink.attempted_count)
+        self.assertEqual(
+            "message_processor.unresolved",
+            self.sink.records[0].processor,
+        )
+        self.assertEqual(
+            "RUNTIME_PROCESSOR_FAILED",
+            self.sink.records[0].error,
+        )
+
     async def test_audit_sink_failure_differs_for_ordinary_and_strong(self) -> None:
         for consistency, should_fail in (
             (AuditConsistency.ORDINARY, False),
@@ -213,6 +284,21 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("identity:test", public)
         self.assertNotIn("permission:test", public)
 
+    def test_dependencies_require_typed_audit_and_event_boundaries(self) -> None:
+        _, context = self._pipeline(calls=[])
+        self.assertEqual(
+            "AuditSink",
+            ProcessorDependencies.__annotations__["audit_sink"],
+        )
+        self.assertEqual(
+            "EventBus",
+            ProcessorDependencies.__annotations__["event_bus"],
+        )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(context.dependencies, audit_sink=object())
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(context.dependencies, event_bus=object())
+
     def _pipeline(
         self,
         *,
@@ -220,10 +306,28 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         actions: dict[ProcessorStage, object] | None = None,
         timeout_seconds: float = 1,
         sink: DeterministicTestAuditSink | None = None,
+        omit_stage: ProcessorStage | None = None,
     ) -> tuple[ProcessorPipeline, ProcessorContext]:
         registry = ProcessorRegistry()
         version = ProtocolVersion(1, 0, 0)
+        message_action = None if actions is None else actions.get(
+            ProcessorStage.MESSAGE_PROCESSOR,
+        )
+        standard = build_standard_stage_processors(
+            message_processor=_MessageProcessorBinding(calls, message_action),
+        )
         for stage in PROCESSOR_STAGE_ORDER:
+            if stage is omit_stage:
+                continue
+            processor = (
+                standard[stage]
+                if stage is ProcessorStage.MESSAGE_PROCESSOR
+                else _StageProcessor(
+                    stage,
+                    calls,
+                    None if actions is None else actions.get(stage),
+                )
+            )
             registry.register(ProcessorRegistration(
                 message_type="connection.drain",
                 stage=stage,
@@ -231,11 +335,7 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
                 maximum_version=version,
                 feature_flag="message_family.connection",
                 feature_enabled=True,
-                processor=_StageProcessor(
-                    stage,
-                    calls,
-                    None if actions is None else actions.get(stage),
-                ),
+                processor=processor,
             ))
         registry.freeze()
         effective_sink = sink or self.sink

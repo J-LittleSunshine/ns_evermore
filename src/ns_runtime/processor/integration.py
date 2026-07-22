@@ -25,11 +25,13 @@ from ns_runtime.transport import TransportSession
 
 from .audit import AuditConsistency, AuditSink
 from .contracts import (
+    PROCESSOR_STAGE_ORDER,
     ProcessorAuthorization,
     ProcessorContext,
     ProcessorDependencies,
     ProcessorErrorMapper,
     ProcessorExecutionPolicy,
+    MessageProcessor,
     ProcessorStage,
     ResponseFinalizer,
     IdempotencyPrecheck,
@@ -152,7 +154,7 @@ class TransportResponseFinalizer(ResponseFinalizer):
         return response
 
 
-class LifecycleMessageProcessorAdapter(PipelineProcessor):
+class LifecycleMessageProcessorAdapter(MessageProcessor):
     def __init__(self, *, registry: ConnectionLifecycleProcessorRegistry, contract: MessageTypeContract) -> None:
         from ns_runtime.connection.processors import ConnectionLifecycleProcessorRegistry
 
@@ -171,7 +173,7 @@ class LifecycleMessageProcessorAdapter(PipelineProcessor):
         return await self._registry.dispatch(context.envelope)
 
 
-class FeatureDisabledMessageProcessorAdapter(PipelineProcessor):
+class FeatureDisabledMessageProcessorAdapter(MessageProcessor):
     def __init__(
         self,
         *,
@@ -287,7 +289,6 @@ def build_connection_processor_pipeline(
     if not isinstance(principal_type, IamPrincipalType):
         _invalid("build.principal_type")
     registry = ProcessorRegistry()
-    standard = build_standard_stage_processors()
     version = session_context.protocol_version
     feature_flags: dict[str, bool] = {}
     for contract in protocol_registry.contracts:
@@ -296,10 +297,8 @@ def build_connection_processor_pipeline(
         previous = feature_flags.setdefault(contract.feature_flag, contract.feature_enabled)
         if previous is not contract.feature_enabled:
             _invalid("build.feature_flag_contract_conflict")
-        for stage, processor in standard.items():
-            registry.register(_registration(contract, stage, processor, version))
         if contract.feature_enabled:
-            processor = LifecycleMessageProcessorAdapter(
+            message_processor = LifecycleMessageProcessorAdapter(
                 registry=lifecycle_registry,
                 contract=contract,
             )
@@ -307,16 +306,20 @@ def build_connection_processor_pipeline(
             disabled = disabled_processors.get(contract.processor_key)
             if disabled is None:
                 _invalid("build.disabled_processor")
-            processor = FeatureDisabledMessageProcessorAdapter(
+            message_processor = FeatureDisabledMessageProcessorAdapter(
                 processor=disabled,
                 error_context_factory=error_context_factory,
             )
-        registry.register(_registration(
-            contract,
-            ProcessorStage.MESSAGE_PROCESSOR,
-            processor,
-            version,
-        ))
+        standard = build_standard_stage_processors(
+            message_processor=message_processor,
+        )
+        for stage in PROCESSOR_STAGE_ORDER:
+            registry.register(_registration(
+                contract,
+                stage,
+                standard[stage],
+                version,
+            ))
     registry.freeze()
     dependencies = ProcessorDependencies(
         authorization=authorization,

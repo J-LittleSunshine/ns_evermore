@@ -6,7 +6,11 @@ import dataclasses
 import unittest
 
 from ns_common.async_runtime import TaskSupervisor
-from ns_common.exceptions import NsRuntimeUnauthorizedMessageTypeError, NsValidationError
+from ns_common.exceptions import (
+    NsRuntimeUnauthorizedMessageTypeError,
+    NsStateError,
+    NsValidationError,
+)
 from ns_runtime.processor import (
     EventBus,
     LocalPluginRegistry,
@@ -21,6 +25,9 @@ from ns_runtime.processor import (
     ProcessorTraceReference,
     RuntimeEvent,
     SubscriberOutcome,
+    MessageProcessor,
+    MessageProcessorStageProcessor,
+    build_standard_stage_processors,
 )
 from ns_runtime.protocol import ExtensionObjectSchema, ProtocolVersion
 
@@ -29,6 +36,15 @@ class _Processor(PipelineProcessor):
     @property
     def name(self) -> str:
         return "test.processor"
+
+    async def process(self, context: ProcessorContext, value: object) -> object:
+        return value
+
+
+class _MessageBinding(MessageProcessor):
+    @property
+    def name(self) -> str:
+        return "test.message_binding"
 
     async def process(self, context: ProcessorContext, value: object) -> object:
         return value
@@ -54,15 +70,20 @@ class ProcessorRegistryTestCase(unittest.TestCase):
             )
 
     def test_feature_flag_is_a_resolution_dimension(self) -> None:
-        registry = ProcessorRegistry((_registration(),))
+        message_stage = build_standard_stage_processors(
+            message_processor=_MessageBinding(),
+        )[ProcessorStage.MESSAGE_PROCESSOR]
+        registry = ProcessorRegistry((_registration(processor=message_stage),))
         registry.freeze()
-        self.assertIsInstance(registry.resolve(
+        resolved = registry.resolve(
             message_type="task.dispatch",
             stage=ProcessorStage.MESSAGE_PROCESSOR,
             protocol_version=ProtocolVersion(1, 0, 0),
             feature_flags={"message_family.task": False},
-        ), _Processor)
-        with self.assertRaises(Exception) as caught:
+        )
+        self.assertIs(resolved, message_stage)
+        self.assertIsInstance(resolved, MessageProcessorStageProcessor)
+        with self.assertRaises(NsStateError) as caught:
             registry.resolve(
                 message_type="task.dispatch",
                 stage=ProcessorStage.MESSAGE_PROCESSOR,
@@ -70,6 +91,39 @@ class ProcessorRegistryTestCase(unittest.TestCase):
                 feature_flags={"message_family.task": True},
             )
         self.assertEqual("processor_not_registered", caught.exception.details["reason"])
+
+    def test_feature_flag_resolution_conflict_is_rejected(self) -> None:
+        processor = build_standard_stage_processors(
+            message_processor=_MessageBinding(),
+        )[ProcessorStage.MESSAGE_PROCESSOR]
+        registry = ProcessorRegistry((
+            _registration(
+                feature_flag="message_family.task_a",
+                feature_enabled=True,
+                processor=processor,
+            ),
+            _registration(
+                feature_flag="message_family.task_b",
+                feature_enabled=True,
+                processor=processor,
+            ),
+        ))
+        registry.freeze()
+
+        with self.assertRaises(NsStateError) as caught:
+            registry.resolve(
+                message_type="task.dispatch",
+                stage=ProcessorStage.MESSAGE_PROCESSOR,
+                protocol_version=ProtocolVersion(1, 0, 0),
+                feature_flags={
+                    "message_family.task_a": True,
+                    "message_family.task_b": True,
+                },
+            )
+        self.assertEqual(
+            "processor_resolution_conflict",
+            caught.exception.details["reason"],
+        )
 
 
 class EventBusTestCase(unittest.IsolatedAsyncioTestCase):
@@ -126,10 +180,12 @@ class LocalPluginRegistryTestCase(unittest.TestCase):
                 _registration(
                     feature_flag="plugin.vendor.safe",
                     feature_enabled=True,
+                    processor=_message_stage(),
                 ),
                 _registration(
                     feature_flag="plugin.vendor.safe",
                     feature_enabled=True,
+                    processor=_message_stage(),
                 ),
             ),
         )
@@ -176,6 +232,19 @@ class LocalPluginRegistryTestCase(unittest.TestCase):
                     feature_enabled=True,
                 ),),
             )
+        with self.assertRaises(NsValidationError) as caught:
+            LocalTrustedPlugin(
+                metadata=_metadata(),
+                registrations=(_registration(
+                    feature_flag="plugin.vendor.safe",
+                    feature_enabled=True,
+                    processor=_Processor(),
+                ),),
+            )
+        self.assertEqual(
+            "registration.message_processor_boundary",
+            caught.exception.details["field"],
+        )
 
 
 def _registration(
@@ -185,7 +254,15 @@ def _registration(
     maximum: ProtocolVersion = ProtocolVersion(1, 0, 0),
     feature_flag: str = "message_family.task",
     feature_enabled: bool = False,
+    processor: PipelineProcessor | None = None,
 ) -> ProcessorRegistration:
+    effective_processor = processor
+    if effective_processor is None:
+        effective_processor = (
+            _message_stage()
+            if stage is ProcessorStage.MESSAGE_PROCESSOR
+            else _Processor()
+        )
     return ProcessorRegistration(
         message_type="task.dispatch",
         stage=stage,
@@ -193,7 +270,7 @@ def _registration(
         maximum_version=maximum,
         feature_flag=feature_flag,
         feature_enabled=feature_enabled,
-        processor=_Processor(),
+        processor=effective_processor,
     )
 
 
@@ -214,8 +291,15 @@ def _plugin() -> LocalTrustedPlugin:
         registrations=(_registration(
             feature_flag="plugin.vendor.safe",
             feature_enabled=True,
+            processor=_message_stage(),
         ),),
     )
+
+
+def _message_stage() -> PipelineProcessor:
+    return build_standard_stage_processors(
+        message_processor=_MessageBinding(),
+    )[ProcessorStage.MESSAGE_PROCESSOR]
 
 
 def _plugins() -> LocalPluginRegistry:

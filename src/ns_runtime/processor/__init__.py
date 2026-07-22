@@ -13,6 +13,8 @@ from .audit import (
 )
 from .contracts import (
     IdempotencyPrecheck,
+    MessageProcessor,
+    MessageProcessorExecutionBoundary,
     PROCESSOR_STAGE_ORDER,
     ProcessorAuthorization,
     ProcessorContext,
@@ -38,6 +40,7 @@ from .pipeline import (
     InterfaceOnlyIdempotencyPrecheck,
     InterfaceOnlyRateLimitEntry,
     InterfaceOnlyRoutingPreparation,
+    MessageProcessorStageProcessor,
     PassthroughResponseFinalizer,
     ProcessorExecutionResult,
     ProcessorPipeline,
@@ -63,6 +66,9 @@ __all__ = (
     "LocalPluginRegistry",
     "LocalTrustedPlugin",
     "LoggingAuditSink",
+    "MessageProcessor",
+    "MessageProcessorExecutionBoundary",
+    "MessageProcessorStageProcessor",
     "PROCESSOR_STAGE_ORDER",
     "PassthroughResponseFinalizer",
     "PipelineProcessor",

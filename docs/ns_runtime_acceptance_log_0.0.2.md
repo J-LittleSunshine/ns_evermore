@@ -1438,6 +1438,66 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 不存在可靠投递、ACK/NACK/Defer state、retry/dead letter、RoutingPlan、lease/fencing/CAS；health/task/management等未启用能力继续返回稳定 feature-disabled错误。
 - 下一工作包：`P08-W01 StateStoreCapabilities`，保持 `NOT_STARTED`。
 
+## P07 MESSAGE_PROCESSOR 标准阶段 review blocker 关闭证据
+
+- 工作包：`P07-W02`、`P07-W03`、`P07-W04`。
+- 状态：blocker 已关闭，P07 重新达到 `VERIFIED / F3`。
+- 完成时间：`2026-07-22T09:20:34+08:00`。
+- 环境：WSL2，Ubuntu 22.04.5 LTS，kernel `6.18.33.2-microsoft-standard-WSL2`；工作区 `/mnt/s/PythonProject/ns/ns_evermore`；分支 `codex/ns-runtime-implementation`，未新建分支。
+- 解释器：runtime `/home/ns/.virtualenvs/ns_runtime/bin/python` 与 backend `/home/ns/.virtualenvs/ns_backend/bin/python` 均为 Python `3.10.12`。
+
+### Blocker 与修复
+
+- 根因：`ProcessorStage` 和 `PROCESSOR_STAGE_ORDER` 虽包含 `MESSAGE_PROCESSOR`，但旧 `build_standard_stage_processors()` 只返回七个通用 processor；production composition 另行补注册具体 handler，因此实际连接路径可运行，但标准阶段 contract 不完整。旧顺序测试又手工注册全部八阶段，没有验证标准构造器，故未暴露缺口。
+- W02：`PROCESSOR_STAGE_ORDER` 改为显式八元素 tuple；新增 `MessageProcessor` binding contract 与 `MessageProcessorStageProcessor` execution boundary。`build_standard_stage_processors(message_processor=...)` 现在强制接收 binding，并按固定顺序返回完整八阶段。
+- W03：connection composition 不再先注册七个标准阶段再单独补 message handler，而是为每个 message contract 构造完整标准 map，并按 message.type、stage、protocol version、feature flag 注册八阶段。registry 测试覆盖 message processor 正常 resolve、duplicate、version overlap、flag mismatch 和多 flag 同时匹配冲突。
+- W04：timeout、caller cancellation、hostile exception 与 error mapping 均通过真实 `MessageProcessorStageProcessor` wrapper 验证。缺失 message processor 时只完成 routing preparation 之前六阶段，不执行 response finalize，不伪成功，返回稳定 `RUNTIME_PROCESSOR_FAILED`，final audit processor 标记为 `message_processor.unresolved`。
+- 显式依赖：`ProcessorDependencies.audit_sink` 与 `event_bus` 的声明类型由 `object` 收紧为 `AuditSink` 与 `EventBus`，构造期仍执行明确类型门禁；plugin registration 也必须使用标准 message stage wrapper，不能以任意 processor 绕过该 execution boundary。
+
+### 实际测试命令与结果
+
+1. P07 processor 专项：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -v tests.test_runtime_processor_pipeline tests.test_runtime_processor_boundaries
+   ```
+
+   结果：`Ran 18 tests in 0.146s`，`OK`；失败 `0`，跳过 `0`。
+
+2. P07 与 connection/session 相关联合回归：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -v tests.test_runtime_processor_pipeline tests.test_runtime_processor_boundaries tests.test_runtime_connection_composition tests.test_runtime_connection_authentication tests.test_runtime_connection_session tests.test_runtime_connection_reauth tests.test_runtime_connection_resume
+   ```
+
+   结果：`Ran 89 tests in 7.325s`，`OK`；失败 `0`，跳过 `0`。
+
+3. runtime 依赖边界全量回归，按 DEP-1 排除 Django-only `test_cache.py`：
+
+   ```bash
+   set -o pipefail
+   rg --files tests -g 'test_*.py' -g '!test_cache.py' | sort | sed 's#/#.#g; s#\.py$##' | xargs env PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest
+   ```
+
+   结果：`Ran 683 tests in 23.897s`，`OK (skipped=1)`；失败 `0`。
+
+4. backend/Django/cache 全量回归：
+
+   ```bash
+   PYTHONPATH=src /home/ns/.virtualenvs/ns_backend/bin/python -m unittest discover -s tests -p 'test_*.py'
+   ```
+
+   结果：`Ran 694 tests in 19.747s`，`OK (skipped=49)`；失败 `0`。
+
+5. 环境、冷导入与边界验证：两环境 `pip check` 均为 `No broken requirements found.`；全树 `compileall`、processor/integration 冷导入与 `git diff --check` 通过。只读标准 contract 探针输出完整相同的 `STAGE_ORDER`/`STANDARD_STAGES`，并输出 `MESSAGE_BOUNDARY=MessageProcessorStageProcessor`、`AUDIT_TYPE=AuditSink`、`EVENT_TYPE=EventBus`。
+
+### 禁止边界复核
+
+- `P08_RELIABLE_BOUNDARY_SCAN=NO_MATCH`：未引入 StateStore、Redis/Valkey authority、lease/fencing/CAS、DeliveryRecord/AckRecord/NackRecord/DeferRecord、retry、dead letter 或 RoutingPlan。
+- `SECOND_OWNER_SCAN=NO_MATCH`：processor package 未构造第二 TaskSupervisor、event loop 或 shutdown owner。
+- `GLOBAL_PROCESSOR_STATE_SCAN=NO_MATCH`：无 global ProcessorRegistry、EventBus、AuditSink 或 ProcessorPipeline 实例。
+- `TRANSPORT_BYPASS_SCAN=NO_MATCH`：标准 contract、pipeline 与 registry 不直接调用 transport；现有 transport response adapter 仍由 composition 显式注入。
+
 ## 新记录模板
 
 - 工作包：
