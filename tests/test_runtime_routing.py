@@ -35,7 +35,9 @@ from ns_runtime.routing import (
     RoutingFailureOutcome,
     RoutingRequest,
     RoutingRiskMetadata,
+    RoutingScoringDecision,
     RoutingStrategy,
+    ResolutionHint,
     StrategyParameters,
 )
 
@@ -55,6 +57,18 @@ class _SnapshotIndex(LocalConnectionIndex):
     async def snapshot(self) -> LocalConnectionIndexSnapshot:
         self.snapshot_calls += 1
         return self._provided_snapshot
+
+
+class _ScoringPolicy(DefaultLocalRoutingPolicy):
+    def __init__(self, scoring_decision: RoutingScoringDecision) -> None:
+        super().__init__()
+        self._scoring_decision = scoring_decision
+
+    def decide(self, *args, **kwargs):
+        return dataclasses.replace(
+            super().decide(*args, **kwargs),
+            scoring_decision=self._scoring_decision,
+        )
 
 
 class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
@@ -131,6 +145,64 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.selected_bindings, second.selected_bindings)
         self.assertEqual("runtime_fallback", first.scorer_source)
         self.assertEqual("fallback.v1", first.scorer_version)
+
+        changed_iam = await self.router.route(_request(
+            target,
+            iam_decision_result_reference="sha256:" + "b" * 64,
+        ))
+        changed_permission = await self.router.route(_request(
+            target,
+            session_permission_snapshot_version="permission-v2",
+            effective_permission_snapshot_version="permission-v2",
+        ))
+        assert isinstance(changed_iam, ResolvedRoutingPlan)
+        assert isinstance(changed_permission, ResolvedRoutingPlan)
+        self.assertNotEqual(first.decision_fingerprint, changed_iam.decision_fingerprint)
+        self.assertNotEqual(
+            first.decision_fingerprint,
+            changed_permission.decision_fingerprint,
+        )
+
+    async def test_scoring_inputs_are_policy_owned_and_fingerprinted(self) -> None:
+        target = TargetGroup(kind="tenant", tenant_id="tenant-a")
+        default = _request(target)
+        request_fields = {item.name for item in dataclasses.fields(RoutingRequest)}
+        self.assertNotIn("trusted_affinity_connection_ids", request_fields)
+        self.assertNotIn("runtime_policy_static_weights", request_fields)
+        self.assertEqual((), default.scoring_decision.trusted_affinity_connection_ids)
+        self.assertEqual((), default.scoring_decision.runtime_policy_static_weights)
+        request_values = {
+            item.name: getattr(default, item.name)
+            for item in dataclasses.fields(RoutingRequest)
+        }
+        with self.assertRaises(TypeError):
+            RoutingRequest(
+                **request_values,
+                trusted_affinity_connection_ids=(self.contexts[0].connection_id,),
+            )
+
+        preferred = self.contexts[2].connection_id
+        scoring = RoutingScoringDecision.from_inputs(
+            scorer_input_version="routing-scoring.policy-v7",
+            trusted_affinity_connection_ids=(preferred,),
+            runtime_policy_static_weights=((preferred, 25),),
+        )
+        scored = await self.router.route(_request(
+            target,
+            policy=_ScoringPolicy(scoring),
+        ))
+        baseline = await self.router.route(default)
+        assert isinstance(scored, ResolvedRoutingPlan)
+        assert isinstance(baseline, ResolvedRoutingPlan)
+        self.assertEqual(preferred, scored.selected_bindings[0].connection_id)
+        self.assertEqual(scoring.scorer_input_reference, scored.scorer_input_reference)
+        self.assertEqual(scoring.scorer_input_version, scored.scorer_input_version)
+        self.assertNotEqual(baseline.decision_fingerprint, scored.decision_fingerprint)
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                scoring,
+                scorer_input_reference="sha256:" + "0" * 64,
+            )
 
     def test_sender_intent_cannot_bypass_policy_decision(self) -> None:
         target = TargetGroup(
@@ -230,6 +302,96 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(
             RebindPolicy.NO_REBIND_FOR_CONTROL,
             security_audit.effective_rebind_policy,
+        )
+
+    def test_rebind_policy_decision_direct_construction_closes_expansion(self) -> None:
+        no_request = _request(
+            TargetGroup(kind="tenant", tenant_id="tenant-a"),
+        ).policy_decision
+        for expanded in (
+            RebindPolicy.SAME_IDENTITY,
+            RebindPolicy.SAME_CAPABILITY,
+            RebindPolicy.SAME_TENANT,
+        ):
+            with self.subTest(no_request_expanded=expanded), self.assertRaises(
+                NsValidationError,
+            ):
+                dataclasses.replace(no_request, effective_rebind_policy=expanded)
+
+        same_policies = (
+            RebindPolicy.SAME_IDENTITY,
+            RebindPolicy.SAME_CAPABILITY,
+            RebindPolicy.SAME_TENANT,
+        )
+        for requested in same_policies:
+            decision = _request(TargetGroup(
+                kind="tenant",
+                tenant_id="tenant-a",
+                rebind_policy=requested.value,
+            )).policy_decision
+            for expanded in same_policies:
+                if expanded is requested:
+                    continue
+                with self.subTest(
+                    requested=requested,
+                    expanded=expanded,
+                ), self.assertRaises(NsValidationError):
+                    dataclasses.replace(
+                        decision,
+                        effective_rebind_policy=expanded,
+                    )
+            for tightened in (
+                requested,
+                RebindPolicy.FIXED_CONNECTION,
+                RebindPolicy.NO_REBIND_FOR_CONTROL,
+            ):
+                with self.subTest(requested=requested, valid=tightened):
+                    dataclasses.replace(
+                        decision,
+                        effective_rebind_policy=tightened,
+                    )
+
+        broadcast = _request(TargetGroup(
+            kind="broadcast",
+            scope="tenant",
+            tenant_id="tenant-a",
+            multi_connection_policy="broadcast",
+        )).policy_decision
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                broadcast,
+                effective_rebind_policy=RebindPolicy.NO_REBIND_FOR_CONTROL,
+            )
+
+        security = _request(
+            TargetGroup(kind="tenant", tenant_id="tenant-a"),
+            category="control",
+        ).policy_decision
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                security,
+                effective_rebind_policy=RebindPolicy.FIXED_CONNECTION,
+            )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                security,
+                security_override_evidence="trusted_contract:no_security_override",
+            )
+        sensitive_broadcast = DefaultLocalRoutingPolicy().decide(
+            RequestedRoutingIntent.from_target(TargetGroup(
+                kind="broadcast",
+                scope="tenant",
+                tenant_id="tenant-a",
+                multi_connection_policy="broadcast",
+            )),
+            risk=_risk(MessageCategory.CONTROL),
+            config_version="config-v1",
+            policy_version="policy-v1",
+        )
+        self.assertFalse(sensitive_broadcast.accepted)
+        self.assertIs(
+            RoutingFailureReason.REBIND_NOT_PERMITTED,
+            sensitive_broadcast.rejection_reason,
         )
 
     async def test_broadcast_is_fixed_and_rebroadcast_uses_new_full_snapshot(self) -> None:
@@ -369,6 +531,109 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
                     strategy=RoutingStrategy.ALL,
                 ),
             )
+        strategy_expansions = (
+            StrategyParameters(strategy=RoutingStrategy.ALL),
+            StrategyParameters(strategy=RoutingStrategy.BROADCAST),
+            StrategyParameters(
+                strategy=RoutingStrategy.QUORUM,
+                fanout_count=2,
+                required_count=1,
+            ),
+            StrategyParameters(strategy=RoutingStrategy.ALL_REQUIRED),
+            StrategyParameters(
+                strategy=RoutingStrategy.WEIGHTED_SUBSET,
+                subset_size=2,
+            ),
+        )
+        for expanded_parameters in strategy_expansions:
+            with self.subTest(
+                strategy_expansion=expanded_parameters.strategy,
+            ), self.assertRaises(NsValidationError):
+                dataclasses.replace(
+                    first,
+                    effective_strategy=expanded_parameters.strategy,
+                    effective_strategy_parameters=expanded_parameters,
+                )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                first,
+                effective_rebind_policy=RebindPolicy.SAME_TENANT,
+            )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(first, effective_policy_evidence="policy:forged")
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                first,
+                authorization_evidence=dataclasses.replace(
+                    first.authorization_evidence,
+                    effective_permission_snapshot_version="permission-v9",
+                ),
+            )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                first,
+                selected_bindings=(dataclasses.replace(
+                    first.selected_bindings[0],
+                    binding_rebind_policy=RebindPolicy.SAME_TENANT,
+                ),),
+            )
+
+        broadcast = await self.router.route(_request(TargetGroup(
+            kind="broadcast",
+            scope="tenant",
+            tenant_id="tenant-a",
+            multi_connection_policy="broadcast",
+        )))
+        assert isinstance(broadcast, ResolvedRoutingPlan)
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                broadcast,
+                effective_rebind_policy=RebindPolicy.NO_REBIND_FOR_CONTROL,
+            )
+
+        security = await self.router.route(_request(
+            TargetGroup(kind="tenant", tenant_id="tenant-a"),
+            category="control",
+        ))
+        assert isinstance(security, ResolvedRoutingPlan)
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                security,
+                security_override_evidence="trusted_contract:no_security_override",
+            )
+
+        same_identity_plan = await self.router.route(_request(TargetGroup(
+            kind="tenant",
+            tenant_id="tenant-a",
+            rebind_policy="same_identity",
+        )))
+        assert isinstance(same_identity_plan, ResolvedRoutingPlan)
+        for expanded in (RebindPolicy.SAME_CAPABILITY, RebindPolicy.SAME_TENANT):
+            with self.subTest(plan_rebind_expansion=expanded), self.assertRaises(
+                NsValidationError,
+            ):
+                dataclasses.replace(
+                    same_identity_plan,
+                    effective_rebind_policy=expanded,
+                )
+
+        quorum_plan = await self.router.route(_request(TargetGroup(
+            kind="tenant",
+            tenant_id="tenant-a",
+            multi_connection_policy="quorum",
+            fanout_count=2,
+            required_count=1,
+        )))
+        assert isinstance(quorum_plan, ResolvedRoutingPlan)
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                quorum_plan,
+                effective_strategy_parameters=StrategyParameters(
+                    strategy=RoutingStrategy.QUORUM,
+                    fanout_count=3,
+                    required_count=1,
+                ),
+            )
 
         missing = await self.router.route(_request(TargetGroup(
             kind="connection", connection_id="connection_123e4567e89b42d3a456000000009999",
@@ -378,6 +643,7 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("config-v1", missing.config_version)
         self.assertEqual("policy-v1", missing.policy_version)
         self.assertRegex(missing.original_target_safe_reference, r"sha256:[0-9a-f]{16}")
+        self.assertIs(ResolutionHint.LOCAL, missing.resolution_hint)
         with self.assertRaises(NsValidationError):
             dataclasses.replace(missing, outcome="rejected")
         with self.assertRaises(NsValidationError):
@@ -474,6 +740,7 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(remote, RoutingFailureReport)
         assert isinstance(remote, RoutingFailureReport)
         self.assertIs(RoutingFailureReason.REMOTE_RUNTIME_REQUIRED, remote.reason)
+        self.assertIs(ResolutionHint.REMOTE_RUNTIME_REQUIRED, remote.resolution_hint)
 
         strong_router = LocalRouter(
             connection_index=self.index,
@@ -492,7 +759,21 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(strong, RoutingFailureReport)
         assert isinstance(strong, RoutingFailureReport)
         self.assertIs(RoutingFailureReason.STRONG_PLAN_AUTHORITY_UNAVAILABLE, strong.reason)
+        self.assertIs(
+            ResolutionHint.AUTHORITY_RECOVERY_REQUIRED,
+            strong.resolution_hint,
+        )
         self.assertIsInstance(strong.public_error(), NsRuntimeRouteUnavailableError)
+
+        self.assertEqual(
+            {
+                "local",
+                "master_query_required",
+                "remote_runtime_required",
+                "authority_recovery_required",
+            },
+            {value.value for value in ResolutionHint},
+        )
 
     async def test_limits_and_5001_selected_bindings_without_truncation(self) -> None:
         contexts = tuple(_routing_context(index) for index in range(5001))
@@ -541,6 +822,11 @@ def _request(
     message_reference: str = MESSAGE_REF,
     principal_tenant_id: str = "tenant-a",
     policy: DefaultLocalRoutingPolicy | None = None,
+    iam_decision_result_reference: str = "sha256:" + "a" * 64,
+    session_permission_snapshot_ref: str = "permission-ref",
+    session_permission_snapshot_version: str = "permission-v1",
+    effective_permission_snapshot_ref: str | None = None,
+    effective_permission_snapshot_version: str | None = None,
 ) -> RoutingRequest:
     intent = RequestedRoutingIntent.from_target(target)
     risk_category = MessageCategory(category)
@@ -571,9 +857,9 @@ def _request(
     )
     target_tenant = target.tenant_id
     crosses = target_tenant is not None and target_tenant != principal_tenant_id
-    evidence = AuthorizationDecisionEvidence(
-        decision_reference="sha256:" + "a" * 64,
+    evidence = AuthorizationDecisionEvidence.bound(
         decision_version="authorization-decision.v1",
+        decision_result_reference=iam_decision_result_reference,
         message_reference=message_reference,
         message_type="task.dispatch",
         principal_tenant_id=principal_tenant_id,
@@ -583,8 +869,15 @@ def _request(
             target,
             session_tenant_id=principal_tenant_id,
         ),
-        permission_snapshot_ref="permission-ref",
-        permission_snapshot_version="permission-v1",
+        session_permission_snapshot_ref=session_permission_snapshot_ref,
+        session_permission_snapshot_version=session_permission_snapshot_version,
+        effective_permission_snapshot_ref=(
+            effective_permission_snapshot_ref or session_permission_snapshot_ref
+        ),
+        effective_permission_snapshot_version=(
+            effective_permission_snapshot_version
+            or session_permission_snapshot_version
+        ),
     )
     return RoutingRequest(
         message_reference=message_reference,

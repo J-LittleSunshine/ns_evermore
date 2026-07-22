@@ -102,10 +102,17 @@ class LocalRoutingPreparation(RoutingPreparation):
             value.message_reference != message_reference
             or value.message_type != contract.message_type
             or value.principal_tenant_id != context.session.tenant_id
+            or value.session_permission_snapshot_ref
+            != context.session.permission_snapshot_ref
+            or value.session_permission_snapshot_version
+            != context.session.permission_version
+            or value.effective_permission_snapshot_ref
+            != value.session_permission_snapshot_ref
             or value.authorized_target_reference != expected_target_reference
             or value.cross_tenant_authorized is not crosses_tenant
             or value.effective_tenant_id
             != (target_tenant if crosses_tenant else context.session.tenant_id)
+            or not value.has_valid_binding()
         ):
             return RoutingPreparationResult.rejected(_failure(
                 context,
@@ -172,7 +179,7 @@ def _failure(
         config_version=context.config_version,
         policy_version=context.policy_version,
         index_mutation_sequence=None,
-        resolution_hint=ResolutionHint.LOCAL_INDEX,
+        resolution_hint=ResolutionHint.LOCAL,
         later_action=LaterActionSuggestion.SUBMIT_CORRECTED_TARGET,
         occurred_at=context.clock.utc_now(),
     )

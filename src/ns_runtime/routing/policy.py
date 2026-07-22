@@ -14,6 +14,7 @@ from .models import (
     RequestedRoutingIntent,
     RoutingFailureReason,
     RoutingPolicyDecision,
+    RoutingScoringDecision,
     RoutingStrategy,
 )
 
@@ -135,6 +136,17 @@ class DefaultLocalRoutingPolicy(RoutingPolicy):
         requested_rebind = intent.requested_rebind_policy
         if requested_rebind is not None and requested_rebind not in self._rebind:
             return self._reject(intent, RoutingFailureReason.REBIND_NOT_PERMITTED, risk, config_version, policy_version)
+        if (
+            intent.requested_strategy is RoutingStrategy.BROADCAST
+            and risk.security_sensitive
+        ):
+            return self._reject(
+                intent,
+                RoutingFailureReason.REBIND_NOT_PERMITTED,
+                risk,
+                config_version,
+                policy_version,
+            )
         if intent.requested_strategy is RoutingStrategy.BROADCAST:
             effective_rebind = RebindPolicy.FIXED_CONNECTION
             override = "trusted_contract:broadcast_fixed_binding"
@@ -158,6 +170,8 @@ class DefaultLocalRoutingPolicy(RoutingPolicy):
             config_version=config_version,
             policy_version=policy_version,
             security_override_evidence=override,
+            security_sensitive=risk.security_sensitive,
+            scoring_decision=RoutingScoringDecision.empty(),
         )
 
     @staticmethod
@@ -174,6 +188,8 @@ class DefaultLocalRoutingPolicy(RoutingPolicy):
             config_version=config_version,
             policy_version=policy_version,
             security_override_evidence=f"trusted_contract:{risk.message_type}:{risk.category.value}:rejected",
+            security_sensitive=risk.security_sensitive,
+            scoring_decision=RoutingScoringDecision.empty(),
         )
 
 

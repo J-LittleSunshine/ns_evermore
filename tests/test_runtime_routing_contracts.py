@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import NsRuntimeEnvelopeSchemaError, NsRuntimeRouteRejectedError
-from ns_common.iam import IamPrincipalType
+from ns_common.iam import IamPrincipalType, PermissionInvalidation
 from ns_common.time import ControlledClock
 from ns_runtime.processor import (
     DefaultProcessorErrorMapper,
@@ -22,7 +22,11 @@ from ns_runtime.processor import (
     RoutingPreparationOutcome,
     AuthorizationDecisionEvidence,
 )
-from ns_runtime.processor.integration import DeterministicTestProcessorAuthorization
+from ns_runtime.processor.integration import (
+    DeterministicTestProcessorAuthorization,
+    IamProcessorAuthorization,
+)
+from ns_runtime.iam import AuthorizationMode, MessageAuthorizationService
 from ns_runtime.protocol import (
     BUILTIN_MESSAGE_REGISTRY,
     MessageGroup,
@@ -40,6 +44,17 @@ from ns_runtime.routing import (
 
 from tests.test_runtime_processor_pipeline import NOW, _envelope, _session
 from tests.test_runtime_routing import RUNTIME_ID, _router, _snapshot, _SnapshotIndex, _routing_context
+from tests.test_runtime_iam_authorization import _Iam
+
+
+class _CountingPolicy(DefaultLocalRoutingPolicy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def decide(self, *args, **kwargs):
+        self.calls += 1
+        return super().decide(*args, **kwargs)
 
 
 class TargetGroupContractTestCase(unittest.TestCase):
@@ -289,6 +304,44 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(session.permission_snapshot_ref, resolved.plan.iam_decision_reference)
 
         before = index.snapshot_calls
+        mismatch_cases = (
+            _bound_replace(
+                evidence,
+                session_permission_snapshot_ref="permission-other",
+            ),
+            _bound_replace(
+                evidence,
+                session_permission_snapshot_version="permission-v9",
+            ),
+            _bound_replace(
+                evidence,
+                effective_permission_snapshot_ref="permission-other",
+            ),
+            dataclasses.replace(
+                evidence,
+                effective_permission_snapshot_version="permission-v9",
+            ),
+        )
+        for mismatch in mismatch_cases:
+            with self.subTest(permission_evidence=mismatch):
+                counting_policy = _CountingPolicy()
+                isolated = LocalRoutingPreparation(
+                    router=_router(index, self.clock),
+                    protocol_registry=registry,
+                    policy=counting_policy,
+                )
+                mismatch_result = await isolated.prepare(context, mismatch)
+                self.assertIs(
+                    RoutingPreparationOutcome.REJECTED,
+                    mismatch_result.outcome,
+                )
+                self.assertIs(
+                    RoutingFailureReason.AUTHORIZATION_EVIDENCE_MISMATCH,
+                    mismatch_result.failure.reason,
+                )
+                self.assertEqual(0, counting_policy.calls)
+                self.assertEqual(before, index.snapshot_calls)
+
         policy_rejected = await LocalRoutingPreparation(
             router=_router(index, self.clock),
             protocol_registry=registry,
@@ -327,6 +380,134 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
         rejected_message = await preparation.prepare(context, unrelated)
         self.assertIs(RoutingPreparationOutcome.REJECTED, rejected_message.outcome)
         self.assertEqual(before, index.snapshot_calls)
+
+    async def test_iam_refresh_binds_session_and_effective_snapshots(self) -> None:
+        contract = dataclasses.replace(
+            BUILTIN_MESSAGE_REGISTRY.require("task.dispatch"),
+            feature_enabled=True,
+        )
+        registry = MessageTypeRegistry((contract,))
+        session = _session()
+        target = TargetGroup(kind="tenant", tenant_id=session.tenant_id)
+        envelope = dataclasses.replace(
+            _envelope(),
+            message=MessageGroup(
+                message_id="message-refresh",
+                type="task.dispatch",
+                category="task",
+                priority=0,
+                created_at="2026-07-22T00:00:00Z",
+            ),
+            target=target,
+        )
+        envelope = dataclasses.replace(
+            envelope,
+            source=dataclasses.replace(
+                envelope.source,
+                connection_id=session.connection_id,
+                tenant_id=session.tenant_id,
+            ),
+            auth_context=dataclasses.replace(
+                envelope.auth_context,
+                permission_snapshot_ref=session.permission_snapshot_ref,
+            ),
+        )
+        refresh_calls = 0
+
+        async def refresh(snapshot):
+            nonlocal refresh_calls
+            refresh_calls += 1
+            return dataclasses.replace(
+                snapshot,
+                permission_digest="sha256:refreshed",
+                permission_version="version:refreshed",
+            )
+
+        iam = _Iam([True], self.clock)
+        service = MessageAuthorizationService(
+            iam_client=iam,
+            clock=self.clock,
+            mode=AuthorizationMode.CACHE,
+            cache_ttl_seconds=60,
+            snapshot_refresher=refresh,
+        )
+        service.invalidate(PermissionInvalidation(
+            permission_snapshot_ref=session.permission_snapshot_ref,
+            previous_version=session.permission_version,
+            current_version="version:refreshed",
+            invalidated_at=NOW,
+            reason="role_changed",
+        ))
+        target_context = dataclasses.replace(
+            _routing_context(0),
+            tenant_id=session.tenant_id,
+        )
+        index = _SnapshotIndex(_snapshot((target_context,)))
+        preparation = LocalRoutingPreparation(
+            router=_router(index, self.clock),
+            protocol_registry=registry,
+        )
+        authorization = IamProcessorAuthorization(
+            service=service,
+            protocol_registry=registry,
+        )
+        dependencies = ProcessorDependencies(
+            authorization=authorization,
+            rate_limit=InterfaceOnlyRateLimitEntry(),
+            idempotency=InterfaceOnlyIdempotencyPrecheck(),
+            routing=preparation,
+            response_finalizer=PassthroughResponseFinalizer(),
+            error_mapper=DefaultProcessorErrorMapper(),
+            principal_type=IamPrincipalType.CLIENT,
+            audit_sink=DeterministicTestAuditSink(),
+            event_bus=EventBus(
+                task_supervisor=self.supervisor,
+                default_timeout_seconds=1,
+            ),
+            task_supervisor=self.supervisor,
+        )
+        context = ProcessorContext(
+            normalized_envelope=envelope,
+            session=session,
+            trace=ProcessorTraceReference(value="trace:refresh"),
+            config_version="config-v1",
+            policy_version="policy-v1",
+            clock=self.clock,
+            dependencies=dependencies,
+        )
+
+        evidence = await authorization.authorize(context)
+        self.assertEqual(
+            session.permission_version,
+            evidence.session_permission_snapshot_version,
+        )
+        self.assertEqual(
+            "version:refreshed",
+            evidence.effective_permission_snapshot_version,
+        )
+        self.assertTrue(evidence.has_valid_binding())
+        self.assertEqual(1, refresh_calls)
+        resolved = await preparation.prepare(context, evidence)
+        self.assertIs(RoutingPreparationOutcome.RESOLVED, resolved.outcome)
+        self.assertEqual(1, index.snapshot_calls)
+        assert isinstance(resolved.plan, ResolvedRoutingPlan)
+        self.assertEqual(
+            "version:refreshed",
+            resolved.plan.effective_permission_snapshot_version,
+        )
+
+
+def _bound_replace(
+    evidence: AuthorizationDecisionEvidence,
+    **changes: object,
+) -> AuthorizationDecisionEvidence:
+    values = {
+        item.name: getattr(evidence, item.name)
+        for item in dataclasses.fields(AuthorizationDecisionEvidence)
+        if item.name != "decision_reference"
+    }
+    values.update(changes)
+    return AuthorizationDecisionEvidence.bound(**values)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

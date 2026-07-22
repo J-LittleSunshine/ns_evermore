@@ -390,7 +390,7 @@ class ProcessorPipelineTestCase(unittest.IsolatedAsyncioTestCase):
                     config_version="config-v1",
                     policy_version="policy-v1",
                     index_mutation_sequence=None,
-                    resolution_hint=ResolutionHint.LOCAL_INDEX,
+                    resolution_hint=ResolutionHint.LOCAL,
                     later_action=LaterActionSuggestion.DO_NOT_RETRY_UNCHANGED,
                     occurred_at=NOW,
                 )

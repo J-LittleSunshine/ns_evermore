@@ -124,8 +124,11 @@ class AuthorizationDecisionEvidence:
     effective_tenant_id: str = field(repr=False)
     cross_tenant_authorized: bool
     authorized_target_reference: str = field(repr=False)
-    permission_snapshot_ref: str = field(repr=False)
-    permission_snapshot_version: str = field(repr=False)
+    session_permission_snapshot_ref: str = field(repr=False)
+    session_permission_snapshot_version: str = field(repr=False)
+    effective_permission_snapshot_ref: str = field(repr=False)
+    effective_permission_snapshot_version: str = field(repr=False)
+    decision_result_reference: str = field(repr=False)
 
     def __post_init__(self) -> None:
         if _DECISION_REFERENCE.fullmatch(self.decision_reference) is None:
@@ -134,16 +137,82 @@ class AuthorizationDecisionEvidence:
             _invalid("authorization_evidence.message_reference")
         if _SAFE_REFERENCE.fullmatch(self.authorized_target_reference) is None:
             _invalid("authorization_evidence.authorized_target_reference")
+        if _DECISION_REFERENCE.fullmatch(self.decision_result_reference) is None:
+            _invalid("authorization_evidence.decision_result_reference")
         for name in (
             "decision_version", "message_type", "principal_tenant_id",
             "effective_tenant_id",
-            "permission_snapshot_ref", "permission_snapshot_version",
+            "session_permission_snapshot_ref",
+            "session_permission_snapshot_version",
+            "effective_permission_snapshot_ref",
+            "effective_permission_snapshot_version",
         ):
             value = getattr(self, name)
             if not isinstance(value, str) or not value or len(value) > 512:
                 _invalid(f"authorization_evidence.{name}")
         if type(self.cross_tenant_authorized) is not bool:
             _invalid("authorization_evidence.cross_tenant_authorized")
+
+    @classmethod
+    def bound(
+        cls,
+        *,
+        decision_version: str,
+        message_reference: str,
+        message_type: str,
+        principal_tenant_id: str,
+        effective_tenant_id: str,
+        cross_tenant_authorized: bool,
+        authorized_target_reference: str,
+        session_permission_snapshot_ref: str,
+        session_permission_snapshot_version: str,
+        effective_permission_snapshot_ref: str,
+        effective_permission_snapshot_version: str,
+        decision_result_reference: str,
+    ) -> "AuthorizationDecisionEvidence":
+        values = {
+            "decision_version": decision_version,
+            "message_reference": message_reference,
+            "message_type": message_type,
+            "principal_tenant_id": principal_tenant_id,
+            "effective_tenant_id": effective_tenant_id,
+            "cross_tenant_authorized": cross_tenant_authorized,
+            "authorized_target_reference": authorized_target_reference,
+            "session_permission_snapshot_ref": session_permission_snapshot_ref,
+            "session_permission_snapshot_version": session_permission_snapshot_version,
+            "effective_permission_snapshot_ref": effective_permission_snapshot_ref,
+            "effective_permission_snapshot_version": effective_permission_snapshot_version,
+            "decision_result_reference": decision_result_reference,
+        }
+        return cls(
+            decision_reference=cls._binding_reference(**values),
+            **values,
+        )
+
+    def has_valid_binding(self) -> bool:
+        return self.decision_reference == self._binding_reference(
+            decision_version=self.decision_version,
+            message_reference=self.message_reference,
+            message_type=self.message_type,
+            principal_tenant_id=self.principal_tenant_id,
+            effective_tenant_id=self.effective_tenant_id,
+            cross_tenant_authorized=self.cross_tenant_authorized,
+            authorized_target_reference=self.authorized_target_reference,
+            session_permission_snapshot_ref=self.session_permission_snapshot_ref,
+            session_permission_snapshot_version=(
+                self.session_permission_snapshot_version
+            ),
+            effective_permission_snapshot_ref=self.effective_permission_snapshot_ref,
+            effective_permission_snapshot_version=(
+                self.effective_permission_snapshot_version
+            ),
+            decision_result_reference=self.decision_result_reference,
+        )
+
+    @staticmethod
+    def _binding_reference(**values: object) -> str:
+        canonical = json.dumps(values, sort_keys=True, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @staticmethod
     def target_reference(target: TargetGroup | None, *, session_tenant_id: str) -> str:

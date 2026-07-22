@@ -183,7 +183,7 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
                     "reason": "cross_tenant_not_authorized_by_test_policy",
                 },
             )
-        payload = {
+        result_payload = {
             "allowed": True,
             "message_reference": message_reference,
             "message_type": context.envelope.message.type,
@@ -191,8 +191,7 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
             "permission_version": context.session.permission_version,
             "target_reference": target_reference,
         }
-        return AuthorizationDecisionEvidence(
-            decision_reference=_decision_digest(payload),
+        return AuthorizationDecisionEvidence.bound(
             decision_version="authorization-decision.v1",
             message_reference=message_reference,
             message_type=context.envelope.message.type,
@@ -202,8 +201,15 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
                 self.authorize_cross_tenant if crosses_tenant else False
             ),
             authorized_target_reference=target_reference,
-            permission_snapshot_ref=context.session.permission_snapshot_ref,
-            permission_snapshot_version=context.session.permission_version,
+            session_permission_snapshot_ref=(
+                context.session.permission_snapshot_ref
+            ),
+            session_permission_snapshot_version=context.session.permission_version,
+            effective_permission_snapshot_ref=(
+                context.session.permission_snapshot_ref
+            ),
+            effective_permission_snapshot_version=context.session.permission_version,
+            decision_result_reference=_decision_digest(result_payload),
         )
 
 
@@ -522,25 +528,23 @@ def _authorization_evidence(
         effective_snapshot.permission_snapshot_ref
     )
     effective_request["permission_version"] = effective_snapshot.permission_version
-    payload = {
+    decision_result_reference = _decision_digest({
         "request": effective_request,
         "decision": decision.to_wire(),
-        "effective_permission_snapshot_ref": effective_snapshot.permission_snapshot_ref,
-        "effective_permission_version": effective_snapshot.permission_version,
-        "message_reference": message_reference,
-        "target_reference": target_reference,
-    }
-    return AuthorizationDecisionEvidence(
-        decision_reference=_decision_digest(payload),
+    })
+    return AuthorizationDecisionEvidence.bound(
         decision_version="authorization-decision.v1",
         message_reference=message_reference,
         message_type=context.envelope.message.type,
-        principal_tenant_id=effective_snapshot.tenant_id,
+        principal_tenant_id=context.session.tenant_id,
         effective_tenant_id=effective_tenant_id,
         cross_tenant_authorized=(decision.allowed and request.cross_tenant),
         authorized_target_reference=target_reference,
-        permission_snapshot_ref=effective_snapshot.permission_snapshot_ref,
-        permission_snapshot_version=effective_snapshot.permission_version,
+        session_permission_snapshot_ref=context.session.permission_snapshot_ref,
+        session_permission_snapshot_version=context.session.permission_version,
+        effective_permission_snapshot_ref=effective_snapshot.permission_snapshot_ref,
+        effective_permission_snapshot_version=effective_snapshot.permission_version,
+        decision_result_reference=decision_result_reference,
     )
 
 

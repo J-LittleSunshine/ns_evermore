@@ -1760,6 +1760,37 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 实现完成：是；测试通过：是；P09 evidence状态：`VERIFIED/F3 (local only)`。
 - strong RoutingPlan persistence、remote/master routing、cluster/lease/fencing、Delivery/Summary/ACK/retry仍未实现。P10-W01保持`BLOCKED`，必须等待独立范围授权。
 
+## P09-FIX-02 公共契约缺口修复验收证据
+
+- 工作包：`P09-FIX-02 permission/scoring/fingerprint/plan/failure-hint contract closure`；开始时P09按`IN_PROGRESS`处理，以下证据全部通过后恢复`VERIFIED/F3 (local only)`。
+- 完成时间：`2026-07-22T16:02:44+08:00`。
+- 范围：只修复P09公共契约。保留显式RoutingPolicy、broadcast fixed binding、previous chain、eligibility、audit-before-send与W09 interface-only边界；未实施P10、P14 health scoring、remote/master routing或strong authority provider。`P10-W01`保持`BLOCKED`。
+
+### Blocker关闭证据
+
+- Permission snapshot binding：`AuthorizationDecisionEvidence`分别记录session/effective snapshot ref/version，并由外层decision reference绑定message、target、tenant/cross-tenant、两组snapshot与底层decision result。production IAM invalidation refresh已验证同ref从旧版本更新到effective新版本；ref/version/effective篡改均在policy与Router前返回`AUTHORIZATION_EVIDENCE_MISMATCH`，policy调用与index snapshot均为零。
+- Rebind expansion：`RoutingPolicyDecision`直接构造矩阵覆盖None到三种same-*、三种same-*之间全部横向扩张、合法保持/fixed/no-rebind收紧、broadcast非fixed、security-sensitive非no-rebind和security evidence不一致；非法值均为`NsValidationError`。security-sensitive broadcast因fixed/no-rebind不变量冲突而明确policy reject。
+- Scoring authority：新增immutable `RoutingScoringDecision`并由policy decision持有；`RoutingRequest`已删除独立affinity/static-weight字段，未知注入直接拒绝。Router只读取decision，plan/fingerprint记录scorer input version/reference；default为空输入，专项用policy-owned affinity/weight验证选择变化，未引入health/latency/pressure。
+- IAM fingerprint：相同routing/IAM evidence跨随机plan ID保持同fingerprint；只改变IAM decision result/reference或permission version均改变fingerprint。payload同时绑定IAM decision ref/version、authorized target、effective snapshot和scorer input，继续排除message reference、created-at和current/previous plan ID，并包含previous decision fingerprint。
+- Independent plan invariant：plan保存`repr=False`的typed policy decision与authorization evidence，复验original target、strategy/parameters、rebind、security与policy evidence、config/policy/scorer、IAM/effective snapshot和selected binding。直接构造负向覆盖single到all/broadcast/quorum/all-required/weighted-subset、None到same-*、same-identity到其他same-*、broadcast非fixed、security evidence、parameter expansion、forged effective evidence与binding policy mismatch。
+- Failure hint：最终闭集恰为`local/master_query_required/remote_runtime_required/authority_recovery_required`；local miss、remote runtime和strong authority unavailable映射分别验证。master-query只冻结值，不执行查询或创建later-action任务。
+
+### 测试命令与结果
+
+- P09 routing/models/policy/integration与PC-1：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime_p09_rp1_review/bin/python -m unittest tests.test_runtime_routing tests.test_runtime_routing_contracts tests.test_runtime_processor_pipeline`，`Ran 41 tests in 0.801s, OK`。加入IAM authorization refresh专项的联合为`Ran 47 tests in 2.854s, OK`。
+- ENV-1、P05 eligibility、audit-before-send、lifecycle audit：执行`test_runtime_protocol_schema`、`test_runtime_processor_pipeline`、`test_runtime_connection_index`、`test_runtime_connection_resume`、`test_runtime_connection_reauth`、`test_runtime_connection_security`、`test_runtime_connection_snapshot_audit`，`Ran 79 tests in 1.858s, OK`。
+- P03-P09联合：加载protocol、transport、connection/session、IAM、processor、state和routing模块，`Ran 373 tests in 21.419s, OK`。
+- Linux runtime标准asyncio：按DEP-1排除唯一Django-only `test_cache.py`，`Ran 742 tests in 48.763s, OK (skipped=1)`。
+- Linux runtime uvloop：同一742项在`uvloop.EventLoopPolicy()`下执行，`Ran 742 tests in 45.703s, OK (skipped=1)`。
+- Linux backend：`PYTHONPATH=src /home/ns/.virtualenvs/ns_backend_p09_rp1_review/bin/python -m unittest discover -s tests -p 'test_*.py'`，`Ran 753 tests in 21.278s, OK (skipped=49)`。
+- 依赖与静态：两隔离环境`pip check`均输出`No broken requirements found.`；runtime `compileall -q src tests`与`git diff --check`通过。
+- 冷导入/禁止项：cold import `ns_runtime.routing`得到`cold_import_forbidden=[]`，未加载Django、rest_framework或ns_backend。routing扫描确认无transport send、StateStore直连、DeliveryRecord/DeliveryAttempt/MessageDeliverySummary、ACK/NACK/Defer、TaskSupervisor/EventBus/create-task；Request scoring injection扫描为空。
+
+### 最终判断与限制
+
+- 六个P09 blocker均关闭；实现与全部规定回归通过，P09恢复`VERIFIED/F3 (local only)`。
+- strong RoutingPlan persistence、remote/master routing、cluster/lease/fencing、P14 health scoring、Delivery/Summary/ACK/retry仍未实现。`P10-W01`保持`BLOCKED`，等待独立授权。
+
 ## 新记录模板
 
 - 工作包：

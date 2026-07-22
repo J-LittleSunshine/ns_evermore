@@ -93,9 +93,10 @@ class CandidateFilterReason(str, Enum):
 
 
 class ResolutionHint(str, Enum):
-    LOCAL_INDEX = "local_index"
-    REMOTE_UNAVAILABLE = "remote_unavailable"
-    STRONG_AUTHORITY_REQUIRED = "strong_authority_required"
+    LOCAL = "local"
+    MASTER_QUERY_REQUIRED = "master_query_required"
+    REMOTE_RUNTIME_REQUIRED = "remote_runtime_required"
+    AUTHORITY_RECOVERY_REQUIRED = "authority_recovery_required"
 
 
 class LaterActionSuggestion(str, Enum):
@@ -194,6 +195,81 @@ class RequestedRoutingIntent:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class RoutingScoringDecision:
+    scorer_input_version: str
+    scorer_input_reference: str
+    trusted_affinity_connection_ids: tuple[str, ...] = field(
+        default=(),
+        repr=False,
+    )
+    runtime_policy_static_weights: tuple[tuple[str, int], ...] = field(
+        default=(),
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        _nonempty(self.scorer_input_version, "scoring_decision.version")
+        if _DECISION_FINGERPRINT.fullmatch(self.scorer_input_reference) is None:
+            _invalid("scoring_decision.reference")
+        _unique_strings(
+            self.trusted_affinity_connection_ids,
+            "scoring_decision.trusted_affinity_connection_ids",
+        )
+        if self.trusted_affinity_connection_ids != tuple(
+            sorted(self.trusted_affinity_connection_ids),
+        ):
+            _invalid("scoring_decision.affinity_order")
+        if not isinstance(self.runtime_policy_static_weights, tuple) or any(
+            not isinstance(item, tuple) or len(item) != 2
+            for item in self.runtime_policy_static_weights
+        ):
+            _invalid("scoring_decision.static_weights")
+        seen: set[str] = set()
+        for connection_id, weight in self.runtime_policy_static_weights:
+            _nonempty(connection_id, "scoring_decision.static_weight.connection_id")
+            if connection_id in seen:
+                _invalid("scoring_decision.static_weight.duplicate")
+            if isinstance(weight, bool) or not isinstance(weight, int):
+                _invalid("scoring_decision.static_weight.value")
+            seen.add(connection_id)
+        if self.runtime_policy_static_weights != tuple(
+            sorted(self.runtime_policy_static_weights),
+        ):
+            _invalid("scoring_decision.static_weight_order")
+        if self.scorer_input_reference != _scoring_input_reference(
+            version=self.scorer_input_version,
+            affinity=self.trusted_affinity_connection_ids,
+            weights=self.runtime_policy_static_weights,
+        ):
+            _invalid("scoring_decision.reference_mismatch")
+
+    @classmethod
+    def from_inputs(
+        cls,
+        *,
+        scorer_input_version: str,
+        trusted_affinity_connection_ids: tuple[str, ...] = (),
+        runtime_policy_static_weights: tuple[tuple[str, int], ...] = (),
+    ) -> "RoutingScoringDecision":
+        affinity = tuple(sorted(trusted_affinity_connection_ids))
+        weights = tuple(sorted(runtime_policy_static_weights))
+        return cls(
+            scorer_input_version=scorer_input_version,
+            scorer_input_reference=_scoring_input_reference(
+                version=scorer_input_version,
+                affinity=affinity,
+                weights=weights,
+            ),
+            trusted_affinity_connection_ids=affinity,
+            runtime_policy_static_weights=weights,
+        )
+
+    @classmethod
+    def empty(cls) -> "RoutingScoringDecision":
+        return cls.from_inputs(scorer_input_version="routing-scoring.v1")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RoutingPolicyDecision:
     accepted: bool
     requested_strategy: RoutingStrategy
@@ -206,10 +282,16 @@ class RoutingPolicyDecision:
     config_version: str
     policy_version: str
     security_override_evidence: str
+    security_sensitive: bool
+    scoring_decision: RoutingScoringDecision
 
     def __post_init__(self) -> None:
         if type(self.accepted) is not bool:
             _invalid("routing_policy_decision.accepted")
+        if type(self.security_sensitive) is not bool:
+            _invalid("routing_policy_decision.security_sensitive")
+        if not isinstance(self.scoring_decision, RoutingScoringDecision):
+            _invalid("routing_policy_decision.scoring_decision")
         if not isinstance(self.requested_strategy, RoutingStrategy):
             _invalid("routing_policy_decision.requested_strategy")
         if self.requested_rebind_policy is not None and not isinstance(
@@ -239,15 +321,30 @@ class RoutingPolicyDecision:
                 self.requested_strategy_parameters,
                 self.effective_strategy_parameters,
             )
-            if (
-                self.requested_rebind_policy is not None
-                and self.effective_rebind_policy is not self.requested_rebind_policy
-                and self.effective_rebind_policy not in {
-                    RebindPolicy.FIXED_CONNECTION,
-                    RebindPolicy.NO_REBIND_FOR_CONTROL,
-                }
-            ):
+            allowed_effective_rebind = {
+                RebindPolicy.FIXED_CONNECTION,
+                RebindPolicy.NO_REBIND_FOR_CONTROL,
+            }
+            if self.requested_rebind_policy is not None:
+                allowed_effective_rebind.add(self.requested_rebind_policy)
+            if self.effective_rebind_policy not in allowed_effective_rebind:
                 _invalid("routing_policy_decision.rebind_expansion")
+            if (
+                self.requested_strategy is RoutingStrategy.BROADCAST
+                and self.effective_rebind_policy is not RebindPolicy.FIXED_CONNECTION
+            ):
+                _invalid("routing_policy_decision.broadcast_rebind")
+            if (
+                self.security_sensitive
+                and self.effective_rebind_policy
+                is not RebindPolicy.NO_REBIND_FOR_CONTROL
+            ):
+                _invalid("routing_policy_decision.security_rebind")
+            claims_security_override = self.security_override_evidence.endswith(
+                ":no_rebind_for_control",
+            )
+            if claims_security_override is not self.security_sensitive:
+                _invalid("routing_policy_decision.security_override_evidence")
         elif (
             self.effective_strategy is not None
             or self.effective_rebind_policy is not None
@@ -268,8 +365,6 @@ class RoutingRequest:
     requested_intent: RequestedRoutingIntent
     policy_decision: RoutingPolicyDecision
     authorization_evidence: AuthorizationDecisionEvidence = field(repr=False)
-    trusted_affinity_connection_ids: tuple[str, ...] = field(default=(), repr=False)
-    runtime_policy_static_weights: tuple[tuple[str, int], ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
         if _SAFE_REFERENCE.fullmatch(self.message_reference) is None:
@@ -314,20 +409,9 @@ class RoutingRequest:
             or evidence.authorized_target_reference != expected_target_reference
             or evidence.cross_tenant_authorized is not crosses_tenant
             or evidence.effective_tenant_id != expected_effective_tenant
+            or not evidence.has_valid_binding()
         ):
             _invalid("routing_request.authorization_evidence_mismatch")
-        _unique_strings(
-            self.trusted_affinity_connection_ids,
-            "routing_request.trusted_affinity_connection_ids",
-        )
-        seen: set[str] = set()
-        for connection_id, weight in self.runtime_policy_static_weights:
-            _nonempty(connection_id, "routing_request.static_weight.connection_id")
-            if connection_id in seen:
-                _invalid("routing_request.static_weight.duplicate")
-            if isinstance(weight, bool) or not isinstance(weight, int):
-                _invalid("routing_request.static_weight.value")
-            seen.add(connection_id)
 
     @property
     def effective_tenant_id(self) -> str:
@@ -367,6 +451,10 @@ class RoutingRequest:
     @property
     def iam_decision_version(self) -> str:
         return self.authorization_evidence.decision_version
+
+    @property
+    def scoring_decision(self) -> RoutingScoringDecision:
+        return self.policy_decision.scoring_decision
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -467,6 +555,8 @@ class ResolvedRoutingPlan:
     candidates: tuple[CandidateEvidence, ...] = field(repr=False)
     filtered_evidence: tuple[CandidateEvidence, ...] = field(repr=False)
     selected_bindings: tuple[SelectedRoutingBinding, ...] = field(repr=False)
+    policy_decision: RoutingPolicyDecision = field(repr=False)
+    authorization_evidence: AuthorizationDecisionEvidence = field(repr=False)
     requested_strategy: RoutingStrategy
     effective_strategy: RoutingStrategy
     requested_strategy_parameters: StrategyParameters
@@ -480,8 +570,13 @@ class ResolvedRoutingPlan:
     policy_version: str
     scorer_source: str
     scorer_version: str
+    scorer_input_reference: str
+    scorer_input_version: str
     iam_decision_reference: str = field(repr=False)
     iam_decision_version: str = field(repr=False)
+    authorized_target_reference: str = field(repr=False)
+    effective_permission_snapshot_ref: str = field(repr=False)
+    effective_permission_snapshot_version: str = field(repr=False)
     index_mutation_sequence: int
     local_hit: bool
     used_stale_route: bool
@@ -492,8 +587,10 @@ class ResolvedRoutingPlan:
             "schema_version", "plan_id", "message_reference", "decision_fingerprint",
             "requested_policy_evidence", "effective_policy_evidence",
             "security_override_evidence", "config_version", "policy_version",
-            "scorer_source", "scorer_version", "iam_decision_reference",
-            "iam_decision_version",
+            "scorer_source", "scorer_version", "scorer_input_reference",
+            "scorer_input_version", "iam_decision_reference",
+            "iam_decision_version", "effective_permission_snapshot_ref",
+            "effective_permission_snapshot_version",
         ):
             _nonempty(getattr(self, name), f"routing_plan.{name}")
         if _SAFE_REFERENCE.fullmatch(self.message_reference) is None:
@@ -528,6 +625,73 @@ class ResolvedRoutingPlan:
             if not isinstance(values, tuple) or any(not isinstance(value, value_type) for value in values):
                 _invalid(f"routing_plan.{name}")
         _validate_bindings(self.selected_bindings, "routing_plan.selected_bindings")
+        if (
+            not isinstance(self.policy_decision, RoutingPolicyDecision)
+            or not self.policy_decision.accepted
+        ):
+            _invalid("routing_plan.policy_decision")
+        if not isinstance(
+            self.authorization_evidence,
+            AuthorizationDecisionEvidence,
+        ) or not self.authorization_evidence.has_valid_binding():
+            _invalid("routing_plan.authorization_evidence")
+        intent = RequestedRoutingIntent.from_target(self.original_target)
+        decision = self.policy_decision
+        expected_requested_evidence = (
+            f"strategy={intent.requested_strategy.value};"
+            f"rebind={self.original_target.rebind_policy or 'unspecified'}"
+        )
+        expected_effective_evidence = (
+            f"strategy={decision.effective_strategy.value};"
+            f"rebind={decision.effective_rebind_policy.value}"
+        )
+        if (
+            decision.requested_strategy is not intent.requested_strategy
+            or decision.requested_rebind_policy is not intent.requested_rebind_policy
+            or decision.requested_strategy_parameters
+            != intent.requested_strategy_parameters
+            or self.requested_strategy is not decision.requested_strategy
+            or self.effective_strategy is not decision.effective_strategy
+            or self.requested_strategy_parameters
+            != decision.requested_strategy_parameters
+            or self.effective_strategy_parameters
+            != decision.effective_strategy_parameters
+            or self.requested_rebind_policy is not decision.requested_rebind_policy
+            or self.effective_rebind_policy is not decision.effective_rebind_policy
+            or self.security_override_evidence
+            != decision.security_override_evidence
+            or self.requested_policy_evidence != expected_requested_evidence
+            or self.effective_policy_evidence != expected_effective_evidence
+            or self.config_version != decision.config_version
+            or self.policy_version != decision.policy_version
+            or self.scorer_input_reference
+            != decision.scoring_decision.scorer_input_reference
+            or self.scorer_input_version
+            != decision.scoring_decision.scorer_input_version
+        ):
+            _invalid("routing_plan.policy_authority_mismatch")
+        authorization = self.authorization_evidence
+        expected_target_reference = AuthorizationDecisionEvidence.target_reference(
+            self.original_target,
+            session_tenant_id=authorization.principal_tenant_id,
+        )
+        if (
+            self.message_reference != authorization.message_reference
+            or self.iam_decision_reference != authorization.decision_reference
+            or self.iam_decision_version != authorization.decision_version
+            or self.authorized_target_reference
+            != authorization.authorized_target_reference
+            or self.authorized_target_reference != expected_target_reference
+            or self.effective_permission_snapshot_ref
+            != authorization.effective_permission_snapshot_ref
+            or self.effective_permission_snapshot_version
+            != authorization.effective_permission_snapshot_version
+        ):
+            _invalid("routing_plan.authorization_authority_mismatch")
+        if _SAFE_REFERENCE.fullmatch(self.authorized_target_reference) is None:
+            _invalid("routing_plan.authorized_target_reference")
+        if _DECISION_FINGERPRINT.fullmatch(self.scorer_input_reference) is None:
+            _invalid("routing_plan.scorer_input_reference")
         if not isinstance(self.requested_strategy, RoutingStrategy) or not isinstance(self.effective_strategy, RoutingStrategy):
             _invalid("routing_plan.strategy")
         if (
@@ -541,6 +705,34 @@ class ResolvedRoutingPlan:
             _invalid("routing_plan.requested_rebind_policy")
         if not isinstance(self.effective_rebind_policy, RebindPolicy):
             _invalid("routing_plan.effective_rebind_policy")
+        if self.effective_strategy is not self.requested_strategy:
+            _invalid("routing_plan.strategy_expansion")
+        _validate_no_parameter_expansion(
+            self.requested_strategy_parameters,
+            self.effective_strategy_parameters,
+        )
+        allowed_effective_rebind = {
+            RebindPolicy.FIXED_CONNECTION,
+            RebindPolicy.NO_REBIND_FOR_CONTROL,
+        }
+        if self.requested_rebind_policy is not None:
+            allowed_effective_rebind.add(self.requested_rebind_policy)
+        if self.effective_rebind_policy not in allowed_effective_rebind:
+            _invalid("routing_plan.rebind_expansion")
+        if (
+            self.requested_strategy is RoutingStrategy.BROADCAST
+            and self.effective_rebind_policy is not RebindPolicy.FIXED_CONNECTION
+        ):
+            _invalid("routing_plan.broadcast_rebind")
+        claims_security_override = self.security_override_evidence.endswith(
+            ":no_rebind_for_control",
+        )
+        if (
+            decision.security_sensitive
+            and self.effective_rebind_policy
+            is not RebindPolicy.NO_REBIND_FOR_CONTROL
+        ) or claims_security_override is not decision.security_sensitive:
+            _invalid("routing_plan.security_override_evidence")
         if any(
             binding.binding_rebind_policy is not self.effective_rebind_policy
             for binding in self.selected_bindings
@@ -701,6 +893,24 @@ def _validate_no_parameter_expansion(
         _invalid("routing_policy_decision.required_count_changed")
 
 
+def _scoring_input_reference(
+    *,
+    version: str,
+    affinity: tuple[str, ...],
+    weights: tuple[tuple[str, int], ...],
+) -> str:
+    canonical = json.dumps(
+        {
+            "version": version,
+            "trusted_affinity_connection_ids": affinity,
+            "runtime_policy_static_weights": weights,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _failure_outcome(reason: RoutingFailureReason) -> RoutingFailureOutcome:
     if reason in {
         RoutingFailureReason.TARGET_REQUIRED,
@@ -795,6 +1005,7 @@ __all__ = (
     "ResolvedRoutingPlan", "ResolutionHint", "RoutingDecision",
     "RoutingFailureOutcome", "RoutingFailureReason", "RoutingFailureReport",
     "RoutingIdentityReference", "RoutingPolicyDecision", "RoutingRequest",
-    "RoutingStrategy", "SafeRoutingProjection", "SelectedRoutingBinding",
+    "RoutingScoringDecision", "RoutingStrategy", "SafeRoutingProjection",
+    "SelectedRoutingBinding",
     "StrategyParameters", "safe_target_reference",
 )

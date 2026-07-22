@@ -318,6 +318,8 @@ class LocalRouter:
             candidates=final_evidence,
             filtered_evidence=filtered,
             selected_bindings=bindings,
+            policy_decision=request.policy_decision,
+            authorization_evidence=request.authorization_evidence,
             requested_strategy=request.requested_intent.requested_strategy,
             effective_strategy=request.effective_strategy,
             requested_strategy_parameters=(
@@ -343,8 +345,21 @@ class LocalRouter:
             policy_version=request.policy_version,
             scorer_source=FALLBACK_SCORER_SOURCE,
             scorer_version=FALLBACK_SCORER_VERSION,
+            scorer_input_reference=(
+                request.scoring_decision.scorer_input_reference
+            ),
+            scorer_input_version=request.scoring_decision.scorer_input_version,
             iam_decision_reference=request.iam_decision_reference,
             iam_decision_version=request.iam_decision_version,
+            authorized_target_reference=(
+                request.authorization_evidence.authorized_target_reference
+            ),
+            effective_permission_snapshot_ref=(
+                request.authorization_evidence.effective_permission_snapshot_ref
+            ),
+            effective_permission_snapshot_version=(
+                request.authorization_evidence.effective_permission_snapshot_version
+            ),
             index_mutation_sequence=snapshot.mutation_sequence,
             local_hit=True,
             used_stale_route=False,
@@ -470,8 +485,13 @@ class LocalRouter:
     def _score(self, request, candidate):
         target = request.target
         exactness = 0 if target.kind == "connection" else 1
-        affinity = 0 if candidate.connection_id in request.trusted_affinity_connection_ids else 1
-        weights = dict(request.runtime_policy_static_weights)
+        scoring = request.scoring_decision
+        affinity = (
+            0
+            if candidate.connection_id in scoring.trusted_affinity_connection_ids
+            else 1
+        )
+        weights = dict(scoring.runtime_policy_static_weights)
         static_weight = -weights.get(candidate.connection_id, 0)
         required = frozenset(target.capabilities or ())
         capability_surplus = len(candidate.capabilities - required)
@@ -536,9 +556,23 @@ class LocalRouter:
             "effective_parameters": _parameters_payload(request.strategy_parameters),
             "config_version": request.config_version,
             "policy_version": request.policy_version,
-            "iam_version": request.iam_decision_version,
+            "iam_decision_reference": request.iam_decision_reference,
+            "iam_decision_version": request.iam_decision_version,
+            "authorized_target_reference": (
+                request.authorization_evidence.authorized_target_reference
+            ),
+            "effective_permission_snapshot_ref": (
+                request.authorization_evidence.effective_permission_snapshot_ref
+            ),
+            "effective_permission_snapshot_version": (
+                request.authorization_evidence.effective_permission_snapshot_version
+            ),
             "index_sequence": sequence,
             "scorer": [FALLBACK_SCORER_SOURCE, FALLBACK_SCORER_VERSION],
+            "scorer_input_reference": (
+                request.scoring_decision.scorer_input_reference
+            ),
+            "scorer_input_version": request.scoring_decision.scorer_input_version,
             "previous_decision_fingerprint": (
                 None if previous is None else previous.decision_fingerprint
             ),
@@ -597,11 +631,11 @@ class LocalRouter:
         else:
             action = LaterActionSuggestion.REROUTE_AFTER_TOPOLOGY_CHANGE
         hint = (
-            ResolutionHint.STRONG_AUTHORITY_REQUIRED
+            ResolutionHint.AUTHORITY_RECOVERY_REQUIRED
             if strong or reason is RoutingFailureReason.STRONG_PLAN_AUTHORITY_UNAVAILABLE
-            else ResolutionHint.REMOTE_UNAVAILABLE
+            else ResolutionHint.REMOTE_RUNTIME_REQUIRED
             if reason is RoutingFailureReason.REMOTE_RUNTIME_REQUIRED
-            else ResolutionHint.LOCAL_INDEX
+            else ResolutionHint.LOCAL
         )
         return RoutingFailureReport(
             outcome=(
