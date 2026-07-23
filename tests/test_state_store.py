@@ -51,7 +51,7 @@ from ns_common.state_store import (
     StateTransactionResult,
     StateTransitionLogAppend,
     StateRecordReadAssertion,
-    create_state_store_composition,
+    create_contract_test_state_store_composition,
 )
 from ns_common.time import ControlledClock
 
@@ -434,7 +434,7 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         audit_namespace = StateNamespace.audit(domain="processor")
-        composition = create_state_store_composition(
+        composition = create_contract_test_state_store_composition(
             config=NsRuntimeStateStoreConfig(
                 backend="redis",
                 endpoint="redis://127.0.0.1:6379/0",
@@ -484,7 +484,10 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
         from ns_common.state_store.authority import _StateScopeIssuer
         validator_closure_values = tuple(
             cell.cell_contents
-            for cell in production_validator._callback.__closure__
+            for name in production_validator.__slots__
+            for value in (getattr(production_validator, name),)
+            if callable(value) and getattr(value, "__closure__", None)
+            for cell in value.__closure__
         )
         self.assertFalse(any(
             isinstance(value, (_StateScopeIssuer, Ed25519PrivateKey))
@@ -498,8 +501,10 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(NsValidationError):
             _ProductionStateScopeValidator(lambda scope: True)
         forged_validator = object.__new__(_ProductionStateScopeValidator)
-        forged_validator._callback = lambda scope: True
-        forged_validator._signature = b"\0" * 32
+        forged_validator._repository_specs = {}
+        forged_validator._scopes = {}
+        forged_validator._closed = False
+        forged_validator._realm = "contract_test"
         self.assertFalse(forged_validator.is_valid())
         with self.assertRaises(
             NsRuntimeStateStoreCapabilityUnavailableError,
@@ -523,16 +528,26 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
         )
         registry_scope = repositories.registry.registry_scope()
         self.assertFalse(hasattr(scheduler_scope, "_issuer"))
-        with self.assertRaises(
-            NsRuntimeStateStoreCapabilityUnavailableError,
+        for repository in (
+            repositories.admission, repositories.scheduler,
+            repositories.payload, repositories.registry,
         ):
+            for name in repository.__slots__:
+                value = getattr(repository, name)
+                closure = getattr(value, "__closure__", None)
+                if closure is not None:
+                    self.assertFalse(any(
+                        isinstance(cell.cell_contents, (
+                            _StateScopeIssuer, Ed25519PrivateKey,
+                        ))
+                        for cell in closure
+                    ))
+        with self.assertRaises(AttributeError):
             repositories.scheduler._issue_atomic_scope(StateAtomicScope(
                 namespace=scheduler_scope.namespace,
                 partition="caller-selected-partition",
             ))
-        with self.assertRaises(
-            NsRuntimeStateStoreCapabilityUnavailableError,
-        ):
+        with self.assertRaises(AttributeError):
             repositories.registry._issue_atomic_scope(StateAtomicScope(
                 namespace=registry_scope.namespace,
                 partition="layout-1-bucket-0",
@@ -555,6 +570,37 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
                     namespace=copied_scheduler_scope.namespace,
                     object_type="delivery",
                     object_id="copied-scope",
+                ),
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+        original_policy_id = scheduler_scope._policy_id
+        object.__setattr__(scheduler_scope, "_policy_id", "delivery-payload.v1")
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await store.read(
+                scope=scheduler_scope,
+                key=StateKey(
+                    namespace=scheduler_scope.namespace,
+                    object_type="payload_body",
+                    object_id="mutated-policy",
+                ),
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+        object.__setattr__(scheduler_scope, "_policy_id", original_policy_id)
+        replay = copy.copy(scheduler_scope)
+        object.__setattr__(
+            replay, "_repository_binding", payload_scope._repository_binding,
+        )
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await store.read(
+                scope=replay,
+                key=StateKey(
+                    namespace=replay.namespace,
+                    object_type="delivery",
+                    object_id="cross-role-replay",
                 ),
                 consistency=StateConsistency.LINEARIZABLE,
             )
@@ -702,6 +748,32 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
                     state_version=1,
                     payload=b"{}",
                 ),
+            )
+
+    def test_production_composition_is_not_public_and_identity_lease_is_unique(
+        self,
+    ) -> None:
+        import ns_common.state_store as public_state_store
+        self.assertFalse(hasattr(
+            public_state_store, "create_state_store_composition",
+        ))
+        import ns_common.state_store.composition as composition_module
+        self.assertFalse(hasattr(
+            composition_module, "_assemble_state_store_composition",
+        ))
+        config = NsRuntimeStateStoreConfig(
+            backend="redis", endpoint="redis://127.0.0.1:6379/0",
+            namespace="duplicate-authority-contract",
+        )
+        lease = composition_module._acquire_production_lease(
+            config=config, runtime_id="runtime-duplicate",
+        )
+        self.assertIsNotNone(lease)
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            composition_module._acquire_production_lease(
+                config=config, runtime_id="runtime-duplicate",
             )
 
     async def test_transaction_result_is_model_bound_and_replay_safe(

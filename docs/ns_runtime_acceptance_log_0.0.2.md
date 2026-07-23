@@ -2319,6 +2319,17 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 状态机仍严格为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发。未新增global registry、service locator、第二StateStore owner、event loop、TaskSupervisor、RuntimeService或shutdown owner。
 - P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership和P22 production验收均未实现；production `task.dispatch`继续disabled。
 
+## P08/P09/P11 authority bootstrap、HTTP TOCTOU 与 opaque policy 复核修复
+
+- 工作包：`P08-FIX-04`、`P09-FIX-08`、`P11-FIX-09`；状态为本地复核通过，P12继续`BLOCKED / F0`。
+- 完成时间：`2026-07-23`（Asia/Shanghai）。本轮启动分支`codex/ns-runtime-implementation`、HEAD `9a7c20e6ad133a373137ccdffe3c47ce3d3998cc`；仅有未提交本地修改。
+- IAM/HTTP：删除基于`sys._getframe`、函数名和文件路径的production proof以及普通owner的handle创建API。bootstrap局部一次性绑定exact owner/client/handle/client identity。HTTP binding冻结backend URL各层表示、scheme/host/port/path prefix、timeout/default headers、TLS context、proxy、主/mount transport与handler；IAM path为exact allowlist。request直接使用绑定时捕获的绝对URL与transport callable，await期间临时替换后恢复transport/base URL/mount仍只能走原transport。
+- StateStore：public facade不再导出production composition factory；provider-only入口不含repository authority。production repository set只安装一次，endpoint/namespace/runtime通过进程文件锁拒绝平行composition。repository/store/composition/validator不保存production private issuer/private key或签发closure；production scope由Store窄endpoint按实例登记，并只携带canonical opaque policy ID。Store内部固定policy表与scope快照绑定role/caller/capability/atomic scope/policy ID/repository binding，copy、字段替换、原地policy修改和cross-role replay均fail closed。
+- 新增攻击覆盖：伪造`compile(..., filename="/tmp/ns_runtime/main.py")`、替换`sys._getframe`、普通owner签发handle、base/request/httpx URL与transport/mount替换、await期间替换后恢复、重复production StateStore composition、repository/validator closure与slots枚举、policy ID和repository binding跨role replay。
+- 实际回归：processor/routing/IAM `Ran 81, OK`；StateStore/provider `Ran 34, OK`；最终代码的真实`/usr/bin/redis-server` integration `Ran 19 in 59.935s, OK`；main/shutdown/transport `Ran 83 in 10.116s, OK`；最终代码的backend全树`Ran 855 in 93.917s, OK (skipped=51)`。runtime全树尝试执行864项，除按DEP-1未安装Django导致`test_cache`收集错误外无其他失败，另有1项平台skip；不得把该次命令记录为全树通过。
+- 静态与环境：runtime/backend `pip check`均为`No broken requirements found.`；`compileall -q src tests`与`git diff --check`通过。真实Redis已验证；Valkey、Redis Sentinel/Cluster、failover、uvloop全树与远程CI未验证。
+- 冻结边界：状态机仍仅`prepared -> queued -> sending -> ack_waiting`；WRITE_UNCERTAIN不恢复、不重发；production `task.dispatch`继续disabled。未新增ACK/NACK/Defer、retry、DLQ、cluster ownership或其他P12+能力。
+
 ## 新记录模板
 
 - 工作包：

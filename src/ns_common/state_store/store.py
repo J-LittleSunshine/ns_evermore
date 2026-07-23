@@ -9,11 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 import hashlib
-import hmac
-from pathlib import Path
-import secrets
-import sys
-from typing import Callable
+from types import MappingProxyType
 
 from ns_common.exceptions import (
     NsRuntimeStateStoreCapabilityUnavailableError,
@@ -38,8 +34,6 @@ from .authority import (
     StateAtomicScope,
     StateAuthorityKind,
     StateNamespace,
-    _StateResourcePolicy,
-    _issue_state_access_scope,
     _new_state_scope_issuer,
 )
 from .model import (
@@ -70,68 +64,156 @@ class StateStoreLifecycleState(str, Enum):
     CLOSED = "closed"
 
 
-def _build_production_scope_validator_type() -> type:
-    signing_key = secrets.token_bytes(32)
+_PolicySpec = tuple[
+    frozenset[tuple[str, str]],
+    frozenset[tuple[str, str]],
+    frozenset[tuple[str, str]],
+    frozenset[tuple[str, str]],
+    bool,
+]
 
-    class _ProductionStateScopeValidator:
-        __slots__ = ("_callback", "_signature")
+_STATE_RESOURCE_POLICIES = MappingProxyType({
+    "delivery-admission.v1": (
+        frozenset({("dedup", "delivery_dedup")}),
+        frozenset({
+            ("dedup", "delivery_dedup"),
+            ("payload_body", "delivery_payload_body"),
+            ("summary", "delivery_summary"),
+            ("delivery", "delivery_delivery"),
+        }),
+        frozenset({("delivery_transition_log", "delivery_transition_event")}),
+        frozenset({("delivery.prepared", "delivery")}),
+        False,
+    ),
+    "delivery-scheduler.v1": (
+        frozenset({
+            ("delivery", "delivery_delivery"),
+            ("summary", "delivery_summary"),
+            ("attempt", "delivery_attempt"),
+            ("delivery_scheduler_cursor", "delivery_scheduler_cursor"),
+        }),
+        frozenset({
+            ("delivery", "delivery_delivery"),
+            ("summary", "delivery_summary"),
+            ("attempt", "delivery_attempt"),
+            ("delivery_scheduler_cursor", "delivery_scheduler_cursor"),
+        }),
+        frozenset({
+            ("delivery_transition_log", "delivery_transition_event"),
+            ("delivery_scheduler_repair_log", "delivery_index_repair_event"),
+        }),
+        frozenset({
+            ("delivery.prepared", "delivery"), ("delivery.ready", "delivery"),
+            ("delivery.claimed", "delivery"), ("delivery.lease", "delivery"),
+            ("delivery.sending", "delivery"), ("delivery.ack", "delivery"),
+            ("delivery.write_failed", "delivery"), ("delivery.waiting", "delivery"),
+            ("delivery.expired", "delivery"), ("delivery.payload_rejected", "delivery"),
+            ("delivery.write_uncertain", "delivery"),
+            ("delivery.scheduler_quarantine", "delivery"),
+            ("delivery.runtime.ready", "delivery"),
+        }),
+        True,
+    ),
+    "delivery-payload.v1": (
+        frozenset({("payload_body", "delivery_payload_body")}),
+        frozenset(), frozenset(), frozenset(), False,
+    ),
+    "delivery-registry.v1": (
+        frozenset({
+            ("delivery_authority_layout", "delivery.authority_layout"),
+            ("delivery_tenant_registration", "delivery.tenant_registration"),
+        }),
+        frozenset({
+            ("delivery_authority_layout", "delivery.authority_layout"),
+            ("delivery_tenant_registration", "delivery.tenant_registration"),
+        }),
+        frozenset(),
+        frozenset({("delivery.tenant_registry", "runtime")}),
+        False,
+    ),
+    "strong-audit.v1": (
+        frozenset(), frozenset(),
+        frozenset({("processor_audit_log", "runtime.processor_audit")}),
+        frozenset(), False,
+    ),
+})
 
-        def __init__(
-            self,
-            callback: Callable[[StateAccessScope], bool],
-        ) -> None:
-            caller = sys._getframe(1)
-            if (
-                caller.f_code.co_name != "create_state_store_composition"
-                or not str(
-                    Path(caller.f_code.co_filename).resolve(),
-                ).replace("\\", "/").casefold().endswith(
-                    "/state_store/composition.py",
-                )
-                or not callable(callback)
-            ):
-                _invalid("production_scope_validator")
-            self._callback = callback
-            self._signature = hmac.new(
-                signing_key,
-                str(id(callback)).encode("ascii"),
-                hashlib.sha256,
-            ).digest()
 
-        def is_valid(self) -> bool:
-            return bool(
-                type(self) is _ProductionStateScopeValidator
-                and hmac.compare_digest(
-                    self._signature,
-                    hmac.new(
-                        signing_key,
-                        str(id(self._callback)).encode("ascii"),
-                        hashlib.sha256,
-                    ).digest(),
-                )
+class _ProductionStateScopeValidator:
+    """Secret-free validator for one closed, fixed repository set."""
+
+    __slots__ = ("_repository_specs", "_scopes", "_closed", "_realm")
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del self, args, kwargs
+        _invalid("production_scope_validator")
+
+    def is_valid(self) -> bool:
+        return bool(
+            type(self) is _ProductionStateScopeValidator
+            and self._closed is True
+            and type(self._repository_specs) is dict
+            and type(self._scopes) is dict
+            and self._realm in {"production", "contract_test"}
+        )
+
+    def __call__(self, scope: StateAccessScope) -> bool:
+        if not self.is_valid() or type(scope) is not StateAccessScope:
+            return False
+        snapshot = self._scopes.get(id(scope))
+        return bool(
+            snapshot is not None
+            and snapshot[0] is scope
+            and snapshot[1:] == (
+                scope.atomic_scope,
+                scope.authority,
+                scope.caller,
+                scope.capabilities,
+                scope._policy_id,
+                scope._repository_binding,
             )
+        )
 
-        def __call__(self, scope: StateAccessScope) -> bool:
-            if not self.is_valid():
-                return False
-            return self._callback(scope) is True
+    def scope_for(
+        self,
+        repository: "StateStoreRepository",
+        atomic_scope: StateAtomicScope,
+    ) -> StateAccessScope:
+        if not self.is_valid() or type(repository) is not StateStoreRepository:
+            _invalid("repository.scope")
+        spec = self._repository_specs.get(repository)
+        if spec is None or not _repository_allows_scope(repository, atomic_scope):
+            _invalid("repository.scope")
+        authority, caller, capabilities, policy_id, binding = spec
+        for value in self._scopes.values():
+            if value[1] == atomic_scope and value[6] is binding:
+                return value[0]
+        value = object.__new__(StateAccessScope)
+        for name, field_value in (
+            ("atomic_scope", atomic_scope), ("authority", authority),
+            ("caller", caller), ("capabilities", capabilities),
+            ("_issuer_realm", self._realm), ("_issuer_identity", b""),
+            ("_authority_signature", b""), ("_policy_id", policy_id),
+            ("_repository_binding", binding),
+        ):
+            object.__setattr__(value, name, field_value)
+        value.__post_init__()
+        self._scopes[id(value)] = (
+            value, atomic_scope, authority, caller, capabilities, policy_id, binding,
+        )
+        return value
 
-        def __copy__(self) -> "_ProductionStateScopeValidator":
-            _invalid("production_scope_validator.copy")
+    def policy_for(self, scope: StateAccessScope) -> _PolicySpec | None:
+        if not self(scope):
+            return None
+        return _STATE_RESOURCE_POLICIES.get(scope._policy_id)
 
-        def __deepcopy__(
-            self,
-            memo: dict[int, object],
-        ) -> "_ProductionStateScopeValidator":
-            del memo
-            _invalid("production_scope_validator.copy")
+    def __copy__(self) -> "_ProductionStateScopeValidator":
+        _invalid("production_scope_validator.copy")
 
-    return _ProductionStateScopeValidator
-
-
-_ProductionStateScopeValidator = _build_production_scope_validator_type()
-del _build_production_scope_validator_type
-_PRODUCTION_SCOPE_VALIDATOR_IS_VALID = _ProductionStateScopeValidator.is_valid
+    def __deepcopy__(self, memo: dict[int, object]) -> "_ProductionStateScopeValidator":
+        del memo
+        _invalid("production_scope_validator.copy")
 
 
 class StateStoreRepositoryRole(str, Enum):
@@ -146,8 +228,8 @@ class StateStoreRepository:
     """Opaque fixed-capability repository handle issued by one composition."""
 
     __slots__ = (
-        "_store", "_role", "_runtime_id", "_audit_namespace",
-        "_issue_atomic_scope", "_is_current_repository",
+        "_store", "_role", "_runtime_id", "_audit_namespace", "_binding",
+        "_contract_issue_scope", "_contract_is_current",
     )
 
     def __init__(
@@ -222,12 +304,13 @@ class StateStoreRepository:
             ))
 
     def _issue_scope(self, atomic_scope: StateAtomicScope) -> StateAccessScope:
-        if (
-            type(self) is not StateStoreRepository
-            or not self._is_current_repository(self)
-        ):
+        if type(self) is not StateStoreRepository:
             _invalid("repository.scope")
-        value = self._issue_atomic_scope(atomic_scope)
+        value = (
+            self._contract_issue_scope(atomic_scope)
+            if self._contract_issue_scope is not None
+            else self._store._scope_for_repository(self, atomic_scope)
+        )
         if type(value) is not StateAccessScope:
             _invalid("repository.scope")
         return value
@@ -236,7 +319,11 @@ class StateStoreRepository:
         if (
             not isinstance(role, StateStoreRepositoryRole)
             or self._role is not role
-            or not self._is_current_repository(self)
+            or not (
+                self._contract_is_current(self)
+                if self._contract_is_current is not None
+                else self._store._is_current_repository(self)
+            )
         ):
             _invalid("repository.role")
 
@@ -284,16 +371,19 @@ def _bind_state_store_repository(
     role: StateStoreRepositoryRole,
     runtime_id: str | None,
     audit_namespace: StateNamespace | None,
-    issue_atomic_scope: Callable[[StateAtomicScope], StateAccessScope],
-    is_current_repository: Callable[[StateStoreRepository], bool],
+    binding: object | None = None,
+    issue_atomic_scope: object | None = None,
+    is_current_repository: object | None = None,
 ) -> StateStoreRepository:
-    """Low-level value assembly; authority remains in the supplied closures."""
+    """Low-level assembly for a fixed binding; it contains no issuer."""
 
     if (
         not isinstance(store, StateStore)
         or not isinstance(role, StateStoreRepositoryRole)
-        or not callable(issue_atomic_scope)
-        or not callable(is_current_repository)
+        or (
+            binding is None
+            and (not callable(issue_atomic_scope) or not callable(is_current_repository))
+        )
     ):
         _invalid("repository.binding")
     value = object.__new__(StateStoreRepository)
@@ -301,9 +391,48 @@ def _bind_state_store_repository(
     value._role = role
     value._runtime_id = runtime_id
     value._audit_namespace = audit_namespace
-    value._issue_atomic_scope = issue_atomic_scope
-    value._is_current_repository = is_current_repository
+    value._binding = binding
+    value._contract_issue_scope = issue_atomic_scope
+    value._contract_is_current = is_current_repository
     return value
+
+
+def _repository_allows_scope(
+    repository: StateStoreRepository,
+    atomic_scope: StateAtomicScope,
+) -> bool:
+    if not isinstance(atomic_scope, StateAtomicScope):
+        return False
+    role = repository._role
+    if role in {
+        StateStoreRepositoryRole.DELIVERY_ADMISSION,
+        StateStoreRepositoryRole.DELIVERY_SCHEDULER,
+        StateStoreRepositoryRole.DELIVERY_PAYLOAD,
+    }:
+        return bool(
+            repository._runtime_id is not None
+            and atomic_scope.namespace.kind is StateNamespaceKind.TENANT
+            and atomic_scope.namespace.domain == "delivery"
+            and __import__("re").fullmatch(
+                r"layout-[1-9][0-9]*-bucket-(0|[1-9][0-9]*)",
+                atomic_scope.partition,
+            ) is not None
+        )
+    if role is StateStoreRepositoryRole.DELIVERY_REGISTRY:
+        expected_tenant = "runtime-registry:" + hashlib.sha256(
+            repository._runtime_id.encode(),
+        ).hexdigest()
+        return bool(
+            atomic_scope.namespace == StateNamespace.tenant(
+                tenant_id=expected_tenant, domain="delivery",
+            )
+            and atomic_scope.partition == "authority-registry"
+        )
+    return bool(
+        role is StateStoreRepositoryRole.STRONG_AUDIT
+        and atomic_scope.namespace == repository._audit_namespace
+        and atomic_scope.partition == "processor-final"
+    )
 
 
 class StateStore(ABC):
@@ -346,12 +475,13 @@ class StateStore(ABC):
             elif (
                 type(_production_scope_validator)
                 is not _ProductionStateScopeValidator
-                or getattr(
-                    type(_production_scope_validator),
-                    "is_valid",
-                    None,
-                ) is not _PRODUCTION_SCOPE_VALIDATOR_IS_VALID
-                or not _production_scope_validator.is_valid()
+                or getattr(_production_scope_validator, "_closed", None) is not False
+                or type(getattr(
+                    _production_scope_validator, "_repository_specs", None,
+                )) is not dict
+                or type(getattr(_production_scope_validator, "_scopes", None)) is not dict
+                or getattr(_production_scope_validator, "_realm", None)
+                not in {"production", "contract_test"}
             ):
                 _invalid("production_scope_validator")
             else:
@@ -361,6 +491,74 @@ class StateStore(ABC):
         self._state = StateStoreLifecycleState.NEW
         self._lifecycle_condition = asyncio.Condition()
         self._active_operations = 0
+
+    def _install_repositories(
+        self,
+        specs: tuple[
+            tuple[
+                StateStoreRepositoryRole, str | None, StateNamespace | None,
+                StateAuthorityKind, str, frozenset[StateCallerCapability], str,
+            ],
+            ...,
+        ],
+    ) -> tuple[StateStoreRepository, ...]:
+        validator = self.__production_scope_validator
+        if (
+            type(validator) is not _ProductionStateScopeValidator
+            or validator._closed
+            or validator._repository_specs
+            or not isinstance(specs, tuple)
+        ):
+            _invalid("repository.install")
+        repositories: list[StateStoreRepository] = []
+        for (
+            role, runtime_id, audit_namespace, authority, caller,
+            capabilities, policy_id,
+        ) in specs:
+            if (
+                not isinstance(role, StateStoreRepositoryRole)
+                or policy_id not in _STATE_RESOURCE_POLICIES
+                or not isinstance(authority, StateAuthorityKind)
+                or not isinstance(capabilities, frozenset)
+            ):
+                _invalid("repository.spec")
+            binding = object()
+            repository = _bind_state_store_repository(
+                store=self, role=role, runtime_id=runtime_id,
+                audit_namespace=audit_namespace, binding=binding,
+            )
+            validator._repository_specs[repository] = (
+                authority, caller, capabilities, policy_id, binding,
+            )
+            repositories.append(repository)
+        validator._closed = True
+        return tuple(repositories)
+
+    def _is_current_repository(self, repository: StateStoreRepository) -> bool:
+        validator = self.__production_scope_validator
+        spec = (
+            None if type(validator) is not _ProductionStateScopeValidator
+            else validator._repository_specs.get(repository)
+        )
+        return bool(
+            type(repository) is StateStoreRepository
+            and repository._store is self
+            and spec is not None
+            and spec[4] is repository._binding
+        )
+
+    def _scope_for_repository(
+        self,
+        repository: StateStoreRepository,
+        atomic_scope: StateAtomicScope,
+    ) -> StateAccessScope:
+        validator = self.__production_scope_validator
+        if (
+            type(validator) is not _ProductionStateScopeValidator
+            or not self._is_current_repository(repository)
+        ):
+            _invalid("repository.scope")
+        return validator.scope_for(repository, atomic_scope)
 
     @property
     def state(self) -> StateStoreLifecycleState:
@@ -933,13 +1131,24 @@ class StateStore(ABC):
         schema_name: str | None,
     ) -> None:
         self._require_scope_issuer(scope)
-        policy = getattr(scope, "_resource_policy", None)
+        policy = self._policy_for(scope)
+        resources = {
+            "read": policy[0] if policy else frozenset(),
+            "scan": policy[0] if policy else frozenset(),
+            "compare_and_set": policy[1] if policy else frozenset(),
+            "transact": policy[1] if policy else frozenset(),
+            "append": policy[2] if policy else frozenset(),
+        }.get(operation, frozenset())
         if (
-            type(policy) is not _StateResourcePolicy
-            or not policy.allows_resource(
-                operation=operation,
-                object_type=object_type,
-                schema_name=schema_name,
+            self.__scope_issuer is not None
+            and getattr(scope, "_policy_id", None) == "contract-test.v1"
+        ):
+            return
+        if (
+            (object_type, schema_name) not in resources
+            and not (
+                schema_name is None
+                and any(item[0] == object_type for item in resources)
             )
         ):
             raise NsRuntimeStateStoreCapabilityUnavailableError(
@@ -958,14 +1167,26 @@ class StateStore(ABC):
         index: StateOrderedIndexKey,
     ) -> None:
         self._require_scope_issuer(scope)
-        policy = getattr(scope, "_resource_policy", None)
+        policy = self._policy_for(scope)
         if (
-            type(policy) is not _StateResourcePolicy
+            self.__scope_issuer is not None
+            and getattr(scope, "_policy_id", None) == "contract-test.v1"
+        ):
+            return
+        allowed_indexes = policy[3] if policy else frozenset()
+        allow_target = policy[4] if policy else False
+        if (
+            index.namespace != scope.namespace
             or (
-                not policy.allow_contract_test_resources
-                and index.namespace != scope.namespace
+                (index.name, index.bucket) not in allowed_indexes
+                and not (
+                    allow_target
+                    and index.bucket == "delivery"
+                    and __import__("re").fullmatch(
+                        r"delivery\.target\.[0-9a-f]{64}", index.name,
+                    ) is not None
+                )
             )
-            or not policy.allows_index(index.name, index.bucket)
         ):
             raise NsRuntimeStateStoreCapabilityUnavailableError(
                 details={
@@ -975,6 +1196,15 @@ class StateStore(ABC):
                     "reason": "resource_policy_denied",
                 },
             )
+
+    def _policy_for(self, scope: StateAccessScope) -> _PolicySpec | None:
+        self._require_scope_issuer(scope)
+        if self.__scope_issuer is not None:
+            return None
+        validator = self.__production_scope_validator
+        if type(validator) is not _ProductionStateScopeValidator:
+            return None
+        return validator.policy_for(scope)
 
     def _require_store_capability(self, capability: StateStoreCapability) -> None:
         if not self._capabilities.supports(capability):

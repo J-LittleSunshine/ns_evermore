@@ -6,6 +6,7 @@ import copy
 from datetime import datetime, timedelta, timezone
 import json
 import unittest
+from unittest import mock
 from typing import Mapping
 
 from ns_common.exceptions import (
@@ -298,57 +299,26 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_owner_provenance_rejects_http_method_substitution_and_copy(
         self,
     ) -> None:
-        server = _HttpServer([{"transport": "real"}])
-        base_url = await server.start()
-        self.addAsyncCleanup(server.close)
         owner = NsHttpClientOwner()
         http = owner.create(
             name="runtime-iam-provenance",
-            base_url=base_url,
+            base_url="https://iam.example.test/api/",
         )
         self.addAsyncCleanup(owner.aclose)
-        handle = owner._create_authority_handle(
-            client=http,
-            composition=object(),
-        )
-        self.assertTrue(handle.is_current())
-        response = await handle.post(
-            "authority/",
-            json_data={},
-            bearer_token=SERVICE,
-            trace_id="operation:transport",
-            expected_statuses={200},
-        )
-        self.assertEqual(
-            {"transport": "real"},
-            response.json()["data"],
-        )
-        proof_type = getattr(
-            iam_client_module,
-            "_ProductionIamCompositionProof",
-        )
-        forged = object.__new__(IamClient)
-        forged._http_authority = handle
-        forged_proof = object.__new__(proof_type)
-        forged_proof._client = forged
-        forged_proof._http_authority = handle
-        forged_proof._signature = b"\0" * 32
-        forged._composition_proof = forged_proof
-        self.assertFalse(forged._is_production_adapter())
-        with self.assertRaises(NsValidationError):
-            proof_type(client=forged, http_authority=handle)
-        self.assertFalse(any(
-            isinstance(value, proof_type)
-            for value in vars(iam_client_module).values()
+        self.assertFalse(hasattr(owner, "_create_authority_handle"))
+        self.assertFalse(hasattr(
+            iam_client_module, "_ProductionIamCompositionProof",
         ))
+        forged = object.__new__(IamClient)
+        self.assertFalse(forged._is_production_adapter())
         with self.assertRaises(NsValidationError):
             copy.copy(owner)
         with self.assertRaises(NsValidationError):
-            copy.copy(handle)
-        with self.assertRaises(NsValidationError):
-            owner._create_authority_handle(
-                client=copy.copy(http),
-                composition=object(),
+            IamClient(
+                http_client=copy.copy(http),
+                internal_service_credential=SERVICE,
+                trace_id_factory=lambda: "operation:forged",
+                clock=ControlledClock(utc_start=NOW),
             )
 
         async def fake_post(*args, **kwargs):
@@ -356,60 +326,22 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
             return object()
 
         http.post = fake_post
-        self.assertFalse(handle.is_current())
         del http.post
-        self.assertTrue(handle.is_current())
-
-        async def fake_request(*args, **kwargs):
-            del args, kwargs
-            return object()
-
-        http._client.request = fake_request
-        self.assertFalse(handle.is_current())
-        del http._client.request
-        self.assertTrue(handle.is_current())
-
-        async def fake_send(*args, **kwargs):
-            del args, kwargs
-            return object()
-
-        http._client.send = fake_send
-        self.assertFalse(handle.is_current())
-        del http._client.send
-        self.assertTrue(handle.is_current())
-
-        original_transport = http._client._transport
-        http._client._transport = object()
-        self.assertFalse(handle.is_current())
-        http._client._transport = original_transport
-        self.assertTrue(handle.is_current())
-
-        original_mounts = http._client._mounts
-        http._client._mounts = dict(original_mounts)
-        self.assertFalse(handle.is_current())
-        http._client._mounts = original_mounts
-        self.assertTrue(handle.is_current())
-
-        async def fake_handler(request):
-            del request
-            return object()
-
-        original_transport.handle_async_request = fake_handler
-        self.assertFalse(handle.is_current())
-        del original_transport.handle_async_request
-        self.assertTrue(handle.is_current())
-
-        mounted = next(
-            value for value in original_mounts.values()
-            if value is not None
+        compiled = compile(
+            "def main():\n"
+            "  from ns_runtime.iam.client import IamClient\n"
+            "  return object.__new__(IamClient)._is_production_adapter()\n",
+            "/tmp/ns_runtime/main.py",
+            "exec",
         )
-        mounted.handle_async_request = fake_handler
-        self.assertFalse(handle.is_current())
-        del mounted.handle_async_request
-        self.assertTrue(handle.is_current())
+        namespace: dict[str, object] = {}
+        exec(compiled, namespace)
+        self.assertFalse(namespace["main"]())
+        with mock.patch("sys._getframe", side_effect=AssertionError("used")):
+            self.assertFalse(object.__new__(IamClient)._is_production_adapter())
 
         await owner.aclose()
-        self.assertFalse(handle.is_current())
+        self.assertTrue(http.is_closed)
         self.assertFalse(object.__new__(IamClient)._is_production_adapter())
 
     async def test_valid_token_uses_internal_credential_and_trace_without_leak(self) -> None:

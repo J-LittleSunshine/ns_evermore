@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import copy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -20,6 +23,7 @@ from ns_common.exceptions import (
     NsDependencyError,
     NsRuntimeStartupSecurityError,
     NsRuntimeTransportDisabledError,
+    NsValidationError,
 )
 from ns_common.logger import NsLogger, close_ns_loggers
 from ns_runtime.main import main as _runtime_main
@@ -94,6 +98,215 @@ def _controlled_preflight(
 
 
 class NsRuntimeMainTestCase(unittest.TestCase):
+
+    def test_production_iam_handle_binds_backend_and_security_configuration(
+        self,
+    ) -> None:
+        checks: list[bool] = []
+        test_case = self
+
+        class InspectingService:
+            def __init__(
+                self, *, context, transport_manager, logger_close,
+                event_loop_monitor, logical_connection_owner,
+            ) -> None:
+                from ns_runtime.shutdown import RuntimeShutdownCoordinator
+
+                self._owner = logical_connection_owner
+                self.shutdown_coordinator = RuntimeShutdownCoordinator(
+                    context=context, logger_close=logger_close,
+                    transport_owner=transport_manager,
+                    logical_connection_owner=logical_connection_owner,
+                )
+
+            async def start(self) -> None:
+                iam = self._owner._iam
+                handle = iam._http_authority
+                binding = handle._NsHttpClientAuthorityHandle__binding
+                client = binding._client
+                httpx_client = binding._httpx_client
+                checks.append(handle.is_current(iam_client=iam))
+                with test_case.assertRaises(NsValidationError):
+                    copy.copy(handle)
+                uninitialized = object.__new__(type(handle))
+                checks.append(not uninitialized.is_current(iam_client=iam))
+                for denied_path in (
+                    "https://evil.invalid/internal/runtime_access_check/",
+                    "../runtime_access_check/",
+                    "internal/not-allowlisted/",
+                ):
+                    with test_case.assertRaises(NsValidationError):
+                        await handle.post(
+                            denied_path, json_data={},
+                            bearer_token="r" * 32,
+                            trace_id="operation:path-attack",
+                            expected_statuses={200},
+                        )
+                mutations = (
+                    (client, "base_url", "https://evil.invalid/"),
+                    (client, "_request_base_url", type(client._request_base_url)(
+                        "https://evil.invalid/",
+                    )),
+                    (httpx_client, "_base_url", type(httpx_client.base_url)(
+                        "https://evil.invalid/",
+                    )),
+                    (httpx_client, "_mounts", dict(httpx_client._mounts)),
+                    (httpx_client, "_transport", object()),
+                )
+                for target, name, replacement in mutations:
+                    original = getattr(target, name)
+                    setattr(target, name, replacement)
+                    checks.append(not handle.is_current(iam_client=iam))
+                    setattr(target, name, original)
+                    checks.append(handle.is_current(iam_client=iam))
+                original_timeout = httpx_client._timeout
+                httpx_client._timeout = type(original_timeout)(1.0)
+                checks.append(not handle.is_current(iam_client=iam))
+                httpx_client._timeout = original_timeout
+                original_headers = httpx_client._headers
+                httpx_client._headers = original_headers.copy()
+                httpx_client._headers["x-route-attack"] = "1"
+                checks.append(not handle.is_current(iam_client=iam))
+                httpx_client._headers = original_headers
+                pool = binding._transport._pool
+                original_proxy = pool._proxy
+                pool._proxy = object()
+                checks.append(not handle.is_current(iam_client=iam))
+                pool._proxy = original_proxy
+                ssl_context = pool._ssl_context
+                original_check_hostname = ssl_context.check_hostname
+                ssl_context.check_hostname = not original_check_hostname
+                checks.append(not handle.is_current(iam_client=iam))
+                ssl_context.check_hostname = original_check_hostname
+                checks.append(handle.is_current(iam_client=iam))
+
+            async def stop(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            config_path = _write_config(root, {})
+            preflight, _ = _controlled_preflight()
+            with mock.patch(
+                "ns_runtime.transport.TransportRuntimeService",
+                InspectingService,
+            ):
+                self.assertEqual(0, main(
+                    environment="test", config_path=config_path,
+                    startup_root=root / "runtime", preflight=preflight,
+                ))
+        self.assertTrue(all(checks))
+
+    def test_iam_request_uses_bound_transport_during_concurrent_replacement(
+        self,
+    ) -> None:
+        request_started = threading.Event()
+        allow_response = threading.Event()
+        outcomes: list[object] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                request_started.set()
+                allow_response.wait(5)
+                body = b'{"success":true,"data":{"bound":true}}'
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: object) -> None:
+                del args
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        class RequestingService:
+            def __init__(
+                self, *, context, transport_manager, logger_close,
+                event_loop_monitor, logical_connection_owner,
+            ) -> None:
+                from ns_runtime.shutdown import RuntimeShutdownCoordinator
+
+                self._owner = logical_connection_owner
+                self.shutdown_coordinator = RuntimeShutdownCoordinator(
+                    context=context, logger_close=logger_close,
+                    transport_owner=transport_manager,
+                    logical_connection_owner=logical_connection_owner,
+                )
+
+            async def start(self) -> None:
+                iam = self._owner._iam
+                handle = iam._http_authority
+                binding = handle._NsHttpClientAuthorityHandle__binding
+
+                def attack() -> None:
+                    if not request_started.wait(5):
+                        return
+                    client = binding._client
+                    httpx_client = binding._httpx_client
+                    originals = (
+                        client.base_url, client._request_base_url,
+                        httpx_client._base_url, httpx_client._transport,
+                        httpx_client._mounts,
+                    )
+                    client.base_url = "https://evil.invalid"
+                    client._request_base_url = type(client._request_base_url)(
+                        "https://evil.invalid/",
+                    )
+                    httpx_client._base_url = type(httpx_client.base_url)(
+                        "https://evil.invalid/",
+                    )
+                    httpx_client._transport = object()
+                    httpx_client._mounts = {}
+                    client.base_url, client._request_base_url = originals[:2]
+                    httpx_client._base_url, httpx_client._transport, (
+                        httpx_client._mounts
+                    ) = originals[2:]
+                    allow_response.set()
+
+                attacker = threading.Thread(target=attack, daemon=True)
+                attacker.start()
+                response = await handle.post(
+                    "internal/runtime_access_check/",
+                    json_data={}, bearer_token="r" * 32,
+                    trace_id="operation:toctou", expected_statuses={200},
+                )
+                attacker.join(5)
+                outcomes.append(response.json()["data"])
+
+            async def stop(self) -> None:
+                return None
+
+        try:
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                root = Path(temporary_directory)
+                base_url = (
+                    f"http://127.0.0.1:{server.server_port}/api/iam/"
+                )
+                config_path = _write_config(
+                    root,
+                    _production_config({"iam": {
+                        "base_url": base_url,
+                        "internal_service_credential": "r" * 32,
+                    }}),
+                )
+                preflight, _ = _controlled_preflight()
+                with mock.patch(
+                    "ns_runtime.transport.TransportRuntimeService",
+                    RequestingService,
+                ):
+                    self.assertEqual(0, main(
+                        environment="test", config_path=config_path,
+                        startup_root=root / "runtime", preflight=preflight,
+                    ))
+        finally:
+            allow_response.set()
+            server.shutdown()
+            server.server_close()
+            server_thread.join(5)
+        self.assertEqual([{"bound": True}], outcomes)
 
     def test_main_wires_each_initial_role_to_explicit_safe_logger(self) -> None:
         captured_contexts: list[object] = []

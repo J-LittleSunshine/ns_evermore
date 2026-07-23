@@ -60,7 +60,7 @@ from ns_common.state_store import (
     StateStorePasswordSource,
     StateTransaction,
     StateTransitionLogAppend,
-    create_state_store_composition,
+    create_contract_test_state_store_composition,
 )
 from ns_common.time import ControlledClock
 from ns_common.state_store.authority import (
@@ -450,7 +450,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         os.environ[variable] = self._password
         composition = None
         try:
-            composition = create_state_store_composition(
+            composition = create_contract_test_state_store_composition(
                 config=NsRuntimeStateStoreConfig(
                     backend="redis",
                     endpoint=f"redis://127.0.0.1:{self._port}/0",

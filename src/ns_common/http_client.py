@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from dataclasses import dataclass, field
 from enum import Enum
@@ -12,7 +13,7 @@ from typing import (
     Collection,
     Mapping,
 )
-from urllib.parse import unquote, unquote_plus
+from urllib.parse import unquote, unquote_plus, urljoin, urlsplit
 
 import httpx
 
@@ -581,9 +582,11 @@ class _NsHttpClientAuthorityBinding:
     """Opaque owner-issued proof for one unmodified production HTTP client."""
 
     __slots__ = (
-        "_owner", "_client", "_composition", "_httpx_client",
+        "_owner", "_client", "_httpx_client",
         "_transport", "_transport_handler", "_mounts", "_mount_entries",
-        "_mount_handlers",
+        "_mount_handlers", "_selected_transport", "_selected_handler",
+        "_base_url", "_request_base_url", "_httpx_base_url", "_endpoint",
+        "_timeout", "_headers", "_security", "_iam_client",
     )
 
     def __init__(
@@ -591,7 +594,6 @@ class _NsHttpClientAuthorityBinding:
         *,
         owner: "NsHttpClientOwner",
         client: NsAsyncHttpClient,
-        composition: object,
         _token: object,
     ) -> None:
         if not owner._consume_authority_binding_token(_token):
@@ -601,7 +603,6 @@ class _NsHttpClientAuthorityBinding:
             )
         self._owner = owner
         self._client = client
-        self._composition = composition
         self._httpx_client = client._client
         self._transport = client._client._transport
         self._transport_handler = _transport_handler(self._transport)
@@ -611,19 +612,52 @@ class _NsHttpClientAuthorityBinding:
             None if value is None else _transport_handler(value)
             for _, value in self._mount_entries
         )
+        self._base_url = client.base_url
+        self._request_base_url = client._request_base_url
+        self._httpx_base_url = client._client.base_url
+        parsed = urlsplit(str(self._request_base_url))
+        if parsed.scheme not in {"https", "http"} or not parsed.hostname:
+            raise NsValidationError(
+                "IAM HTTP backend is invalid.",
+                details={"component": "http_client_owner", "field": "base_url"},
+            )
+        self._endpoint = (
+            parsed.scheme.casefold(), parsed.hostname.casefold(),
+            parsed.port or (443 if parsed.scheme.casefold() == "https" else 80),
+            parsed.path,
+        )
+        self._timeout = (
+            client.timeout_seconds,
+            tuple(sorted(vars(client._client.timeout).items())),
+        )
+        self._headers = tuple(sorted(
+            (name.casefold(), value)
+            for name, value in client._client.headers.multi_items()
+        ))
+        self._security = tuple(
+            _transport_security_snapshot(value)
+            for value in (self._transport,) + tuple(
+                mounted for _, mounted in self._mount_entries if mounted is not None
+            )
+        )
+        endpoint_url = httpx.URL(str(self._request_base_url))
+        self._selected_transport = client._client._transport_for_url(endpoint_url)
+        self._selected_handler = getattr(
+            self._selected_transport, "handle_async_request",
+        )
+        self._iam_client = None
 
     def is_current(
         self,
         *,
         owner: "NsHttpClientOwner",
         client: NsAsyncHttpClient,
-        composition: object,
+        iam_client: object | None = None,
     ) -> bool:
         if (
             type(self) is not _NsHttpClientAuthorityBinding
             or self._owner is not owner
             or self._client is not client
-            or self._composition is not composition
             or type(owner) is not NsHttpClientOwner
             or type(owner.factory) is not NsHttpClientFactory
             or type(client) is not NsAsyncHttpClient
@@ -637,6 +671,18 @@ class _NsHttpClientAuthorityBinding:
             or owner.state is not NsHttpClientOwnerState.OPEN
             or client.is_closed
             or self._httpx_client.is_closed
+            or (iam_client is not None and self._iam_client is not iam_client)
+            or client.base_url != self._base_url
+            or client._request_base_url != self._request_base_url
+            or self._httpx_client.base_url != self._httpx_base_url
+            or (
+                client.timeout_seconds,
+                tuple(sorted(vars(self._httpx_client.timeout).items())),
+            ) != self._timeout
+            or tuple(sorted(
+                (name.casefold(), value)
+                for name, value in self._httpx_client.headers.multi_items()
+            )) != self._headers
         ):
             return False
         client_substitutions = {
@@ -658,6 +704,16 @@ class _NsHttpClientAuthorityBinding:
             )
             or _transport_handler(self._transport)
             is not self._transport_handler
+            or tuple(
+                _transport_security_snapshot(value)
+                for value in (self._transport,) + tuple(
+                    mounted for _, mounted in current_mount_entries
+                    if mounted is not None
+                )
+            ) != self._security
+            or self._httpx_client._transport_for_url(
+                httpx.URL(str(self._request_base_url)),
+            ) is not self._selected_transport
         ):
             return False
         for offset, (_, mounted) in enumerate(current_mount_entries):
@@ -702,7 +758,6 @@ class _NsHttpClientAuthorityBinding:
         if not self.is_current(
             owner=self._owner,
             client=self._client,
-            composition=self._composition,
         ):
             raise NsValidationError(
                 "HTTP authority provenance is no longer valid.",
@@ -711,25 +766,58 @@ class _NsHttpClientAuthorityBinding:
                     "field": "authority_transport",
                 },
             )
-        result = await self._client.post(
-            path,
-            json_data=json_data,
-            bearer_token=bearer_token,
-            trace_id=trace_id,
-            expected_statuses=expected_statuses,
-        )
-        if not self.is_current(
-            owner=self._owner,
-            client=self._client,
-            composition=self._composition,
-        ):
+        normalized_path = _validate_iam_path(path)
+        absolute_url = urljoin(str(self._request_base_url), normalized_path)
+        parsed = urlsplit(absolute_url)
+        if (
+            parsed.scheme.casefold(), parsed.hostname.casefold(),
+            parsed.port or (443 if parsed.scheme.casefold() == "https" else 80),
+        ) != self._endpoint[:3] or not parsed.path.startswith(self._endpoint[3]):
             raise NsValidationError(
-                "HTTP authority provenance changed during request.",
+                "IAM HTTP endpoint escaped its configured backend.",
                 details={
                     "component": "http_client_owner",
-                    "field": "authority_transport",
+                    "field": "authority_endpoint",
                 },
             )
+        headers = httpx.Headers(self._headers)
+        headers["authorization"] = f"Bearer {bearer_token}"
+        headers["x-trace-id"] = trace_id
+        request = httpx.Request(
+            "POST", absolute_url, headers=headers, json=json_data,
+            extensions={"timeout": dict(self._timeout[1])},
+        )
+        try:
+            response = await self._selected_handler(request)
+            response.request = request
+            await response.aread()
+        except httpx.TimeoutException:
+            raise NsDependencyError(
+                "IAM HTTP request timed out.",
+                details={"component": "http_client_owner", "operation": "iam_post"},
+            ) from None
+        except httpx.RequestError as error:
+            raise NsDependencyError(
+                "IAM HTTP request failed.",
+                details={
+                    "component": "http_client_owner",
+                    "operation": "iam_post",
+                    "error_type": type(error).__name__,
+                },
+            ) from None
+        result = NsHttpResponse(
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            text=response.text,
+            url=str(response.url),
+            method="POST",
+            safe_url=self._client._safe_url(absolute_url),
+        )
+        self._client._validate_response_status(
+            response=result,
+            expected_statuses=expected_statuses,
+            raise_for_status=True,
+        )
         return result
 
 
@@ -759,13 +847,22 @@ class _NsHttpClientAuthorityHandle:
             )
         self.__binding = binding
 
-    def is_current(self) -> bool:
-        binding = self.__binding
-        return binding.is_current(
-            owner=binding._owner,
-            client=binding._client,
-            composition=binding._composition,
+    def is_current(self, *, iam_client: object | None = None) -> bool:
+        if type(self) is not _NsHttpClientAuthorityHandle:
+            return False
+        binding = getattr(
+            self, "_NsHttpClientAuthorityHandle__binding", None,
         )
+        if type(binding) is not _NsHttpClientAuthorityBinding:
+            return False
+        try:
+            return binding.is_current(
+                owner=binding._owner,
+                client=binding._client,
+                iam_client=iam_client,
+            )
+        except BaseException:
+            return False
 
     async def post(
         self,
@@ -776,6 +873,14 @@ class _NsHttpClientAuthorityHandle:
         trace_id: str,
         expected_statuses: Collection[int],
     ) -> NsHttpResponse:
+        if not self.is_current():
+            raise NsValidationError(
+                "HTTP authority provenance is no longer valid.",
+                details={
+                    "component": "http_client_owner",
+                    "field": "authority_transport",
+                },
+            )
         return await self.__binding.post(
             path,
             json_data=json_data,
@@ -812,6 +917,83 @@ def _transport_handler(transport: object) -> object:
             },
         )
     return handler
+
+
+def _transport_security_snapshot(transport: object) -> tuple[object, ...]:
+    pool = getattr(transport, "_pool", None)
+    ssl_context = getattr(pool, "_ssl_context", None)
+    proxy_ssl_context = getattr(pool, "_proxy_ssl_context", None)
+    return (
+        type(transport),
+        id(transport),
+        _transport_handler(transport),
+        id(pool),
+        _ssl_context_snapshot(ssl_context),
+        id(getattr(pool, "_proxy", None)),
+        repr(getattr(pool, "_proxy", None)),
+        repr(getattr(pool, "_proxy_url", None)),
+        repr(getattr(pool, "_proxy_headers", None)),
+        _ssl_context_snapshot(proxy_ssl_context),
+        getattr(pool, "_http1", None),
+        getattr(pool, "_http2", None),
+        getattr(pool, "_retries", None),
+        getattr(pool, "_local_address", None),
+        getattr(pool, "_uds", None),
+        getattr(pool, "_socket_options", None),
+    )
+
+
+def _ssl_context_snapshot(context: object) -> tuple[object, ...]:
+    if context is None:
+        return (None,)
+    ca_certificates = getattr(context, "get_ca_certs", None)
+    try:
+        ca_fingerprints = (
+            tuple(
+                hashlib.sha256(value).digest()
+                for value in ca_certificates(binary_form=True)
+            )
+            if callable(ca_certificates)
+            else ()
+        )
+    except (TypeError, ValueError):
+        ca_fingerprints = ()
+    return (
+        type(context), id(context),
+        getattr(context, "verify_mode", None),
+        getattr(context, "check_hostname", None),
+        getattr(context, "minimum_version", None),
+        getattr(context, "maximum_version", None),
+        getattr(context, "options", None),
+        getattr(context, "verify_flags", None),
+        ca_fingerprints,
+    )
+
+
+_IAM_PATH_ALLOWLIST = frozenset({
+    "internal/introspect_token/",
+    "internal/runtime_access_check/",
+    "internal/permission_snapshot/",
+    "internal/payload_ref/validate/",
+    "internal/payload_ref/revalidate/",
+})
+
+
+def _validate_iam_path(path: object) -> str:
+    if (
+        type(path) is not str
+        or path not in _IAM_PATH_ALLOWLIST
+        or urlsplit(path).scheme
+        or urlsplit(path).netloc
+        or "\\" in path
+        or unquote(path) != path
+        or any(part in {"", ".", ".."} for part in path.rstrip("/").split("/"))
+    ):
+        raise NsValidationError(
+            "IAM HTTP path is not allowed.",
+            details={"component": "http_client_owner", "field": "authority_path"},
+        )
+    return path
 
 
 class NsHttpClientFactory:
@@ -920,54 +1102,6 @@ class NsHttpClientOwner:
                 )
             self._clients.append(client)
             return client
-
-    def _create_authority_handle(
-        self,
-        *,
-        client: NsAsyncHttpClient,
-        composition: object,
-    ) -> _NsHttpClientAuthorityHandle:
-        """Bind one owned client and return only a narrow IAM request handle."""
-
-        with self._state_lock:
-            self._ensure_open()
-            if (
-                type(self) is not NsHttpClientOwner
-                or type(self._factory) is not NsHttpClientFactory
-                or type(client) is not NsAsyncHttpClient
-                or not any(client is current for current in self._clients)
-                or client in self._authority_bindings
-                or composition is None
-            ):
-                raise NsValidationError(
-                    "HTTP client authority binding is invalid.",
-                    details={
-                        "component": "http_client_owner",
-                        "field": "authority_client",
-                    },
-                )
-            token = object()
-            self._pending_authority_binding_token = token
-            try:
-                binding = _NsHttpClientAuthorityBinding(
-                    owner=self,
-                    client=client,
-                    composition=composition,
-                    _token=token,
-                )
-            finally:
-                self._pending_authority_binding_token = None
-            self._authority_bindings[client] = binding
-            handle_token = object()
-            self._pending_authority_handle_token = handle_token
-            try:
-                return _NsHttpClientAuthorityHandle(
-                    binding=binding,
-                    _token=handle_token,
-                    owner=self,
-                )
-            finally:
-                self._pending_authority_handle_token = None
 
     def _consume_authority_binding_token(self, token: object) -> bool:
         return (

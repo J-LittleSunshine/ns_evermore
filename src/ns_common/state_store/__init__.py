@@ -49,7 +49,7 @@ from .store import (
 )
 from .composition import (
     StateStoreComposition,
-    create_state_store_composition,
+    create_contract_test_state_store_composition,
     create_state_store_provider,
 )
 from .redis_provider import (
@@ -111,7 +111,7 @@ __all__ = (
     "StateTransactionResult",
     "StateTransitionLogAppend",
     "classify_state_authority",
-    "create_state_store_composition",
+    "create_contract_test_state_store_composition",
     "create_state_store_provider",
     "password_source_from_reference",
 )

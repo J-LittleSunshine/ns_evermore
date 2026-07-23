@@ -3,11 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import secrets
-import sys
-from pathlib import Path
 from typing import Callable, Mapping
 
 from ns_common.exceptions import (
@@ -38,81 +33,6 @@ from ns_runtime.connection.iam import (
 
 from .models import PermissionSnapshot
 
-
-def _build_production_composition_proof_type() -> type:
-    signing_key = secrets.token_bytes(32)
-
-    class _ProductionIamCompositionProof:
-        """Exact-client proof constructible only while executing main()."""
-
-        __slots__ = ("_client", "_http_authority", "_signature")
-
-        def __init__(
-            self,
-            *,
-            client: "IamClient",
-            http_authority: _NsHttpClientAuthorityHandle,
-        ) -> None:
-            caller = sys._getframe(1)
-            if (
-                caller.f_code.co_name != "main"
-                or not str(
-                    Path(caller.f_code.co_filename).resolve(),
-                ).replace("\\", "/").casefold().endswith(
-                    "/ns_runtime/main.py",
-                )
-                or type(client) is not IamClient
-                or type(http_authority) is not _NsHttpClientAuthorityHandle
-                or not http_authority.is_current()
-            ):
-                _invalid("composition_authority")
-            self._client = client
-            self._http_authority = http_authority
-            self._signature = hmac.new(
-                signing_key,
-                f"{id(client)}:{id(http_authority)}".encode("ascii"),
-                hashlib.sha256,
-            ).digest()
-
-        def validates(
-            self,
-            client: "IamClient",
-            http_authority: _NsHttpClientAuthorityHandle,
-        ) -> bool:
-            if (
-                type(self) is not _ProductionIamCompositionProof
-                or self._client is not client
-                or self._http_authority is not http_authority
-            ):
-                return False
-            expected = hmac.new(
-                signing_key,
-                f"{id(client)}:{id(http_authority)}".encode("ascii"),
-                hashlib.sha256,
-            ).digest()
-            return bool(
-                hmac.compare_digest(self._signature, expected)
-                and http_authority.is_current()
-            )
-
-        def __copy__(self) -> "_ProductionIamCompositionProof":
-            _invalid("composition_authority.copy")
-
-        def __deepcopy__(
-            self,
-            memo: dict[int, object],
-        ) -> "_ProductionIamCompositionProof":
-            del memo
-            _invalid("composition_authority.copy")
-
-    return _ProductionIamCompositionProof
-
-
-_ProductionIamCompositionProof = _build_production_composition_proof_type()
-del _build_production_composition_proof_type
-_PRODUCTION_IAM_PROOF_VALIDATES = _ProductionIamCompositionProof.validates
-
-
 class IamClient(HandshakeIamAdapter):
     """One explicitly injected client; it never creates or finds HTTP globals."""
 
@@ -142,17 +62,7 @@ class IamClient(HandshakeIamAdapter):
             type(self) is IamClient
             and type(getattr(self, "_http_authority", None))
             is _NsHttpClientAuthorityHandle
-            and type(getattr(self, "_composition_proof", None))
-            is _ProductionIamCompositionProof
-            and getattr(
-                type(self._composition_proof),
-                "validates",
-                None,
-            ) is _PRODUCTION_IAM_PROOF_VALIDATES
-            and self._composition_proof.validates(
-                self,
-                self._http_authority,
-            )
+            and self._http_authority.is_current(iam_client=self)
             and not substituted
             and getattr(type(self), "revalidate_payload_ref", None)
             is IamClient.revalidate_payload_ref

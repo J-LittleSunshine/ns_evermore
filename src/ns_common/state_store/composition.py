@@ -4,24 +4,19 @@
 from __future__ import annotations
 
 import hashlib
-import re
-from types import MappingProxyType
+import os
+import tempfile
 from typing import TYPE_CHECKING
 
 from ns_common.exceptions import NsRuntimeStateStoreCapabilityUnavailableError
 from ns_common.time import Clock
 
 from .authority import (
-    StateAccessScope,
-    StateAtomicScope,
     StateAuthorityKind,
     StateCallerCapability,
     StateNamespace,
     StateNamespaceKind,
     StateStoreCapabilities,
-    _StateResourcePolicy,
-    _issue_state_access_scope,
-    _new_state_scope_issuer,
 )
 from .redis_provider import (
     RedisStateStoreOptions,
@@ -34,7 +29,6 @@ from .store import (
     StateStoreRepository,
     StateStoreRepositoryRole,
     _ProductionStateScopeValidator,
-    _bind_state_store_repository,
 )
 
 if TYPE_CHECKING:
@@ -44,7 +38,7 @@ if TYPE_CHECKING:
 class StateStoreComposition:
     """Closed repository set; it contains no repository creation capability."""
 
-    __slots__ = ("store", "_delivery", "_runtime_id", "_audit")
+    __slots__ = ("store", "_delivery", "_runtime_id", "_audit", "_lease")
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         del self, args, kwargs
@@ -113,7 +107,7 @@ def create_state_store_provider(
     )
 
 
-def create_state_store_composition(
+def _assemble_contract_test_state_store_composition(
     *,
     config: "NsRuntimeStateStoreConfig",
     clock: Clock,
@@ -136,43 +130,12 @@ def create_state_store_composition(
     ):
         _unavailable("audit_namespaces_invalid")
 
-    issuer = _new_state_scope_issuer(contract_test=False)
-    active_bindings: dict[
-        object,
-        tuple[
-            _StateResourcePolicy,
-            StateAuthorityKind,
-            str,
-            frozenset[StateCallerCapability],
-        ],
-    ] = {}
-    frozen_bindings = MappingProxyType({})
-    creation_closed = False
-    scope_public_key = issuer._public_key
-    scope_issuer_identity = issuer._identity
-
-    def validate_scope(scope: StateAccessScope) -> bool:
-        if not creation_closed or type(scope) is not StateAccessScope:
-            return False
-        spec = frozen_bindings.get(
-            getattr(scope, "_repository_binding", None),
-        )
-        if spec is None:
-            return False
-        policy, authority, caller, caller_capabilities = spec
-        return bool(
-            type(policy) is _StateResourcePolicy
-            and getattr(scope, "_resource_policy", None) is policy
-            and scope.authority is authority
-            and scope.caller == caller
-            and scope.capabilities == caller_capabilities
-            and scope._verified_by(
-                public_key=scope_public_key,
-                issuer_identity=scope_issuer_identity,
-            )
-        )
-
-    scope_validator = _ProductionStateScopeValidator(validate_scope)
+    lease = None
+    scope_validator = object.__new__(_ProductionStateScopeValidator)
+    scope_validator._repository_specs = {}
+    scope_validator._scopes = {}
+    scope_validator._closed = False
+    scope_validator._realm = "contract_test"
     store = _create_redis_valkey_provider(
         config=config,
         clock=clock,
@@ -182,150 +145,123 @@ def create_state_store_composition(
     if store is None:
         return None
 
-    repositories: list[StateStoreRepository] = []
-
-    def bind_repository(
-        *,
-        role: StateStoreRepositoryRole,
-        authority: StateAuthorityKind,
-        caller: str,
-        caller_capabilities: frozenset[StateCallerCapability],
-        policy: _StateResourcePolicy,
-        repository_runtime_id: str | None = None,
-        audit_namespace: StateNamespace | None = None,
-    ) -> StateStoreRepository:
-        if creation_closed:
-            _unavailable("repository_creation_closed")
-        binding = object()
-        repository_ref: StateStoreRepository | None = None
-        scope_cache: dict[StateAtomicScope, StateAccessScope] = {}
-
-        def issue_scope(atomic_scope: StateAtomicScope) -> StateAccessScope:
-            spec = active_bindings.get(binding)
-            if (
-                not creation_closed
-                or repository_ref is None
-                or spec is None
-                or spec[0] is not policy
-                or not _repository_allows_atomic_scope(
-                    role=role,
-                    runtime_id=repository_runtime_id,
-                    audit_namespace=audit_namespace,
-                    atomic_scope=atomic_scope,
-                )
-            ):
-                _unavailable("repository_not_current")
-            existing = scope_cache.get(atomic_scope)
-            if existing is not None:
-                return existing
-            value = _issue_state_access_scope(
-                issuer,
-                atomic_scope=atomic_scope,
-                authority=authority,
-                caller=caller,
-                capabilities=caller_capabilities,
-                resource_policy=policy,
-                repository_binding=binding,
-            )
-            scope_cache[atomic_scope] = value
-            return value
-
-        def is_current(candidate: StateStoreRepository) -> bool:
-            return bool(
-                repository_ref is candidate
-                and active_bindings.get(binding) is not None
-                and active_bindings[binding][0] is policy
-            )
-
-        repository_ref = _bind_state_store_repository(
-            store=store,
-            role=role,
-            runtime_id=repository_runtime_id,
-            audit_namespace=audit_namespace,
-            issue_atomic_scope=issue_scope,
-            is_current_repository=is_current,
-        )
-        active_bindings[binding] = (
-            policy,
-            authority,
-            caller,
-            caller_capabilities,
-        )
-        repositories.append(repository_ref)
-        return repository_ref
-
-    delivery: StateStoreDeliveryRepositories | None = None
+    specs = []
     if runtime_id is not None:
-        delivery = StateStoreDeliveryRepositories(
-            admission=bind_repository(
-                role=StateStoreRepositoryRole.DELIVERY_ADMISSION,
-                authority=StateAuthorityKind.DELIVERY_ADMISSION,
-                caller="delivery.admission",
-                caller_capabilities=frozenset({
-                    StateCallerCapability.READ,
-                    StateCallerCapability.TRANSACT,
+        specs.extend((
+            (
+                StateStoreRepositoryRole.DELIVERY_ADMISSION, runtime_id, None,
+                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.admission",
+                frozenset({
+                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
+                    StateCallerCapability.ORDERED_INDEX, StateCallerCapability.APPEND,
+                }), "delivery-admission.v1",
+            ),
+            (
+                StateStoreRepositoryRole.DELIVERY_SCHEDULER, runtime_id, None,
+                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.scheduling",
+                frozenset({
+                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
+                    StateCallerCapability.ORDERED_INDEX, StateCallerCapability.APPEND,
+                }), "delivery-scheduler.v1",
+            ),
+            (
+                StateStoreRepositoryRole.DELIVERY_PAYLOAD, runtime_id, None,
+                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.payload_authority",
+                frozenset({StateCallerCapability.READ}), "delivery-payload.v1",
+            ),
+            (
+                StateStoreRepositoryRole.DELIVERY_REGISTRY, runtime_id, None,
+                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.authority_registry",
+                frozenset({
+                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
                     StateCallerCapability.ORDERED_INDEX,
-                    StateCallerCapability.APPEND,
-                }),
-                policy=_delivery_admission_policy(),
-                repository_runtime_id=runtime_id,
+                }), "delivery-registry.v1",
             ),
-            scheduler=bind_repository(
-                role=StateStoreRepositoryRole.DELIVERY_SCHEDULER,
-                authority=StateAuthorityKind.DELIVERY_ADMISSION,
-                caller="delivery.scheduling",
-                caller_capabilities=frozenset({
-                    StateCallerCapability.READ,
-                    StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX,
-                    StateCallerCapability.APPEND,
-                }),
-                policy=_delivery_scheduler_policy(),
-                repository_runtime_id=runtime_id,
-            ),
-            payload=bind_repository(
-                role=StateStoreRepositoryRole.DELIVERY_PAYLOAD,
-                authority=StateAuthorityKind.DELIVERY_ADMISSION,
-                caller="delivery.payload_authority",
-                caller_capabilities=frozenset({StateCallerCapability.READ}),
-                policy=_delivery_payload_policy(),
-                repository_runtime_id=runtime_id,
-            ),
-            registry=bind_repository(
-                role=StateStoreRepositoryRole.DELIVERY_REGISTRY,
-                authority=StateAuthorityKind.DELIVERY_ADMISSION,
-                caller="delivery.authority_registry",
-                caller_capabilities=frozenset({
-                    StateCallerCapability.READ,
-                    StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX,
-                }),
-                policy=_delivery_registry_policy(),
-                repository_runtime_id=runtime_id,
-            ),
-        )
-    audit = {
-        namespace: bind_repository(
-            role=StateStoreRepositoryRole.STRONG_AUDIT,
-            authority=StateAuthorityKind.STRONG_AUDIT,
-            caller="strong-audit-authority",
-            caller_capabilities=frozenset({StateCallerCapability.APPEND}),
-            policy=_strong_audit_policy(),
-            audit_namespace=namespace,
+        ))
+    specs.extend(
+        (
+            StateStoreRepositoryRole.STRONG_AUDIT, None, namespace,
+            StateAuthorityKind.STRONG_AUDIT, "strong-audit-authority",
+            frozenset({StateCallerCapability.APPEND}), "strong-audit.v1",
         )
         for namespace in audit_namespaces
+    )
+    repositories = store._install_repositories(tuple(specs))
+    offset = 0
+    delivery = None
+    if runtime_id is not None:
+        delivery = StateStoreDeliveryRepositories(
+            admission=repositories[0], scheduler=repositories[1],
+            payload=repositories[2], registry=repositories[3],
+        )
+        offset = 4
+    audit = {
+        namespace: repositories[offset + index]
+        for index, namespace in enumerate(audit_namespaces)
     }
-    frozen_bindings = MappingProxyType(dict(active_bindings))
-    creation_closed = True
-    # The local creation function and issuer are not retained by the store or
-    # composition.  Repository closures can issue only their already-fixed
-    # scope and cannot register another binding after this point.
     value = object.__new__(StateStoreComposition)
     value.store = store
     value._delivery = delivery
     value._runtime_id = runtime_id
     value._audit = audit
+    value._lease = lease
     return value
+
+
+def create_contract_test_state_store_composition(
+    **kwargs: object,
+) -> StateStoreComposition | None:
+    """Explicit non-production entry used by resource-policy contract tests."""
+    return _assemble_contract_test_state_store_composition(  # type: ignore[arg-type]
+        **kwargs,
+    )
+
+
+class _ProductionCompositionLease:
+    __slots__ = ("_file",)
+
+    def __init__(self, file: object) -> None:
+        self._file = file
+
+    def __del__(self) -> None:
+        file = getattr(self, "_file", None)
+        if file is not None:
+            try:
+                import portalocker
+
+                portalocker.unlock(file)
+                file.close()
+            except (OSError, ValueError):
+                pass
+            self._file = None
+
+
+def _acquire_production_lease(
+    *,
+    config: "NsRuntimeStateStoreConfig",
+    runtime_id: str,
+) -> _ProductionCompositionLease:
+    import portalocker
+
+    identity = hashlib.sha256(
+        "\0".join((
+            config.backend, config.resolved_endpoint, config.namespace, runtime_id,
+        )).encode(),
+    ).hexdigest()
+    path = os.path.join(
+        tempfile.gettempdir(), f"ns-runtime-state-authority-{identity}.lock",
+    )
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    file = os.fdopen(fd, "a+b", buffering=0)
+    try:
+        portalocker.lock(
+            file,
+            portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
+        )
+    except portalocker.AlreadyLocked:
+        file.close()
+        _unavailable("parallel_production_composition")
+    return _ProductionCompositionLease(file)
 
 
 def _create_redis_valkey_provider(
@@ -370,155 +306,6 @@ def _create_redis_valkey_provider(
     )
 
 
-def _delivery_admission_policy() -> _StateResourcePolicy:
-    return _StateResourcePolicy(
-        read_resources=frozenset({
-            ("dedup", "delivery_dedup"),
-        }),
-        transact_resources=frozenset({
-            ("dedup", "delivery_dedup"),
-            ("payload_body", "delivery_payload_body"),
-            ("summary", "delivery_summary"),
-            ("delivery", "delivery_delivery"),
-        }),
-        append_resources=frozenset({
-            ("delivery_transition_log", "delivery_transition_event"),
-        }),
-        ordered_indexes=frozenset({
-            ("delivery.prepared", "delivery"),
-        }),
-    )
-
-
-def _delivery_scheduler_policy() -> _StateResourcePolicy:
-    return _StateResourcePolicy(
-        read_resources=frozenset({
-            ("delivery", "delivery_delivery"),
-            ("summary", "delivery_summary"),
-            ("attempt", "delivery_attempt"),
-            ("delivery_scheduler_cursor", "delivery_scheduler_cursor"),
-        }),
-        transact_resources=frozenset({
-            ("delivery", "delivery_delivery"),
-            ("summary", "delivery_summary"),
-            ("attempt", "delivery_attempt"),
-            ("delivery_scheduler_cursor", "delivery_scheduler_cursor"),
-        }),
-        append_resources=frozenset({
-            ("delivery_transition_log", "delivery_transition_event"),
-            (
-                "delivery_scheduler_repair_log",
-                "delivery_index_repair_event",
-            ),
-        }),
-        ordered_indexes=frozenset({
-            ("delivery.prepared", "delivery"),
-            ("delivery.ready", "delivery"),
-            ("delivery.claimed", "delivery"),
-            ("delivery.lease", "delivery"),
-            ("delivery.sending", "delivery"),
-            ("delivery.ack", "delivery"),
-            ("delivery.write_failed", "delivery"),
-            ("delivery.waiting", "delivery"),
-            ("delivery.expired", "delivery"),
-            ("delivery.payload_rejected", "delivery"),
-            ("delivery.write_uncertain", "delivery"),
-            ("delivery.scheduler_quarantine", "delivery"),
-            ("delivery.runtime.ready", "delivery"),
-        }),
-        allow_delivery_target_index=True,
-    )
-
-
-def _delivery_payload_policy() -> _StateResourcePolicy:
-    return _StateResourcePolicy(
-        read_resources=frozenset({
-            ("payload_body", "delivery_payload_body"),
-        }),
-    )
-
-
-def _delivery_registry_policy() -> _StateResourcePolicy:
-    return _StateResourcePolicy(
-        read_resources=frozenset({
-            (
-                "delivery_authority_layout",
-                "delivery.authority_layout",
-            ),
-            (
-                "delivery_tenant_registration",
-                "delivery.tenant_registration",
-            ),
-        }),
-        transact_resources=frozenset({
-            (
-                "delivery_authority_layout",
-                "delivery.authority_layout",
-            ),
-            (
-                "delivery_tenant_registration",
-                "delivery.tenant_registration",
-            ),
-        }),
-        ordered_indexes=frozenset({
-            ("delivery.tenant_registry", "runtime"),
-        }),
-    )
-
-
-def _strong_audit_policy() -> _StateResourcePolicy:
-    return _StateResourcePolicy(
-        append_resources=frozenset({
-            ("processor_audit_log", "runtime.processor_audit"),
-        }),
-    )
-
-
-def _repository_allows_atomic_scope(
-    *,
-    role: StateStoreRepositoryRole,
-    runtime_id: str | None,
-    audit_namespace: StateNamespace | None,
-    atomic_scope: StateAtomicScope,
-) -> bool:
-    if not isinstance(atomic_scope, StateAtomicScope):
-        return False
-    if role in {
-        StateStoreRepositoryRole.DELIVERY_ADMISSION,
-        StateStoreRepositoryRole.DELIVERY_SCHEDULER,
-        StateStoreRepositoryRole.DELIVERY_PAYLOAD,
-    }:
-        return bool(
-            runtime_id is not None
-            and atomic_scope.namespace.kind is StateNamespaceKind.TENANT
-            and atomic_scope.namespace.domain == "delivery"
-            and re.fullmatch(
-                r"layout-[1-9][0-9]*-bucket-(0|[1-9][0-9]*)",
-                atomic_scope.partition,
-            ) is not None
-        )
-    if role is StateStoreRepositoryRole.DELIVERY_REGISTRY:
-        if runtime_id is None:
-            return False
-        expected_tenant = "runtime-registry:" + hashlib.sha256(
-            runtime_id.encode(),
-        ).hexdigest()
-        return bool(
-            atomic_scope.namespace
-            == StateNamespace.tenant(
-                tenant_id=expected_tenant,
-                domain="delivery",
-            )
-            and atomic_scope.partition == "authority-registry"
-        )
-    return bool(
-        role is StateStoreRepositoryRole.STRONG_AUDIT
-        and audit_namespace is not None
-        and atomic_scope.namespace == audit_namespace
-        and atomic_scope.partition == "processor-final"
-    )
-
-
 def _unavailable(reason: str) -> None:
     raise NsRuntimeStateStoreCapabilityUnavailableError(details={
         "component": "state_store_composition",
@@ -528,6 +315,6 @@ def _unavailable(reason: str) -> None:
 
 __all__ = (
     "StateStoreComposition",
-    "create_state_store_composition",
+    "create_contract_test_state_store_composition",
     "create_state_store_provider",
 )

@@ -16,7 +16,7 @@
 ### P08-FIX-03 / P09-FIX-07 / P11-FIX-08 authority closure
 
 - 状态：`VERIFIED / F3 (local only)`；证据见 acceptance log 的“P08/P09/P11 transport provenance 与 repository resource authority 复核修复”。
-- P09-FIX-07：production `IamClient`不再有公共factory；process composition只组装exact client、owner-issued narrow HTTP handle和exact-client proof。HTTP provenance覆盖主transport、mount/proxy transport、关键handler与instance substitution，请求前后复验。
+- P09-FIX-07：production `IamClient`不再有公共factory或frame/path proof；process bootstrap局部一次性组装exact client与narrow HTTP handle，普通owner无签发API。HTTP provenance覆盖backend/TLS/proxy/timeout/header、主transport、mount/proxy transport与关键handler；请求固定执行绑定transport以关闭await期间TOCTOU。
 - P08-FIX-03：raw Store不保存repository owner/private issuer或creation API；composition一次性建立固定repository set后关闭。production scope改为repository私钥签名、raw Store公钥验证，并按operation/object/schema/index bucket/log/namespace执行exact allowlist。
 - P11-FIX-08：delivery admission、scheduler、payload、registry与audit repository保持最小资源权限；跨role和未知资源fail closed。状态机与WRITE_UNCERTAIN规则未改变。
 - 冻结：P12仍`BLOCKED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
@@ -965,7 +965,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 ### P09-FIX-06 composition-owned authorization authority
 
 - 状态：`VERIFIED`。删除自由production signer；实例issuer绑定精确production MessageAuthorizationService并只消费该service本次sealed typed result与当前ProcessorContext，evidence绑定config/policy版本。
-- production IamClient由绑定NsHttpClientOwner、精确HTTP client、底层httpx transport和runtime composition的实例factory一次性创建；HTTP关键方法替换、copy/subclass、未初始化对象、重复composition binding和fake service均fail closed。
+- production IamClient由process bootstrap在单一局部组装区间绑定精确NsHttpClientOwner、HTTP client、固定backend与底层transport；普通owner/factory不能创建production handle。HTTP关键方法/config/transport替换、copy/subclass、未初始化对象、重复binding和fake service均fail closed。
 - 范围仍是P09 local-only authority closure；P12、P14、P17和production task.dispatch保持未实现/关闭；见ADR-046。
 
 ### 测试矩阵

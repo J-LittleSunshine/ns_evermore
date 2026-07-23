@@ -13,12 +13,6 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Mapping
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
-
 from ns_common.exceptions import NsValidationError
 
 
@@ -250,21 +244,14 @@ class StateAtomicScope:
 class _StateScopeIssuer:
     """One store-owned capability issuer; never shared through a registry."""
 
-    __slots__ = ("realm", "_key", "_private_key", "_public_key", "_identity")
+    __slots__ = ("realm", "_key", "_identity")
 
     def __init__(self, *, realm: str) -> None:
-        if realm not in {"production", "contract_test"}:
+        if realm != "contract_test":
             _invalid("issuer.realm")
         self.realm = realm
         self._identity = secrets.token_bytes(32)
-        if realm == "production":
-            self._key = None
-            self._private_key = Ed25519PrivateKey.generate()
-            self._public_key = self._private_key.public_key()
-        else:
-            self._key = secrets.token_bytes(32)
-            self._private_key = None
-            self._public_key = None
+        self._key = secrets.token_bytes(32)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -398,7 +385,7 @@ class StateAccessScope:
     _authority_signature: bytes = dataclass_field(
         init=False, repr=False, compare=False,
     )
-    _resource_policy: _StateResourcePolicy = dataclass_field(
+    _policy_id: str = dataclass_field(
         init=False, repr=False, compare=False,
     )
     _repository_binding: object | None = dataclass_field(
@@ -415,22 +402,15 @@ class StateAccessScope:
         _issuer: _StateScopeIssuer | None = None,
         _resource_policy: _StateResourcePolicy | None = None,
         _repository_binding: object | None = None,
+        _policy_id: str | None = None,
     ) -> None:
         if (
             type(self) is not StateAccessScope
             or type(_issuer) is not _StateScopeIssuer
-            or type(_resource_policy) is not _StateResourcePolicy
-            or (
-                _issuer.realm == "production"
-                and _repository_binding is None
-            )
-            or (
-                _issuer.realm == "contract_test"
-                and (
-                    _resource_policy is not _CONTRACT_TEST_RESOURCE_POLICY
-                    or _repository_binding is not None
-                )
-            )
+            or _issuer.realm != "contract_test"
+            or _resource_policy is not _CONTRACT_TEST_RESOURCE_POLICY
+            or _repository_binding is not None
+            or _policy_id is not None
         ):
             _invalid("access_scope.issuer")
         for name, value in (
@@ -441,7 +421,7 @@ class StateAccessScope:
             ("_issuer_realm", _issuer.realm),
             ("_issuer_identity", _issuer._identity),
             ("_authority_signature", b""),
-            ("_resource_policy", _resource_policy),
+            ("_policy_id", "contract-test.v1"),
             ("_repository_binding", _repository_binding),
         ):
             object.__setattr__(self, name, value)
@@ -497,41 +477,14 @@ class StateAccessScope:
                 self._authority_signature,
                 _state_scope_signature(self, issuer=issuer),
             )
-        return self._verified_by(
-            public_key=issuer._public_key,
-            issuer_identity=issuer._identity,
-        )
-
-    def _verified_by(
-        self,
-        *,
-        public_key: Ed25519PublicKey,
-        issuer_identity: bytes,
-    ) -> bool:
-        if (
-            type(self) is not StateAccessScope
-            or not isinstance(public_key, Ed25519PublicKey)
-            or type(issuer_identity) is not bytes
-            or self._issuer_realm != "production"
-            or not hmac.compare_digest(
-                self._issuer_identity,
-                issuer_identity,
-            )
-        ):
-            return False
-        try:
-            public_key.verify(
-                self._authority_signature,
-                _state_scope_payload(self),
-            )
-        except (InvalidSignature, TypeError, ValueError):
-            return False
-        return True
+        return False
 
 
 def _new_state_scope_issuer(*, contract_test: bool = False) -> _StateScopeIssuer:
+    if not contract_test:
+        _invalid("issuer.production_removed")
     return _StateScopeIssuer(
-        realm="contract_test" if contract_test else "production",
+        realm="contract_test",
     )
 
 
@@ -551,11 +504,8 @@ def _issue_state_access_scope(
         if resource_policy is not None or repository_binding is not None:
             _invalid("access_scope.contract_test_policy")
         resource_policy = _CONTRACT_TEST_RESOURCE_POLICY
-    elif (
-        type(resource_policy) is not _StateResourcePolicy
-        or repository_binding is None
-    ):
-        _invalid("access_scope.resource_policy")
+    else:
+        _invalid("access_scope.production_issuer_removed")
     return StateAccessScope(
         atomic_scope=atomic_scope,
         authority=authority,
@@ -575,8 +525,6 @@ def _state_scope_signature(
     if type(issuer) is not _StateScopeIssuer:
         _invalid("access_scope.issuer")
     payload = _state_scope_payload(scope)
-    if issuer.realm == "production":
-        return issuer._private_key.sign(payload)
     return hmac.new(issuer._key, payload, hashlib.sha256).digest()
 
 
@@ -594,7 +542,7 @@ def _state_scope_payload(scope: StateAccessScope) -> bytes:
         "authority": scope.authority.value,
         "caller": scope.caller,
         "capabilities": sorted(value.value for value in scope.capabilities),
-        "resource_policy": scope._resource_policy.canonical_values(),
+        "policy_id": scope._policy_id,
         "repository_binding": (
             None
             if scope._repository_binding is None

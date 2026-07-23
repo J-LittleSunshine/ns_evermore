@@ -204,7 +204,11 @@ def main(
         WebSocketTcpAdapterOptions,
     )
     from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
-    from ns_common.http_client import NsHttpClientOwner
+    from ns_common.http_client import (
+        NsHttpClientOwner,
+        _NsHttpClientAuthorityBinding,
+        _NsHttpClientAuthorityHandle,
+    )
     from ns_runtime.context import RuntimeDependencySlots
     from ns_runtime.connection import (
         AcceptedHeartbeatPolicy,
@@ -219,10 +223,7 @@ def main(
         AuthorizationMode,
         MessageAuthorizationService,
     )
-    from ns_runtime.iam.client import (
-        IamClient,
-        _ProductionIamCompositionProof,
-    )
+    from ns_runtime.iam.client import IamClient
     from ns_runtime.processor import (
         DefaultProcessorErrorMapper,
         EventBus,
@@ -279,13 +280,82 @@ def main(
         base_url=config.runtime.iam.base_url,
         timeout_seconds=config.runtime.iam.request_timeout_seconds,
     )
-    from ns_common.state_store import create_state_store_composition
-
-    state_store_composition = create_state_store_composition(
-        config=config.runtime.state_store,
-        clock=context.clock,
-        runtime_id=runtime_id,
+    from ns_common.state_store import (
+        StateAuthorityKind,
+        StateCallerCapability,
+        StateStoreDeliveryRepositories,
+        StateStoreRepositoryRole,
     )
+    from ns_common.state_store.composition import (
+        StateStoreComposition,
+        _acquire_production_lease,
+        _create_redis_valkey_provider,
+    )
+    from ns_common.state_store.store import _ProductionStateScopeValidator
+
+    state_store_config = config.runtime.state_store
+    state_store_composition = None
+    if state_store_config.backend != "sqlite":
+        state_lease = _acquire_production_lease(
+            config=state_store_config, runtime_id=runtime_id,
+        )
+        state_validator = object.__new__(_ProductionStateScopeValidator)
+        state_validator._repository_specs = {}
+        state_validator._scopes = {}
+        state_validator._closed = False
+        state_validator._realm = "production"
+        composed_store = _create_redis_valkey_provider(
+            config=state_store_config, clock=context.clock,
+            capabilities=None, production_scope_validator=state_validator,
+        )
+        assert composed_store is not None
+        state_repositories = composed_store._install_repositories((
+            (
+                StateStoreRepositoryRole.DELIVERY_ADMISSION, runtime_id, None,
+                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.admission",
+                frozenset({
+                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
+                    StateCallerCapability.ORDERED_INDEX,
+                    StateCallerCapability.APPEND,
+                }), "delivery-admission.v1",
+            ),
+            (
+                StateStoreRepositoryRole.DELIVERY_SCHEDULER, runtime_id, None,
+                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.scheduling",
+                frozenset({
+                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
+                    StateCallerCapability.ORDERED_INDEX,
+                    StateCallerCapability.APPEND,
+                }), "delivery-scheduler.v1",
+            ),
+            (
+                StateStoreRepositoryRole.DELIVERY_PAYLOAD, runtime_id, None,
+                StateAuthorityKind.DELIVERY_ADMISSION,
+                "delivery.payload_authority",
+                frozenset({StateCallerCapability.READ}),
+                "delivery-payload.v1",
+            ),
+            (
+                StateStoreRepositoryRole.DELIVERY_REGISTRY, runtime_id, None,
+                StateAuthorityKind.DELIVERY_ADMISSION,
+                "delivery.authority_registry",
+                frozenset({
+                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
+                    StateCallerCapability.ORDERED_INDEX,
+                }), "delivery-registry.v1",
+            ),
+        ))
+        state_store_composition = object.__new__(StateStoreComposition)
+        state_store_composition.store = composed_store
+        state_store_composition._delivery = StateStoreDeliveryRepositories(
+            admission=state_repositories[0],
+            scheduler=state_repositories[1],
+            payload=state_repositories[2],
+            registry=state_repositories[3],
+        )
+        state_store_composition._runtime_id = runtime_id
+        state_store_composition._audit = {}
+        state_store_composition._lease = state_lease
     state_store = (
         None
         if state_store_composition is None
@@ -303,19 +373,33 @@ def main(
             state_store=state_store,
         ),
     )
-    # This is the sole production IAM graph construction site.  The narrow
-    # HTTP handle and exact-client verifier are local to this invocation and
-    # cannot be reused to authorize a copied or independently created client.
-    iam_http_authority = http_client_owner._create_authority_handle(
-        client=iam_http_client,
-        composition=context,
-    )
+    # Assemble the complete graph here. No owner/factory method can issue an
+    # IAM authority handle, and the one-shot construction tokens are consumed
+    # before any business object receives a dependency.
+    binding_token = object()
+    http_client_owner._pending_authority_binding_token = binding_token
+    try:
+        iam_http_binding = _NsHttpClientAuthorityBinding(
+            owner=http_client_owner,
+            client=iam_http_client,
+            _token=binding_token,
+        )
+    finally:
+        http_client_owner._pending_authority_binding_token = None
+    http_client_owner._authority_bindings[iam_http_client] = iam_http_binding
+    handle_token = object()
+    http_client_owner._pending_authority_handle_token = handle_token
+    try:
+        iam_http_authority = _NsHttpClientAuthorityHandle(
+            binding=iam_http_binding,
+            _token=handle_token,
+            owner=http_client_owner,
+        )
+    finally:
+        http_client_owner._pending_authority_handle_token = None
     iam_client = object.__new__(IamClient)
     iam_client._http_authority = iam_http_authority
-    iam_client._composition_proof = _ProductionIamCompositionProof(
-        client=iam_client,
-        http_authority=iam_http_authority,
-    )
+    iam_http_binding._iam_client = iam_client
     iam_client._service_credential = (
         config.runtime.iam.internal_service_credential
     )
