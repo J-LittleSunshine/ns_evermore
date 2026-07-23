@@ -3,7 +3,7 @@
 > 实施文档版本：`0.0.2`
 > 设计基线：`ns_runtime 设计边界与功能清单 0.0.2`
 > 仓库基线：Code Agent 当前会话所处的 `ns_evermore` 本地工作区；远程仓库、远程分支和提交历史不作为实现状态依据
-> 当前状态校准时间：`2026-07-22T08:49:30+08:00`
+> 当前状态校准时间：`2026-07-23T09:50:00+08:00`
 > 文档用途：作为人工开发者与 Code Agent 的当前状态、阶段边界和后续执行入口。
 
 文档分工：
@@ -109,14 +109,14 @@
 
 | 字段 | 当前值 |
 |---|---|
-| 当前阶段 | `P11 本地可靠投递调度与发送`（local write边界） |
-| 当前工作包 | `P11-FIX-02` |
-| 当前工作包状态 | `VERIFIED` |
-| 当前阶段状态 | `VERIFIED / F3 (local only)` |
-| 最近已验证阶段 | `P11 本地可靠投递调度与发送` |
-| 最近已验证工作包 | `P10-FIX-04 + P11-FIX-02` |
-| 下一阶段 | `P12-W01`继续`BLOCKED`，等待独立ACK/NACK/Defer授权与设计验收 |
-| 当前阻塞项 | 无；production task.dispatch继续关闭，transport write只允许到ack_waiting，不等于delivery成功 |
+| 当前阶段 | `P12 ACK/NACK/Defer/Timeout/Retry` |
+| 当前工作包 | `P12-W01` |
+| 当前工作包状态 | `BLOCKED`（等待独立授权） |
+| 当前阶段状态 | `NOT_STARTED / F0` |
+| 最近已验证阶段 | `P11 本地可靠投递调度与发送`（`VERIFIED/F3 local only`） |
+| 最近已验证工作包 | `P10-FIX-05 + P11-FIX-03` |
+| 下一阶段 | `P12-W01`保持`BLOCKED`，等待独立授权 |
+| 当前阻塞项 | P12未获授权；production task.dispatch继续关闭，transport write只允许到ack_waiting，不等于delivery成功 |
 | 设计基线版本 | `0.0.2` |
 | wire codec | `json.v1` |
 | 当前正式 transport | `websocket_tcp` adapter 为 `VERIFIED/F2`；P05 logical connection composition 保持冻结；P06 已把 production `IamClient` 与同一 P01 HTTP owner 显式接入握手、reauth 和 resume，IAM 异常继续 fail-closed |
@@ -147,8 +147,8 @@ P00 必须记录以下事实：
 | `src/ns_backend/iam` 实际能力 | `VERIFIED` | IAM-R1保持；payload_ref validation result现冻结对象/version/checksum/tenant/size完整性元数据，runtime通过显式IAM HTTP client实时调用既有backend endpoint；backend无对象provider时继续明确invalid/fail-closed。 |
 | `src/ns_runtime` 实际能力 | `VERIFIED` | P02-P09及P10 DR-1冻结边界保持；P11以typed prepared DeliveryRecord和StateStore authority完成本地prepared -> queued -> sending -> ack_waiting，复用既有TaskSupervisor与P05 local connection owner。task.dispatch只提供显式注入的本地实验组合，production contract/默认配置仍关闭；不含P12 ACK/NACK/Defer/timeout/retry。 |
 | 配置示例与依赖清单 | `VERIFIED` | runtime.state_store支持backend、credential-free endpoint、username、env/file/none password source、namespace和timeout；Redis/Valkey driver已移入runtime生产层且动态加载，五层无环清单保持。 |
-| 当前本地测试基线 | `VERIFIED` | P11 scheduler专项12项；Redis/Valkey provider与真实Redis integration专项24项；当前WSL解释器最终全量 `Ran 816 tests in 44.814s, OK (skipped=1)`。全树compileall与diff check通过；均为local verification，无远程CI。 |
-| 当前状态校准时间 | `VERIFIED` | `2026-07-23T00:22:16+08:00` |
+| 当前本地测试基线 | `VERIFIED` | P10/P11定向51项、真实Redis integration 16项；标准asyncio全树`Ran 843 tests in 98.231s, OK (skipped=1)`，runtime uvloop（按DEP-1排除Django-only cache）`Ran 832 tests in 105.462s, OK (skipped=1)`，backend/Django全树`Ran 827 tests in 60.694s, OK (skipped=50)`。compileall、两环境pip check、cold import、diff check与禁止项扫描通过；均为local verification，无远程CI。 |
+| 当前状态校准时间 | `VERIFIED` | `2026-07-23T09:50:00+08:00` |
 
 ### 2.2 本地代码检查范围
 
@@ -967,7 +967,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 
 ## P10 受理、Summary、去重与 Payload Reference
 
-**阶段状态：`VERIFIED / F3 (local only)`（P10-FIX-04联合复验通过）**
+**阶段状态：`VERIFIED`（`F3 / local only`）**
 **目标完成度：`F3`**  
 **前置阶段：P09 `VERIFIED`**
 
@@ -997,6 +997,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `P10-FIX-02` | `VERIFIED` | Redis StateStore trusted-boundary、lifecycle 与 recovery closure | options/source/BaseException/port reservation/PID gate/3与501 target跨provider恢复全部关闭；DR-1/RP-1/P11/P12零扩展 |
 | `P10-FIX-03` | `VERIFIED` | 修正Summary状态/普通fanout单Summary、统一typed fanout/批量配置、trusted payload admission与fingerprint绑定、可靠inline持久权威、dependency outcome和DR schema迁移 | DR contract family的持久schema升级为dr-2并显式拒绝未迁移dr-1；源码、真实Redis、全量回归与恢复证据见联合验收记录 |
 | `P10-FIX-04` | `VERIFIED` | 保存ProcessorContext注入的安全Envelope authority、协商protocol上下文与单次bounded inline descriptor；闭合Summary分类计数 | 原始source/auth/message/trace、protocol mismatch、field swap、cycle/deep/NaN、P12 reserved summary status及真实Redis恢复证据通过；见ADR-041和联合验收记录 |
+| `P10-FIX-05` | `VERIFIED` | authority layout版本化、8→16迁移门禁、出站MessageGroup策略字段authority与payload_ref实时object access decision绑定 | provider-neutral registry、旧generation门禁、policy message重建与当前IAM access绑定通过；见ADR-042和联合验收记录 |
 
 ### 测试矩阵
 
@@ -1020,7 +1021,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 
 ## P11 本地可靠投递调度与发送
 
-**阶段状态：`VERIFIED / F3 (local only)`（P11-FIX-02联合复验通过）**
+**阶段状态：`VERIFIED`（`F3 / local only`）**
 **目标完成度：`F3`**  
 **前置阶段：P10 `VERIFIED/F3 (local only)`；本阶段仅形成local write -> ack_waiting，不包含ACK闭环**
 
@@ -1045,6 +1046,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `P11-W11` | `VERIFIED` | 提供显式注入的LocalTaskDispatchExperimentalProcessor与bounded coordinator，复用唯一TaskSupervisor和P05 connection owner | 默认config false且protocol production contract仍disabled；P12完成前不得production enable |
 | `P11-FIX-01` | `VERIFIED` | typed完整Envelope重建、provider-neutral原子投递投影、权威ready/lease/ack索引、per-delivery fencing、真实renew任务、typed precheck handoff与重启恢复 | 标准asyncio/uvloop/backend全量、真实Redis冲突回滚与provider A/B恢复通过；仍不实现P12 ACK/retry或P17 leader fencing |
 | `P11-FIX-02` | `VERIFIED` | cluster-slot bucket布局、独立持久fencing/owner epoch、lease与ACK deadline分离、indeterminate reconcile、ordered-index分页、waiting handoff和实时payload access binding | key-slot、legacy migration、三分支reconcile、分页饥饿、lease恢复、跨target replay、真实Redis与三套全量回归通过；不实现P12 ACK/retry、P14或P17 |
+| `P11-FIX-03` | `VERIFIED` | 可恢复runtime tenant/layout registry、真正runtime-global watermark、跨bucket有界轮转activation/claim/recovery和post-write统一reconcile | 重启恢复、跨tenant水位、跨bucket进展、lease版本冲突与WRITE_UNCERTAIN对账通过；无跨slot事务/system global ZSet或第二lifecycle owner |
 
 ### 测试矩阵
 
@@ -1646,8 +1648,8 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | P07 | Processor、插件、事件与审计 | `VERIFIED` | F3 | P06 |
 | P08 | StateStore 抽象契约与 Authority Boundary | `VERIFIED` | F3 | P07 |
 | P09 | RoutingPlan 与本地路由 | `VERIFIED` | F3（local only） | P08 |
-| P10 | 受理、Summary、去重、PayloadRef | `IN_PROGRESS` | F0（FIX-04复核中） | P09 |
-| P11 | 本地可靠投递调度与发送 | `IN_PROGRESS` | F0（FIX-02复核中） | P10 |
+| P10 | 受理、Summary、去重、PayloadRef | `VERIFIED` | F3（local only） | P09 |
+| P11 | 本地可靠投递调度与发送 | `VERIFIED` | F3（local only） | P10 |
 | P12 | ACK/NACK/Defer/Timeout/Retry | `NOT_STARTED` | F0 | P11 |
 | P13 | Dead Letter/Replay/Cancel/Hold | `NOT_STARTED` | F0 | P12 |
 | P14 | Priority/Fairness/Backpressure/Health | `NOT_STARTED` | F0 | P13 |

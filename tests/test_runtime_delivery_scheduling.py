@@ -14,12 +14,14 @@ from ns_common.exceptions import (
     NsRuntimeDeliveryLeaseExpiredError,
     NsRuntimeDeliveryStateError,
     NsRuntimeOwnerMismatchError,
+    NsRuntimeStateStoreVersionMismatchError,
     NsValidationError,
 )
 from ns_common.state_store import (
-    StateAccessScope, StateAtomicScope, StateAuthorityKind,
+    StateAccessScope, StateAssertion, StateAtomicScope, StateAuthorityKind,
     StateCallerCapability, StateOrderedIndexKey, StateOrderedIndexMutation,
     StateOrderedIndexMutationKind, StateStoreCapabilities, StateTransaction,
+    StateDocument, StateKey, StateMutation, StateMutationKind,
 )
 from ns_common.time import ControlledClock
 from ns_runtime.delivery import (
@@ -27,6 +29,7 @@ from ns_runtime.delivery import (
     AdmissionPolicyConfig,
     AdmissionRequest,
     AdmissionTrace,
+    ActivationSkipReason,
     ClaimOutcome,
     ClaimWorker,
     DefaultAdmissionPolicy,
@@ -39,6 +42,7 @@ from ns_runtime.delivery import (
     DeliveryTargetResolver,
     DeliveryTransportWriter,
     DeliveryWriteFailure,
+    DeliveryAuthorityLayout,
     InlinePayload,
     LeaseRenewOutcome,
     LeaseRenewWorker,
@@ -46,6 +50,7 @@ from ns_runtime.delivery import (
     OutboundDeliveryMaterial,
     OwnerRiskGuard,
     PayloadValidationResult,
+    payload_access_decision_request_fingerprint,
     PayloadReference,
     PreparedActivationWorker,
     LocalDeliveryDispatchCoordinator,
@@ -55,6 +60,10 @@ from ns_runtime.delivery import (
     StateStoreDeliveryAdmissionStore,
     StateStoreDeliveryPayloadAuthority,
     StateStoreDeliveryScheduler,
+    StateStoreDeliveryAuthorityRegistry,
+    delivery_scope,
+    delivery_from_dict,
+    delivery_to_dict,
 )
 from ns_runtime.processor import RoutingPreparationResult
 from ns_runtime.protocol import PayloadGroup, ProtocolGroup
@@ -77,6 +86,9 @@ class _Validator(DeliveryPayloadValidator):
         if self.illegal:
             return {"valid": True}
         evidence = delivery.payload_evidence
+        access_request = payload_access_decision_request_fingerprint(
+            delivery, target=target,
+        )
         return PayloadValidationResult(
             valid=self.valid,
             evidence_fingerprint=evidence.evidence_fingerprint,
@@ -86,7 +98,9 @@ class _Validator(DeliveryPayloadValidator):
             tenant_id=delivery.tenant_id,
             request_binding_fingerprint=delivery.policy_decision.request_fingerprint,
             target_binding_fingerprint=delivery.target_fingerprint,
-            target_access_decision_reference=target.access_decision_reference,
+            target_permission_snapshot_reference=target.access_decision_reference,
+            access_decision_request_fingerprint=access_request,
+            target_access_decision_reference="iam-decision:" + access_request,
         )
 
 
@@ -151,7 +165,7 @@ class _Targets(DeliveryTargetResolver):
             protocol_schema_key="envelope-v1",
             access_decision_reference=(
                 self.access_decision_reference
-                or delivery.target_access_decision_reference
+                or "session-permission-snapshot:current"
             ),
         )
 
@@ -165,12 +179,14 @@ class _Writer(DeliveryTransportWriter):
         authority_model=None,
         delivery_id: str | None = None,
         indeterminate: str | None = None,
+        after_write=None,
     ) -> None:
         self.error = error
         self.block = block
         self.authority_model = authority_model
         self.delivery_id = delivery_id
         self.indeterminate = indeterminate
+        self.after_write = after_write
         self.calls = 0
         self.saw_authoritative_sending = False
         self.payloads = []
@@ -205,6 +221,8 @@ class _Writer(DeliveryTransportWriter):
             self.authority_model.indeterminate_before_transaction = True
         elif self.indeterminate == "after":
             self.authority_model.indeterminate_after_transaction = True
+        if self.after_write is not None:
+            await self.after_write()
 
 
 class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
@@ -335,6 +353,148 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
         limited_model = self.model
         self.assertIs(limited_model, self.model)
 
+    async def test_fix03_runtime_global_watermark_recovers_all_registered_tenants(self) -> None:
+        layout = DeliveryAuthorityLayout(bucket_count=8)
+        registry = StateStoreDeliveryAuthorityRegistry(store=self.model)
+        await registry.ensure_registered(tenant_id="tenant-b", layout=layout)
+        tenant_b_scope = delivery_scope("tenant-b", 7)
+        tenant_b_index = StateOrderedIndexKey(
+            namespace=tenant_b_scope.namespace,
+            name="delivery.ready",
+            bucket="delivery",
+        )
+        await self.model.transact(StateTransaction(
+            scope=tenant_b_scope,
+            mutations=(),
+            ordered_index_mutations=(StateOrderedIndexMutation(
+                index=tenant_b_index,
+                kind=StateOrderedIndexMutationKind.ADD,
+                member="tenant-b-ready-1",
+                score=1.0,
+            ),),
+        ))
+        restarted = StateStoreDeliveryScheduler(store=self.model, clock=self.clock)
+        policy = dataclasses.replace(
+            self.policy,
+            global_queued_high_watermark=1,
+            tenant_queued_high_watermark=10,
+        )
+        self.assertEqual(1, await restarted.runtime_queued_count(policy=policy))
+        blocked = await restarted.activate_prepared(
+            tenant_id=self.tenant_id,
+            policy=policy,
+        )
+        self.assertEqual(0, len(blocked.activated))
+        self.assertIn(ActivationSkipReason.GLOBAL_WATERMARK, blocked.skip_reasons)
+        tenant_a = await restarted.resource_counts(tenant_id=self.tenant_id)
+        tenant_b = await restarted.resource_counts(tenant_id="tenant-b")
+        self.assertEqual((0, 1), (tenant_a.queued, tenant_b.queued))
+
+    async def test_fix03_authority_layout_change_is_restart_fail_closed(self) -> None:
+        registry = StateStoreDeliveryAuthorityRegistry(store=self.model)
+        with self.assertRaises(NsRuntimeStateStoreVersionMismatchError) as caught:
+            await registry.ensure_registered(
+                tenant_id=self.tenant_id,
+                layout=DeliveryAuthorityLayout(bucket_count=16),
+            )
+        self.assertEqual(
+            "authority_layout_migration_required",
+            caught.exception.details["reason"],
+        )
+
+    def test_fix03_runtime_config_snapshot_carries_layout_and_scan_budget(self) -> None:
+        runtime = NsRuntimeDeliveryConfig(
+            authority_bucket_count=16,
+            activation_scan_budget=321,
+        )
+        scheduling = DeliverySchedulingPolicy.from_runtime_config(
+            runtime, config_version="c-layout", policy_version="p-layout",
+        )
+        admission = AdmissionPolicyConfig.from_runtime_config(
+            runtime, config_version="c-layout", policy_version="p-layout",
+        )
+        self.assertEqual((16, 321, 2), (
+            scheduling.authority_bucket_count,
+            scheduling.activation_scan_budget,
+            scheduling.authority_layout_generation,
+        ))
+        self.assertEqual((16, 2), (
+            admission.authority_bucket_count,
+            admission.authority_layout_generation,
+        ))
+        self.assertEqual("restart_required", runtime.authority_layout_apply_mode)
+
+    async def test_fix03_blocked_bucket_does_not_starve_later_bucket(self) -> None:
+        source_record = next(
+            record for record in self.model.records.values()
+            if record.key.object_type == "delivery"
+        )
+        source = delivery_from_dict(json.loads(source_record.document.payload))
+        blocked = dataclasses.replace(
+            source,
+            delivery_id="delivery-blocked-bucket-0",
+            authority_bucket_id=0,
+        )
+        scope = delivery_scope(self.tenant_id, 0)
+        delivery_key = StateKey(
+            namespace=scope.namespace,
+            object_type="delivery",
+            object_id="sha256:" + __import__("hashlib").sha256(
+                blocked.delivery_id.encode()
+            ).hexdigest(),
+        )
+        prepared = StateOrderedIndexKey(
+            namespace=scope.namespace, name="delivery.prepared", bucket="delivery",
+        )
+        target = StateOrderedIndexKey(
+            namespace=scope.namespace,
+            name="delivery.target." + blocked.target_fingerprint.split(":", 1)[1],
+            bucket="delivery",
+        )
+        await self.model.transact(StateTransaction(
+            scope=scope,
+            mutations=(StateMutation(
+                key=delivery_key,
+                assertion=StateAssertion.absent(),
+                kind=StateMutationKind.CREATE,
+                document=StateDocument(
+                    schema_name="delivery_delivery",
+                    schema_version=1,
+                    state_version=blocked.state_version,
+                    payload=json.dumps(
+                        delivery_to_dict(blocked),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode(),
+                ),
+            ),),
+            ordered_index_mutations=(
+                StateOrderedIndexMutation(
+                    index=prepared,
+                    kind=StateOrderedIndexMutationKind.ADD,
+                    member=blocked.delivery_id,
+                    score=0.0,
+                ),
+                StateOrderedIndexMutation(
+                    index=target,
+                    kind=StateOrderedIndexMutationKind.ADD,
+                    member="blocked-target-1",
+                    score=0.0,
+                ),
+                StateOrderedIndexMutation(
+                    index=target,
+                    kind=StateOrderedIndexMutationKind.ADD,
+                    member="blocked-target-2",
+                    score=1.0,
+                ),
+            ),
+        ))
+        result = await self._activate(
+            policy=dataclasses.replace(self.policy, activation_batch_size=1),
+        )
+        self.assertEqual(1, len(result.activated))
+        self.assertNotEqual(blocked.delivery_id, result.activated[0].delivery_id)
+
     async def test_fix01_expired_prepared_is_terminalized_and_not_revisited(self) -> None:
         self.clock.advance(31)
         result = await self._activate()
@@ -421,7 +581,16 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
         authority = result.delivery.envelope_authority
         self.assertEqual(authority.source, outbound.source)
         self.assertEqual(authority.auth_context, outbound.auth_context)
-        self.assertEqual(authority.message, outbound.message)
+        self.assertEqual(authority.message.message_id, outbound.message.message_id)
+        self.assertEqual(authority.message.type, outbound.message.type)
+        self.assertEqual(authority.message.category, outbound.message.category)
+        self.assertEqual(authority.message.created_at, outbound.message.created_at)
+        self.assertEqual(0, outbound.message.priority)
+        self.assertEqual("at_least_once", outbound.message.reliability)
+        self.assertEqual(
+            result.delivery.policy_decision.expires_at.isoformat(),
+            outbound.message.expires_at,
+        )
         self.assertEqual(authority.trace, outbound.trace)
         self.assertEqual(authority.protocol, outbound.protocol)
         self.assertNotEqual(result.delivery.binding.runtime_id, outbound.source.runtime_id)
@@ -464,7 +633,7 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
                 result = await super().validate(delivery, target=target)
                 return dataclasses.replace(
                     result,
-                    target_access_decision_reference="sha256:" + "9" * 64,
+                    access_decision_request_fingerprint="sha256:" + "9" * 64,
                 )
 
         replay_writer = _Writer()
@@ -615,6 +784,26 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             "completion_reconcile_conflict", caught.exception.details["reason"],
         )
 
+    async def test_fix03_lease_renew_after_transport_write_reconciles_uncertain(self) -> None:
+        one = dataclasses.replace(self.policy, activation_batch_size=1)
+        await self._activate(policy=one)
+        claimed = await self._claim(token="claim-renew-race", policy=one)
+
+        async def renew_after_write():
+            await self.scheduler.renew_owner(claim=claimed.claim, policy=one)
+
+        result = await self._send_worker(
+            policy=one,
+            writer=_Writer(after_write=renew_after_write),
+            attempt_id_factory=lambda: "attempt-renew-race",
+        ).run_once(claim=claimed.claim)
+        self.assertIs(SendOutcome.WRITE_FAILED, result.outcome)
+        self.assertIs(DeliveryRecordStatus.WRITE_UNCERTAIN, result.delivery.status)
+        self.assertIs(
+            DeliveryWriteFailure.AUTHORITY_CONFLICT_AFTER_WRITE,
+            result.failure,
+        )
+
     async def test_fix02_activation_cursor_skips_invalid_first_page(self) -> None:
         prepared = next(
             value for key, value in self.model.ordered_indexes.items()
@@ -626,10 +815,13 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             if record.key.object_type == "delivery"
         )
         bucket_id = first_delivery["authority_bucket_id"]
-        namespace = next(iter(self.model.records)).namespace
+        namespace = next(
+            key.namespace for key in self.model.records
+            if key.object_type == "delivery"
+        )
         scope = StateAccessScope(
             atomic_scope=StateAtomicScope(
-                namespace=namespace, partition=f"bucket-{bucket_id}",
+                namespace=namespace, partition=f"layout-2-bucket-{bucket_id}",
             ),
             authority=StateAuthorityKind.DELIVERY_ADMISSION,
             caller="delivery.scheduling",
@@ -902,9 +1094,13 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_fix01_projection_indexes_and_transition_log_are_authoritative(self) -> None:
         await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
         claimed = await self._claim(token="claim-projection")
+        delivery_namespace = next(
+            key.namespace for key in self.model.records
+            if key.object_type == "delivery"
+        )
         names = {
             key.name: values for key, values in self.model.ordered_indexes.items()
-            if key.namespace == next(iter(self.model.records)).namespace
+            if key.namespace == delivery_namespace
         }
         self.assertEqual(0, len(names["delivery.ready"]))
         self.assertEqual(1, len(names["delivery.claimed"]))

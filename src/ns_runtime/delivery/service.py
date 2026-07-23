@@ -522,6 +522,8 @@ class DeliveryAdmissionService:
             target_fingerprint=target_fingerprint,
             authority_bucket_count=decision.authority_bucket_count,
             authority_bucket_id=authority_bucket_id,
+            authority_layout_version=decision.authority_layout_version,
+            authority_layout_generation=decision.authority_layout_generation,
             payload_evidence=payload_evidence, policy_decision=decision,
             state_version=final_state_version, created_at=now, updated_at=now,
             active_count=0, inflight_count=0, cancelled_count=0,
@@ -573,13 +575,14 @@ class DeliveryAdmissionService:
                 target_index=index, binding=binding,
                 authority_bucket_count=decision.authority_bucket_count,
                 authority_bucket_id=authority_bucket_id,
+                authority_layout_version=decision.authority_layout_version,
+                authority_layout_generation=decision.authority_layout_generation,
                 status=DeliveryRecordStatus.PREPARED,
                 payload_evidence=payload_evidence, policy_decision=decision,
                 envelope_authority=request.envelope_authority,
                 envelope_authority_fingerprint=compute_envelope_authority_fingerprint(
                     request.envelope_authority
                 ),
-                target_access_decision_reference=plan.iam_decision_reference,
                 state_version=1, created_at=now, updated_at=now,
             ))
         dedup_expires = now + timedelta(seconds=decision.dedup_ttl_seconds)

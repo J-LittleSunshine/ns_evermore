@@ -73,6 +73,11 @@ from .serde import (
     summary_from_dict,
     summary_to_dict,
 )
+from .authority_layout import (
+    DeliveryAuthorityLayout,
+    StateStoreDeliveryAuthorityRegistry,
+    delivery_scope,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,13 +95,22 @@ class _SummaryAuthority:
 class StateStoreDeliveryScheduler:
     """Single-runtime scheduler; Redis records remain the only state authority."""
 
-    def __init__(self, *, store: StateStore, clock: Clock) -> None:
+    def __init__(
+        self, *, store: StateStore, clock: Clock,
+        authority_runtime_id: str = "runtime-local",
+    ) -> None:
         if not isinstance(store, StateStore):
             _invalid("store")
         if not isinstance(clock, Clock):
             _invalid("clock")
         self._store = store
         self._clock = clock
+        self._registry = StateStoreDeliveryAuthorityRegistry(
+            store=store, runtime_id=authority_runtime_id,
+        )
+        self._activation_lock = asyncio.Lock()
+        self._activation_bucket_cursor: dict[str, int] = {}
+        self._claim_bucket_cursor: dict[str, int] = {}
 
     async def wait_for_renewal(self, *, policy: DeliverySchedulingPolicy) -> None:
         """Wait on the scheduler's injected Clock without exposing it to workers."""
@@ -115,47 +129,46 @@ class StateStoreDeliveryScheduler:
         _text(tenant_id, "activate.tenant_id")
         if not isinstance(policy, DeliverySchedulingPolicy):
             _invalid("activate.policy")
-        scope = _scope(tenant_id, 0)
-        candidate_page = None
-        page_size = min(64, policy.activation_scan_budget)
-        for bucket_id in range(policy.authority_bucket_count):
-            candidate_scope = _scope(tenant_id, bucket_id)
-            page = await self._store.read_ordered_index(
-                scope=candidate_scope,
-                index=_index(candidate_scope, "delivery.prepared"),
-                limit=page_size,
+        async with self._activation_lock:
+            return await self._activate_prepared_locked(
+                tenant_id=tenant_id,
+                policy=policy,
+                global_queued_before=global_queued_before,
             )
-            if page.total_count:
-                scope = candidate_scope
-                candidate_page = page
-                break
-        if candidate_page is None:
-            candidate_page = await self._store.read_ordered_index(
-                scope=scope, index=_index(scope, "delivery.prepared"), limit=1,
-            )
-        elif candidate_page.next_cursor is not None:
-            entries = list(candidate_page.entries)
-            cursor = candidate_page.next_cursor
-            while cursor is not None and len(entries) < policy.activation_scan_budget:
-                page = await self._store.read_ordered_index(
-                    scope=scope, index=_index(scope, "delivery.prepared"),
-                    limit=min(page_size, policy.activation_scan_budget - len(entries)),
-                    start_after=cursor,
-                )
-                entries.extend(page.entries)
-                cursor = page.next_cursor
-            candidate_page = StateOrderedIndexReadResult(
-                entries=tuple(entries), observed_at=candidate_page.observed_at,
-                total_count=candidate_page.total_count,
-                next_cursor=(cursor if cursor is not None and entries else None),
-            )
+
+    async def _activate_prepared_locked(
+        self,
+        *,
+        tenant_id: str,
+        policy: DeliverySchedulingPolicy,
+        global_queued_before: int | None,
+    ) -> ActivationResult:
+        layout = _layout(policy)
+        await self._registry.ensure_registered(tenant_id=tenant_id, layout=layout)
+        scope = _scope(
+            tenant_id, 0, layout_generation=policy.authority_layout_generation,
+        )
+        now = self._clock.utc_now()
+        start_bucket = self._activation_bucket_cursor.get(tenant_id, 0) % policy.authority_bucket_count
+        bucket_order = tuple(
+            (start_bucket + offset) % policy.authority_bucket_count
+            for offset in range(policy.authority_bucket_count)
+        )
+        self._activation_bucket_cursor[tenant_id] = (start_bucket + 1) % policy.authority_bucket_count
+        scope, candidate_page = await self._select_activation_page(
+            tenant_id=tenant_id,
+            bucket_order=bucket_order,
+            policy=policy,
+            now=now,
+        )
         prepared_index = _index(scope, "delivery.prepared")
         counts = await self.resource_counts(
             tenant_id=tenant_id,
             authority_bucket_count=policy.authority_bucket_count,
+            authority_layout_generation=policy.authority_layout_generation,
         )
         queued_before = counts.queued
-        authoritative_global = counts.queued
+        authoritative_global = await self.runtime_queued_count(policy=policy)
         if global_queued_before is None:
             global_queued_before = authoritative_global
         if (
@@ -168,7 +181,6 @@ class StateStoreDeliveryScheduler:
         selected: list[_DeliveryAuthority] = []
         expired: list[_DeliveryAuthority] = []
         reasons: list[ActivationSkipReason] = []
-        now = self._clock.utc_now()
         selected_scores: dict[str, float] = {}
         expired_scores: dict[str, float] = {}
         selected_policy_snapshot: tuple[str, str] | None = None
@@ -184,10 +196,12 @@ class StateStoreDeliveryScheduler:
                 ))
                 continue
             value = item.value
-            bucket_id = int(scope.atomic_scope.partition.removeprefix("bucket-"))
+            bucket_id = _bucket_id(scope)
             if (
                 value.authority_bucket_count != policy.authority_bucket_count
                 or value.authority_bucket_id != bucket_id
+                or value.authority_layout_version != policy.authority_layout_version
+                or value.authority_layout_generation != policy.authority_layout_generation
             ):
                 raise NsRuntimeDeliveryStateError(details={
                     "component": "delivery_scheduler",
@@ -225,13 +239,11 @@ class StateStoreDeliveryScheduler:
                 _reason(reasons, ActivationSkipReason.GLOBAL_WATERMARK)
                 break
             if value.target_fingerprint not in target_queued:
-                target_queued[value.target_fingerprint] = (
-                    await self._store.read_ordered_index(
-                        scope=scope,
-                        index=_target_index(scope, value.target_fingerprint),
-                        limit=1,
-                    )
-                ).total_count
+                target_queued[value.target_fingerprint] = await self._target_queued_count(
+                    tenant_id=tenant_id,
+                    target_fingerprint=value.target_fingerprint,
+                    policy=policy,
+                )
             target_count = target_queued[value.target_fingerprint]
             if target_count >= policy.target_queued_high_watermark:
                 _reason(reasons, ActivationSkipReason.TARGET_WATERMARK)
@@ -372,8 +384,144 @@ class StateStoreDeliveryScheduler:
             ),
         )
 
+    async def _activation_page_is_eligible(
+        self, *, scope: StateAccessScope, page: StateOrderedIndexReadResult,
+        policy: DeliverySchedulingPolicy, now,
+    ) -> bool:
+        """Cheap bounded probe so one blocked bucket cannot hide another."""
+
+        for entry in page.entries:
+            try:
+                authority = await self._read_delivery(scope, entry.member)
+            except NsRuntimeStateStoreUnavailableError:
+                continue
+            value = authority.value
+            if value.status is not DeliveryRecordStatus.PREPARED:
+                continue
+            if (
+                value.authority_bucket_count != policy.authority_bucket_count
+                or value.authority_bucket_id != _bucket_id(scope)
+                or value.authority_layout_version != policy.authority_layout_version
+                or value.authority_layout_generation != policy.authority_layout_generation
+            ):
+                raise NsRuntimeDeliveryStateError(details={
+                    "component": "delivery_scheduler",
+                    "operation": "activation_probe",
+                    "reason": "authority_layout_mismatch",
+                })
+            if value.policy_decision.expires_at <= now:
+                return True
+            target_count = await self._target_queued_count(
+                tenant_id=value.tenant_id,
+                target_fingerprint=value.target_fingerprint,
+                policy=policy,
+            )
+            if target_count < policy.target_queued_high_watermark:
+                return True
+        return False
+
+    async def _target_queued_count(
+        self, *, tenant_id: str, target_fingerprint: str,
+        policy: DeliverySchedulingPolicy,
+    ) -> int:
+        results = await asyncio.gather(*(
+            self._store.read_ordered_index(
+                scope=(scope := _scope(
+                    tenant_id,
+                    bucket_id,
+                    layout_generation=policy.authority_layout_generation,
+                )),
+                index=_target_index(scope, target_fingerprint),
+                limit=1,
+            )
+            for bucket_id in range(policy.authority_bucket_count)
+        ))
+        return sum(result.total_count for result in results)
+
+    async def _select_activation_page(
+        self, *, tenant_id: str, bucket_order: tuple[int, ...],
+        policy: DeliverySchedulingPolicy, now,
+    ) -> tuple[StateAccessScope, StateOrderedIndexReadResult]:
+        """Round-robin all buckets inside one global candidate scan budget."""
+
+        remaining = policy.activation_scan_budget
+        first_limit = max(
+            1,
+            min(64, policy.activation_scan_budget // policy.authority_bucket_count),
+        )
+        pages: list[tuple[StateAccessScope, StateOrderedIndexReadResult]] = []
+        for bucket_id in bucket_order:
+            if remaining <= 0:
+                break
+            scope = _scope(
+                tenant_id, bucket_id,
+                layout_generation=policy.authority_layout_generation,
+            )
+            page = await self._store.read_ordered_index(
+                scope=scope,
+                index=_index(scope, "delivery.prepared"),
+                limit=min(first_limit, remaining),
+            )
+            remaining -= len(page.entries)
+            pages.append((scope, page))
+        for scope, page in pages:
+            if page.total_count and await self._activation_page_is_eligible(
+                scope=scope, page=page, policy=policy, now=now,
+            ):
+                return scope, page
+        # No first-page candidate: advance every non-empty cursor by one page
+        # per round, so a dense blocked bucket cannot consume the full budget.
+        mutable = [
+            [scope, list(page.entries), page]
+            for scope, page in pages
+        ]
+        progress = True
+        while remaining > 0 and progress:
+            progress = False
+            for item in mutable:
+                scope = item[0]
+                entries = item[1]
+                prior = item[2]
+                cursor = prior.next_cursor
+                if cursor is None or remaining <= 0:
+                    continue
+                next_page = await self._store.read_ordered_index(
+                    scope=scope,
+                    index=_index(scope, "delivery.prepared"),
+                    limit=min(64, remaining),
+                    start_after=cursor,
+                )
+                progress = progress or bool(next_page.entries)
+                entries.extend(next_page.entries)
+                remaining -= len(next_page.entries)
+                merged = StateOrderedIndexReadResult(
+                    entries=tuple(entries),
+                    observed_at=prior.observed_at,
+                    total_count=prior.total_count,
+                    next_cursor=next_page.next_cursor,
+                )
+                item[2] = merged
+                if await self._activation_page_is_eligible(
+                    scope=scope, page=merged, policy=policy, now=now,
+                ):
+                    return scope, merged
+        for scope, entries, page in mutable:
+            if page.total_count:
+                return scope, page
+        # Preserve a typed empty result even when the budget is smaller than
+        # the configured bucket count.
+        scope = _scope(
+            tenant_id, bucket_order[0],
+            layout_generation=policy.authority_layout_generation,
+        )
+        page = await self._store.read_ordered_index(
+            scope=scope, index=_index(scope, "delivery.prepared"), limit=1,
+        )
+        return scope, page
+
     async def resource_counts(
         self, *, tenant_id: str, authority_bucket_count: int = 8,
+        authority_layout_generation: int = 2,
     ) -> DeliveryResourceCounts:
         """Rebuild P11 resource counts from authoritative delivery records."""
 
@@ -386,7 +534,10 @@ class StateStoreDeliveryScheduler:
         )
         requests = []
         for bucket_id in range(authority_bucket_count):
-            scope = _scope(tenant_id, bucket_id)
+            scope = _scope(
+                tenant_id, bucket_id,
+                layout_generation=authority_layout_generation,
+            )
             for name in names:
                 requests.append(self._store.read_ordered_index(
                     scope=scope, index=_index(scope, name), limit=1,
@@ -409,6 +560,22 @@ class StateStoreDeliveryScheduler:
         )
         return counts
 
+    async def runtime_queued_count(self, *, policy: DeliverySchedulingPolicy) -> int:
+        """Bounded runtime-global queued count rebuilt from registered authority."""
+
+        if not isinstance(policy, DeliverySchedulingPolicy):
+            _invalid("runtime_queued.policy")
+        tenants = await self._registry.registered_tenants(layout=_layout(policy))
+        counts = await asyncio.gather(*(
+            self.resource_counts(
+                tenant_id=tenant_id,
+                authority_bucket_count=policy.authority_bucket_count,
+                authority_layout_generation=policy.authority_layout_generation,
+            )
+            for tenant_id in tenants
+        ))
+        return sum(value.queued for value in counts)
+
     async def claim_next(
         self,
         *,
@@ -425,40 +592,56 @@ class StateStoreDeliveryScheduler:
             _text(value, f"claim.{field}")
         if not isinstance(policy, DeliverySchedulingPolicy):
             _invalid("claim.policy")
-        scope = _scope(tenant_id, 0)
+        await self._registry.ensure_registered(tenant_id=tenant_id, layout=_layout(policy))
         now = self._clock.utc_now()
-        ready = None
-        for bucket_id in range(policy.authority_bucket_count):
-            candidate_scope = _scope(tenant_id, bucket_id)
-            page = await self._store.read_ordered_index(
-                scope=candidate_scope, index=_index(candidate_scope, "delivery.ready"),
-                limit=16,
+        start_bucket = self._claim_bucket_cursor.get(tenant_id, 0) % policy.authority_bucket_count
+        contended = False
+        for offset in range(policy.authority_bucket_count):
+            bucket_id = (start_bucket + offset) % policy.authority_bucket_count
+            scope = _scope(
+                tenant_id, bucket_id,
+                layout_generation=policy.authority_layout_generation,
             )
-            if page.entries:
-                scope, ready = candidate_scope, page
-                break
-        if ready is None:
-            for bucket_id in range(policy.authority_bucket_count):
-                candidate_scope = _scope(tenant_id, bucket_id)
-                due = await self._store.read_ordered_index(
-                    scope=candidate_scope,
-                    index=_index(candidate_scope, "delivery.lease"),
-                    limit=1, max_score=now.timestamp(),
-                )
-                if due.entries:
-                    scope = candidate_scope
-                    break
+            recovered = await self._recover_expired_for_claim(
+                scope=scope, runtime_id=runtime_id, worker_id=worker_id,
+                claim_token=claim_token, policy=policy, now=now,
+            )
+            if recovered is not None:
+                self._claim_bucket_cursor[tenant_id] = (bucket_id + 1) % policy.authority_bucket_count
+                return recovered
             ready = await self._store.read_ordered_index(
                 scope=scope, index=_index(scope, "delivery.ready"), limit=16,
             )
+            result, was_contended = await self._claim_ready_in_scope(
+                scope=scope, ready=ready, tenant_id=tenant_id,
+                runtime_id=runtime_id, worker_id=worker_id,
+                claim_token=claim_token, policy=policy, now=now,
+            )
+            contended = contended or was_contended
+            if result is not None:
+                self._claim_bucket_cursor[tenant_id] = (bucket_id + 1) % policy.authority_bucket_count
+                return result
+        self._claim_bucket_cursor[tenant_id] = (start_bucket + 1) % policy.authority_bucket_count
+        return ClaimResult(
+            outcome=(ClaimOutcome.CONTENDED if contended else ClaimOutcome.EMPTY),
+            claim=None, delivery=None,
+        )
+
+    async def _claim_ready_in_scope(
+        self, *, scope: StateAccessScope, ready: StateOrderedIndexReadResult,
+        tenant_id: str, runtime_id: str, worker_id: str, claim_token: str,
+        policy: DeliverySchedulingPolicy, now,
+    ) -> tuple[ClaimResult | None, bool]:
         contended = False
         for entry in ready.entries:
             authority = await self._read_delivery(scope, entry.member)
-            bucket_id = int(scope.atomic_scope.partition.removeprefix("bucket-"))
+            bucket_id = _bucket_id(scope)
             if (
                 authority.value.authority_bucket_count
                 != policy.authority_bucket_count
                 or authority.value.authority_bucket_id != bucket_id
+                or authority.value.authority_layout_version != policy.authority_layout_version
+                or authority.value.authority_layout_generation != policy.authority_layout_generation
             ):
                 raise NsRuntimeDeliveryStateError(details={
                     "component": "delivery_scheduler",
@@ -505,18 +688,11 @@ class StateStoreDeliveryScheduler:
                 owner_epoch=owner_epoch,
                 authority_bucket_count=claimed.authority_bucket_count,
                 authority_bucket_id=claimed.authority_bucket_id,
+                authority_layout_version=claimed.authority_layout_version,
+                authority_layout_generation=claimed.authority_layout_generation,
             )
-            return ClaimResult(outcome=ClaimOutcome.CLAIMED, claim=claim, delivery=claimed)
-        recovered = await self._recover_expired_for_claim(
-            scope=scope, runtime_id=runtime_id, worker_id=worker_id,
-            claim_token=claim_token, policy=policy, now=now,
-        )
-        if recovered is not None:
-            return recovered
-        return ClaimResult(
-            outcome=(ClaimOutcome.CONTENDED if contended else ClaimOutcome.EMPTY),
-            claim=None, delivery=None,
-        )
+            return ClaimResult(outcome=ClaimOutcome.CLAIMED, claim=claim, delivery=claimed), contended
+        return None, contended
 
     async def renew_owner(
         self,
@@ -689,6 +865,17 @@ class StateStoreDeliveryScheduler:
         )
         for entry in due.entries:
             authority = await self._read_delivery(scope, entry.member)
+            if (
+                authority.value.authority_bucket_count != policy.authority_bucket_count
+                or authority.value.authority_bucket_id != _bucket_id(scope)
+                or authority.value.authority_layout_version != policy.authority_layout_version
+                or authority.value.authority_layout_generation != policy.authority_layout_generation
+            ):
+                raise NsRuntimeDeliveryStateError(details={
+                    "component": "delivery_scheduler",
+                    "operation": "recover_expired_owner",
+                    "reason": "authority_layout_mismatch",
+                })
             old = authority.value.owner
             if old is None or old.lease_expires_at > now:
                 continue
@@ -727,6 +914,8 @@ class StateStoreDeliveryScheduler:
                     owner_epoch=owner.owner_epoch,
                     authority_bucket_count=updated.authority_bucket_count,
                     authority_bucket_id=updated.authority_bucket_id,
+                    authority_layout_version=updated.authority_layout_version,
+                    authority_layout_generation=updated.authority_layout_generation,
                 )
                 return ClaimResult(outcome=ClaimOutcome.CLAIMED, claim=claim, delivery=updated)
             if authority.value.status is DeliveryRecordStatus.SENDING:
@@ -874,8 +1063,19 @@ class StateStoreDeliveryScheduler:
         self,
         *,
         claim: DeliveryClaim,
+        expected_state_version: int | None = None,
     ) -> DeliveryRecord:
-        return await self._complete_write(claim=claim, failure=None)
+        if expected_state_version is not None and (
+            isinstance(expected_state_version, bool)
+            or not isinstance(expected_state_version, int)
+            or expected_state_version <= 0
+        ):
+            _invalid("complete.expected_state_version")
+        return await self._complete_write(
+            claim=claim,
+            failure=None,
+            expected_state_version=expected_state_version,
+        )
 
     async def complete_write_failure(
         self,
@@ -885,7 +1085,9 @@ class StateStoreDeliveryScheduler:
     ) -> DeliveryRecord:
         if not isinstance(failure, DeliveryWriteFailure):
             _invalid("complete.failure")
-        return await self._complete_write(claim=claim, failure=failure)
+        return await self._complete_write(
+            claim=claim, failure=failure, expected_state_version=None,
+        )
 
     async def mark_write_uncertain(self, *, claim: DeliveryClaim) -> DeliveryRecord:
         if not isinstance(claim, DeliveryClaim):
@@ -977,11 +1179,21 @@ class StateStoreDeliveryScheduler:
         *,
         claim: DeliveryClaim,
         failure: DeliveryWriteFailure | None,
+        expected_state_version: int | None,
     ) -> DeliveryRecord:
         if not isinstance(claim, DeliveryClaim):
             _invalid("complete.claim")
         scope = _claim_scope(claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
+        if (
+            expected_state_version is not None
+            and authority.value.state_version != expected_state_version
+        ):
+            raise NsRuntimeStateStoreConflictError(details={
+                "component": "delivery_scheduler",
+                "operation": "complete_write",
+                "reason": "post_write_authority_revision_changed",
+            })
         now = self._clock.utc_now()
         owner = _require_owner(authority.value, claim, now, allow_risk=True)
         if (
@@ -1180,27 +1392,48 @@ async def _read_record(
     return result.record
 
 
-def _scope(tenant_id: str, bucket_id: int) -> StateAccessScope:
-    namespace = StateNamespace.tenant(tenant_id=tenant_id, domain="delivery")
-    return StateAccessScope(
-        atomic_scope=StateAtomicScope(
-            namespace=namespace, partition=f"bucket-{bucket_id}",
-        ),
-        authority=StateAuthorityKind.DELIVERY_ADMISSION,
+def _scope(
+    tenant_id: str, bucket_id: int, *, layout_generation: int = 2,
+) -> StateAccessScope:
+    return delivery_scope(
+        tenant_id, bucket_id, layout_generation=layout_generation,
         caller="delivery.scheduling",
-        capabilities=frozenset({
-            StateCallerCapability.READ,
-            StateCallerCapability.SCAN,
-            StateCallerCapability.COMPARE_AND_SET,
-            StateCallerCapability.TRANSACT,
-            StateCallerCapability.ORDERED_INDEX,
-            StateCallerCapability.APPEND,
-        }),
     )
 
 
 def _claim_scope(claim: DeliveryClaim) -> StateAccessScope:
-    return _scope(claim.tenant_id, claim.authority_bucket_id)
+    return _scope(
+        claim.tenant_id,
+        claim.authority_bucket_id,
+        layout_generation=claim.authority_layout_generation,
+    )
+
+
+def _layout(policy: DeliverySchedulingPolicy) -> DeliveryAuthorityLayout:
+    return DeliveryAuthorityLayout(
+        version=policy.authority_layout_version,
+        generation=policy.authority_layout_generation,
+        bucket_count=policy.authority_bucket_count,
+    )
+
+
+def _bucket_id(scope: StateAccessScope) -> int:
+    partition = scope.atomic_scope.partition
+    marker = "-bucket-"
+    if not partition.startswith("layout-") or marker not in partition:
+        raise NsRuntimeDeliveryStateError(details={
+            "component": "delivery_scheduler",
+            "operation": "bucket_id",
+            "reason": "authority_layout_partition_invalid",
+        })
+    try:
+        return int(partition.rsplit(marker, 1)[1])
+    except ValueError:
+        raise NsRuntimeDeliveryStateError(details={
+            "component": "delivery_scheduler",
+            "operation": "bucket_id",
+            "reason": "authority_layout_partition_invalid",
+        }) from None
 
 
 def _replace_delivery(record: StateRecord, value: DeliveryRecord) -> StateMutation:
@@ -1308,6 +1541,8 @@ def _require_owner(
         or value.owner_epoch != claim.owner_epoch
         or value.authority_bucket_count != claim.authority_bucket_count
         or value.authority_bucket_id != claim.authority_bucket_id
+        or value.authority_layout_version != claim.authority_layout_version
+        or value.authority_layout_generation != claim.authority_layout_generation
     ):
         raise NsRuntimeOwnerMismatchError(details={
             "component": "delivery_scheduler", "reason": "claim_mismatch",

@@ -34,6 +34,11 @@ from .models import (
 )
 from ns_runtime.routing import ResolvedRoutingPlan
 from .serde import delivery_to_dict, summary_to_dict
+from .authority_layout import (
+    DeliveryAuthorityLayout,
+    StateStoreDeliveryAuthorityRegistry,
+    delivery_scope,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -141,29 +146,54 @@ class UnavailableDeliveryAdmissionStore(DeliveryAdmissionStore):
 class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
     """Production adapter. It never falls back to cache or process memory."""
 
-    def __init__(self, store: StateStore) -> None:
+    def __init__(self, store: StateStore, *, authority_runtime_id: str = "runtime-local") -> None:
         if not isinstance(store, StateStore):
             _invalid("store")
         self._store = store
+        self._registry = StateStoreDeliveryAuthorityRegistry(
+            store=store, runtime_id=authority_runtime_id,
+        )
 
     async def initialize(self, value: AdmissionInitialization) -> AtomicAdmissionResult:
         if not isinstance(value, AdmissionInitialization):
             _invalid("initialization")
-        namespace = StateNamespace.tenant(
-            tenant_id=value.root_summary.tenant_id, domain="delivery",
+        layout = DeliveryAuthorityLayout(
+            version=value.root_summary.authority_layout_version,
+            generation=value.root_summary.authority_layout_generation,
+            bucket_count=value.root_summary.authority_bucket_count,
         )
-        scope = StateAccessScope(
-            atomic_scope=StateAtomicScope(
-                namespace=namespace,
-                partition=f"bucket-{value.root_summary.authority_bucket_id}",
-            ),
-            authority=StateAuthorityKind.DELIVERY_ADMISSION,
+        await self._registry.ensure_registered(
+            tenant_id=value.root_summary.tenant_id,
+            layout=layout,
+        )
+        scope = delivery_scope(
+            value.root_summary.tenant_id,
+            value.root_summary.authority_bucket_id,
+            layout_generation=value.root_summary.authority_layout_generation,
             caller="delivery.admission",
-            capabilities=frozenset({
-                StateCallerCapability.READ, StateCallerCapability.TRANSACT,
-                StateCallerCapability.ORDERED_INDEX, StateCallerCapability.APPEND,
-            }),
         )
+        namespace = scope.namespace
+        dedup_key = StateKey(
+            namespace=namespace,
+            object_type="dedup",
+            object_id=_key_digest(
+                value.dedup.tenant_id,
+                value.dedup.message_id,
+                value.dedup.target_fingerprint,
+            ),
+        )
+        existing_dedup = await self._store.read(
+            scope=scope,
+            key=dedup_key,
+            consistency=StateConsistency.LINEARIZABLE,
+        )
+        if existing_dedup.record is not None:
+            existing = await self._read_dedup(scope, namespace, value.dedup)
+            return AtomicAdmissionResult(
+                outcome=AtomicAdmissionOutcome.DUPLICATE,
+                root_summary=None,
+                dedup=existing,
+            )
         if not value.deliveries:
             mutations = self._initial_mutations(
                 namespace, value, value.root_summary,

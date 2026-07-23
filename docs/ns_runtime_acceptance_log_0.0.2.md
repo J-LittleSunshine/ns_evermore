@@ -2091,6 +2091,43 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - P13 DeadLetterRecord/replay/一般cancel/hold、P14 health scoring/fair scheduling、P17 leader lease/cluster fencing、Redis Cluster运行、master query、remote forwarding、跨runtime ownership均未实现；没有第二TaskSupervisor/event loop/shutdown owner。
 - Redis服务证据仍为standalone；Valkey只是driver compatibility，不声明valkey-server、Sentinel、Cluster、failover或replica read。production `task.dispatch`继续disabled。
 
+## P10-FIX-05 + P11-FIX-03 联合修复启动记录
+
+- 工作包：`P10-FIX-05 + P11-FIX-03`。
+- 状态：`IN_PROGRESS`；P10/P11既有`VERIFIED/F3 (local only)`结论在修复和联合复验期间撤回，P12继续`BLOCKED`，production `task.dispatch`继续disabled。
+- 开始时间：`2026-07-23`（Asia/Shanghai）。
+- 基线：分支`codex/ns-runtime-implementation`，启动HEAD与upstream均为`0003eaa495f6045b4b1f10c89f31d4096b925464`，worktree启动时干净。
+- 复核范围：可恢复runtime tenant/layout registry和真正global watermark；跨bucket activation/claim/lease recovery公平性；authority layout version/generation与8→16迁移门禁；出站MessageGroup策略字段authority；post-write StateStore冲突统一reconcile；payload_ref实时object access decision绑定。
+- 冻结边界：ENV-1、PC-1、IAM-R1、RP-1和P08 StateStore owner保持；不调用Router、不重选target、不修改RoutingPlan；不新增第二TaskSupervisor/event loop/shutdown owner。
+- 明确不实施：P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay/cancel/hold、P14健康/公平调度、P17 leader/cluster coordination、remote/master routing或production task.dispatch enable。
+- 恢复条件：源码和指定竞争/迁移测试、真实Redis standalone与provider A/B恢复、P03-P11、asyncio/uvloop/backend全量、compileall/pip/diff/cold-import/banned scan全部通过并完成ADR/plan/log；任一证据缺失则保持`IN_PROGRESS`。
+
+## P10-FIX-05 + P11-FIX-03 联合验收记录
+
+- 工作包：`P10-FIX-05 + P11-FIX-03`。
+- 状态：`VERIFIED / F3 (local only)`；P10/P11恢复VERIFIED，P12继续`BLOCKED`，production `task.dispatch`继续disabled。
+- 完成时间：`2026-07-23`（Asia/Shanghai）。启动基线为`0003eaa495f6045b4b1f10c89f31d4096b925464`；本记录只有local verification，没有远程CI，不声明CI passed或ACK可靠投递闭环完成。
+- 修改文件：`docs/ns_runtime_architecture_decisions_0.0.2.md`、`docs/ns_runtime_implementation_plan_for_design_0.0.2.md`、`docs/ns_runtime_acceptance_log_0.0.2.md`；`src/ns_common/config/groups/runtime.py`、`validation.py`、`state_store/redis_provider.py`；`src/ns_runtime/delivery/authority_layout.py`、`__init__.py`、`models.py`、`payload_authority.py`、`policy.py`、`scheduling.py`、`scheduling_store.py`、`serde.py`、`service.py`、`store.py`、`workers.py`；三份delivery/Redis测试文件。
+- layout与全局authority：新增typed layout version/generation、restart-required配置、持久runtime layout/tenant registry和generation物理partition；admission/scheduler从StateStore权威注册表恢复tenant集合并跨全部tenant/bucket重建runtime-global queued水位。8到16、layout/generation不匹配以及上一代tagged Redis record均typed migration-required，不静默混读。
+- activation/claim/recovery：同一local scheduler activation coordinator串行激活，在全局scan budget内给所有bucket有界首页并轮转cursor；claim每次轮转bucket并先处理expired lease，持续ready的低号桶不再遮蔽后桶。没有system global ZSet、跨slot transaction、P14通用公平调度或P17 ownership transfer。
+- message/payload/write reconcile：出站MessageGroup保留identity/type/category/created_at，但priority/reliability/expiry从冻结policy重建。payload_ref validation绑定对象/version/checksum/request、target、当前permission snapshot和实际IAM access decision。transport成功后的任何StateStore error统一重读：匹配ACK_WAITING接受、SENDING转WRITE_UNCERTAIN、其他typed conflict；对账读取失败返回WRITE_OUTCOME_UNKNOWN，不盲写或重发。
+- P11-W01至W11：既有prepared分批激活、原子claim、local lease/renew、发送前权威校验、queued到sending与attempt一致、ack deadline、write成功只到ack_waiting、typed write failure、owner risk窗口、资源计数和本地实验dispatch全部保持；本修复补齐跨tenant/global、跨bucket/layout、策略消息、payload IAM与写后冲突恢复证据。
+
+### 实际测试命令与真实结果
+
+- P10/P11定向：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling`，`Ran 51 tests in 36.257s`，`OK`。覆盖public直接构造、`dataclasses.replace()`、非法dependency、fake transport、多worker/duplicate claim、prepared批量/水位、跨tenant global watermark、跨bucket激活、target disconnect、payload_ref、expires_at、owner risk、write success/failure/uncertain、shutdown与StateStore冲突。
+- 真实Redis standalone：`PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_integration`，`Ran 16 tests in 26.546s`，`OK`。覆盖Lua原子冲突、provider A/B恢复、runtime registry重建、8到16门禁及上一代tagged key迁移检测。
+- 标准asyncio全树：`PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py' -q`，`Ran 843 tests in 98.231s`，`OK (skipped=1)`；跳过为既有平台条件。
+- runtime uvloop：显式安装`uvloop.EventLoopPolicy()`并按DEP-1排除Django-only `test_cache.py`，`Ran 832 tests in 105.462s`，`OK (skipped=1)`。
+- backend/Django全树：`PYTHONPATH=src /home/ns/.virtualenvs/ns_backend_p09_rp1_review/bin/python -m unittest discover -s tests -p 'test_*.py' -q`，`Ran 827 tests in 60.694s`，`OK (skipped=50)`；skips为backend环境未安装runtime可选依赖等既有边界。
+- 依赖与静态：`python3 -m compileall -q src tests`通过；runtime/backend两环境`python -m pip check`均为`No broken requirements found.`；delivery cold import输出`DELIVERY_COLD_IMPORT=OK`；RP-1相对基线零diff；P12+禁止项新增源码扫描为`NO_MATCH`；`git diff --check`通过。
+
+### 未实现限制
+
+- P11只完成`prepared -> queued -> sending -> ack_waiting`及typed waiting/failure/uncertain保护；transport write成功不等于delivery success。P12 ACK/NACK/Defer、AckRecord、ACK timeout scanner、retry worker/budget与成功终态均未实现。
+- P13 DeadLetterRecord/replay/一般cancel/hold、P14 health scoring/fair scheduling、P17 leader lease/cluster fencing、Redis Cluster运行、master query、remote forwarding、跨runtime ownership均未实现；没有第二TaskSupervisor/event loop/shutdown owner。
+- Redis服务证据仍为standalone；Valkey只是driver compatibility，不声明valkey-server、Sentinel、Cluster、failover或replica read。production `task.dispatch`继续disabled。
+
 ## 新记录模板
 
 - 工作包：

@@ -777,6 +777,9 @@ class _ConfigValidator:
             )
         for field_name in (
             "activation_batch_size",
+            "activation_scan_budget",
+            "authority_bucket_count",
+            "authority_layout_generation",
             "global_queued_high_watermark",
             "tenant_queued_high_watermark",
             "target_queued_high_watermark",
@@ -788,6 +791,16 @@ class _ConfigValidator:
         ):
             self._validate_positive_int(
                 f"runtime.delivery.{field_name}", getattr(delivery, field_name),
+            )
+        if delivery.authority_layout_version != "delivery-authority-layout-v2":
+            raise NsConfigError(
+                "runtime.delivery.authority_layout_version is unsupported.",
+                details={"field": "runtime.delivery.authority_layout_version"},
+            )
+        if delivery.authority_layout_apply_mode != "restart_required":
+            raise NsConfigError(
+                "runtime.delivery.authority_layout_apply_mode must be restart_required.",
+                details={"field": "runtime.delivery.authority_layout_apply_mode"},
             )
         if delivery.lease_renew_interval_seconds >= delivery.lease_ttl_seconds:
             raise NsConfigError(

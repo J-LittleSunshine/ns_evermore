@@ -67,11 +67,13 @@ from ns_runtime.delivery import (
     ClaimOutcome,
     ClaimWorker,
     DeliverySchedulingPolicy,
+    DeliveryAuthorityLayout,
     DeliveryAdmissionService,
     InlinePayload,
     StageSixAdmissionInput,
     StateStoreDeliveryAdmissionStore,
     StateStoreDeliveryScheduler,
+    StateStoreDeliveryAuthorityRegistry,
 )
 from ns_runtime.processor import RoutingPreparationResult
 from ns_runtime.context import RuntimeContext, RuntimeDependencySlots
@@ -306,6 +308,41 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(
             "legacy_physical_key_migration_required",
+            caught.exception.details["reason"],
+        )
+        await store.close()
+
+    async def test_previous_bucket_tag_generation_requires_layout_migration(self) -> None:
+        store = self._provider()
+        await store.open()
+        base = self._bucket_scope(bucket_id=4)
+        scope = StateAccessScope(
+            atomic_scope=StateAtomicScope(
+                namespace=base.namespace,
+                partition="layout-2-bucket-4",
+            ),
+            authority=base.authority,
+            caller=base.caller,
+            capabilities=base.capabilities,
+        )
+        key = StateKey(
+            namespace=scope.namespace,
+            object_type="delivery",
+            object_id="previous-tag-layout-proof",
+        )
+        client = store._require_client()
+        await client.hset(
+            store._previous_layout_record_key(scope, key),
+            mapping={"legacy": "1"},
+        )
+        with self.assertRaises(NsRuntimeStateStoreVersionMismatchError) as caught:
+            await store.read(
+                scope=scope,
+                key=key,
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+        self.assertEqual(
+            "authority_layout_generation_migration_required",
             caught.exception.details["reason"],
         )
         await store.close()
@@ -746,7 +783,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         scope = StateAccessScope(
             atomic_scope=StateAtomicScope(
                 namespace=namespace,
-                partition=f"bucket-{bucket_id}",
+                partition=f"layout-2-bucket-{bucket_id}",
             ),
             authority=StateAuthorityKind.DELIVERY_ADMISSION,
             caller="delivery.admission",
@@ -779,7 +816,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             client, self.namespace + ":record:*",
         )
         await client.aclose()
-        self.assertEqual(504, len(record_keys))
+        self.assertEqual(506, len(record_keys))
         await store.close()
 
     async def test_p10_records_survive_independent_provider_reconstruction(self) -> None:
@@ -849,7 +886,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                     namespace_prefix + ":record:*",
                 )
                 await raw.aclose()
-                self.assertEqual(target_count + 3, len(keys_before_restart))
+                self.assertEqual(target_count + 5, len(keys_before_restart))
                 await store_a.close()
                 del store_a, service_a, request_a, plan_a, scope, record_keys
 
@@ -948,6 +985,13 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                     set(keys_before_restart),
                     set(keys_after_duplicate),
                 )
+                with self.assertRaises(NsRuntimeStateStoreVersionMismatchError):
+                    await StateStoreDeliveryAuthorityRegistry(
+                        store=store_b,
+                    ).ensure_registered(
+                        tenant_id=request_b.tenant_id,
+                        layout=DeliveryAuthorityLayout(bucket_count=16),
+                    )
                 await store_b.close()
 
     @staticmethod
@@ -966,7 +1010,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         return StateAccessScope(
             atomic_scope=StateAtomicScope(
                 namespace=namespace,
-                partition=f"bucket-{bucket_id}",
+                partition=f"layout-2-bucket-{bucket_id}",
             ),
             authority=StateAuthorityKind.DELIVERY_ADMISSION,
             caller="delivery.admission",

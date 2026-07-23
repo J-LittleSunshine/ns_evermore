@@ -58,6 +58,8 @@ def delivery_to_dict(value: DeliveryRecord) -> dict[str, object]:
         "target_set_fingerprint": value.target_set_fingerprint,
         "target_index": value.target_index,
         "authority_bucket_count": value.authority_bucket_count,
+        "authority_layout_version": value.authority_layout_version,
+        "authority_layout_generation": value.authority_layout_generation,
         "authority_bucket_id": value.authority_bucket_id,
         "binding": _binding_to_dict(value.binding),
         "status": value.status.value,
@@ -86,7 +88,6 @@ def delivery_to_dict(value: DeliveryRecord) -> dict[str, object]:
         "last_failure": (
             None if value.last_failure is None else value.last_failure.value
         ),
-        "target_access_decision_reference": value.target_access_decision_reference,
         "last_fencing": value.last_fencing,
         "owner_epoch": value.owner_epoch,
     }
@@ -112,6 +113,8 @@ def delivery_from_dict(raw: object) -> DeliveryRecord:
             target_set_fingerprint=values["target_set_fingerprint"],
             target_index=values["target_index"],
             authority_bucket_count=values["authority_bucket_count"],
+            authority_layout_version=values.get("authority_layout_version", "delivery-authority-layout-v2"),
+            authority_layout_generation=values.get("authority_layout_generation", 2),
             authority_bucket_id=values["authority_bucket_id"],
             binding=_binding_from_dict(values["binding"]),
             status=DeliveryRecordStatus(values["status"]),
@@ -140,7 +143,6 @@ def delivery_from_dict(raw: object) -> DeliveryRecord:
                 None if values.get("last_failure") is None
                 else DeliveryWriteFailure(values["last_failure"])
             ),
-            target_access_decision_reference=values["target_access_decision_reference"],
             last_fencing=values.get("last_fencing", 0),
             owner_epoch=values.get("owner_epoch", 0),
         )
@@ -165,6 +167,8 @@ def summary_to_dict(value: MessageDeliverySummary) -> dict[str, object]:
         "target_fingerprint": value.target_fingerprint,
         "authority_bucket_count": value.authority_bucket_count,
         "authority_bucket_id": value.authority_bucket_id,
+        "authority_layout_version": value.authority_layout_version,
+        "authority_layout_generation": value.authority_layout_generation,
         "status": value.status.value,
         "total_count": value.total_count,
         "accepted_count": value.accepted_count,
@@ -222,6 +226,8 @@ def summary_from_dict(raw: object) -> MessageDeliverySummary:
             target_fingerprint=values["target_fingerprint"],
             authority_bucket_count=values["authority_bucket_count"],
             authority_bucket_id=values["authority_bucket_id"],
+            authority_layout_version=values.get("authority_layout_version", "delivery-authority-layout-v2"),
+            authority_layout_generation=values.get("authority_layout_generation", 2),
             status=DeliverySummaryStatus(values["status"]),
             total_count=values["total_count"],
             accepted_count=values["accepted_count"],
@@ -341,6 +347,8 @@ def policy_decision_to_dict(value: AdmissionPolicyDecision) -> dict[str, object]
         "initialization_batch_size": value.initialization_batch_size,
         "activation_batch_size": value.activation_batch_size,
         "authority_bucket_count": value.authority_bucket_count,
+        "authority_layout_version": value.authority_layout_version,
+        "authority_layout_generation": value.authority_layout_generation,
         "rejection_reason": (
             None if value.rejection_reason is None else value.rejection_reason.value
         ),
@@ -371,6 +379,8 @@ def policy_decision_from_dict(raw: object) -> AdmissionPolicyDecision:
             initialization_batch_size=values["initialization_batch_size"],
             activation_batch_size=values["activation_batch_size"],
             authority_bucket_count=values["authority_bucket_count"],
+            authority_layout_version=values.get("authority_layout_version", "delivery-authority-layout-v2"),
+            authority_layout_generation=values.get("authority_layout_generation", 2),
             rejection_reason=(
                 None if values["rejection_reason"] is None
                 else RejectionReason(values["rejection_reason"])

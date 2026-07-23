@@ -14,3 +14,4 @@ from .workers import *
 from .local_transport import *
 from .payload_authority import *
 from .dispatch import *
+from .authority_layout import *

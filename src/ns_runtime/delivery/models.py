@@ -31,6 +31,8 @@ ATOMIC_ADMISSION_VERSION = "delivery-admission-atomic-1"
 P11_ATTEMPT_SCHEMA_VERSION = "delivery-attempt-1"
 P11_ACTIVATION_SCHEMA_VERSION = "delivery-activation-1"
 P11_OWNER_SCHEMA_VERSION = "delivery-owner-1"
+AUTHORITY_LAYOUT_VERSION = "delivery-authority-layout-v2"
+AUTHORITY_LAYOUT_GENERATION = 2
 MAX_ACTIVATION_BATCH_SIZE = 1000
 _TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,511}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -358,6 +360,8 @@ class AdmissionPolicyDecision:
     initialization_batch_size: int
     activation_batch_size: int
     authority_bucket_count: int
+    authority_layout_version: str = AUTHORITY_LAYOUT_VERSION
+    authority_layout_generation: int = AUTHORITY_LAYOUT_GENERATION
     rejection_reason: RejectionReason | None = None
 
     def __post_init__(self) -> None:
@@ -378,6 +382,9 @@ class AdmissionPolicyDecision:
                      "initialization_batch_size", "activation_batch_size"):
             _positive(getattr(self, name), f"policy_decision.{name}")
         _positive(self.authority_bucket_count, "policy_decision.authority_bucket_count")
+        if self.authority_layout_version != AUTHORITY_LAYOUT_VERSION:
+            _invalid("policy_decision.authority_layout_version")
+        _positive(self.authority_layout_generation, "policy_decision.authority_layout_generation")
         if self.activation_batch_size > MAX_ACTIVATION_BATCH_SIZE:
             _invalid("policy_decision.activation_batch_size")
         if self.accepted is (self.rejection_reason is not None):
@@ -541,6 +548,8 @@ class MessageDeliverySummary:
     state_version: int
     created_at: datetime
     updated_at: datetime
+    authority_layout_version: str = AUTHORITY_LAYOUT_VERSION
+    authority_layout_generation: int = AUTHORITY_LAYOUT_GENERATION
     queued_count: int = 0
     sending_count: int = 0
     ack_waiting_count: int = 0
@@ -560,6 +569,9 @@ class MessageDeliverySummary:
         _nonnegative(self.authority_bucket_id, "summary.authority_bucket_id")
         if self.authority_bucket_id >= self.authority_bucket_count:
             _invalid("summary.authority_bucket_id")
+        if self.authority_layout_version != AUTHORITY_LAYOUT_VERSION:
+            _invalid("summary.authority_layout_version")
+        _positive(self.authority_layout_generation, "summary.authority_layout_generation")
         _digest(self.plan_decision_fingerprint, "summary.plan_decision_fingerprint")
         _digest(self.target_fingerprint, "summary.target_fingerprint")
         if not isinstance(self.status, DeliverySummaryStatus):
@@ -645,13 +657,14 @@ class DeliveryRecord:
     state_version: int
     created_at: datetime
     updated_at: datetime
+    authority_layout_version: str = AUTHORITY_LAYOUT_VERSION
+    authority_layout_generation: int = AUTHORITY_LAYOUT_GENERATION
     activation: DeliveryActivationEvidence | None = None
     owner: DeliveryOwner | None = field(default=None, repr=False)
     current_attempt_id: str | None = field(default=None, repr=False)
     attempt_count: int = 0
     ack_deadline: datetime | None = None
     last_failure: DeliveryWriteFailure | None = None
-    target_access_decision_reference: str = field(default="", repr=False)
     last_fencing: int = 0
     owner_epoch: int = 0
 
@@ -669,6 +682,9 @@ class DeliveryRecord:
         _nonnegative(self.authority_bucket_id, "delivery.authority_bucket_id")
         if self.authority_bucket_id >= self.authority_bucket_count:
             _invalid("delivery.authority_bucket_id")
+        if self.authority_layout_version != AUTHORITY_LAYOUT_VERSION:
+            _invalid("delivery.authority_layout_version")
+        _positive(self.authority_layout_generation, "delivery.authority_layout_generation")
         if (self.shard_index is None) is not (self.summary_id == self.root_summary_id):
             _invalid("delivery.summary_binding")
         for name in ("plan_decision_fingerprint", "target_fingerprint", "target_set_fingerprint"):
@@ -707,7 +723,6 @@ class DeliveryRecord:
             object.__setattr__(self, "ack_deadline", _utc(self.ack_deadline, "delivery.ack_deadline"))
         if self.last_failure is not None and not isinstance(self.last_failure, DeliveryWriteFailure):
             _invalid("delivery.last_failure")
-        _text(self.target_access_decision_reference, "delivery.target_access_decision_reference")
         _nonnegative(self.last_fencing, "delivery.last_fencing")
         _nonnegative(self.owner_epoch, "delivery.owner_epoch")
         if self.owner is not None and (
@@ -845,6 +860,12 @@ def validate_initialization_graph(
             or dedup.summary_id != root.summary_id):
         _invalid("initialization.authority_chain")
     threshold = root.policy_decision.fanout_shard_threshold
+    if (
+        root.authority_bucket_count != root.policy_decision.authority_bucket_count
+        or root.authority_layout_version != root.policy_decision.authority_layout_version
+        or root.authority_layout_generation != root.policy_decision.authority_layout_generation
+    ):
+        _invalid("initialization.authority_layout")
     bucket_size = root.policy_decision.shard_bucket_size
     expected_shards = 0 if root.total_count <= threshold else (
         root.total_count + bucket_size - 1
@@ -862,6 +883,7 @@ def validate_initialization_graph(
         "tenant_id", "plan_id", "plan_version", "plan_decision_fingerprint",
         "target_fingerprint", "payload_evidence", "policy_decision",
         "authority_bucket_count", "authority_bucket_id",
+        "authority_layout_version", "authority_layout_generation",
     )
     if any(
         any(getattr(value, field_name) != getattr(root, field_name)
@@ -893,6 +915,8 @@ def validate_initialization_graph(
         or value.policy_decision != root.policy_decision
         or value.authority_bucket_count != root.authority_bucket_count
         or value.authority_bucket_id != root.authority_bucket_id
+        or value.authority_layout_version != root.authority_layout_version
+        or value.authority_layout_generation != root.authority_layout_generation
         or value.target_fingerprint != compute_binding_fingerprint(value.binding)
         or value.target_set_fingerprint != root.target_fingerprint
         for value in deliveries

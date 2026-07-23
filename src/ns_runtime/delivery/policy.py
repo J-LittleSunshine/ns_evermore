@@ -36,9 +36,11 @@ class AdmissionPolicyConfig:
     initialization_batch_size: int = 500
     activation_batch_size: int = 200
     authority_bucket_count: int = 8
+    authority_layout_version: str = "delivery-authority-layout-v2"
+    authority_layout_generation: int = 2
 
     def __post_init__(self) -> None:
-        for name in ("config_version", "policy_version"):
+        for name in ("config_version", "policy_version", "authority_layout_version"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value or len(value) > 256:
                 _invalid(f"config.{name}")
@@ -46,7 +48,8 @@ class AdmissionPolicyConfig:
                      "min_delivery_window_seconds", "max_ack_timeout_seconds",
                      "dedup_ttl_seconds", "fanout_shard_threshold",
                      "shard_bucket_size", "initialization_batch_size",
-                     "activation_batch_size", "authority_bucket_count"):
+                     "activation_batch_size", "authority_bucket_count",
+                     "authority_layout_generation"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 _invalid(f"config.{name}")
@@ -56,6 +59,23 @@ class AdmissionPolicyConfig:
             _invalid("config.default_priority")
         if not isinstance(self.default_reliability, AdmissionReliability):
             _invalid("config.default_reliability")
+
+    @classmethod
+    def from_runtime_config(
+        cls, value, *, config_version: str, policy_version: str,
+    ) -> "AdmissionPolicyConfig":
+        from ns_common.config import NsRuntimeDeliveryConfig
+        if type(value) is not NsRuntimeDeliveryConfig:
+            _invalid("config.runtime_config")
+        return cls(
+            config_version=config_version,
+            policy_version=policy_version,
+            max_ack_timeout_seconds=value.ack_timeout_seconds,
+            activation_batch_size=value.activation_batch_size,
+            authority_bucket_count=value.authority_bucket_count,
+            authority_layout_version=value.authority_layout_version,
+            authority_layout_generation=value.authority_layout_generation,
+        )
 
 
 _ADMISSION_REQUEST_ISSUER = object()
@@ -238,6 +258,8 @@ class AdmissionRequest:
                 "initialization_batch_size": config.initialization_batch_size,
                 "activation_batch_size": config.activation_batch_size,
                 "authority_bucket_count": config.authority_bucket_count,
+                "authority_layout_version": config.authority_layout_version,
+                "authority_layout_generation": config.authority_layout_generation,
             }),
         }
         raw = json.dumps(values, sort_keys=True, separators=(",", ":")).encode()
@@ -305,6 +327,8 @@ class DefaultAdmissionPolicy(AdmissionPolicy):
             initialization_batch_size=config.initialization_batch_size,
             activation_batch_size=config.activation_batch_size,
             authority_bucket_count=config.authority_bucket_count,
+            authority_layout_version=config.authority_layout_version,
+            authority_layout_generation=config.authority_layout_generation,
             rejection_reason=reason,
         )
 
@@ -329,12 +353,19 @@ def validate_policy_decision(
             or decision.initialization_batch_size != config.initialization_batch_size
             or decision.activation_batch_size != config.activation_batch_size
             or decision.authority_bucket_count != config.authority_bucket_count
+            or decision.authority_layout_version != config.authority_layout_version
+            or decision.authority_layout_generation != config.authority_layout_generation
             or decision.ack_timeout_seconds > config.max_ack_timeout_seconds
             or decision.ack_timeout_seconds > request.requested_ack_timeout_seconds
-            or decision.expires_at != request.requested_expires_at):
+            or decision.expires_at > request.requested_expires_at
+            or decision.payload_dependency_disposition is not {
+                AdmissionReliability.BEST_EFFORT: PayloadDependencyDisposition.REJECT,
+                AdmissionReliability.AT_LEAST_ONCE: PayloadDependencyDisposition.WAIT_REQUIRED,
+                AdmissionReliability.CRITICAL: PayloadDependencyDisposition.DEAD_LETTER_REQUIRED,
+            }[decision.reliability]):
         _invalid("policy_result.authority")
-    expired = request.requested_expires_at <= now
-    short = request.requested_expires_at < now + timedelta(
+    expired = decision.expires_at <= now
+    short = decision.expires_at < now + timedelta(
         seconds=config.min_delivery_window_seconds
     )
     if decision.accepted and (expired or short):

@@ -11,7 +11,7 @@ from typing import Callable
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import (
-    NsRuntimeStateStoreError, NsRuntimeStateStoreIndeterminateWriteError,
+    NsRuntimeStateStoreError,
     NsValidationError,
 )
 from ns_common.time import Clock
@@ -38,6 +38,7 @@ from .scheduling import (
     PayloadValidationResult,
     SendOutcome,
     SendResult,
+    policy_message_group,
     validate_outbound_payload,
     validate_payload_authority,
 )
@@ -387,9 +388,19 @@ class SendWorker:
                 failure=DeliveryWriteFailure.TRANSPORT_WRITE_FAILED,
             )
         try:
-            ack_waiting = await self._scheduler.complete_write_success(claim=claim)
-        except NsRuntimeStateStoreIndeterminateWriteError:
-            reconciled = await self._scheduler.reconcile_write_completion(claim=claim)
+            ack_waiting = await self._scheduler.complete_write_success(
+                claim=claim,
+                expected_state_version=transition.delivery.state_version,
+            )
+        except NsRuntimeStateStoreError:
+            try:
+                reconciled = await self._scheduler.reconcile_write_completion(claim=claim)
+            except NsRuntimeStateStoreError:
+                return SendResult(
+                    outcome=SendOutcome.WRITE_OUTCOME_UNKNOWN,
+                    delivery=transition.delivery,
+                    failure=DeliveryWriteFailure.AUTHORITY_CONFLICT_AFTER_WRITE,
+                )
             if reconciled.status is DeliveryRecordStatus.ACK_WAITING:
                 return SendResult(
                     outcome=SendOutcome.ACK_WAITING, delivery=reconciled,
@@ -467,7 +478,7 @@ def _build_outbound_payload(
         _invalid("outbound.protocol")
     envelope = Envelope(
         protocol=target.protocol,
-        message=authority.message,
+        message=policy_message_group(delivery),
         source=authority.source,
         target=TargetGroup(
             kind="connection", connection_id=binding.connection_id,

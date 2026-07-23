@@ -30,6 +30,7 @@ from ns_runtime.delivery import (
     emit_admission_result,
     BoundPayloadRefValidationResult,
     delivery_from_dict, delivery_to_dict,
+    policy_message_group,
 )
 from ns_runtime.protocol import (
     AuthContextGroup, MessageGroup, ProtocolGroup, SourceGroup, TargetGroup,
@@ -162,7 +163,9 @@ class _FailSecondTransactionStore(DeterministicStateStoreContractModel):
 
     async def _transact(self, transaction):
         self.transaction_calls += 1
-        if self.transaction_calls == 2:
+        # Layout and tenant registration are the first two authority writes;
+        # fail the second delivery initialization batch.
+        if self.transaction_calls == 4:
             raise NsRuntimeStateStoreConflictError(details={
                 "component": "p10_test", "reason": "second_batch_failure",
             })
@@ -248,6 +251,44 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
         ))
         self.assertEqual(60, root.policy_decision.ack_timeout_seconds)
         self.assertIs(root.policy_decision.target_strategy, self.plan.effective_strategy)
+
+    async def test_fix03_trusted_policy_controls_priority_reliability_and_expiry(self):
+        chosen_expiry = self.clock.utc_now() + timedelta(seconds=20)
+
+        def replace_policy(value):
+            return dataclasses.replace(
+                value,
+                priority=AdmissionPriority.LOW,
+                reliability=AdmissionReliability.BEST_EFFORT,
+                payload_dependency_disposition=PayloadDependencyDisposition.REJECT,
+                expires_at=chosen_expiry,
+            )
+
+        result = await self._service(policy=_Policy(replace_policy)).admit(
+            self._request(expires_delta=30),
+            trace=AdmissionTrace(trace_id="trace-policy-authority"),
+        )
+        self.assertIs(AdmissionOutcome.ACCEPTED, result.outcome)
+        graph = self.store.values[0]
+        decision = graph.root_summary.policy_decision
+        self.assertEqual(
+            (AdmissionPriority.LOW, AdmissionReliability.BEST_EFFORT, chosen_expiry),
+            (decision.priority, decision.reliability, decision.expires_at),
+        )
+        self.assertTrue(all(item.policy_decision == decision for item in graph.deliveries))
+        outbound_message = policy_message_group(graph.deliveries[0])
+        inbound_message = graph.deliveries[0].envelope_authority.message
+        self.assertEqual(
+            (inbound_message.message_id, inbound_message.type,
+             inbound_message.category, inbound_message.created_at),
+            (outbound_message.message_id, outbound_message.type,
+             outbound_message.category, outbound_message.created_at),
+        )
+        self.assertEqual(
+            (-10, "best_effort", chosen_expiry.isoformat()),
+            (outbound_message.priority, outbound_message.reliability,
+             outbound_message.expires_at),
+        )
 
     def test_pc1_stage_six_accepts_only_typed_resolved_result(self):
         handoff = StageSixAdmissionInput.from_result(
@@ -712,7 +753,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
         persisted = b" ".join(record.document.payload for record in model.records.values())
         self.assertNotIn(b"never-store-me", persisted)
         self.assertNotIn(b"business_secret", persisted)
-        self.assertEqual(2, model.write_count)
+        self.assertEqual(4, model.write_count)
         await model.close()
 
     async def test_w10_w12_real_second_batch_failure_cancels_prepared(self):
@@ -754,7 +795,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(AdmissionOutcome.REJECTED, result.outcome)
         self.assertTrue(result.committed)
-        self.assertEqual(3, model.transaction_calls)
+        self.assertEqual(5, model.transaction_calls)
         documents = [json.loads(record.document.payload)
                      for record in model.records.values()]
         root = next(item for item in documents

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -11,10 +13,13 @@ from enum import Enum
 
 from ns_common.exceptions import NsValidationError
 from ns_runtime.protocol import (
-    Envelope, PayloadGroup, ProtocolGroup, canonical_checksum, canonical_serialize,
+    Envelope, MessageGroup, PayloadGroup, ProtocolGroup, canonical_checksum,
+    canonical_serialize,
 )
 
 from .models import (
+    AUTHORITY_LAYOUT_GENERATION,
+    AUTHORITY_LAYOUT_VERSION,
     MAX_ACTIVATION_BATCH_SIZE,
     DeliveryAttempt,
     DeliveryRecord,
@@ -43,6 +48,7 @@ class SendOutcome(str, Enum):
     PRECHECK_FAILED = "precheck_failed"
     WRITE_FAILED = "write_failed"
     OWNER_RISK = "owner_risk"
+    WRITE_OUTCOME_UNKNOWN = "write_outcome_unknown"
 
 
 class LeaseRenewOutcome(str, Enum):
@@ -66,9 +72,11 @@ class DeliverySchedulingPolicy:
     write_timeout_seconds: float = 10.0
     authority_bucket_count: int = 8
     activation_scan_budget: int = 1000
+    authority_layout_version: str = AUTHORITY_LAYOUT_VERSION
+    authority_layout_generation: int = AUTHORITY_LAYOUT_GENERATION
 
     def __post_init__(self) -> None:
-        for name in ("config_version", "policy_version"):
+        for name in ("config_version", "policy_version", "authority_layout_version"):
             if type(getattr(self, name)) is not str or not getattr(self, name):
                 _invalid(f"policy.{name}")
         for name in (
@@ -76,12 +84,15 @@ class DeliverySchedulingPolicy:
             "tenant_queued_high_watermark",
             "target_queued_high_watermark", "max_renew_failures",
             "authority_bucket_count", "activation_scan_budget",
+            "authority_layout_generation",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 _invalid(f"policy.{name}")
         if self.activation_batch_size > MAX_ACTIVATION_BATCH_SIZE:
             _invalid("policy.activation_batch_size")
+        if self.authority_layout_version != AUTHORITY_LAYOUT_VERSION:
+            _invalid("policy.authority_layout_version")
         for name in (
             "lease_ttl_seconds", "renew_interval_seconds",
             "owner_risk_window_seconds", "write_timeout_seconds",
@@ -97,6 +108,31 @@ class DeliverySchedulingPolicy:
             _invalid("policy.renew_interval_seconds")
         if self.write_timeout_seconds >= self.lease_ttl_seconds:
             _invalid("policy.write_timeout_seconds")
+
+    @classmethod
+    def from_runtime_config(
+        cls, value, *, config_version: str, policy_version: str,
+    ) -> "DeliverySchedulingPolicy":
+        from ns_common.config import NsRuntimeDeliveryConfig
+        if type(value) is not NsRuntimeDeliveryConfig:
+            _invalid("policy.runtime_config")
+        return cls(
+            config_version=config_version,
+            policy_version=policy_version,
+            activation_batch_size=value.activation_batch_size,
+            global_queued_high_watermark=value.global_queued_high_watermark,
+            tenant_queued_high_watermark=value.tenant_queued_high_watermark,
+            target_queued_high_watermark=value.target_queued_high_watermark,
+            lease_ttl_seconds=value.lease_ttl_seconds,
+            renew_interval_seconds=value.lease_renew_interval_seconds,
+            max_renew_failures=value.lease_max_renew_failures,
+            owner_risk_window_seconds=value.owner_risk_window_seconds,
+            write_timeout_seconds=value.write_timeout_seconds,
+            authority_bucket_count=value.authority_bucket_count,
+            activation_scan_budget=value.activation_scan_budget,
+            authority_layout_version=value.authority_layout_version,
+            authority_layout_generation=value.authority_layout_generation,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -180,6 +216,8 @@ class DeliveryClaim:
     owner_epoch: int
     authority_bucket_count: int
     authority_bucket_id: int
+    authority_layout_version: str = AUTHORITY_LAYOUT_VERSION
+    authority_layout_generation: int = AUTHORITY_LAYOUT_GENERATION
 
     def __post_init__(self) -> None:
         for name in ("tenant_id", "delivery_id", "runtime_id", "worker_id", "claim_token"):
@@ -193,6 +231,14 @@ class DeliveryClaim:
         _nonnegative(self.authority_bucket_id, "claim.authority_bucket_id")
         if self.authority_bucket_id >= self.authority_bucket_count:
             _invalid("claim.authority_bucket_id")
+        if self.authority_layout_version != AUTHORITY_LAYOUT_VERSION:
+            _invalid("claim.authority_layout_version")
+        if (
+            isinstance(self.authority_layout_generation, bool)
+            or not isinstance(self.authority_layout_generation, int)
+            or self.authority_layout_generation <= 0
+        ):
+            _invalid("claim.authority_layout_generation")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -226,6 +272,8 @@ class PayloadValidationResult:
     tenant_id: str = field(repr=False)
     request_binding_fingerprint: str
     target_binding_fingerprint: str
+    target_permission_snapshot_reference: str = field(repr=False)
+    access_decision_request_fingerprint: str
     target_access_decision_reference: str = field(repr=False)
 
     def __post_init__(self) -> None:
@@ -234,6 +282,8 @@ class PayloadValidationResult:
         for name in (
             "evidence_fingerprint", "checksum", "tenant_id",
             "request_binding_fingerprint", "target_binding_fingerprint",
+            "target_permission_snapshot_reference",
+            "access_decision_request_fingerprint",
             "target_access_decision_reference",
         ):
             _text(getattr(self, name), f"payload_validation.{name}")
@@ -418,8 +468,10 @@ def validate_payload_authority(
         or result.request_binding_fingerprint
         != delivery.policy_decision.request_fingerprint
         or result.target_binding_fingerprint != delivery.target_fingerprint
-        or result.target_access_decision_reference
+        or result.target_permission_snapshot_reference
         != target.access_decision_reference
+        or result.access_decision_request_fingerprint
+        != payload_access_decision_request_fingerprint(delivery, target=target)
     ):
         return False
     if evidence.kind is PayloadKind.REFERENCE:
@@ -430,6 +482,31 @@ def validate_payload_authority(
     return result.object_id is None and result.object_version is None
 
 
+def payload_access_decision_request_fingerprint(
+    delivery: DeliveryRecord, *, target: LocalDeliveryTarget,
+) -> str:
+    """Bind one real-time object access decision to this send request."""
+
+    if not isinstance(delivery, DeliveryRecord) or not isinstance(target, LocalDeliveryTarget):
+        _invalid("payload_access_decision_request")
+    evidence = delivery.payload_evidence
+    raw = json.dumps({
+        "object_id": evidence.object_id,
+        "object_version": evidence.object_version,
+        "checksum": evidence.checksum,
+        "request_binding_fingerprint": delivery.policy_decision.request_fingerprint,
+        "target_binding_fingerprint": delivery.target_fingerprint,
+        "target_runtime_id": target.runtime_id,
+        "target_connection_id": target.connection_id,
+        "target_session_id": target.session_id,
+        "target_connection_epoch": target.connection_epoch,
+        "target_tenant_id": target.tenant_id,
+        "target_identity": target.identity,
+        "current_permission_snapshot_reference": target.access_decision_reference,
+    }, sort_keys=True, separators=(",", ":")).encode()
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
 def validate_outbound_payload(
     delivery: DeliveryRecord,
     payload: OutboundDeliveryPayload,
@@ -438,7 +515,7 @@ def validate_outbound_payload(
         _invalid("outbound_authority")
     return (
         payload.envelope.message.message_id == delivery.message_id
-        and payload.envelope.message == delivery.envelope_authority.message
+        and payload.envelope.message == policy_message_group(delivery)
         and payload.envelope.source == delivery.envelope_authority.source
         and payload.envelope.auth_context == delivery.envelope_authority.auth_context
         and payload.envelope.trace == delivery.envelope_authority.trace
@@ -450,6 +527,29 @@ def validate_outbound_payload(
         and payload.envelope.target.connection_id == delivery.binding.connection_id
         and payload.envelope.target.connection_epoch == delivery.binding.connection_epoch
         and payload.evidence_fingerprint == delivery.payload_evidence.evidence_fingerprint
+    )
+
+
+def policy_message_group(delivery: DeliveryRecord) -> MessageGroup:
+    """Preserve stable inbound identity while rebuilding policy authority."""
+
+    if not isinstance(delivery, DeliveryRecord):
+        _invalid("policy_message.delivery")
+    inbound = delivery.envelope_authority.message
+    priority = {
+        "low": -10,
+        "normal": 0,
+        "high": 10,
+        "critical": 20,
+    }[delivery.policy_decision.priority.value]
+    return MessageGroup(
+        message_id=inbound.message_id,
+        type=inbound.type,
+        category=inbound.category,
+        priority=priority,
+        created_at=inbound.created_at,
+        expires_at=delivery.policy_decision.expires_at.isoformat(),
+        reliability=delivery.policy_decision.reliability.value,
     )
 
 
@@ -484,5 +584,6 @@ __all__ = (
     "LeaseRenewOutcome", "LeaseRenewResult", "LocalDeliveryTarget",
     "OutboundDeliveryMaterial", "OutboundDeliveryPayload", "OwnerRiskGuard",
     "PayloadValidationResult", "SendOutcome", "SendResult", "SendingTransition",
+    "payload_access_decision_request_fingerprint", "policy_message_group",
     "validate_outbound_payload", "validate_payload_authority",
 )

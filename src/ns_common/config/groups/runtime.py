@@ -186,6 +186,11 @@ class NsRuntimeDeliveryConfig:
     ack_timeout_seconds: int = 30
     local_task_dispatch_experimental_enabled: bool = False
     activation_batch_size: int = 200
+    activation_scan_budget: int = 1000
+    authority_bucket_count: int = 8
+    authority_layout_version: str = "delivery-authority-layout-v2"
+    authority_layout_generation: int = 2
+    authority_layout_apply_mode: Literal["restart_required"] = "restart_required"
     global_queued_high_watermark: int = 10_000
     tenant_queued_high_watermark: int = 10_000
     target_queued_high_watermark: int = 256

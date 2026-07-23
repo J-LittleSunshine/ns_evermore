@@ -515,14 +515,19 @@ class RedisValkeyStateStore(StateStore):
             client.hgetall(physical_key),  # type: ignore[attr-defined]
         )
         if not raw:
-            legacy_exists = await self._execute(
-                client.exists(self._legacy_record_key(key)),  # type: ignore[attr-defined]
+            legacy_exists, previous_tag_exists = await asyncio.gather(
+                self._execute(client.exists(self._legacy_record_key(key))),  # type: ignore[attr-defined]
+                self._execute(client.exists(self._previous_layout_record_key(scope, key))),  # type: ignore[attr-defined]
             )
-            if legacy_exists:
+            if legacy_exists or previous_tag_exists:
                 raise NsRuntimeStateStoreVersionMismatchError(details={
                     "component": "state_store_provider",
                     "operation": "read",
-                    "reason": "legacy_physical_key_migration_required",
+                    "reason": (
+                        "legacy_physical_key_migration_required"
+                        if legacy_exists
+                        else "authority_layout_generation_migration_required"
+                    ),
                 })
         record = None if not raw else self._record_from_hash(key, raw)
         stale = False
@@ -790,6 +795,12 @@ class RedisValkeyStateStore(StateStore):
             raise RuntimeError("provider projection transaction result invalid")
         record_values = values.get("records")
         positions = values.get("log_positions")
+        # Redis Lua cjson represents an empty array-shaped table as ``{}``.
+        # The public contract still requires provider-neutral empty tuples.
+        if record_values == {}:
+            record_values = []
+        if positions == {}:
+            positions = []
         if not isinstance(record_values, list) or not isinstance(positions, list):
             raise RuntimeError("provider projection transaction result invalid")
         records: list[StateRecord | None] = []
@@ -879,6 +890,10 @@ class RedisValkeyStateStore(StateStore):
     def _slot_tag(self, scope: StateAccessScope) -> str:
         namespace = scope.namespace
         partition = scope.atomic_scope.partition
+        if namespace.tenant_id is not None and partition.startswith("layout-"):
+            parts = partition.split("-")
+            if len(parts) == 4 and parts[0] == "layout" and parts[2] == "bucket":
+                return f"{namespace.tenant_id}:g{parts[1]}:b{parts[3]}"
         bucket = partition.removeprefix("bucket-")
         if namespace.tenant_id is not None and partition.startswith("bucket-"):
             return f"{namespace.tenant_id}:{bucket}"
@@ -893,6 +908,23 @@ class RedisValkeyStateStore(StateStore):
 
     def _legacy_record_key(self, key: StateKey) -> str:
         return self._prefix + "record:" + _state_key_digest(key)
+
+    def _previous_layout_record_key(
+        self, scope: StateAccessScope, key: StateKey,
+    ) -> str:
+        """P10-FIX-05 gate for the pre-generation tenant/bucket hash tag."""
+
+        namespace = scope.namespace
+        partition = scope.atomic_scope.partition
+        if namespace.tenant_id is not None and partition.startswith("layout-"):
+            parts = partition.split("-")
+            if len(parts) == 4 and parts[2] == "bucket":
+                return (
+                    self._prefix + "record:{" + namespace.tenant_id + ":"
+                    + parts[3] + "}:" + _state_key_digest(key)
+                )
+        # A harmless impossible key keeps the provider call shape constant.
+        return self._prefix + "record:{layout-migration-none}:none"
 
     def _index_key(
         self, scope: StateAccessScope, namespace: StateNamespace, object_type: str,
