@@ -411,6 +411,12 @@ class TaskSupervisor:
             if not record.task.done()
         )
 
+    @property
+    def cancelled_task_count(self) -> int:
+        """Return supervised tasks observed in the cancelled terminal state."""
+
+        return len(self._task_names_with_outcome("cancelled"))
+
     def get_task(self, name: str) -> asyncio.Task[Any]:
         try:
             return self._records_by_name[name].task

@@ -1,8 +1,6 @@
 # ns_runtime unit and integration test dependencies.
 # The suite uses the standard-library unittest runner; these are real-service
-# client drivers owned by tests, not production StateStore declarations.
+# Test dependencies layer. Real StateStore drivers are production runtime
+# dependencies and are inherited from requirements-runtime.txt.
 
 -r requirements-runtime.txt
-
-redis==8.0.1
-valkey==6.1.1

@@ -61,6 +61,7 @@ EXCEPTION_SUBMODULES = (
     "ns_common.exceptions.processor",
     "ns_common.exceptions.transport",
     "ns_common.exceptions.cluster",
+    "ns_common.exceptions.state_store",
     "ns_common.exceptions.registry",
     "ns_common.exceptions.nack",
 )
@@ -310,6 +311,12 @@ EXCEPTION_SNAPSHOTS = {
         200132,
         "Runtime route is unavailable.",
     ),
+    "NsRuntimeRouteRejectedError": (
+        "NsRuntimeError",
+        "RUNTIME_ROUTE_REJECTED",
+        200177,
+        "Runtime routing policy rejected the request.",
+    ),
     "NsRuntimeRouteLoopError": (
         "NsRuntimeError",
         "RUNTIME_ROUTE_LOOP",
@@ -502,6 +509,78 @@ EXCEPTION_SNAPSHOTS = {
         200164,
         "Runtime protocol violation is detected.",
     ),
+    "NsRuntimeFeatureDisabledError": (
+        "NsRuntimeError",
+        "RUNTIME_FEATURE_DISABLED",
+        200165,
+        "Runtime feature is disabled.",
+    ),
+    "NsRuntimeStateStoreError": (
+        "NsRuntimeError",
+        "RUNTIME_STATE_STORE_ERROR",
+        200166,
+        "Runtime StateStore operation failed.",
+    ),
+    "NsRuntimeStateStoreNotReadyError": (
+        "NsRuntimeStateStoreError",
+        "RUNTIME_STATE_STORE_NOT_READY",
+        200167,
+        "Runtime StateStore is not ready.",
+    ),
+    "NsRuntimeStateStoreClosedError": (
+        "NsRuntimeStateStoreError",
+        "RUNTIME_STATE_STORE_CLOSED",
+        200168,
+        "Runtime StateStore is closed.",
+    ),
+    "NsRuntimeStateStoreUnavailableError": (
+        "NsRuntimeStateStoreError",
+        "RUNTIME_STATE_STORE_UNAVAILABLE",
+        200169,
+        "Runtime StateStore is unavailable.",
+    ),
+    "NsRuntimeStateStoreTimeoutError": (
+        "NsRuntimeStateStoreError",
+        "RUNTIME_STATE_STORE_TIMEOUT",
+        200170,
+        "Runtime StateStore operation timed out.",
+    ),
+    "NsRuntimeStateStoreConflictError": (
+        "NsRuntimeStateStoreError",
+        "RUNTIME_STATE_STORE_CONFLICT",
+        200171,
+        "Runtime StateStore assertion conflicted.",
+    ),
+    "NsRuntimeStateStoreStaleReadError": (
+        "NsRuntimeStateStoreError",
+        "RUNTIME_STATE_STORE_STALE_READ",
+        200172,
+        "Runtime StateStore read is stale.",
+    ),
+    "NsRuntimeStateStoreCapabilityUnavailableError": (
+        "NsRuntimeStateStoreError",
+        "RUNTIME_STATE_STORE_CAPABILITY_UNAVAILABLE",
+        200173,
+        "Runtime StateStore capability is unavailable.",
+    ),
+    "NsRuntimeStateStoreNamespaceViolationError": (
+        "NsRuntimeStateStoreError",
+        "RUNTIME_STATE_STORE_NAMESPACE_VIOLATION",
+        200174,
+        "Runtime StateStore namespace access was rejected.",
+    ),
+    "NsRuntimeStateStoreVersionMismatchError": (
+        "NsRuntimeStateStoreError",
+        "RUNTIME_STATE_STORE_VERSION_MISMATCH",
+        200175,
+        "Runtime StateStore version is incompatible.",
+    ),
+    "NsRuntimeStateStoreIndeterminateWriteError": (
+        "NsRuntimeStateStoreError",
+        "RUNTIME_STATE_STORE_INDETERMINATE_WRITE",
+        200176,
+        "Runtime StateStore write outcome is indeterminate.",
+    ),
 }
 
 TOP_LEVEL_EXCEPTION_EXPORTS = (
@@ -532,6 +611,7 @@ TOP_LEVEL_EXCEPTION_EXPORTS = (
 
 
 REQUIRED_RUNTIME_ERROR_SCENARIOS = {
+    "feature_disabled": "RUNTIME_FEATURE_DISABLED",
     "protocol_parse": "RUNTIME_PROTOCOL_PARSE_ERROR",
     "protocol_violation": "RUNTIME_PROTOCOL_VIOLATION",
     "envelope_schema": "RUNTIME_ENVELOPE_SCHEMA_ERROR",
@@ -857,6 +937,11 @@ EXPECTED_ERROR_POLICIES = {
         "retry_route_resolution",
         retryable=True,
     ),
+    exceptions_facade.NsRuntimeRouteRejectedError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.ROUTING,
+        "reject_routing_policy",
+    ),
     exceptions_facade.NsRuntimeRouteLoopError: expected_policy(
         NsErrorSeverity.CRITICAL,
         NsErrorCategory.ROUTING,
@@ -1041,6 +1126,70 @@ EXPECTED_ERROR_POLICIES = {
         "retry_runtime_dependency",
         retryable=True,
     ),
+    exceptions_facade.NsRuntimeFeatureDisabledError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.RUNTIME,
+        "reject_disabled_feature",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeStateStoreError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.STATE,
+        "handle_state_store_failure",
+    ),
+    exceptions_facade.NsRuntimeStateStoreNotReadyError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.STATE,
+        "reject_state_store_not_ready",
+    ),
+    exceptions_facade.NsRuntimeStateStoreClosedError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.STATE,
+        "reject_closed_state_store",
+    ),
+    exceptions_facade.NsRuntimeStateStoreUnavailableError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.STATE,
+        "probe_state_store_recovery",
+        retryable=True,
+    ),
+    exceptions_facade.NsRuntimeStateStoreTimeoutError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.STATE,
+        "handle_state_store_timeout",
+    ),
+    exceptions_facade.NsRuntimeStateStoreConflictError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.STATE,
+        "reconcile_state_store_conflict",
+    ),
+    exceptions_facade.NsRuntimeStateStoreStaleReadError: expected_policy(
+        NsErrorSeverity.WARNING,
+        NsErrorCategory.STATE,
+        "reject_stale_state_read",
+    ),
+    exceptions_facade.NsRuntimeStateStoreCapabilityUnavailableError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.STATE,
+        "reject_state_store_capability",
+    ),
+    exceptions_facade.NsRuntimeStateStoreNamespaceViolationError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.STATE,
+        "reject_state_store_namespace",
+        audit_required=True,
+    ),
+    exceptions_facade.NsRuntimeStateStoreVersionMismatchError: expected_policy(
+        NsErrorSeverity.ERROR,
+        NsErrorCategory.STATE,
+        "reject_state_store_version",
+    ),
+    exceptions_facade.NsRuntimeStateStoreIndeterminateWriteError: expected_policy(
+        NsErrorSeverity.CRITICAL,
+        NsErrorCategory.STATE,
+        "reconcile_indeterminate_write",
+        audit_required=True,
+    ),
 }
 
 
@@ -1141,6 +1290,7 @@ class NsExceptionsPackageStructureTestCase(unittest.TestCase):
             "registry.py",
             "routing.py",
             "transport.py",
+            "state_store.py",
         }
         actual_files = {
             path.relative_to(EXCEPTIONS_PACKAGE).as_posix()
@@ -1227,6 +1377,7 @@ class NsExceptionsPackageStructureTestCase(unittest.TestCase):
             ".processor",
             ".transport",
             ".cluster",
+            ".state_store",
         ):
             self.assertNotIn(domain_module, metadata_source)
         for forbidden in ("__subclasses__", "sys.modules", "importlib"):
@@ -1245,7 +1396,7 @@ class NsExceptionsPackageStructureTestCase(unittest.TestCase):
 class NsExceptionCompatibilityTestCase(unittest.TestCase):
 
     def test_class_metadata_and_inheritance_match_legacy_contract(self) -> None:
-        self.assertEqual(72, len(EXCEPTION_SNAPSHOTS))
+        self.assertEqual(85, len(EXCEPTION_SNAPSHOTS))
         for class_name, snapshot in EXCEPTION_SNAPSHOTS.items():
             with self.subTest(class_name=class_name):
                 base_name, code, numeric_code, default_message = snapshot
@@ -1355,7 +1506,7 @@ class NsExceptionCompatibilityTestCase(unittest.TestCase):
 class NsErrorMetadataRegistryTestCase(unittest.TestCase):
 
     def test_all_current_error_policies_match_explicit_matrix(self) -> None:
-        self.assertEqual(72, len(EXPECTED_ERROR_POLICIES))
+        self.assertEqual(85, len(EXPECTED_ERROR_POLICIES))
         self.assertEqual(
             set(EXPECTED_ERROR_POLICIES),
             {definition.error_type for definition in ALL_ERROR_DEFINITIONS},
@@ -1386,6 +1537,7 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             exceptions_facade.NsRuntimeProtocolError,
             exceptions_facade.NsRuntimeTransportError,
             exceptions_facade.NsRuntimeClusterCoordinationError,
+            exceptions_facade.NsRuntimeStateStoreError,
         )
         for error_type in general_error_types:
             with self.subTest(error_type=error_type.__name__):
@@ -1599,10 +1751,10 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
     def test_registry_is_complete_unique_queryable_and_json_safe(self) -> None:
         definitions = list_error_definitions()
         self.assertIs(ALL_ERROR_DEFINITIONS, definitions)
-        self.assertEqual(72, len(definitions))
-        self.assertEqual(72, len({item.error_type for item in definitions}))
-        self.assertEqual(72, len({item.code for item in definitions}))
-        self.assertEqual(72, len({item.numeric_code for item in definitions}))
+        self.assertEqual(85, len(definitions))
+        self.assertEqual(85, len({item.error_type for item in definitions}))
+        self.assertEqual(85, len({item.code for item in definitions}))
+        self.assertEqual(85, len({item.numeric_code for item in definitions}))
 
         validate_error_registry()
         for definition in definitions:
@@ -1635,7 +1787,7 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
         json.dumps(ERROR_REGISTRY.to_dict(), allow_nan=False)
 
     def test_runtime_error_coverage_matrix_is_complete_and_validated(self) -> None:
-        self.assertEqual(18, len(RUNTIME_ERROR_COVERAGE_MATRIX))
+        self.assertEqual(20, len(RUNTIME_ERROR_COVERAGE_MATRIX))
         validated = validate_runtime_error_coverage_matrix()
         self.assertIs(RUNTIME_ERROR_COVERAGE_MATRIX, validated)
 
@@ -1649,7 +1801,7 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
             for definition in ALL_ERROR_DEFINITIONS
             if definition.code.startswith("RUNTIME_")
         }
-        self.assertEqual(65, len(covered_codes))
+        self.assertEqual(78, len(covered_codes))
         self.assertEqual(registered_runtime_codes, set(covered_codes))
         self.assertEqual(len(covered_codes), len(set(covered_codes)))
 
@@ -1694,7 +1846,7 @@ class NsErrorMetadataRegistryTestCase(unittest.TestCase):
     def test_required_runtime_error_scenarios_are_independent_and_complete(
         self,
     ) -> None:
-        self.assertEqual(19, len(REQUIRED_RUNTIME_ERROR_SCENARIOS))
+        self.assertEqual(20, len(REQUIRED_RUNTIME_ERROR_SCENARIOS))
         self.assertEqual(
             len(REQUIRED_RUNTIME_ERROR_SCENARIOS),
             len(set(REQUIRED_RUNTIME_ERROR_SCENARIOS)),

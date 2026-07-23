@@ -73,6 +73,64 @@ class ExitingError(Exception):
 
 class LoggerSanitizerTestCase(unittest.TestCase):
 
+    def test_explicit_logger_config_avoids_global_config_and_uses_explicit_root(
+        self,
+    ) -> None:
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+        source = r'''
+import json
+import pathlib
+import sys
+import tempfile
+
+from ns_common.logger import NsLogger
+from ns_common.security import Sanitizer
+import ns_common.config.model as config_model
+
+assert "ns_config" not in vars(config_model)
+with tempfile.TemporaryDirectory() as temporary_directory:
+    root = pathlib.Path(temporary_directory)
+    logger = NsLogger(
+        "explicit-runtime",
+        sanitizer=Sanitizer(),
+        config={
+            "console": False,
+            "level": "INFO",
+            "file_level": "INFO",
+            "format_type": "json",
+            "file_format_type": "json",
+            "level_files": (),
+            "delay": False,
+        },
+        log_dir=root,
+    )
+    logger.error(
+        "token=logger-message-secret",
+        extra={"payload": "logger-payload-secret", "event": "safe-event"},
+    )
+    logger.close()
+    logger.close()
+    files = list((root / "explicit-runtime").rglob("explicit-runtime.log"))
+    assert len(files) == 1
+    payload = json.loads(files[0].read_text(encoding="utf-8").strip())
+    serialized = json.dumps(payload, allow_nan=False)
+    assert payload["event"] == "safe-event"
+    assert "logger-message-secret" not in serialized
+    assert "logger-payload-secret" not in serialized
+assert "ns_config" not in vars(config_model)
+'''
+        completed = subprocess.run(
+            [sys.executable, "-c", source],
+            cwd=Path(__file__).resolve().parents[1],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
     def test_concurrent_handler_dependency_is_loaded_lazily(self) -> None:
         environment = os.environ.copy()
         environment["PYTHONPATH"] = os.pathsep.join(

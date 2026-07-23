@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         MetricsSink,
         TraceSink,
     )
+    from ns_common.state_store import StateStore
     from ns_common.time import Clock
 
 
@@ -87,6 +88,7 @@ class RuntimeDependencySlots:
 
     diagnostic_snapshot_sink: DiagnosticSnapshotSink | None = None
     http_client_owner: NsHttpClientOwner | None = None
+    state_store: StateStore | None = None
 
     def __post_init__(self) -> None:
         if self.diagnostic_snapshot_sink is not None:
@@ -103,6 +105,13 @@ class RuntimeDependencySlots:
                 module_name="ns_common.http_client",
                 expected_type_name="NsHttpClientOwner",
             )
+        if self.state_store is not None:
+            _require_loaded_dependency(
+                self.state_store,
+                dependency="dependencies.state_store",
+                module_name="ns_common.state_store",
+                expected_type_name="StateStore",
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -110,8 +119,9 @@ class RuntimeContext:
     """Immutable wiring snapshot for one :class:`RuntimeService`.
 
     The context freezes dependency references, not the lifecycle state of the
-    referenced objects.  Creation, startup, flushing and shutdown remain the
-    responsibility of the process composition root and later lifecycle work.
+    referenced objects.  Creation and startup remain with the process
+    composition root; the injected shutdown coordinator flushes and closes
+    only the resources explicitly owned by that process.
     """
 
     config: NsConfig
@@ -186,6 +196,10 @@ class RuntimeContext:
     @property
     def http_client_owner(self) -> NsHttpClientOwner | None:
         return self.dependencies.http_client_owner
+
+    @property
+    def state_store(self) -> StateStore | None:
+        return self.dependencies.state_store
 
 
 __all__ = [

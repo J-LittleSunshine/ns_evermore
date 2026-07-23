@@ -21,6 +21,12 @@ class NsRuntimeRouteUnavailableError(NsRuntimeError):
     default_message = "Runtime route is unavailable."
 
 
+class NsRuntimeRouteRejectedError(NsRuntimeError):
+    code = "RUNTIME_ROUTE_REJECTED"
+    numeric_code = 200177
+    default_message = "Runtime routing policy rejected the request."
+
+
 class NsRuntimeRouteLoopError(NsRuntimeError):
     code = "RUNTIME_ROUTE_LOOP"
     numeric_code = 200133
@@ -46,6 +52,12 @@ ROUTING_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
         category=NsErrorCategory.ROUTING,
         retryable=True,
         action="retry_route_resolution",
+    ),
+    NsErrorDefinition.for_error_type(
+        NsRuntimeRouteRejectedError,
+        severity=NsErrorSeverity.WARNING,
+        category=NsErrorCategory.ROUTING,
+        action="reject_routing_policy",
     ),
     NsErrorDefinition.for_error_type(
         NsRuntimeRouteLoopError,

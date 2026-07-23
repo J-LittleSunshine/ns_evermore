@@ -135,6 +135,11 @@ class NsRuntimeIamConfig:
     request_timeout_seconds: int = 5
     credential_refresh_interval_seconds: int = 300
     permission_snapshot_ttl_seconds: int = 60
+    authorization_mode: Literal["strict", "cache"] = "strict"
+    internal_service_credential: str = field(
+        default="change-me-iam-internal-token-at-least-32-chars",
+        repr=False,
+    )
     fail_closed: bool = True
     allow_degraded_startup: bool = False
     metadata: NsConfigGroupMetadata = field(
@@ -145,13 +150,21 @@ class NsRuntimeIamConfig:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NsRuntimeStateStoreConfig:
     backend: Literal["sqlite", "redis", "valkey"] = "sqlite"
-    url: str = ""
+    endpoint: str = field(default="", repr=False)
+    username: str = field(default="", repr=False)
+    password_source: str = field(default="none", repr=False)
+    # Deprecated compatibility alias. New snapshots must prefer ``endpoint``.
+    url: str = field(default="", repr=False)
     namespace: str = "ns_runtime"
     sqlite_path: str = "data/ns_runtime_state.sqlite3"
     operation_timeout_seconds: int = 5
     metadata: NsConfigGroupMetadata = field(
         default_factory=lambda: NsConfigGroupMetadata(apply_mode="restart_required")
     )
+
+    @property
+    def resolved_endpoint(self) -> str:
+        return self.endpoint or self.url
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -160,6 +173,9 @@ class NsRuntimeRoutingConfig:
     max_hops: int = 8
     route_cache_ttl_seconds: int = 30
     allow_cross_node: bool = False
+    max_candidate_count: int = 10_000
+    max_selected_target_count: int = 10_000
+    max_plan_evidence_count: int = 20_000
     metadata: NsConfigGroupMetadata = field(
         default_factory=lambda: NsConfigGroupMetadata(apply_mode="immediate")
     )
@@ -168,6 +184,21 @@ class NsRuntimeRoutingConfig:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NsRuntimeDeliveryConfig:
     ack_timeout_seconds: int = 30
+    local_task_dispatch_experimental_enabled: bool = False
+    activation_batch_size: int = 200
+    activation_scan_budget: int = 1000
+    authority_bucket_count: int = 8
+    authority_layout_version: str = "delivery-authority-layout-v2"
+    authority_layout_generation: int = 2
+    authority_layout_apply_mode: Literal["restart_required"] = "restart_required"
+    global_queued_high_watermark: int = 10_000
+    tenant_queued_high_watermark: int = 10_000
+    target_queued_high_watermark: int = 256
+    lease_ttl_seconds: int = 15
+    lease_renew_interval_seconds: int = 5
+    lease_max_renew_failures: int = 2
+    owner_risk_window_seconds: int = 4
+    write_timeout_seconds: int = 10
     max_retry_attempts: int = 5
     retry_base_delay_ms: int = 100
     retry_max_delay_ms: int = 30_000

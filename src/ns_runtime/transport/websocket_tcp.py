@@ -1,0 +1,869 @@
+# -*- coding: utf-8 -*-
+"""WebSocket over TCP adapter declarations.
+
+The third-party WebSocket implementation is imported lazily by the operational
+adapter path added in P04-W03. Importing this module only exposes frozen runtime
+contracts and cannot open a listener.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import ssl
+from dataclasses import dataclass, field
+from typing import Any
+
+from ns_common.async_runtime import TaskSupervisor
+from ns_common.exceptions import (
+    NsRuntimeTransportFlowControlBlockedError,
+    NsRuntimeTransportReceiveFailedError,
+    NsRuntimeTransportSendFailedError,
+    NsRuntimeStartupSecurityError,
+    NsStateError,
+    NsValidationError,
+)
+from ns_common.time import Clock
+
+from .contracts import TransportAdapter, TransportSession
+from .errors import normalize_transport_exception
+from .identity import (
+    TransportDiagnosticSummary,
+    TransportIdentity,
+    TransportIdentityFactory,
+)
+from .metrics import TransportMetricsRecorder
+from .models import (
+    TransportClose,
+    TransportCloseInitiator,
+    TransportCloseReason,
+    TransportErrorKind,
+    TransportMessage,
+    TransportSessionState,
+)
+from .models import TransportCapabilities, TransportCapability
+
+
+WEBSOCKET_TCP_TRANSPORT_TYPE = "websocket_tcp"
+WEBSOCKET_TCP_CAPABILITIES = TransportCapabilities(frozenset({
+    TransportCapability.RELIABLE_ORDERED_MESSAGES,
+    TransportCapability.TRANSPORT_FLOW_CONTROL,
+    TransportCapability.NATIVE_KEEPALIVE,
+}))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WebSocketTcpAdapterOptions:
+    host: str
+    port: int
+    clock: Clock
+    ssl_context: ssl.SSLContext | None = field(default=None, repr=False)
+    environment: str = "local"
+    allow_plaintext_non_prod: bool = False
+    allowed_origins: tuple[str, ...] = ()
+    max_message_bytes: int = 1_048_576
+    accept_queue_capacity: int = 128
+    read_queue_capacity: int = 128
+    write_queue_capacity: int = 128
+    send_timeout_seconds: float = 10.0
+    ping_timeout_seconds: float = 10.0
+    close_timeout_seconds: float = 10.0
+    adapter_shutdown_timeout_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.host, str) or not self.host.strip():
+            self._invalid("host")
+        if isinstance(self.port, bool) or not isinstance(self.port, int) or not 0 <= self.port <= 65535:
+            self._invalid("port")
+        if not isinstance(self.clock, Clock):
+            self._invalid("clock")
+        if self.ssl_context is not None and not isinstance(self.ssl_context, ssl.SSLContext):
+            self._invalid("ssl_context")
+        if self.environment not in {"dev", "local", "prod", "test"}:
+            self._invalid("environment")
+        if not isinstance(self.allow_plaintext_non_prod, bool):
+            self._invalid("allow_plaintext_non_prod")
+        if self.environment == "prod" and self.ssl_context is None:
+            raise NsRuntimeStartupSecurityError(
+                "Runtime production transport requires TLS.",
+                details={
+                    "component": "transport",
+                    "field": "ssl_context",
+                    "environment": "prod",
+                    "reason": "plaintext_transport_in_production",
+                },
+            )
+        if self.ssl_context is None and not self.allow_plaintext_non_prod:
+            raise NsRuntimeStartupSecurityError(
+                "Runtime plaintext transport is disabled.",
+                details={
+                    "component": "transport",
+                    "field": "allow_plaintext_non_prod",
+                    "reason": "plaintext_transport_disabled",
+                },
+            )
+        try:
+            origins = tuple(self.allowed_origins)
+        except (TypeError, ValueError):
+            self._invalid("allowed_origins")
+        if any(not isinstance(item, str) or not item for item in origins):
+            self._invalid("allowed_origins")
+        object.__setattr__(self, "allowed_origins", origins)
+        for field_name in (
+            "max_message_bytes",
+            "accept_queue_capacity",
+            "read_queue_capacity",
+            "write_queue_capacity",
+        ):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                self._invalid(field_name)
+        for field_name in (
+            "send_timeout_seconds",
+            "ping_timeout_seconds",
+            "close_timeout_seconds",
+            "adapter_shutdown_timeout_seconds",
+        ):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                self._invalid(field_name)
+            object.__setattr__(self, field_name, float(value))
+
+    @staticmethod
+    def _invalid(field_name: str) -> None:
+        raise NsValidationError(
+            "WebSocket TCP adapter option is invalid.",
+            details={"component": "transport", "field": field_name},
+        )
+
+
+@dataclass(slots=True)
+class _PendingWrite:
+    text: str = field(repr=False)
+    completion: asyncio.Future[None] = field(repr=False)
+    started: bool = False
+    cancelled: bool = False
+    enqueued_at: float = 0.0
+    backpressured: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingClose:
+    close_info: TransportClose
+    send_close: bool
+
+
+class WebSocketTcpSession(TransportSession):
+    """A library-object firewall around one accepted WebSocket connection."""
+
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        options: WebSocketTcpAdapterOptions,
+        task_supervisor: TaskSupervisor,
+        task_suffix: int,
+        identity: TransportIdentity,
+        metrics: TransportMetricsRecorder,
+    ) -> None:
+        self._connection = connection
+        self._options = options
+        self._task_supervisor = task_supervisor
+        self._identity = identity
+        self._metrics = metrics
+        self._state = TransportSessionState.HANDSHAKING
+        self._close_info: TransportClose | None = None
+        self._pending_close: _PendingClose | None = None
+        self._close_lock = asyncio.Lock()
+        self._receive_lock = asyncio.Lock()
+        self._closed = asyncio.Event()
+        self._read_ready = asyncio.Event()
+        self._read_queue: asyncio.Queue[TransportMessage] = asyncio.Queue(
+            maxsize=options.read_queue_capacity,
+        )
+        self._write_queue: asyncio.Queue[_PendingWrite] = asyncio.Queue(
+            maxsize=options.write_queue_capacity,
+        )
+        self._active_write: _PendingWrite | None = None
+        self._read_failure_reason: str | None = None
+        self._reader_task = task_supervisor.create_task(
+            self._reader_loop(),
+            name=f"transport-read-{task_suffix}",
+            cancel_order=20,
+        )
+        self._writer_task = task_supervisor.create_task(
+            self._writer_loop(),
+            name=f"transport-write-{task_suffix}",
+            cancel_order=20,
+        )
+
+    @property
+    def transport_type(self) -> str:
+        return WEBSOCKET_TCP_TRANSPORT_TYPE
+
+    @property
+    def capabilities(self) -> TransportCapabilities:
+        return WEBSOCKET_TCP_CAPABILITIES
+
+    @property
+    def state(self) -> TransportSessionState:
+        return self._state
+
+    @property
+    def close_info(self) -> TransportClose | None:
+        return self._close_info
+
+    @property
+    def identity(self) -> TransportIdentity:
+        return self._identity
+
+    @property
+    def diagnostic_summary(self) -> TransportDiagnosticSummary:
+        return self._identity.diagnostic_summary(
+            transport_type=WEBSOCKET_TCP_TRANSPORT_TYPE,
+            tls=self._options.ssl_context is not None,
+        )
+
+    @property
+    def read_queue_depth(self) -> int:
+        return self._read_queue.qsize()
+
+    @property
+    def write_queue_depth(self) -> int:
+        return self._write_queue.qsize()
+
+    async def receive(self) -> TransportMessage:
+        async with self._receive_lock:
+            while True:
+                if not self._read_queue.empty():
+                    message = self._read_queue.get_nowait()
+                    self._metrics.read_queue_depth(self._read_queue.qsize())
+                    if self._read_queue.empty() and self._read_failure_reason is None:
+                        self._read_ready.clear()
+                    return message
+                if self._read_failure_reason is not None:
+                    self._raise_receive_failure(self._read_failure_reason)
+                if self._state is TransportSessionState.CLOSED:
+                    self._raise_receive_failure("session_closed")
+                self._read_ready.clear()
+                if (
+                    not self._read_queue.empty()
+                    or self._read_failure_reason is not None
+                    or self._state is TransportSessionState.CLOSED
+                ):
+                    self._read_ready.set()
+                    continue
+                await self._read_ready.wait()
+
+    async def send(self, text: str) -> None:
+        if not isinstance(text, str):
+            raise NsValidationError(
+                "Transport send requires text.",
+                details={"component": "transport", "field": "message.text"},
+            )
+        if len(text.encode("utf-8")) > self._options.max_message_bytes:
+            self._metrics.send_error("RUNTIME_TRANSPORT_SEND_FAILED")
+            raise NsRuntimeTransportSendFailedError(
+                "Runtime transport message exceeds the configured boundary.",
+                details={
+                    "component": "transport",
+                    "operation": "send",
+                    "reason": "message_too_large",
+                    "transport_type": WEBSOCKET_TCP_TRANSPORT_TYPE,
+                },
+            )
+        if self._state is not TransportSessionState.HANDSHAKING:
+            raise NsStateError(
+                "Transport session is not writable.",
+                details={
+                    "component": "transport",
+                    "operation": "send",
+                    "state": self._state.value,
+                },
+            )
+        loop = asyncio.get_running_loop()
+        pending = _PendingWrite(
+            text=text,
+            completion=loop.create_future(),
+            enqueued_at=self._options.clock.monotonic(),
+            backpressured=(
+                self._active_write is not None
+                or not self._write_queue.empty()
+            ),
+        )
+        try:
+            self._write_queue.put_nowait(pending)
+        except asyncio.QueueFull:
+            self._metrics.send_error("RUNTIME_TRANSPORT_FLOW_CONTROL_BLOCKED")
+            self._metrics.backpressure(0.0)
+            raise NsRuntimeTransportFlowControlBlockedError(
+                "Runtime transport write queue is full.",
+                details={
+                    "component": "transport",
+                    "operation": "send",
+                    "reason": "write_queue_full",
+                    "transport_type": WEBSOCKET_TCP_TRANSPORT_TYPE,
+                },
+            ) from None
+        self._metrics.write_queue_depth(self._write_queue.qsize())
+        try:
+            # This is the sole authoritative timeout for both queueing and the
+            # underlying write.  The writer never starts a second budget.
+            await asyncio.wait_for(
+                asyncio.shield(pending.completion),
+                timeout=self._options.send_timeout_seconds,
+            )
+            if pending.backpressured:
+                self._metrics.backpressure(max(
+                    0.0,
+                    (self._options.clock.monotonic() - pending.enqueued_at) * 1000.0,
+                ))
+        except asyncio.CancelledError:
+            pending.cancelled = True
+            pending.completion.cancel()
+            raise
+        except asyncio.TimeoutError:
+            pending.cancelled = True
+            pending.completion.cancel()
+            self._metrics.send_error("RUNTIME_TRANSPORT_SEND_FAILED")
+            if pending.started:
+                await self._close_with(
+                    reason=TransportCloseReason.SEND_TIMEOUT,
+                    initiator=TransportCloseInitiator.ADAPTER,
+                    clean=False,
+                    protocol_code=1011,
+                )
+            raise self._send_failure("send_timeout") from None
+
+    async def _reader_loop(self) -> None:
+        try:
+            while self._state is TransportSessionState.HANDSHAKING:
+                value = await self._connection.recv()
+                if not isinstance(value, str):
+                    self._set_read_failure("binary_message_rejected")
+                    await self._close_with(
+                        reason=TransportCloseReason.PROTOCOL_ERROR,
+                        initiator=TransportCloseInitiator.ADAPTER,
+                        clean=False,
+                        protocol_code=1003,
+                    )
+                    return
+                byte_size = len(value.encode("utf-8"))
+                if byte_size > self._options.max_message_bytes:
+                    self._set_read_failure("message_too_large")
+                    await self._close_with(
+                        reason=TransportCloseReason.MESSAGE_TOO_LARGE,
+                        initiator=TransportCloseInitiator.ADAPTER,
+                        clean=False,
+                        protocol_code=1009,
+                    )
+                    return
+                message = TransportMessage(
+                    text=value,
+                    byte_size=byte_size,
+                    received_at=self._options.clock.utc_now(),
+                )
+                try:
+                    self._read_queue.put_nowait(message)
+                except asyncio.QueueFull:
+                    self._metrics.receive_error("RUNTIME_TRANSPORT_RECEIVE_FAILED")
+                    self._set_read_failure("read_queue_full")
+                    await self._close_with(
+                        reason=TransportCloseReason.READ_QUEUE_FULL,
+                        initiator=TransportCloseInitiator.ADAPTER,
+                        clean=False,
+                        protocol_code=1013,
+                    )
+                    return
+                self._metrics.bytes_received(byte_size)
+                self._metrics.read_queue_depth(self._read_queue.qsize())
+                self._read_ready.set()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            failure = normalize_transport_exception(
+                error,
+                operation="receive",
+                close_code=_safe_connection_close_code(self._connection),
+            )
+            reason = str(failure.error.details["reason"])
+            self._set_read_failure(reason)
+            self._metrics.receive_error(failure.error.code)
+            await self._close_for_receive_failure(
+                kind=failure.error.kind,
+                reason=reason,
+            )
+
+    async def _writer_loop(self) -> None:
+        try:
+            while self._state is TransportSessionState.HANDSHAKING:
+                pending = await self._write_queue.get()
+                self._metrics.write_queue_depth(self._write_queue.qsize())
+                if pending.cancelled:
+                    continue
+                pending.started = True
+                self._active_write = pending
+                try:
+                    await self._connection.send(pending.text)
+                except asyncio.CancelledError:
+                    if not pending.completion.done():
+                        pending.completion.cancel()
+                    raise
+                except Exception as error:
+                    failure = normalize_transport_exception(
+                        error,
+                        operation="send",
+                    )
+                    if not pending.completion.done():
+                        pending.completion.set_exception(failure.exception)
+                    self._metrics.send_error(failure.error.code)
+                    await self._close_with(
+                        reason=TransportCloseReason.SEND_FAILED,
+                        initiator=TransportCloseInitiator.ADAPTER,
+                        clean=False,
+                        protocol_code=1011,
+                    )
+                    return
+                if not pending.completion.done():
+                    pending.completion.set_result(None)
+                self._metrics.bytes_sent(len(pending.text.encode("utf-8")))
+                self._active_write = None
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._active_write = None
+
+    def _set_read_failure(self, reason: str) -> None:
+        if self._read_failure_reason is None:
+            self._read_failure_reason = reason
+        self._read_ready.set()
+
+    @staticmethod
+    def _raise_receive_failure(reason: str) -> None:
+        message = {
+            "binary_message_rejected": "Runtime transport requires text messages.",
+            "message_too_large": "Runtime transport message exceeds the configured boundary.",
+            "read_queue_full": "Runtime transport read queue is full.",
+            "session_closed": "Runtime transport session is closed.",
+        }.get(reason, "Runtime transport receive failed.")
+        raise NsRuntimeTransportReceiveFailedError(
+            message,
+            details={
+                "component": "transport",
+                "operation": "receive",
+                "reason": reason,
+                "transport_type": WEBSOCKET_TCP_TRANSPORT_TYPE,
+            },
+        ) from None
+
+    @staticmethod
+    def _send_failure(reason: str) -> NsRuntimeTransportSendFailedError:
+        return NsRuntimeTransportSendFailedError(
+            "Runtime transport send failed.",
+            details={
+                "component": "transport",
+                "operation": "send",
+                "reason": reason,
+                "transport_type": WEBSOCKET_TCP_TRANSPORT_TYPE,
+            },
+        )
+
+    async def ping(self) -> None:
+        if self._state is not TransportSessionState.HANDSHAKING:
+            raise NsStateError(
+                "Transport session cannot perform keepalive.",
+                details={
+                    "component": "transport",
+                    "operation": "keepalive",
+                    "state": self._state.value,
+                },
+            )
+        try:
+            pong_waiter = await self._connection.ping()
+            await asyncio.wait_for(
+                pong_waiter,
+                timeout=self._options.ping_timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            failure = normalize_transport_exception(
+                error,
+                operation="keepalive",
+            )
+            self._metrics.receive_error(failure.error.code)
+            await self._close_with(
+                reason=TransportCloseReason.KEEPALIVE_FAILED,
+                initiator=TransportCloseInitiator.ADAPTER,
+                clean=False,
+                protocol_code=1011,
+            )
+            raise failure.exception from None
+
+    async def close(self) -> TransportClose:
+        return await self._close_with(
+            reason=TransportCloseReason.NORMAL,
+            initiator=TransportCloseInitiator.LOCAL,
+            clean=True,
+            protocol_code=1000,
+        )
+
+    async def _close_for_adapter_shutdown(self) -> TransportClose:
+        return await self._close_with(
+            reason=TransportCloseReason.ADAPTER_SHUTDOWN,
+            initiator=TransportCloseInitiator.ADAPTER,
+            clean=True,
+            protocol_code=1001,
+        )
+
+    async def wait_closed(self) -> None:
+        await self._closed.wait()
+
+    async def _mark_remote_closed(self, *, clean: bool) -> TransportClose:
+        return await self._close_with(
+            reason=TransportCloseReason.REMOTE_CLOSED,
+            initiator=TransportCloseInitiator.REMOTE,
+            clean=clean,
+            protocol_code=_safe_connection_close_code(self._connection),
+            send_close=False,
+        )
+
+    async def _close_for_receive_failure(
+        self,
+        *,
+        kind: TransportErrorKind,
+        reason: str,
+    ) -> TransportClose:
+        protocol_code = _safe_connection_close_code(self._connection)
+        if kind is TransportErrorKind.REMOTE_CLOSED:
+            return await self._mark_remote_closed(clean=reason == "remote_closed")
+        if kind is TransportErrorKind.PROTOCOL_ERROR:
+            close_reason = TransportCloseReason.PROTOCOL_ERROR
+            protocol_code = protocol_code or 1002
+        elif kind is TransportErrorKind.MESSAGE_TOO_LARGE:
+            close_reason = TransportCloseReason.MESSAGE_TOO_LARGE
+            protocol_code = 1009
+        else:
+            close_reason = TransportCloseReason.RECEIVE_FAILED
+            protocol_code = protocol_code or 1011
+        return await self._close_with(
+            reason=close_reason,
+            initiator=TransportCloseInitiator.ADAPTER,
+            clean=False,
+            protocol_code=protocol_code,
+        )
+
+    async def _close_with(
+        self,
+        *,
+        reason: TransportCloseReason,
+        initiator: TransportCloseInitiator,
+        clean: bool,
+        protocol_code: int | None,
+        send_close: bool = True,
+    ) -> TransportClose:
+        async with self._close_lock:
+            if self._close_info is not None:
+                return self._close_info
+            self._state = TransportSessionState.CLOSING
+            if self._read_failure_reason is None:
+                self._set_read_failure("session_closed")
+            if self._pending_close is None:
+                self._pending_close = _PendingClose(
+                    close_info=TransportClose(
+                        reason=reason,
+                        initiator=initiator,
+                        clean=clean,
+                        protocol_code=protocol_code,
+                    ),
+                    send_close=send_close,
+                )
+            close_info = self._pending_close.close_info
+            send_close = self._pending_close.send_close
+            self._fail_pending_writes()
+            current_task = asyncio.current_task()
+            io_tasks = tuple(
+                task
+                for task in (self._reader_task, self._writer_task)
+                if task is not current_task and not task.done()
+            )
+            for task in io_tasks:
+                task.cancel()
+            if send_close:
+                try:
+                    await asyncio.wait_for(
+                        self._connection.close(
+                            code=protocol_code or 1000,
+                            reason="",
+                        ),
+                        timeout=self._options.close_timeout_seconds,
+                    )
+                except asyncio.CancelledError:
+                    # Resource ownership is retained in CLOSING.  A later
+                    # close call re-enters this path with the original outcome.
+                    raise
+                except Exception:
+                    close_info = TransportClose(
+                        reason=close_info.reason,
+                        initiator=close_info.initiator,
+                        clean=False,
+                        protocol_code=close_info.protocol_code,
+                    )
+                    self._pending_close = _PendingClose(
+                        close_info=close_info,
+                        send_close=send_close,
+                    )
+            if io_tasks:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*io_tasks, return_exceptions=True),
+                        timeout=self._options.close_timeout_seconds,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
+            self._state = TransportSessionState.CLOSED
+            self._close_info = close_info
+            self._pending_close = None
+            self._closed.set()
+            self._metrics.connection_closed(close_info.reason)
+            return close_info
+
+    def _fail_pending_writes(self) -> None:
+        failure = self._send_failure("session_closing")
+        active = self._active_write
+        if active is not None and not active.completion.done():
+            active.completion.set_exception(failure)
+        while not self._write_queue.empty():
+            pending = self._write_queue.get_nowait()
+            pending.cancelled = True
+            if not pending.completion.done():
+                pending.completion.set_exception(
+                    self._send_failure("session_closing"),
+                )
+
+
+class WebSocketTcpAdapter(TransportAdapter):
+    """TLS/TCP WebSocket listener with typed admission and drain operations."""
+
+    def __init__(
+        self,
+        *,
+        options: WebSocketTcpAdapterOptions,
+        task_supervisor: TaskSupervisor,
+        identity_factory: TransportIdentityFactory,
+        metrics: TransportMetricsRecorder,
+    ) -> None:
+        if not isinstance(options, WebSocketTcpAdapterOptions):
+            raise NsValidationError(
+                "WebSocket TCP adapter options are invalid.",
+                details={"component": "transport", "field": "options"},
+            )
+        if not isinstance(task_supervisor, TaskSupervisor):
+            raise NsValidationError(
+                "WebSocket TCP task supervisor is invalid.",
+                details={"component": "transport", "field": "task_supervisor"},
+            )
+        if not isinstance(identity_factory, TransportIdentityFactory):
+            raise NsValidationError(
+                "WebSocket TCP identity factory is invalid.",
+                details={"component": "transport", "field": "identity_factory"},
+            )
+        if not isinstance(metrics, TransportMetricsRecorder):
+            raise NsValidationError(
+                "WebSocket TCP transport metrics recorder is invalid.",
+                details={"component": "transport", "field": "metrics"},
+            )
+        self._options = options
+        self._task_supervisor = task_supervisor
+        self._identity_factory = identity_factory
+        self._metrics = metrics
+        self._server: Any | None = None
+        self._accept_queue: asyncio.Queue[WebSocketTcpSession] = asyncio.Queue(
+            maxsize=options.accept_queue_capacity,
+        )
+        self._sessions: set[WebSocketTcpSession] = set()
+        self._accepting = False
+        self._start_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
+        self._closed = False
+        self._session_sequence = 0
+
+    @property
+    def transport_type(self) -> str:
+        return WEBSOCKET_TCP_TRANSPORT_TYPE
+
+    @property
+    def capabilities(self) -> TransportCapabilities:
+        return WEBSOCKET_TCP_CAPABILITIES
+
+    @property
+    def accepting(self) -> bool:
+        return self._accepting
+
+    @property
+    def bound_port(self) -> int | None:
+        if self._server is None or not self._server.sockets:
+            return None
+        return int(self._server.sockets[0].getsockname()[1])
+
+    async def start(self) -> None:
+        async with self._start_lock:
+            if self._closed:
+                raise NsStateError(
+                    "Transport adapter is closed.",
+                    details={"component": "transport", "operation": "listen", "state": "closed"},
+                )
+            if self._server is not None:
+                return
+            try:
+                from websockets.asyncio.server import serve
+
+                self._server = await serve(
+                    self._handle_connection,
+                    self._options.host,
+                    self._options.port,
+                    ssl=self._options.ssl_context,
+                    origins=(self._options.allowed_origins or None),
+                    compression=None,
+                    max_size=self._options.max_message_bytes,
+                    max_queue=16,
+                    open_timeout=self._options.send_timeout_seconds,
+                    ping_timeout=self._options.ping_timeout_seconds,
+                    close_timeout=self._options.close_timeout_seconds,
+                    server_header=None,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                raise normalize_transport_exception(
+                    error,
+                    operation="listen",
+                ).exception from None
+            self._accepting = True
+
+    async def accept(self) -> TransportSession:
+        if not self._accepting and self._accept_queue.empty():
+            raise NsStateError(
+                "Transport adapter is not accepting sessions.",
+                details={"component": "transport", "operation": "accept", "state": "closed"},
+            )
+        return await self._accept_queue.get()
+
+    async def stop_admission(self) -> None:
+        self.stop_admission_now()
+
+    def stop_admission_now(self) -> None:
+        self._accepting = False
+        if self._server is not None:
+            self._server.close(close_connections=False)
+
+    async def drain(self) -> None:
+        sessions = tuple(self._sessions)
+        if not sessions:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(
+                    session._close_for_adapter_shutdown()
+                    for session in sessions
+                )),
+                # Adapter ownership, rather than an upper-layer close request,
+                # determines the stable close classification during drain.
+                timeout=self._options.adapter_shutdown_timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Individual close paths normalize and seal their own state. Drain
+            # remains fail-soft so one broken socket cannot retain the adapter.
+            return
+
+    async def close(self) -> None:
+        async with self._close_lock:
+            if self._closed:
+                return
+            await self.stop_admission()
+            await self.drain()
+            if self._server is not None:
+                self._server.close()
+                try:
+                    await asyncio.wait_for(
+                        self._server.wait_closed(),
+                        timeout=self._options.adapter_shutdown_timeout_seconds,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
+            self._closed = True
+
+    async def _handle_connection(self, connection: Any) -> None:
+        if not self._accepting:
+            try:
+                await connection.close(code=1001, reason="")
+            except Exception:
+                pass
+            return
+        self._session_sequence += 1
+        handshake_started = self._options.clock.monotonic()
+        try:
+            local_address = connection.local_address
+        except Exception:
+            local_address = None
+        try:
+            peer_address = connection.remote_address
+        except Exception:
+            peer_address = None
+        session = WebSocketTcpSession(
+            connection=connection,
+            options=self._options,
+            task_supervisor=self._task_supervisor,
+            task_suffix=self._session_sequence,
+            identity=self._identity_factory.create(
+                local_address=local_address,
+                peer_address=peer_address,
+                validated_at=self._options.clock.utc_now(),
+            ),
+            metrics=self._metrics,
+        )
+        self._sessions.add(session)
+        try:
+            self._accept_queue.put_nowait(session)
+        except asyncio.QueueFull:
+            await session._close_with(
+                reason=TransportCloseReason.READ_QUEUE_FULL,
+                initiator=TransportCloseInitiator.ADAPTER,
+                clean=False,
+                protocol_code=1013,
+            )
+            self._sessions.discard(session)
+            return
+        self._metrics.connection_opened()
+        self._metrics.handshake_completed(max(
+            0.0,
+            (self._options.clock.monotonic() - handshake_started) * 1000.0,
+        ))
+        try:
+            await session.wait_closed()
+        finally:
+            self._sessions.discard(session)
+
+
+def _safe_connection_close_code(connection: Any) -> int | None:
+    try:
+        code = connection.close_code
+    except Exception:
+        return None
+    if isinstance(code, bool) or not isinstance(code, int):
+        return None
+    return code
+
+
+__all__ = (
+    "WEBSOCKET_TCP_CAPABILITIES",
+    "WEBSOCKET_TCP_TRANSPORT_TYPE",
+    "WebSocketTcpAdapter",
+    "WebSocketTcpAdapterOptions",
+    "WebSocketTcpSession",
+)

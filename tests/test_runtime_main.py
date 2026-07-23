@@ -18,6 +18,7 @@ from ns_common.exceptions import (
     NsRuntimeStartupSecurityError,
     NsRuntimeTransportDisabledError,
 )
+from ns_common.logger import NsLogger, close_ns_loggers
 from ns_runtime.main import main
 from ns_runtime.startup import (
     RuntimeStartupDirectories,
@@ -48,10 +49,18 @@ def _production_config(runtime: dict[str, object] | None = None) -> dict[str, ob
         "backend": {
             "debug": False,
             "secret_key": "s" * 32,
+            "iam_internal_token": "b" * 32,
+        },
+    }
+    runtime_config: dict[str, object] = {
+        "iam": {
+            "base_url": "https://iam.example.test/api/iam/",
+            "internal_service_credential": "r" * 32,
         },
     }
     if runtime is not None:
-        config["runtime"] = runtime
+        runtime_config.update(runtime)
+    config["runtime"] = runtime_config
     return config
 
 
@@ -77,6 +86,105 @@ def _controlled_preflight(
 
 
 class NsRuntimeMainTestCase(unittest.TestCase):
+
+    def test_main_wires_each_initial_role_to_explicit_safe_logger(self) -> None:
+        captured_contexts: list[object] = []
+        captured_monitors: list[object] = []
+        captured_logical_owners: list[object] = []
+
+        class CapturingService:
+            def __init__(
+                self,
+                *,
+                context: object,
+                transport_manager: object,
+                logger_close: object,
+                event_loop_monitor: object,
+                logical_connection_owner: object,
+            ) -> None:
+                from ns_runtime.shutdown import RuntimeShutdownCoordinator
+
+                captured_contexts.append(context)
+                captured_monitors.append(event_loop_monitor)
+                captured_logical_owners.append(logical_connection_owner)
+                self.shutdown_coordinator = RuntimeShutdownCoordinator(
+                    context=context,  # type: ignore[arg-type]
+                    logger_close=logger_close,  # type: ignore[arg-type]
+                    transport_owner=transport_manager,  # type: ignore[arg-type]
+                    logical_connection_owner=logical_connection_owner,  # type: ignore[arg-type]
+                )
+                self.event_loop_monitor = event_loop_monitor
+
+            async def start(self) -> None:
+                return None
+
+            async def stop(self) -> None:
+                return None
+
+        try:
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                temporary_root = Path(temporary_directory)
+                for role in (
+                    "singleton",
+                    "sub_node",
+                    "standby_master",
+                    "active_master",
+                ):
+                    with self.subTest(role=role):
+                        cluster: dict[str, object] = {"role": role}
+                        if role == "sub_node":
+                            cluster["active_master_url"] = (
+                                "https://master.example.test"
+                            )
+                        config_path = _write_config(
+                            temporary_root,
+                            {"runtime": {"cluster": cluster}},
+                            filename=f"{role}.json",
+                        )
+                        startup_root = temporary_root / role
+                        preflight, _ = _controlled_preflight()
+
+                        with mock.patch(
+                            "ns_runtime.transport.TransportRuntimeService",
+                            CapturingService,
+                        ):
+                            self.assertEqual(
+                                0,
+                                main(
+                                    environment="test",
+                                    config_path=config_path,
+                                    startup_root=startup_root,
+                                    preflight=preflight,
+                                ),
+                            )
+
+                        context = captured_contexts[-1]
+                        self.assertEqual(
+                            role,
+                            context.config.runtime.cluster.role,  # type: ignore[attr-defined]
+                        )
+                        self.assertIsInstance(
+                            context.logger,  # type: ignore[attr-defined]
+                            NsLogger,
+                        )
+                        self.assertIs(
+                            context,
+                            captured_monitors[-1].context,  # type: ignore[attr-defined]
+                        )
+                        self.assertEqual(
+                            "asyncio",
+                            captured_monitors[-1].snapshot.implementation.value,  # type: ignore[attr-defined]
+                        )
+                        self.assertTrue((startup_root / "log").is_dir())
+                        from ns_runtime.iam import IamClient
+
+                        self.assertIsInstance(
+                            captured_logical_owners[-1]._iam,  # type: ignore[attr-defined]
+                            IamClient,
+                        )
+                        self.assertIsNotNone(context.http_client_owner)  # type: ignore[attr-defined]
+        finally:
+            close_ns_loggers()
 
     def test_main_succeeds_with_runtime_dependencies_or_fails_closed(self) -> None:
         if importlib.util.find_spec("websockets") is None:
@@ -108,8 +216,15 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             self.assertIn("websockets", completed.stderr)
         else:
             self.assertEqual(0, completed.returncode, completed.stderr)
-            self.assertEqual("", completed.stdout)
             self.assertEqual("", completed.stderr)
+            summary = json.loads(completed.stdout.strip())
+            self.assertEqual("runtime_shutdown_summary", summary["event"])
+            self.assertEqual(
+                "self_check_complete",
+                summary["shutdown_reason"],
+            )
+            self.assertEqual(0, summary["task_unfinished_count"])
+            self.assertEqual(0, summary["cleanup_failure_count"])
 
     def test_main_normalizes_production_plaintext_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

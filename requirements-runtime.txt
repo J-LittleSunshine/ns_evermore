@@ -1,9 +1,10 @@
 # ns_runtime production dependencies.
-# Redis/Valkey test drivers live in requirements-runtime-test.txt until P08
-# freezes the production StateStore driver contract. QUIC/WebTransport
-# experiments remain deferred to P21.
+# Redis and Valkey are production StateStore provider drivers. They remain
+# dynamically loaded so importing ns_common does not create a client.
 
 -r requirements-common.txt
 
 uvloop==0.22.1; platform_system != "Windows"
 websockets==16.0
+redis==8.0.1
+valkey==6.1.1

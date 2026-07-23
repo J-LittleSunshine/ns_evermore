@@ -6,10 +6,7 @@
 adrf==0.1.13
 asgiref==3.12.1
 async-property==0.2.2
-cffi==2.1.0
-cryptography==49.0.0
 Django==5.2.16
 djangorestframework==3.17.1
 joserfc==1.7.3
-pycparser==3.0
 sqlparse==0.5.5

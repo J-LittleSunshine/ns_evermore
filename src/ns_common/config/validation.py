@@ -650,6 +650,65 @@ class _ConfigValidator:
             "runtime.iam.permission_snapshot_ttl_seconds",
             iam.permission_snapshot_ttl_seconds,
         )
+        if iam.authorization_mode not in {"strict", "cache"}:
+            self._raise_invalid_choice(
+                "runtime.iam.authorization_mode",
+                iam.authorization_mode,
+                {"strict", "cache"},
+            )
+        self._validate_non_empty_string(
+            "runtime.iam.internal_service_credential",
+            iam.internal_service_credential,
+        )
+        if len(iam.internal_service_credential) < 32:
+            raise NsConfigError(
+                "runtime IAM internal service credential is too short.",
+                details={
+                    "field": "runtime.iam.internal_service_credential",
+                    "minimum_length": 32,
+                },
+            )
+        self._validate_non_empty_string(
+            "backend.iam_internal_token",
+            self._config.backend.iam_internal_token,
+        )
+        if len(self._config.backend.iam_internal_token) < 32:
+            raise NsConfigError(
+                "backend IAM internal token is too short.",
+                details={
+                    "field": "backend.iam_internal_token",
+                    "minimum_length": 32,
+                },
+            )
+        if environment == "prod":
+            if urlparse(iam.base_url.strip()).scheme != "https":
+                raise NsConfigError(
+                    "runtime IAM must use HTTPS in prod.",
+                    details={
+                        "field": "runtime.iam.base_url",
+                        "env": environment,
+                    },
+                )
+            for field_name, secret in (
+                (
+                    "runtime.iam.internal_service_credential",
+                    iam.internal_service_credential,
+                ),
+                (
+                    "backend.iam_internal_token",
+                    self._config.backend.iam_internal_token,
+                ),
+            ):
+                if secret.startswith("change-me-"):
+                    raise NsConfigError(
+                        "IAM internal credentials must be changed in prod.",
+                        details={"field": field_name, "env": environment},
+                    )
+            if not iam.fail_closed:
+                raise NsConfigError(
+                    "runtime IAM fail-closed mode is required in prod.",
+                    details={"field": "runtime.iam.fail_closed", "env": environment},
+                )
 
         state_store = runtime.state_store
         if environment == "prod" and state_store.backend not in {"redis", "valkey"}:
@@ -668,21 +727,91 @@ class _ConfigValidator:
         )
         if state_store.backend == "sqlite":
             self._validate_non_empty_string("runtime.state_store.sqlite_path", state_store.sqlite_path)
-        elif state_store.backend == "redis":
-            self._validate_cache_url("runtime.state_store.url", state_store.url, {"redis", "rediss"})
-        elif state_store.backend == "valkey":
-            self._validate_cache_url(
-                "runtime.state_store.url",
-                state_store.url,
-                {"redis", "rediss", "valkey", "valkeys"},
+        else:
+            if state_store.endpoint and state_store.url:
+                raise NsConfigError(
+                    "runtime.state_store endpoint aliases cannot be combined.",
+                    details={"field": "runtime.state_store.endpoint"},
+                )
+            endpoint = state_store.resolved_endpoint
+            allowed_schemes = (
+                {"redis", "rediss"}
+                if state_store.backend == "redis"
+                else {"redis", "rediss", "valkey", "valkeys"}
+            )
+            self._validate_state_store_endpoint(
+                "runtime.state_store.endpoint", endpoint, allowed_schemes,
+            )
+            if not isinstance(state_store.username, str):
+                raise NsConfigError(
+                    "runtime.state_store.username must be a string.",
+                    details={"field": "runtime.state_store.username"},
+                )
+            self._validate_state_store_password_source(
+                state_store.password_source,
+                environment=environment,
             )
 
         routing = runtime.routing
         self._validate_positive_int("runtime.routing.max_hops", routing.max_hops)
         self._validate_non_negative_int("runtime.routing.route_cache_ttl_seconds", routing.route_cache_ttl_seconds)
+        self._validate_positive_int(
+            "runtime.routing.max_candidate_count",
+            routing.max_candidate_count,
+        )
+        self._validate_positive_int(
+            "runtime.routing.max_selected_target_count",
+            routing.max_selected_target_count,
+        )
+        self._validate_positive_int(
+            "runtime.routing.max_plan_evidence_count",
+            routing.max_plan_evidence_count,
+        )
 
         delivery = runtime.delivery
         self._validate_positive_int("runtime.delivery.ack_timeout_seconds", delivery.ack_timeout_seconds)
+        if type(delivery.local_task_dispatch_experimental_enabled) is not bool:
+            raise NsConfigError(
+                "runtime.delivery.local_task_dispatch_experimental_enabled must be a boolean.",
+                details={"field": "runtime.delivery.local_task_dispatch_experimental_enabled"},
+            )
+        for field_name in (
+            "activation_batch_size",
+            "activation_scan_budget",
+            "authority_bucket_count",
+            "authority_layout_generation",
+            "global_queued_high_watermark",
+            "tenant_queued_high_watermark",
+            "target_queued_high_watermark",
+            "lease_ttl_seconds",
+            "lease_renew_interval_seconds",
+            "lease_max_renew_failures",
+            "owner_risk_window_seconds",
+            "write_timeout_seconds",
+        ):
+            self._validate_positive_int(
+                f"runtime.delivery.{field_name}", getattr(delivery, field_name),
+            )
+        if delivery.authority_layout_version != "delivery-authority-layout-v2":
+            raise NsConfigError(
+                "runtime.delivery.authority_layout_version is unsupported.",
+                details={"field": "runtime.delivery.authority_layout_version"},
+            )
+        if delivery.authority_layout_apply_mode != "restart_required":
+            raise NsConfigError(
+                "runtime.delivery.authority_layout_apply_mode must be restart_required.",
+                details={"field": "runtime.delivery.authority_layout_apply_mode"},
+            )
+        if delivery.lease_renew_interval_seconds >= delivery.lease_ttl_seconds:
+            raise NsConfigError(
+                "runtime.delivery lease renew interval must be lower than the lease TTL.",
+                details={"field": "runtime.delivery.lease_renew_interval_seconds"},
+            )
+        if delivery.write_timeout_seconds >= delivery.lease_ttl_seconds:
+            raise NsConfigError(
+                "runtime.delivery write timeout must be lower than the lease TTL.",
+                details={"field": "runtime.delivery.write_timeout_seconds"},
+            )
         self._validate_non_negative_int("runtime.delivery.max_retry_attempts", delivery.max_retry_attempts)
         self._validate_non_negative_int("runtime.delivery.retry_base_delay_ms", delivery.retry_base_delay_ms)
         self._validate_non_negative_int("runtime.delivery.retry_max_delay_ms", delivery.retry_max_delay_ms)
@@ -926,6 +1055,74 @@ class _ConfigValidator:
                     "field": field_name,
                     "value": cache_url,
                 },
+            )
+
+    @staticmethod
+    def _validate_state_store_endpoint(
+        field_name: str,
+        endpoint: Any,
+        allowed_schemes: set[str],
+    ) -> None:
+        if not isinstance(endpoint, str) or not endpoint.strip():
+            raise NsConfigError(
+                "Runtime StateStore endpoint must be configured.",
+                details={"field": field_name},
+            )
+        parsed = urlparse(endpoint.strip())
+        if parsed.scheme not in allowed_schemes:
+            raise NsConfigError(
+                "Runtime StateStore endpoint scheme is invalid.",
+                details={
+                    "field": field_name,
+                    "scheme": parsed.scheme,
+                    "allowed_schemes": sorted(allowed_schemes),
+                },
+            )
+        if not parsed.hostname:
+            raise NsConfigError(
+                "Runtime StateStore endpoint host is required.",
+                details={"field": field_name},
+            )
+        if parsed.username is not None or parsed.password is not None:
+            raise NsConfigError(
+                "Runtime StateStore credentials must use typed fields and a secret source.",
+                details={"field": field_name, "reason": "userinfo_forbidden"},
+            )
+        if parsed.query or parsed.fragment or parsed.params:
+            raise NsConfigError(
+                "Runtime StateStore endpoint contains unsupported components.",
+                details={"field": field_name},
+            )
+        path = parsed.path or "/0"
+        try:
+            database = int(path.removeprefix("/"))
+        except ValueError:
+            database = -1
+        if not path.startswith("/") or database < 0:
+            raise NsConfigError(
+                "Runtime StateStore endpoint database is invalid.",
+                details={"field": field_name},
+            )
+
+    @staticmethod
+    def _validate_state_store_password_source(
+        value: Any,
+        *,
+        environment: str,
+    ) -> None:
+        valid = False
+        if value == "none":
+            valid = True
+        elif isinstance(value, str) and value.startswith("env:"):
+            name = value[4:]
+            valid = re.fullmatch(r"[A-Z_][A-Z0-9_]{0,127}", name) is not None
+        elif isinstance(value, str) and value.startswith("file:"):
+            path = value[5:]
+            valid = bool(path) and Path(path).is_absolute()
+        if not valid:
+            raise NsConfigError(
+                "runtime.state_store.password_source is invalid.",
+                details={"field": "runtime.state_store.password_source"},
             )
 
     @staticmethod

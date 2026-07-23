@@ -52,6 +52,13 @@ def _production_candidate_config() -> NsConfig:
             "backend": {
                 "debug": False,
                 "secret_key": "s" * 32,
+                "iam_internal_token": "b" * 32,
+            },
+            "runtime": {
+                "iam": {
+                    "base_url": "https://iam.example.test/api/iam/",
+                    "internal_service_credential": "r" * 32,
+                },
             },
         },
         environment="local",
@@ -70,6 +77,88 @@ def _windows_selector(
 
 
 class RuntimeStartupPreflightTestCase(unittest.TestCase):
+
+    def test_inspect_reports_missing_directories_without_mutation_or_policy(
+        self,
+    ) -> None:
+        installed_policies: list[asyncio.AbstractEventLoopPolicy] = []
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / "must-not-exist"
+            result = RuntimeStartupPreflight(
+                event_loop_selector=_windows_selector(
+                    installed_policies=installed_policies,
+                ),
+                dependency_probe=lambda _: object(),
+            ).inspect(
+                _create_context(),
+                environment="test",
+                directories=RuntimeStartupDirectories.for_root(root),
+            )
+
+            self.assertFalse(result.ready)
+            self.assertEqual(
+                ("data", "etc", "log", "tmp"),
+                tuple(item.role for item in result.directories),
+            )
+            self.assertEqual(
+                {"missing"},
+                {item.state for item in result.directories},
+            )
+            self.assertFalse(root.exists())
+        self.assertEqual([], installed_policies)
+
+    def test_inspect_reports_accessible_local_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / "runtime-root"
+            directories = RuntimeStartupDirectories.for_root(root)
+            for _, path in directories.required_directories():
+                path.mkdir(parents=True, exist_ok=True)
+
+            result = RuntimeStartupPreflight(
+                event_loop_selector=_windows_selector(),
+                dependency_probe=lambda _: object(),
+            ).inspect(
+                _create_context(),
+                environment="local",
+                directories=directories,
+            )
+
+        self.assertTrue(result.ready)
+        self.assertEqual(
+            {"accessible"},
+            {item.state for item in result.directories},
+        )
+        self.assertEqual(("websockets",), result.checked_dependencies)
+
+    def test_inspect_distinguishes_not_directory_and_access_denied(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / "runtime-root"
+            directories = RuntimeStartupDirectories.for_root(root)
+            directories.data_dir.parent.mkdir(parents=True)
+            directories.data_dir.write_text("not a directory", encoding="utf-8")
+            for path in (
+                directories.etc_dir,
+                directories.log_dir,
+                directories.tmp_dir,
+            ):
+                path.mkdir()
+
+            result = RuntimeStartupPreflight(
+                event_loop_selector=_windows_selector(),
+                dependency_probe=lambda _: object(),
+                directory_access_probe=(
+                    lambda path, _mode: path != directories.log_dir
+                ),
+            ).inspect(
+                _create_context(),
+                environment="dev",
+                directories=directories,
+            )
+
+        states = {item.role: item.state for item in result.directories}
+        self.assertEqual("not_directory", states["data"])
+        self.assertEqual("access_denied", states["log"])
+        self.assertFalse(result.ready)
 
     def test_validate_prepares_explicit_directories_without_installing_policy(
         self,
@@ -318,8 +407,13 @@ class RuntimeStartupPreflightTestCase(unittest.TestCase):
                         "backend": {
                             "debug": False,
                             "secret_key": "s" * 32,
+                            "iam_internal_token": "b" * 32,
                         },
                         "runtime": {
+                            "iam": {
+                                "base_url": "https://iam.example.test/api/iam/",
+                                "internal_service_credential": "r" * 32,
+                            },
                             "transport": {
                                 "websocket_tcp": {
                                     "tls_enabled": True,
@@ -347,7 +441,10 @@ class RuntimeStartupPreflightTestCase(unittest.TestCase):
 
                 self.assertEqual(backend, result.state_store_backend)
                 self.assertEqual(("websocket_tcp",), result.tls_transport_adapters)
-                self.assertEqual(("websockets",), result.checked_dependencies)
+                self.assertEqual(
+                    ("websockets", backend),
+                    result.checked_dependencies,
+                )
 
     def test_tls_capability_is_checked_before_directories_and_policy(self) -> None:
         config = NsConfig.from_dict({}, environment="local")

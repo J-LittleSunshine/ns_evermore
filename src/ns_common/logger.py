@@ -502,9 +502,15 @@ class NsLogger(logging.Logger):
         name: str,
         multiprocessing_mode: bool = False,
         sanitizer: Sanitizer | None = None,
+        config: Mapping[str, object] | None = None,
+        log_dir: str | os.PathLike[str] | None = None,
     ) -> "NsLogger":
         if sanitizer is not None and not isinstance(sanitizer, Sanitizer):
             raise TypeError("sanitizer must be a Sanitizer instance")
+        if config is not None and not isinstance(config, Mapping):
+            raise TypeError("config must be a mapping")
+        if log_dir is not None and not isinstance(log_dir, (str, os.PathLike)):
+            raise TypeError("log_dir must be path-like")
         with _LOGGER_LOCK:
             logger: NsLogger | None = _LOGGER_MAP.get(name)
             if logger is None:
@@ -517,8 +523,16 @@ class NsLogger(logging.Logger):
         name: str,
         multiprocessing_mode: bool = False,
         sanitizer: Sanitizer | None = None,
+        config: Mapping[str, object] | None = None,
+        log_dir: str | os.PathLike[str] | None = None,
     ) -> None:
         with _LOGGER_LOCK:
+            explicit_config = (
+                None
+                if config is None
+                else copy.deepcopy(dict(config))
+            )
+            explicit_log_dir = None if log_dir is None else Path(log_dir)
             if not getattr(self, "_base_initialized", False):
                 super().__init__(name=name, level=logging.DEBUG)
                 self._base_initialized: bool = True
@@ -526,6 +540,8 @@ class NsLogger(logging.Logger):
                 self._owner_pid: int = -1
                 self._multiprocessing_mode: bool = multiprocessing_mode
                 self._sanitizer: Sanitizer = sanitizer or Sanitizer()
+                self._explicit_config: dict[str, object] | None = None
+                self._explicit_log_dir: Path | None = None
 
             next_sanitizer = sanitizer or self._sanitizer
             should_reconfigure: bool = (
@@ -533,6 +549,8 @@ class NsLogger(logging.Logger):
                 or self._owner_pid != os.getpid()
                 or self._multiprocessing_mode != multiprocessing_mode
                 or next_sanitizer is not self._sanitizer
+                or explicit_config != self._explicit_config
+                or explicit_log_dir != self._explicit_log_dir
             )
 
             if not should_reconfigure:
@@ -540,11 +558,21 @@ class NsLogger(logging.Logger):
 
             self._multiprocessing_mode = multiprocessing_mode
             self._sanitizer = next_sanitizer
+            self._explicit_config = explicit_config
+            self._explicit_log_dir = explicit_log_dir
             self._configure()
 
     @property
     def sanitizer(self) -> Sanitizer:
         return self._sanitizer
+
+    def close(self) -> None:
+        """Flush and close this logger's handlers idempotently."""
+
+        with _LOGGER_LOCK:
+            self._reset_handlers()
+            self._initialized = False
+            self._owner_pid = -1
 
     def _log(self, level: int, msg: object, args: Any, exc_info: Any = None, extra: Mapping[str, object] | None = None, stack_info: bool = False, stacklevel: int = 1) -> None:
         self._ensure_current_process()
@@ -560,15 +588,19 @@ class NsLogger(logging.Logger):
             self._configure()
 
     def _configure(self) -> None:
-        from ns_common.config import ns_config
+        if self._explicit_config is None:
+            from ns_common.config import ns_config
 
-        config: dict[str, Any] = asdict(ns_config.log)
+            config: dict[str, Any] = asdict(ns_config.log)
+        else:
+            config = copy.deepcopy(self._explicit_config)
 
         utc_enabled: bool = bool(config.get("utc", False))
         date_text: str = self._get_current_date_text(utc_enabled)
 
-        active_dir: Path = Path(LOG_DIR) / self.name / date_text
-        backup_dir: Path = Path(LOG_DIR) / self.name / "backup" / date_text
+        log_root = self._explicit_log_dir or Path(LOG_DIR)
+        active_dir: Path = log_root / self.name / date_text
+        backup_dir: Path = log_root / self.name / "backup" / date_text
         active_dir.mkdir(parents=True, exist_ok=True)
         backup_dir.mkdir(parents=True, exist_ok=True)
 
@@ -762,17 +794,19 @@ def get_ns_logger(
     name: str,
     multiprocessing_mode: bool = False,
     sanitizer: Sanitizer | None = None,
+    config: Mapping[str, object] | None = None,
+    log_dir: str | os.PathLike[str] | None = None,
 ) -> NsLogger:
     return NsLogger(
         name=name,
         multiprocessing_mode=multiprocessing_mode,
         sanitizer=sanitizer,
+        config=config,
+        log_dir=log_dir,
     )
 
 
 def close_ns_loggers() -> None:
     with _LOGGER_LOCK:
         for logger in _LOGGER_MAP.values():
-            logger._reset_handlers()  # noqa
-            logger._initialized = False
-            logger._owner_pid = -1
+            logger.close()

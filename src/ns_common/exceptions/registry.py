@@ -16,6 +16,7 @@ from .payload_ref import PAYLOAD_REF_ERROR_DEFINITIONS
 from .processor import PROCESSOR_ERROR_DEFINITIONS
 from .protocol import PROTOCOL_ERROR_DEFINITIONS
 from .routing import ROUTING_ERROR_DEFINITIONS
+from .state_store import STATE_STORE_ERROR_DEFINITIONS
 from .transport import TRANSPORT_ERROR_DEFINITIONS
 
 
@@ -30,10 +31,17 @@ ALL_ERROR_DEFINITIONS: tuple[NsErrorDefinition, ...] = (
     *CONFIGURATION_ERROR_DEFINITIONS,
     *TRANSPORT_ERROR_DEFINITIONS,
     *CLUSTER_ERROR_DEFINITIONS,
+    *STATE_STORE_ERROR_DEFINITIONS,
 )
 
 
 RUNTIME_ERROR_COVERAGE_MATRIX: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "runtime",
+        (
+            "RUNTIME_FEATURE_DISABLED",
+        ),
+    ),
     (
         "protocol",
         (
@@ -80,6 +88,7 @@ RUNTIME_ERROR_COVERAGE_MATRIX: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "route",
         (
+            "RUNTIME_ROUTE_REJECTED",
             "RUNTIME_ROUTE_UNAVAILABLE",
             "RUNTIME_ROUTE_LOOP",
             "RUNTIME_ROUTE_HOP_LIMIT_EXCEEDED",
@@ -187,6 +196,22 @@ RUNTIME_ERROR_COVERAGE_MATRIX: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "RUNTIME_DELIVERY_STATE_ERROR",
             "RUNTIME_BACKPRESSURE",
+        ),
+    ),
+    (
+        "state_store",
+        (
+            "RUNTIME_STATE_STORE_ERROR",
+            "RUNTIME_STATE_STORE_NOT_READY",
+            "RUNTIME_STATE_STORE_CLOSED",
+            "RUNTIME_STATE_STORE_UNAVAILABLE",
+            "RUNTIME_STATE_STORE_TIMEOUT",
+            "RUNTIME_STATE_STORE_CONFLICT",
+            "RUNTIME_STATE_STORE_STALE_READ",
+            "RUNTIME_STATE_STORE_CAPABILITY_UNAVAILABLE",
+            "RUNTIME_STATE_STORE_NAMESPACE_VIOLATION",
+            "RUNTIME_STATE_STORE_VERSION_MISMATCH",
+            "RUNTIME_STATE_STORE_INDETERMINATE_WRITE",
         ),
     ),
 )
