@@ -13,6 +13,14 @@
 - 历史验收证据、测试命令和完成记录：[ns_runtime_acceptance_log_0.0.2.md](ns_runtime_acceptance_log_0.0.2.md)。
 - 长期架构决策与后续约束：[ns_runtime_architecture_decisions_0.0.2.md](ns_runtime_architecture_decisions_0.0.2.md)。
 
+### P08-FIX-03 / P09-FIX-07 / P11-FIX-08 authority closure
+
+- 状态：`VERIFIED / F3 (local only)`；证据见 acceptance log 的“P08/P09/P11 transport provenance 与 repository resource authority 复核修复”。
+- P09-FIX-07：production `IamClient`不再有公共factory；process composition只组装exact client、owner-issued narrow HTTP handle和exact-client proof。HTTP provenance覆盖主transport、mount/proxy transport、关键handler与instance substitution，请求前后复验。
+- P08-FIX-03：raw Store不保存repository owner/private issuer或creation API；composition一次性建立固定repository set后关闭。production scope改为repository私钥签名、raw Store公钥验证，并按operation/object/schema/index bucket/log/namespace执行exact allowlist。
+- P11-FIX-08：delivery admission、scheduler、payload、registry与audit repository保持最小资源权限；跨role和未知资源fail closed。状态机与WRITE_UNCERTAIN规则未改变。
+- 冻结：P12仍`BLOCKED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
+
 ---
 
 ## 0. 文档执行规则

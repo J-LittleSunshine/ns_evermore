@@ -504,18 +504,18 @@ class RedisValkeyStateStore(StateStore):
         options: RedisStateStoreOptions,
         capabilities: StateStoreCapabilities,
         clock: Clock,
-        _repository_owner: object | None = None,
         _contract_test_authority: bool = False,
         _scope_issuer: object | None = None,
+        _production_scope_validator: object | None = None,
     ) -> None:
         if not isinstance(options, RedisStateStoreOptions):
             _invalid("provider.options")
         super().__init__(
             capabilities=capabilities,
             clock=clock,
-            _repository_owner=_repository_owner,
             _contract_test_authority=_contract_test_authority,
             _scope_issuer=_scope_issuer,
+            _production_scope_validator=_production_scope_validator,
         )
         self._options = options
         self._prefix = options.namespace.rstrip(":") + ":"

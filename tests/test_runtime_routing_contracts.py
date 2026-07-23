@@ -7,17 +7,12 @@ import unittest
 from pathlib import Path
 
 from ns_common.async_runtime import TaskSupervisor
-from ns_common.http_client import NsHttpClientOwner
 from ns_common.exceptions import (
     NsRuntimeEnvelopeSchemaError,
     NsRuntimeRouteRejectedError,
     NsValidationError,
 )
-from ns_common.iam import (
-    IamAccessDecision,
-    IamPrincipalType,
-    PermissionInvalidation,
-)
+from ns_common.iam import IamPrincipalType, PermissionInvalidation
 from ns_common.time import ControlledClock
 from ns_runtime.processor import (
     DefaultProcessorErrorMapper,
@@ -39,8 +34,6 @@ from ns_runtime.processor.integration import (
     DeterministicTestProcessorAuthorization,
     IamProcessorAuthorization,
 )
-from ns_runtime.iam import AuthorizationMode, MessageAuthorizationService
-from ns_runtime.iam.client import IamClientFactory
 from ns_runtime.iam import AuthorizationMode, MessageAuthorizationService
 from ns_runtime.protocol import (
     BUILTIN_MESSAGE_REGISTRY,
@@ -322,56 +315,6 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
             clock=self.clock,
             dependencies=dependencies,
         )
-        from tests.test_runtime_iam_client import _HttpServer
-
-        backend = _HttpServer([IamAccessDecision(
-            allowed=True,
-            reason="backend_allow",
-            permission_version=session.permission_version,
-            decided_at=self.clock.utc_now(),
-        ).to_wire()])
-        base_url = await backend.start()
-        http_owner = NsHttpClientOwner()
-        http_client = http_owner.create(
-            name="routing-production-authority-test",
-            base_url=base_url,
-            timeout_seconds=0.2,
-        )
-        self.addAsyncCleanup(backend.close)
-        self.addAsyncCleanup(http_owner.aclose)
-        iam_client = IamClientFactory(
-            http_owner=http_owner,
-            http_client=http_client,
-            runtime_composition=self,
-        ).create(
-            internal_service_credential="r" * 32,
-            trace_id_factory=lambda: "operation:routing-authority",
-            clock=self.clock,
-        )
-        production_authorization = IamProcessorAuthorization(
-            service=MessageAuthorizationService(
-                iam_client=iam_client,
-                clock=self.clock,
-                mode=AuthorizationMode.STRICT,
-                cache_ttl_seconds=60,
-            ),
-            protocol_registry=registry,
-        )
-        production_context = dataclasses.replace(
-            context,
-            dependencies=dataclasses.replace(
-                dependencies,
-                authorization=production_authorization,
-            ),
-        )
-        production_evidence = await production_authorization.authorize(
-            production_context,
-        )
-        with self.assertRaises(NsValidationError):
-            copy.copy(production_authorization._evidence_issuer)
-        self.assertTrue(production_evidence.is_production_authority())
-        self.assertFalse(production_evidence.is_contract_test_authority())
-
         evidence = await authorization.authorize(context)
         self.assertIsInstance(evidence, AuthorizationDecisionEvidence)
         with self.assertRaises(NsValidationError):

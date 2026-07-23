@@ -2286,6 +2286,39 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 未实现P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership或P22 production验收；production `task.dispatch`继续disabled。
 - 本轮未运行uvloop全树、backend/Django全树、Valkey/Sentinel/Redis Cluster、replica/failover或远程CI，不从standard asyncio与Redis standalone结果推断这些环境通过。
 
+## P08/P09/P11 transport provenance 与 repository resource authority 复核修复
+
+- 工作包：`P08-FIX-03`、`P09-FIX-07`、`P11-FIX-08`。
+- 状态：`VERIFIED / F3 (local only)`；P12继续`BLOCKED / F0`，production `task.dispatch`继续disabled。
+- 完成时间：`2026-07-23`（Asia/Shanghai）。本轮启动分支为`codex/ns-runtime-implementation`，HEAD为`10bbc3d48d64c7190136b33c21f101c4b015a8f3`；只保留未提交本地修改。
+- production IAM graph：删除`IamClientFactory`及production free factory，公共`IamClient`构造永久拒绝。process composition创建exact client、owner-issued narrow HTTP handle和exact-client proof；module attribute、普通owner/client/composition object、copy、subclass、method override及`object.__new__`未初始化对象不能满足production adapter检查。测试IAM替身为显式contract-test realm，不冒充production client。
+- HTTP transport provenance：narrow handle逐次绑定并在请求前后验证exact `NsAsyncHttpClient`、底层exact `httpx.AsyncClient`、主`_transport`、原`_mounts`容器、每个mount/proxy transport及其`handle_async_request` class identity，同时拒绝`request/get/post/put/delete/send/stream` instance substitution。transport、mount、handler替换和owner关闭后复用均即时fail closed。
+- raw StateStore closure：删除raw Store上的repository owner和`_create_repository`路径；composition一次创建固定repository set后冻结creation。production scope使用Ed25519 repository私钥签名，raw Store validator仅闭包持有公钥、issuer identity和冻结policy映射，不持有`_StateScopeIssuer`或private key。name-mangled lookup、vars/dir遍历、copy、pickle式字段复制、伪造validator和二次composition均不能产生新scope/repository。
+- resource allowlist：每个scope签名绑定exact role policy；Store在provider前逐项验证operation、object type/schema、ordered-index name/bucket、transition/audit log object/schema和namespace/partition。scheduler读取payload、payload读取delivery、admission写attempt/owner/cursor、registry访问非registry object/index、unknown object/schema/index/log均稳定拒绝。真实Redis路径验证合法admission事务可提交且跨role读取被拒绝。
+
+### 新增攻击测试
+
+- IAM：直接import旧production factory、module attribute探测、普通owner/client/composition、direct constructor、`object.__new__`、copy、subclass/method override、伪造proof。
+- HTTP：替换`NsAsyncHttpClient.post`、`httpx.AsyncClient.request/send`、主`_transport`、`_mounts`容器、主transport handler及mount/proxy handler，copy client/owner/handle和关闭后复用。
+- StateStore：name-mangled owner缺失、raw Store无creation API/repository/private issuer、validator闭包反射不含issuer/private key、validator direct construction/object-new/copy拒绝、composition二次构造拒绝、production scope copy/replace/object-setattr拒绝。
+- repository：scheduler->payload_body、payload->delivery、registry->delivery/非registry index、admission->attempt/owner/cursor，以及unknown object/schema/index bucket/log/audit log全部fail closed。
+
+### 本轮实际测试命令与结果
+
+- processor/routing/IAM authority与client composition：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_backend_runtime_iam tests.test_runtime_connection_processors tests.test_runtime_iam_authorization tests.test_runtime_iam_client tests.test_runtime_iam_credential_recovery tests.test_runtime_processor_boundaries tests.test_runtime_processor_pipeline tests.test_runtime_protocol_processors tests.test_runtime_routing tests.test_runtime_routing_contracts`，`Ran 93 tests in 3.228s`，`OK`。
+- payload authority、delivery admission与scheduling：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling`，`Ran 62 tests in 50.631s`，`OK`。
+- StateStore repository/contract/provider：最终namespace/partition signer复验落盘后执行`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_provider tests.test_state_store tests.test_runtime_state_store`，`Ran 42 tests in 0.858s`，`OK`。
+- Redis provider与真实Redis standalone：Ed25519与最终resource policy代码落盘后执行`PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_provider tests.test_redis_state_store_integration`，`Ran 31 tests in 49.564s`，`OK`；本机实际使用`/usr/bin/redis-server`。另有production resource policy真实Redis专项`Ran 2 tests in 0.296s`，`OK`。
+- main、shutdown、critical failure与transport：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_runtime_event_loop_observability tests.test_runtime_shutdown tests.test_runtime_service tests.test_runtime_main tests.test_runtime_transport_metrics tests.test_runtime_transport_lifecycle tests.test_runtime_transport_identity tests.test_runtime_transport_errors tests.test_runtime_transport_contracts tests.test_runtime_transport_conformance tests.test_runtime_transport_backpressure tests.test_runtime_transport_websocket_tcp tests.test_runtime_transport_registry`，`Ran 110 tests in 7.518s`，`OK`。
+- 全仓可执行测试集（包含本轮最终Ed25519、资源策略及namespace/partition signer复验代码）：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py' -q`，`Ran 871 tests in 133.757s`，`OK (skipped=1)`；唯一skip为既有非Windows平台上的真实Windows event-loop policy条件。
+- 静态与边界：最终`python3 -m compileall -q src tests`和`git diff --check`通过；公共assertion导出及修改边界模块冷导入输出`COLD_IMPORT_AND_PUBLIC_EXPORTS_OK`。`PYTHONPATH=src python3 -m unittest -q tests.test_requirements tests.test_runtime_bootstrap tests.test_runtime_processor_boundaries`为`Ran 19 tests in 2.952s, OK`；runtime/backend项目虚拟环境`pip check`均输出`No broken requirements found.`。P12+新增源码与已删除IAM factory/raw-store repository owner入口扫描无匹配。
+
+### 冻结边界与未验证范围
+
+- 未验证Valkey server、Redis Sentinel/Cluster、replica/failover、uvloop全树、backend/Django全树或远程CI；不得从本机standard asyncio与Redis standalone推断这些环境通过。
+- 状态机仍严格为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发。未新增global registry、service locator、第二StateStore owner、event loop、TaskSupervisor、RuntimeService或shutdown owner。
+- P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership和P22 production验收均未实现；production `task.dispatch`继续disabled。
+
 ## 新记录模板
 
 - 工作包：

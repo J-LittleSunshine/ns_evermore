@@ -9,6 +9,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 import hashlib
+import hmac
+from pathlib import Path
+import secrets
+import sys
+from typing import Callable
 
 from ns_common.exceptions import (
     NsRuntimeStateStoreCapabilityUnavailableError,
@@ -33,6 +38,7 @@ from .authority import (
     StateAtomicScope,
     StateAuthorityKind,
     StateNamespace,
+    _StateResourcePolicy,
     _issue_state_access_scope,
     _new_state_scope_issuer,
 )
@@ -64,6 +70,70 @@ class StateStoreLifecycleState(str, Enum):
     CLOSED = "closed"
 
 
+def _build_production_scope_validator_type() -> type:
+    signing_key = secrets.token_bytes(32)
+
+    class _ProductionStateScopeValidator:
+        __slots__ = ("_callback", "_signature")
+
+        def __init__(
+            self,
+            callback: Callable[[StateAccessScope], bool],
+        ) -> None:
+            caller = sys._getframe(1)
+            if (
+                caller.f_code.co_name != "create_state_store_composition"
+                or not str(
+                    Path(caller.f_code.co_filename).resolve(),
+                ).replace("\\", "/").casefold().endswith(
+                    "/state_store/composition.py",
+                )
+                or not callable(callback)
+            ):
+                _invalid("production_scope_validator")
+            self._callback = callback
+            self._signature = hmac.new(
+                signing_key,
+                str(id(callback)).encode("ascii"),
+                hashlib.sha256,
+            ).digest()
+
+        def is_valid(self) -> bool:
+            return bool(
+                type(self) is _ProductionStateScopeValidator
+                and hmac.compare_digest(
+                    self._signature,
+                    hmac.new(
+                        signing_key,
+                        str(id(self._callback)).encode("ascii"),
+                        hashlib.sha256,
+                    ).digest(),
+                )
+            )
+
+        def __call__(self, scope: StateAccessScope) -> bool:
+            if not self.is_valid():
+                return False
+            return self._callback(scope) is True
+
+        def __copy__(self) -> "_ProductionStateScopeValidator":
+            _invalid("production_scope_validator.copy")
+
+        def __deepcopy__(
+            self,
+            memo: dict[int, object],
+        ) -> "_ProductionStateScopeValidator":
+            del memo
+            _invalid("production_scope_validator.copy")
+
+    return _ProductionStateScopeValidator
+
+
+_ProductionStateScopeValidator = _build_production_scope_validator_type()
+del _build_production_scope_validator_type
+_PRODUCTION_SCOPE_VALIDATOR_IS_VALID = _ProductionStateScopeValidator.is_valid
+
+
 class StateStoreRepositoryRole(str, Enum):
     STRONG_AUDIT = "strong_audit"
     DELIVERY_ADMISSION = "delivery_admission"
@@ -77,27 +147,16 @@ class StateStoreRepository:
 
     __slots__ = (
         "_store", "_role", "_runtime_id", "_audit_namespace",
+        "_issue_atomic_scope", "_is_current_repository",
     )
 
     def __init__(
         self,
-        *,
-        store: "StateStore",
-        role: StateStoreRepositoryRole,
-        runtime_id: str | None,
-        audit_namespace: StateNamespace | None,
-        _token: object,
+        *args: object,
+        **kwargs: object,
     ) -> None:
-        if (
-            type(self) is not StateStoreRepository
-            or not isinstance(store, StateStore)
-            or not store._consume_repository_token(_token)
-        ):
-            _invalid("repository.issuer")
-        self._store = store
-        self._role = role
-        self._runtime_id = runtime_id
-        self._audit_namespace = audit_namespace
+        del self, args, kwargs
+        _invalid("repository.issuer")
 
     @property
     def role(self) -> StateStoreRepositoryRole:
@@ -126,16 +185,13 @@ class StateStoreRepository:
             or layout_generation <= 0
         ):
             _invalid("repository.layout_generation")
-        return self._store._scope_for_repository(
-            self,
-            StateAtomicScope(
+        return self._issue_scope(StateAtomicScope(
                 namespace=StateNamespace.tenant(
                     tenant_id=tenant_id,
                     domain="delivery",
                 ),
                 partition=f"layout-{layout_generation}-bucket-{bucket_id}",
-            ),
-        )
+            ))
 
     def registry_scope(self) -> StateAccessScope:
         if (
@@ -146,16 +202,13 @@ class StateStoreRepository:
         synthetic_tenant = "runtime-registry:" + hashlib.sha256(
             self._runtime_id.encode(),
         ).hexdigest()
-        return self._store._scope_for_repository(
-            self,
-            StateAtomicScope(
+        return self._issue_scope(StateAtomicScope(
                 namespace=StateNamespace.tenant(
                     tenant_id=synthetic_tenant,
                     domain="delivery",
                 ),
                 partition="authority-registry",
-            ),
-        )
+            ))
 
     def audit_scope(self) -> StateAccessScope:
         if (
@@ -163,19 +216,27 @@ class StateStoreRepository:
             or self._audit_namespace is None
         ):
             _invalid("repository.audit_scope")
-        return self._store._scope_for_repository(
-            self,
-            StateAtomicScope(
+        return self._issue_scope(StateAtomicScope(
                 namespace=self._audit_namespace,
                 partition="processor-final",
-            ),
-        )
+            ))
+
+    def _issue_scope(self, atomic_scope: StateAtomicScope) -> StateAccessScope:
+        if (
+            type(self) is not StateStoreRepository
+            or not self._is_current_repository(self)
+        ):
+            _invalid("repository.scope")
+        value = self._issue_atomic_scope(atomic_scope)
+        if type(value) is not StateAccessScope:
+            _invalid("repository.scope")
+        return value
 
     def _require_role(self, role: StateStoreRepositoryRole) -> None:
         if (
             not isinstance(role, StateStoreRepositoryRole)
             or self._role is not role
-            or not self._store._owns_repository(self)
+            or not self._is_current_repository(self)
         ):
             _invalid("repository.role")
 
@@ -217,6 +278,34 @@ class StateStoreDeliveryRepositories:
             _invalid("repository_set.store")
 
 
+def _bind_state_store_repository(
+    *,
+    store: "StateStore",
+    role: StateStoreRepositoryRole,
+    runtime_id: str | None,
+    audit_namespace: StateNamespace | None,
+    issue_atomic_scope: Callable[[StateAtomicScope], StateAccessScope],
+    is_current_repository: Callable[[StateStoreRepository], bool],
+) -> StateStoreRepository:
+    """Low-level value assembly; authority remains in the supplied closures."""
+
+    if (
+        not isinstance(store, StateStore)
+        or not isinstance(role, StateStoreRepositoryRole)
+        or not callable(issue_atomic_scope)
+        or not callable(is_current_repository)
+    ):
+        _invalid("repository.binding")
+    value = object.__new__(StateStoreRepository)
+    value._store = store
+    value._role = role
+    value._runtime_id = runtime_id
+    value._audit_namespace = audit_namespace
+    value._issue_atomic_scope = issue_atomic_scope
+    value._is_current_repository = is_current_repository
+    return value
+
+
 class StateStore(ABC):
     """Strict StateStore template with one explicit lifecycle owner.
 
@@ -231,7 +320,7 @@ class StateStore(ABC):
         clock: Clock,
         _contract_test_authority: bool = False,
         _scope_issuer: object | None = None,
-        _repository_owner: object | None = None,
+        _production_scope_validator: Callable[[StateAccessScope], bool] | None = None,
     ) -> None:
         if not isinstance(capabilities, StateStoreCapabilities):
             _invalid("capabilities")
@@ -241,16 +330,34 @@ class StateStore(ABC):
         self._clock = clock
         if type(_contract_test_authority) is not bool:
             _invalid("contract_test_authority")
-        self.__scope_issuer = (
-            _scope_issuer
-            if _scope_issuer is not None
-            else _new_state_scope_issuer(
-                contract_test=_contract_test_authority,
+        if _contract_test_authority:
+            self.__scope_issuer = (
+                _scope_issuer
+                if _scope_issuer is not None
+                else _new_state_scope_issuer(contract_test=True)
             )
-        )
-        self.__repository_owner = _repository_owner
-        self.__repositories: list[StateStoreRepository] = []
-        self.__pending_repository_token: object | None = None
+            self.__production_scope_validator = None
+        else:
+            if _scope_issuer is not None:
+                _invalid("scope_issuer")
+            self.__scope_issuer = None
+            if _production_scope_validator is None:
+                self.__production_scope_validator = None
+            elif (
+                type(_production_scope_validator)
+                is not _ProductionStateScopeValidator
+                or getattr(
+                    type(_production_scope_validator),
+                    "is_valid",
+                    None,
+                ) is not _PRODUCTION_SCOPE_VALIDATOR_IS_VALID
+                or not _production_scope_validator.is_valid()
+            ):
+                _invalid("production_scope_validator")
+            else:
+                self.__production_scope_validator = (
+                    _production_scope_validator
+                )
         self._state = StateStoreLifecycleState.NEW
         self._lifecycle_condition = asyncio.Condition()
         self._active_operations = 0
@@ -261,118 +368,6 @@ class StateStore(ABC):
 
     def capabilities(self) -> StateStoreCapabilities:
         return self._capabilities
-
-    def _create_repository(
-        self,
-        *,
-        owner: object,
-        role: StateStoreRepositoryRole,
-        runtime_id: str | None = None,
-        audit_namespace: StateNamespace | None = None,
-    ) -> StateStoreRepository:
-        """Create one fixed role only for the composition that owns this store."""
-
-        if (
-            owner is None
-            or owner is not self.__repository_owner
-            or not isinstance(role, StateStoreRepositoryRole)
-        ):
-            _invalid("repository.owner")
-        if role is StateStoreRepositoryRole.STRONG_AUDIT:
-            if (
-                not isinstance(audit_namespace, StateNamespace)
-                or audit_namespace.kind is not StateNamespaceKind.AUDIT
-                or runtime_id is not None
-            ):
-                _invalid("repository.audit_namespace")
-        elif role is StateStoreRepositoryRole.DELIVERY_REGISTRY:
-            if type(runtime_id) is not str or not runtime_id or audit_namespace is not None:
-                _invalid("repository.runtime_id")
-        elif runtime_id is None or type(runtime_id) is not str or not runtime_id:
-            _invalid("repository.runtime_id")
-        elif audit_namespace is not None:
-            _invalid("repository.audit_namespace")
-        token = object()
-        self.__pending_repository_token = token
-        try:
-            repository = StateStoreRepository(
-                store=self,
-                role=role,
-                runtime_id=runtime_id,
-                audit_namespace=audit_namespace,
-                _token=token,
-            )
-        finally:
-            self.__pending_repository_token = None
-        self.__repositories.append(repository)
-        return repository
-
-    def _consume_repository_token(self, token: object) -> bool:
-        return token is not None and self.__pending_repository_token is token
-
-    def _owns_repository(self, repository: StateStoreRepository) -> bool:
-        return bool(
-            type(repository) is StateStoreRepository
-            and repository._store is self
-            and any(repository is current for current in self.__repositories)
-        )
-
-    def _scope_for_repository(
-        self,
-        repository: StateStoreRepository,
-        atomic_scope: StateAtomicScope,
-    ) -> StateAccessScope:
-        if not self._owns_repository(repository):
-            _invalid("repository.scope")
-        specs = {
-            StateStoreRepositoryRole.STRONG_AUDIT: (
-                StateAuthorityKind.STRONG_AUDIT,
-                "strong-audit-authority",
-                frozenset({StateCallerCapability.APPEND}),
-            ),
-            StateStoreRepositoryRole.DELIVERY_ADMISSION: (
-                StateAuthorityKind.DELIVERY_ADMISSION,
-                "delivery.admission",
-                frozenset({
-                    StateCallerCapability.READ,
-                    StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX,
-                    StateCallerCapability.APPEND,
-                }),
-            ),
-            StateStoreRepositoryRole.DELIVERY_SCHEDULER: (
-                StateAuthorityKind.DELIVERY_ADMISSION,
-                "delivery.scheduling",
-                frozenset({
-                    StateCallerCapability.READ,
-                    StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX,
-                    StateCallerCapability.APPEND,
-                }),
-            ),
-            StateStoreRepositoryRole.DELIVERY_PAYLOAD: (
-                StateAuthorityKind.DELIVERY_ADMISSION,
-                "delivery.payload_authority",
-                frozenset({StateCallerCapability.READ}),
-            ),
-            StateStoreRepositoryRole.DELIVERY_REGISTRY: (
-                StateAuthorityKind.DELIVERY_ADMISSION,
-                "delivery.authority_registry",
-                frozenset({
-                    StateCallerCapability.READ,
-                    StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX,
-                }),
-            ),
-        }
-        authority, caller, capabilities = specs[repository.role]
-        return _issue_state_access_scope(
-            self.__scope_issuer,
-            atomic_scope=atomic_scope,
-            authority=authority,
-            caller=caller,
-            capabilities=capabilities,
-        )
 
     async def open(self) -> None:
         async with self._lifecycle_condition:
@@ -452,6 +447,8 @@ class StateStore(ABC):
         self._validate_access(
             scope=scope,
             key=key,
+            operation="read",
+            document=None,
             caller_capability=StateCallerCapability.READ,
             store_capability=StateStoreCapability.READ,
         )
@@ -502,6 +499,13 @@ class StateStore(ABC):
                 raise NsRuntimeStateStoreStaleReadError(
                     details={"component": "state_store", "operation": "read"},
                 )
+            if result.record is not None:
+                self._validate_resource(
+                    scope=scope,
+                    operation="read",
+                    object_type=result.record.key.object_type,
+                    schema_name=result.record.document.schema_name,
+                )
             return result
         finally:
             await self._exit_operation()
@@ -517,6 +521,8 @@ class StateStore(ABC):
         self._validate_access(
             scope=scope,
             key=mutation.key,
+            operation="compare_and_set",
+            document=mutation.document,
             caller_capability=StateCallerCapability.COMPARE_AND_SET,
             store_capability=StateStoreCapability.COMPARE_AND_SET,
         )
@@ -549,6 +555,12 @@ class StateStore(ABC):
         self._require_caller_capability(scope, StateCallerCapability.SCAN)
         self._require_authority(scope)
         self._require_store_capability(StateStoreCapability.SCAN)
+        self._validate_resource(
+            scope=scope,
+            operation="scan",
+            object_type=object_type,
+            schema_name=None,
+        )
         await self._enter_operation("scan")
         try:
             try:
@@ -586,6 +598,13 @@ class StateStore(ABC):
                         "reason": "provider_scope_mismatch",
                     },
                 )
+            for record in result.records:
+                self._validate_resource(
+                    scope=scope,
+                    operation="scan",
+                    object_type=record.key.object_type,
+                    schema_name=record.document.schema_name,
+                )
             return result
         finally:
             await self._exit_operation()
@@ -613,14 +632,31 @@ class StateStore(ABC):
             self._require_store_capability(StateStoreCapability.APPEND)
         for mutation in transaction.mutations:
             self._validate_key_scope(scope, mutation.key)
+            self._validate_resource(
+                scope=scope,
+                operation="transact",
+                object_type=mutation.key.object_type,
+                schema_name=(
+                    None
+                    if mutation.document is None
+                    else mutation.document.schema_name
+                ),
+            )
         for assertion in transaction.record_assertions:
             self._validate_key_scope(scope, assertion.key)
+            self._validate_resource(
+                scope=scope,
+                operation="transact",
+                object_type=assertion.key.object_type,
+                schema_name=None,
+            )
         for mutation in transaction.ordered_index_mutations:
             if (mutation.index.namespace != scope.namespace
                     and mutation.index.namespace.kind is not StateNamespaceKind.SYSTEM):
                 raise NsRuntimeStateStoreNamespaceViolationError(details={
                     "component": "state_store", "reason": "namespace_scope_mismatch",
                 })
+            self._validate_index_resource(scope, mutation.index)
         for assertion in transaction.ordered_index_assertions:
             if (
                 assertion.index.namespace != scope.namespace
@@ -631,8 +667,15 @@ class StateStore(ABC):
                     "component": "state_store",
                     "reason": "namespace_scope_mismatch",
                 })
+            self._validate_index_resource(scope, assertion.index)
         for append in transaction.log_appends:
             self._validate_key_scope(scope, append.key)
+            self._validate_resource(
+                scope=scope,
+                operation="append",
+                object_type=append.key.object_type,
+                schema_name=append.document.schema_name,
+            )
         await self._enter_operation("transact")
         try:
             result = await self._run_write(
@@ -679,6 +722,7 @@ class StateStore(ABC):
         self._require_caller_capability(scope, StateCallerCapability.ORDERED_INDEX)
         self._require_authority(scope)
         self._require_store_capability(StateStoreCapability.ORDERED_INDEX)
+        self._validate_index_resource(scope, index)
         await self._enter_operation("read_ordered_index")
         try:
             try:
@@ -721,6 +765,8 @@ class StateStore(ABC):
         self._validate_access(
             scope=scope,
             key=key,
+            operation="append",
+            document=document,
             caller_capability=StateCallerCapability.APPEND,
             store_capability=StateStoreCapability.APPEND,
         )
@@ -814,6 +860,8 @@ class StateStore(ABC):
         *,
         scope: StateAccessScope,
         key: StateKey,
+        operation: str,
+        document: StateDocument | None,
         caller_capability: StateCallerCapability,
         store_capability: StateStoreCapability,
     ) -> None:
@@ -823,6 +871,12 @@ class StateStore(ABC):
         self._require_authority(scope)
         self._require_store_capability(store_capability)
         self._validate_key_scope(scope, key)
+        self._validate_resource(
+            scope=scope,
+            operation=operation,
+            object_type=key.object_type,
+            schema_name=None if document is None else document.schema_name,
+        )
 
     def _require_caller_capability(
         self,
@@ -851,16 +905,74 @@ class StateStore(ABC):
             )
 
     def _require_scope_issuer(self, scope: StateAccessScope) -> None:
-        if (
-            type(scope) is not StateAccessScope
-            or not scope._issued_by(self.__scope_issuer)
-        ):
+        valid = False
+        if type(scope) is StateAccessScope:
+            if self.__scope_issuer is not None:
+                valid = scope._issued_by(self.__scope_issuer)
+            elif self.__production_scope_validator is not None:
+                try:
+                    valid = self.__production_scope_validator(scope) is True
+                except BaseException:
+                    valid = False
+        if not valid:
             raise NsRuntimeStateStoreCapabilityUnavailableError(
                 details={
                     "component": "state_store",
                     "capability": "authority",
                     "source": "caller",
                     "reason": "scope_issuer_mismatch",
+                },
+            )
+
+    def _validate_resource(
+        self,
+        *,
+        scope: StateAccessScope,
+        operation: str,
+        object_type: str,
+        schema_name: str | None,
+    ) -> None:
+        self._require_scope_issuer(scope)
+        policy = getattr(scope, "_resource_policy", None)
+        if (
+            type(policy) is not _StateResourcePolicy
+            or not policy.allows_resource(
+                operation=operation,
+                object_type=object_type,
+                schema_name=schema_name,
+            )
+        ):
+            raise NsRuntimeStateStoreCapabilityUnavailableError(
+                details={
+                    "component": "state_store",
+                    "capability": "resource",
+                    "source": "caller",
+                    "operation": operation,
+                    "reason": "resource_policy_denied",
+                },
+            )
+
+    def _validate_index_resource(
+        self,
+        scope: StateAccessScope,
+        index: StateOrderedIndexKey,
+    ) -> None:
+        self._require_scope_issuer(scope)
+        policy = getattr(scope, "_resource_policy", None)
+        if (
+            type(policy) is not _StateResourcePolicy
+            or (
+                not policy.allow_contract_test_resources
+                and index.namespace != scope.namespace
+            )
+            or not policy.allows_index(index.name, index.bucket)
+        ):
+            raise NsRuntimeStateStoreCapabilityUnavailableError(
+                details={
+                    "component": "state_store",
+                    "capability": "ordered_index",
+                    "source": "caller",
+                    "reason": "resource_policy_denied",
                 },
             )
 

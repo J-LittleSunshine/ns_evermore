@@ -13,6 +13,12 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Mapping
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
+
 from ns_common.exceptions import NsValidationError
 
 
@@ -244,13 +250,137 @@ class StateAtomicScope:
 class _StateScopeIssuer:
     """One store-owned capability issuer; never shared through a registry."""
 
-    __slots__ = ("realm", "_key")
+    __slots__ = ("realm", "_key", "_private_key", "_public_key", "_identity")
 
     def __init__(self, *, realm: str) -> None:
         if realm not in {"production", "contract_test"}:
             _invalid("issuer.realm")
         self.realm = realm
-        self._key = secrets.token_bytes(32)
+        self._identity = secrets.token_bytes(32)
+        if realm == "production":
+            self._key = None
+            self._private_key = Ed25519PrivateKey.generate()
+            self._public_key = self._private_key.public_key()
+        else:
+            self._key = secrets.token_bytes(32)
+            self._private_key = None
+            self._public_key = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _StateResourcePolicy:
+    """Issuer-owned exact resource policy carried by one repository scope."""
+
+    read_resources: frozenset[tuple[str, str]] = frozenset()
+    transact_resources: frozenset[tuple[str, str]] = frozenset()
+    append_resources: frozenset[tuple[str, str]] = frozenset()
+    ordered_indexes: frozenset[tuple[str, str]] = frozenset()
+    allow_delivery_target_index: bool = False
+    allow_contract_test_resources: bool = False
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "read_resources",
+            "transact_resources",
+            "append_resources",
+        ):
+            values = getattr(self, field_name)
+            if not isinstance(values, frozenset) or any(
+                not isinstance(value, tuple)
+                or len(value) != 2
+                or any(
+                    not isinstance(part, str)
+                    or _NAME_PATTERN.fullmatch(part) is None
+                    for part in value
+                )
+                for value in values
+            ):
+                _invalid(f"resource_policy.{field_name}")
+        if not isinstance(self.ordered_indexes, frozenset) or any(
+            not isinstance(value, tuple)
+            or len(value) != 2
+            or any(
+                not isinstance(part, str)
+                or _NAME_PATTERN.fullmatch(part) is None
+                for part in value
+            )
+            for value in self.ordered_indexes
+        ):
+            _invalid("resource_policy.ordered_indexes")
+        if (
+            type(self.allow_delivery_target_index) is not bool
+            or type(self.allow_contract_test_resources) is not bool
+        ):
+            _invalid("resource_policy.flags")
+        if self.allow_contract_test_resources and any((
+            self.read_resources,
+            self.transact_resources,
+            self.append_resources,
+            self.ordered_indexes,
+            self.allow_delivery_target_index,
+        )):
+            _invalid("resource_policy.contract_test")
+
+    def allows_resource(
+        self,
+        *,
+        operation: str,
+        object_type: str,
+        schema_name: str | None,
+    ) -> bool:
+        if self.allow_contract_test_resources:
+            return True
+        resources = {
+            "read": self.read_resources,
+            "compare_and_set": self.transact_resources,
+            "scan": self.read_resources,
+            "transact": self.transact_resources,
+            "append": self.append_resources,
+        }.get(operation)
+        if resources is None:
+            return False
+        if schema_name is None:
+            return any(value[0] == object_type for value in resources)
+        return (object_type, schema_name) in resources
+
+    def allows_index(self, name: str, bucket: str) -> bool:
+        if (
+            self.allow_contract_test_resources
+            or (name, bucket) in self.ordered_indexes
+        ):
+            return True
+        if not self.allow_delivery_target_index:
+            return False
+        return bool(
+            bucket == "delivery"
+            and re.fullmatch(
+                r"delivery\.target\.[0-9a-f]{64}",
+                name,
+            ) is not None
+        )
+
+    def canonical_values(self) -> Mapping[str, object]:
+        return {
+            "read_resources": sorted(
+                [list(value) for value in self.read_resources],
+            ),
+            "transact_resources": sorted(
+                [list(value) for value in self.transact_resources],
+            ),
+            "append_resources": sorted(
+                [list(value) for value in self.append_resources],
+            ),
+            "ordered_indexes": sorted(
+                [list(value) for value in self.ordered_indexes],
+            ),
+            "allow_delivery_target_index": self.allow_delivery_target_index,
+            "allow_contract_test_resources": self.allow_contract_test_resources,
+        }
+
+
+_CONTRACT_TEST_RESOURCE_POLICY = _StateResourcePolicy(
+    allow_contract_test_resources=True,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, init=False)
@@ -259,10 +389,19 @@ class StateAccessScope:
     authority: StateAuthorityKind
     caller: str
     capabilities: frozenset[StateCallerCapability]
-    _issuer: _StateScopeIssuer = dataclass_field(
+    _issuer_realm: str = dataclass_field(
+        init=False, repr=False, compare=False,
+    )
+    _issuer_identity: bytes = dataclass_field(
         init=False, repr=False, compare=False,
     )
     _authority_signature: bytes = dataclass_field(
+        init=False, repr=False, compare=False,
+    )
+    _resource_policy: _StateResourcePolicy = dataclass_field(
+        init=False, repr=False, compare=False,
+    )
+    _repository_binding: object | None = dataclass_field(
         init=False, repr=False, compare=False,
     )
 
@@ -274,16 +413,36 @@ class StateAccessScope:
         caller: str,
         capabilities: frozenset[StateCallerCapability],
         _issuer: _StateScopeIssuer | None = None,
+        _resource_policy: _StateResourcePolicy | None = None,
+        _repository_binding: object | None = None,
     ) -> None:
-        if type(self) is not StateAccessScope or type(_issuer) is not _StateScopeIssuer:
+        if (
+            type(self) is not StateAccessScope
+            or type(_issuer) is not _StateScopeIssuer
+            or type(_resource_policy) is not _StateResourcePolicy
+            or (
+                _issuer.realm == "production"
+                and _repository_binding is None
+            )
+            or (
+                _issuer.realm == "contract_test"
+                and (
+                    _resource_policy is not _CONTRACT_TEST_RESOURCE_POLICY
+                    or _repository_binding is not None
+                )
+            )
+        ):
             _invalid("access_scope.issuer")
         for name, value in (
             ("atomic_scope", atomic_scope),
             ("authority", authority),
             ("caller", caller),
             ("capabilities", capabilities),
-            ("_issuer", _issuer),
+            ("_issuer_realm", _issuer.realm),
+            ("_issuer_identity", _issuer._identity),
             ("_authority_signature", b""),
+            ("_resource_policy", _resource_policy),
+            ("_repository_binding", _repository_binding),
         ):
             object.__setattr__(self, name, value)
         self.__post_init__()
@@ -323,14 +482,51 @@ class StateAccessScope:
         return self.atomic_scope.namespace
 
     def _issued_by(self, issuer: _StateScopeIssuer) -> bool:
-        return bool(
-            type(self) is StateAccessScope
-            and self._issuer is issuer
-            and hmac.compare_digest(
+        if (
+            type(self) is not StateAccessScope
+            or type(issuer) is not _StateScopeIssuer
+            or self._issuer_realm != issuer.realm
+            or not hmac.compare_digest(
+                self._issuer_identity,
+                issuer._identity,
+            )
+        ):
+            return False
+        if issuer.realm == "contract_test":
+            return hmac.compare_digest(
                 self._authority_signature,
                 _state_scope_signature(self, issuer=issuer),
             )
+        return self._verified_by(
+            public_key=issuer._public_key,
+            issuer_identity=issuer._identity,
         )
+
+    def _verified_by(
+        self,
+        *,
+        public_key: Ed25519PublicKey,
+        issuer_identity: bytes,
+    ) -> bool:
+        if (
+            type(self) is not StateAccessScope
+            or not isinstance(public_key, Ed25519PublicKey)
+            or type(issuer_identity) is not bytes
+            or self._issuer_realm != "production"
+            or not hmac.compare_digest(
+                self._issuer_identity,
+                issuer_identity,
+            )
+        ):
+            return False
+        try:
+            public_key.verify(
+                self._authority_signature,
+                _state_scope_payload(self),
+            )
+        except (InvalidSignature, TypeError, ValueError):
+            return False
+        return True
 
 
 def _new_state_scope_issuer(*, contract_test: bool = False) -> _StateScopeIssuer:
@@ -346,15 +542,28 @@ def _issue_state_access_scope(
     authority: StateAuthorityKind,
     caller: str,
     capabilities: frozenset[StateCallerCapability],
+    resource_policy: _StateResourcePolicy | None = None,
+    repository_binding: object | None = None,
 ) -> StateAccessScope:
     if type(issuer) is not _StateScopeIssuer:
         _invalid("access_scope.issuer")
+    if issuer.realm == "contract_test":
+        if resource_policy is not None or repository_binding is not None:
+            _invalid("access_scope.contract_test_policy")
+        resource_policy = _CONTRACT_TEST_RESOURCE_POLICY
+    elif (
+        type(resource_policy) is not _StateResourcePolicy
+        or repository_binding is None
+    ):
+        _invalid("access_scope.resource_policy")
     return StateAccessScope(
         atomic_scope=atomic_scope,
         authority=authority,
         caller=caller,
         capabilities=capabilities,
         _issuer=issuer,
+        _resource_policy=resource_policy,
+        _repository_binding=repository_binding,
     )
 
 
@@ -365,8 +574,17 @@ def _state_scope_signature(
 ) -> bytes:
     if type(issuer) is not _StateScopeIssuer:
         _invalid("access_scope.issuer")
+    payload = _state_scope_payload(scope)
+    if issuer.realm == "production":
+        return issuer._private_key.sign(payload)
+    return hmac.new(issuer._key, payload, hashlib.sha256).digest()
+
+
+def _state_scope_payload(scope: StateAccessScope) -> bytes:
     namespace = scope.atomic_scope.namespace
-    payload = json.dumps({
+    return json.dumps({
+        "issuer_realm": scope._issuer_realm,
+        "issuer_identity": scope._issuer_identity.hex(),
         "namespace_kind": namespace.kind.value,
         "domain": namespace.domain,
         "tenant_id": namespace.tenant_id,
@@ -376,8 +594,13 @@ def _state_scope_signature(
         "authority": scope.authority.value,
         "caller": scope.caller,
         "capabilities": sorted(value.value for value in scope.capabilities),
+        "resource_policy": scope._resource_policy.canonical_values(),
+        "repository_binding": (
+            None
+            if scope._repository_binding is None
+            else id(scope._repository_binding)
+        ),
     }, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hmac.new(issuer._key, payload, hashlib.sha256).digest()
 
 
 def _validate_name(value: object, field_name: str) -> None:

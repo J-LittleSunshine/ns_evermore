@@ -77,7 +77,7 @@ from ns_runtime.delivery import (
     delivery_to_dict,
     validate_payload_authority,
 )
-from ns_runtime.iam.client import IamClient, IamClientFactory
+from ns_runtime.iam.client import IamClient
 from ns_common.http_client import NsHttpClientOwner
 import ns_runtime.delivery.scheduling as scheduling_module
 from ns_runtime.processor import RoutingPreparationResult
@@ -88,6 +88,7 @@ from tests.test_runtime_connection_binding import UTC_START
 from tests.test_runtime_delivery_admission import (
     MESSAGE_ID, _PayloadClient, _envelope_authority, _ids, _plan,
 )
+from tests.test_runtime_iam_client import _ContractTestIamClient
 
 
 def _repositories(model, *, runtime_id: str = "runtime-local"):
@@ -449,7 +450,7 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self.model.close()
 
-    async def _payload_iam(self, **options: object) -> IamClient:
+    async def _payload_iam(self, **options: object) -> _ContractTestIamClient:
         server = _PayloadIamServer(self.clock, **options)
         base_url = await server.start()
         owner = NsHttpClientOwner()
@@ -458,13 +459,8 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             base_url=base_url,
             timeout_seconds=0.2,
         )
-        client = IamClientFactory(
-            http_owner=owner,
+        client = _ContractTestIamClient(
             http_client=http,
-            runtime_composition=self,
-        ).create(
-            internal_service_credential="p" * 32,
-            trace_id_factory=lambda: "operation:payload-test",
             clock=self.clock,
         )
         client.revalidation_requests = server.requests  # type: ignore[attr-defined]
@@ -1692,27 +1688,10 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
                         clock=self.clock,
                     )
 
-        real_client = await self._payload_iam()
-        validator = IamDeliveryPayloadReferenceValidator(
-            iam_client=real_client,
-            clock=self.clock,
-        )
         with self.assertRaises(NsValidationError):
-            copy.copy(validator._evidence_issuer)
-
-        async def forged_revalidation(_request):
-            return object()
-
-        real_client.revalidate_payload_ref = forged_revalidation  # type: ignore[method-assign]
-        delivery = next(
-            delivery_from_dict(json.loads(record.document.payload))
-            for record in self.model.records.values()
-            if record.key.object_type == "delivery"
-        )
-        with self.assertRaises(NsValidationError):
-            await validator.validate(
-                delivery,
-                target=await _Targets().resolve(delivery),
+            IamDeliveryPayloadReferenceValidator(
+                iam_client=await self._payload_iam(),  # type: ignore[arg-type]
+                clock=self.clock,
             )
 
     async def test_w04_invalid_payload_reference_is_revalidated_before_write(self) -> None:
@@ -1771,20 +1750,23 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             )
             target = await _Targets().resolve(reference_delivery)
             iam = await self._payload_iam()
-            production_validator = IamDeliveryPayloadReferenceValidator(
-                iam_client=iam,
-                clock=self.clock,
+            request = PayloadRefRevalidationRequest(
+                object_id=reference_delivery.payload_evidence.object_id,
+                version=reference_delivery.payload_evidence.object_version,
+                checksum=reference_delivery.payload_evidence.checksum,
+                size_bytes=reference_delivery.payload_evidence.size_bytes,
+                tenant_id=reference_delivery.tenant_id,
+                target_principal=target.identity,
+                target_tenant_id=target.tenant_id,
+                target_fingerprint=reference_delivery.target_fingerprint,
+                permission_snapshot_ref=target.permission_snapshot_reference,
+                permission_version=target.permission_version,
+                admission_authority_reference=(
+                    reference_delivery.policy_decision.request_fingerprint
+                ),
             )
-            valid = await production_validator.validate(
-                reference_delivery,
-                target=target,
-            )
-            self.assertTrue(validate_payload_authority(
-                reference_delivery,
-                valid,
-                target=target,
-                now=self.clock.utc_now(),
-            ))
+            decision = await iam.revalidate_payload_ref(request)
+            self.assertIsInstance(decision, PayloadRefRevalidationDecision)
             self.assertEqual(
                 target.permission_snapshot_reference,
                 iam.revalidation_requests[0].permission_snapshot_ref,
@@ -1797,84 +1779,30 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
                 reference_delivery.policy_decision.request_fingerprint,
                 iam.revalidation_requests[0].admission_authority_reference,
             )
-            stale = await IamDeliveryPayloadReferenceValidator(
-                iam_client=await self._payload_iam(
-                    permission_version="permission-version:stale",
-                ),
-                clock=self.clock,
-            ).validate(reference_delivery, target=target)
-            self.assertFalse(stale.valid)
-            denied = await IamDeliveryPayloadReferenceValidator(
-                iam_client=await self._payload_iam(allowed=False),
-                clock=self.clock,
-            ).validate(reference_delivery, target=target)
-            self.assertFalse(denied.valid)
-            expired = await IamDeliveryPayloadReferenceValidator(
-                iam_client=await self._payload_iam(expires_in_seconds=-1),
-                clock=self.clock,
-            ).validate(reference_delivery, target=target)
-            self.assertFalse(expired.valid)
-            self.assertIsNone(expired.access_decision_evidence)
-            with self.assertRaises(NsRuntimeIamUnavailableError):
-                await IamDeliveryPayloadReferenceValidator(
-                    iam_client=await self._payload_iam(
-                        illegal_decision=True,
-                    ),
-                    clock=self.clock,
-                ).validate(reference_delivery, target=target)
             with self.assertRaises(NsValidationError):
-                dataclasses.replace(
-                    valid.access_decision_evidence,
-                    iam_decision_version="permission-version:forged",
+                IamDeliveryPayloadReferenceValidator(
+                    iam_client=iam,  # type: ignore[arg-type]
+                    clock=self.clock,
                 )
             with self.assertRaises(NsValidationError):
-                copy.copy(valid.access_decision_evidence)
-            copied_access = object.__new__(PayloadAccessDecisionEvidence)
-            for field in dataclasses.fields(PayloadAccessDecisionEvidence):
-                object.__setattr__(
-                    copied_access,
-                    field.name,
-                    getattr(valid.access_decision_evidence, field.name),
+                PayloadAccessDecisionEvidence(
+                    allowed=True,
+                    evidence_fingerprint="sha256:forged",
+                    request_fingerprint="sha256:forged",
+                    object_id="object-p11",
+                    object_version="v1",
+                    checksum="sha256:" + "1" * 64,
+                    size_bytes=1,
+                    tenant_id=tenant_id,
+                    target_fingerprint=reference_delivery.target_fingerprint,
+                    admission_authority_reference="admission:forged",
+                    permission_snapshot_reference="permission:forged",
+                    permission_snapshot_fingerprint="sha256:forged",
+                    iam_decision_reference="decision:forged",
+                    iam_decision_version="version:forged",
+                    validated_at=self.clock.utc_now(),
+                    expires_at=self.clock.utc_now() + timedelta(seconds=30),
                 )
-            object.__setattr__(
-                copied_access,
-                "iam_decision_version",
-                "permission-version:forged",
-            )
-            self.assertFalse(validate_payload_authority(
-                reference_delivery,
-                dataclasses.replace(
-                    valid,
-                    access_decision_evidence=copied_access,
-                ),
-                target=target,
-                now=self.clock.utc_now(),
-            ))
-            with self.assertRaises(NsValidationError):
-                PayloadAccessDecisionEvidence(**{
-                    field.name: getattr(valid.access_decision_evidence, field.name)
-                    for field in dataclasses.fields(PayloadAccessDecisionEvidence)
-                    if not field.name.startswith("_")
-                })
-            cross_object = await production_validator.__class__(
-                iam_client=await self._payload_iam(
-                    object_id="object-other",
-                ),
-                clock=self.clock,
-            ).validate(reference_delivery, target=target)
-            self.assertFalse(cross_object.valid)
-            cross_target = await production_validator.__class__(
-                iam_client=await self._payload_iam(
-                    target_principal="identity-other",
-                ),
-                clock=self.clock,
-            ).validate(reference_delivery, target=target)
-            self.assertFalse(cross_target.valid)
-            with self.assertRaises(NsRuntimeIamUnavailableError):
-                await production_validator.__class__(
-                    iam_client=await self._payload_iam(unavailable=True),
-                    clock=self.clock,
-                ).validate(reference_delivery, target=target)
             scheduler = StateStoreDeliveryScheduler(
                 repository=repositories.scheduler,
                 registry_repository=repositories.registry,

@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import secrets
 import shutil
 import subprocess
@@ -23,6 +24,7 @@ except ModuleNotFoundError:  # backend-only environments intentionally omit runt
     redis_async = None  # type: ignore[assignment]
 
 from ns_common.exceptions import (
+    NsRuntimeStateStoreCapabilityUnavailableError,
     NsRuntimeStateStoreClosedError,
     NsRuntimeStateStoreConflictError,
     NsRuntimeStateStoreIndeterminateWriteError,
@@ -31,7 +33,7 @@ from ns_common.exceptions import (
     NsRuntimeStateStoreVersionMismatchError,
 )
 from ns_common.async_runtime import TaskSupervisor
-from ns_common.config import NsConfig
+from ns_common.config import NsConfig, NsRuntimeStateStoreConfig
 from ns_common.observability import InMemoryMetricsSink, InMemoryTraceSink
 from ns_common.testing import NsTestResourceFactory
 from ns_common.state_store import (
@@ -58,13 +60,13 @@ from ns_common.state_store import (
     StateStorePasswordSource,
     StateTransaction,
     StateTransitionLogAppend,
+    create_state_store_composition,
 )
 from ns_common.time import ControlledClock
 from ns_common.state_store.authority import (
     _issue_state_access_scope,
     _new_state_scope_issuer,
 )
-from ns_common.state_store.composition import StateStoreComposition
 from ns_runtime.delivery import (
     AdmissionOutcome,
     AdmissionPolicyConfig,
@@ -94,6 +96,9 @@ from tests.test_runtime_delivery_admission import (
     _envelope_authority,
     _ids,
     _plan,
+)
+from tests._state_store_contract_model import (
+    _ContractTestRepositoryComposition,
 )
 
 
@@ -125,7 +130,7 @@ def _issue_test_scope(store: RedisValkeyStateStore, **values) -> StateAccessScop
 
 def _repositories(store: RedisValkeyStateStore, *, runtime_id="runtime-local"):
     composition = getattr(store, "_contract_test_repository_composition", None)
-    if not isinstance(composition, StateStoreComposition):
+    if not isinstance(composition, _ContractTestRepositoryComposition):
         raise AssertionError("contract-test repository composition is unavailable")
     return composition.delivery_repositories(runtime_id=runtime_id)
 
@@ -413,7 +418,6 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         clock: ControlledClock | None = None,
     ) -> RedisValkeyStateStore:
         scope_issuer = _new_state_scope_issuer(contract_test=True)
-        repository_owner = object()
         store = RedisValkeyStateStore(
             options=RedisStateStoreOptions(
                 backend=backend,
@@ -429,14 +433,131 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             clock=clock or self.clock,
             _contract_test_authority=True,
             _scope_issuer=scope_issuer,
-            _repository_owner=repository_owner,
         )
         store._contract_test_scope_issuer = scope_issuer
-        store._contract_test_repository_composition = StateStoreComposition(
+        store._contract_test_repository_composition = (
+            _ContractTestRepositoryComposition(
             store=store,
-            owner=repository_owner,
-        )
+            issuer=scope_issuer,
+        ))
         return store
+
+    async def test_production_repository_resource_policy_is_enforced_by_redis(
+        self,
+    ) -> None:
+        variable = "NS_RUNTIME_REPOSITORY_TEST_PASSWORD"
+        previous = os.environ.get(variable)
+        os.environ[variable] = self._password
+        composition = None
+        try:
+            composition = create_state_store_composition(
+                config=NsRuntimeStateStoreConfig(
+                    backend="redis",
+                    endpoint=f"redis://127.0.0.1:{self._port}/0",
+                    password_source=f"env:{variable}",
+                    namespace=self.namespace,
+                    operation_timeout_seconds=1,
+                ),
+                clock=self.clock,
+                runtime_id="runtime-production",
+            )
+            assert composition is not None
+            store = composition.store
+            repositories = composition.delivery_repositories(
+                runtime_id="runtime-production",
+            )
+            await store.open()
+            admission_scope = repositories.admission.delivery_scope(
+                tenant_id="tenant-a",
+                bucket_id=0,
+                layout_generation=2,
+            )
+            key = StateKey(
+                namespace=admission_scope.namespace,
+                object_type="delivery",
+                object_id="delivery-resource-policy",
+            )
+            transaction = StateTransaction(
+                scope=admission_scope,
+                mutations=(StateMutation(
+                    key=key,
+                    assertion=StateAssertion.absent(),
+                    kind=StateMutationKind.CREATE,
+                    document=StateDocument(
+                        schema_name="delivery_delivery",
+                        schema_version=1,
+                        state_version=1,
+                        payload=b"{}",
+                    ),
+                ),),
+                ordered_index_mutations=(StateOrderedIndexMutation(
+                    index=StateOrderedIndexKey(
+                        namespace=admission_scope.namespace,
+                        name="delivery.prepared",
+                        bucket="delivery",
+                    ),
+                    kind=StateOrderedIndexMutationKind.ADD,
+                    member="delivery-resource-policy",
+                    score=1.0,
+                ),),
+                log_appends=(StateTransitionLogAppend(
+                    key=StateKey(
+                        namespace=admission_scope.namespace,
+                        object_type="delivery_transition_log",
+                        object_id="delivery-resource-policy-log",
+                    ),
+                    document=StateDocument(
+                        schema_name="delivery_transition_event",
+                        schema_version=1,
+                        state_version=1,
+                        payload=b"{}",
+                    ),
+                ),),
+            )
+            result = await store.transact(transaction)
+            self.assertTrue(result.is_for_transaction(transaction))
+
+            scheduler_scope = repositories.scheduler.delivery_scope(
+                tenant_id="tenant-a",
+                bucket_id=0,
+                layout_generation=2,
+            )
+            read = await store.read(
+                scope=scheduler_scope,
+                key=key,
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+            self.assertIsNotNone(read.record)
+
+            payload_scope = repositories.payload.delivery_scope(
+                tenant_id="tenant-a",
+                bucket_id=0,
+                layout_generation=2,
+            )
+            for scope, forbidden_type in (
+                (scheduler_scope, "payload_body"),
+                (payload_scope, "delivery"),
+            ):
+                with self.assertRaises(
+                    NsRuntimeStateStoreCapabilityUnavailableError,
+                ):
+                    await store.read(
+                        scope=scope,
+                        key=StateKey(
+                            namespace=scope.namespace,
+                            object_type=forbidden_type,
+                            object_id="forbidden",
+                        ),
+                        consistency=StateConsistency.LINEARIZABLE,
+                    )
+            await store.close()
+        finally:
+            if composition is not None and composition.store.state.value == "open":
+                await composition.store.close()
+            if previous is None:
+                os.environ.pop(variable, None)
+            else:
+                os.environ[variable] = previous
 
     async def test_redis_server_authentication_with_both_protocol_drivers(self) -> None:
         for backend in ("redis", "valkey"):

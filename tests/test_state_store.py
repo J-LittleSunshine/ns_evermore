@@ -6,6 +6,7 @@ import copy
 import dataclasses
 import unittest
 
+from ns_common.config import NsRuntimeStateStoreConfig
 from ns_common.exceptions import (
     NsRuntimeStateStoreCapabilityUnavailableError,
     NsRuntimeStateStoreClosedError,
@@ -50,6 +51,7 @@ from ns_common.state_store import (
     StateTransactionResult,
     StateTransitionLogAppend,
     StateRecordReadAssertion,
+    create_state_store_composition,
 )
 from ns_common.time import ControlledClock
 
@@ -271,12 +273,7 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         self.assertFalse(hasattr(self.store, "_issue_access_scope"))
-        with self.assertRaises(NsValidationError):
-            self.store._create_repository(
-                owner=object(),
-                role=StateStoreRepositoryRole.DELIVERY_SCHEDULER,
-                runtime_id="runtime-forged",
-            )
+        self.assertFalse(hasattr(self.store, "_create_repository"))
         with self.assertRaises(NsValidationError):
             StateStoreRepository(
                 store=self.store,
@@ -432,6 +429,280 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
                 scope=payload_scope,
                 mutations=(_create(_key(payload_scope, "payload-write")),),
             ))
+
+    async def test_production_store_has_closed_repositories_and_exact_resources(
+        self,
+    ) -> None:
+        audit_namespace = StateNamespace.audit(domain="processor")
+        composition = create_state_store_composition(
+            config=NsRuntimeStateStoreConfig(
+                backend="redis",
+                endpoint="redis://127.0.0.1:6379/0",
+                namespace="authority-contract-test",
+            ),
+            clock=self.clock,
+            runtime_id="runtime-production",
+            audit_namespaces=(audit_namespace,),
+        )
+        assert composition is not None
+        store = composition.store
+        repositories = composition.delivery_repositories(
+            runtime_id="runtime-production",
+        )
+        self.assertIs(
+            repositories,
+            composition.delivery_repositories(
+                runtime_id="runtime-production",
+            ),
+        )
+        self.assertFalse(hasattr(store, "_create_repository"))
+        self.assertFalse(any(
+            "repository_owner" in name
+            for name in dir(store)
+        ))
+        self.assertFalse(any(
+            isinstance(value, StateStoreRepository)
+            for value in vars(store).values()
+        ))
+        with self.assertRaises(AttributeError):
+            getattr(store, "_StateStore__repository_owner")
+        cloned_store = object.__new__(type(store))
+        for name, value in vars(store).items():
+            setattr(cloned_store, name, value)
+        self.assertFalse(hasattr(cloned_store, "_create_repository"))
+        self.assertFalse(any(
+            "scope_issuer" in name and value is not None
+            for name, value in vars(store).items()
+        ))
+        production_validator = vars(store).get(
+            "_StateStore__production_scope_validator",
+        )
+        self.assertIsNotNone(production_validator)
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+        from ns_common.state_store.authority import _StateScopeIssuer
+        validator_closure_values = tuple(
+            cell.cell_contents
+            for cell in production_validator._callback.__closure__
+        )
+        self.assertFalse(any(
+            isinstance(value, (_StateScopeIssuer, Ed25519PrivateKey))
+            for value in validator_closure_values
+        ))
+        with self.assertRaises(NsValidationError):
+            copy.copy(production_validator)
+        from ns_common.state_store.store import (
+            _ProductionStateScopeValidator,
+        )
+        with self.assertRaises(NsValidationError):
+            _ProductionStateScopeValidator(lambda scope: True)
+        forged_validator = object.__new__(_ProductionStateScopeValidator)
+        forged_validator._callback = lambda scope: True
+        forged_validator._signature = b"\0" * 32
+        self.assertFalse(forged_validator.is_valid())
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            type(composition)(store=store, owner=object())
+
+        scheduler_scope = repositories.scheduler.delivery_scope(
+            tenant_id="tenant-1",
+            bucket_id=0,
+            layout_generation=2,
+        )
+        payload_scope = repositories.payload.delivery_scope(
+            tenant_id="tenant-1",
+            bucket_id=0,
+            layout_generation=2,
+        )
+        admission_scope = repositories.admission.delivery_scope(
+            tenant_id="tenant-1",
+            bucket_id=0,
+            layout_generation=2,
+        )
+        registry_scope = repositories.registry.registry_scope()
+        self.assertFalse(hasattr(scheduler_scope, "_issuer"))
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            repositories.scheduler._issue_atomic_scope(StateAtomicScope(
+                namespace=scheduler_scope.namespace,
+                partition="caller-selected-partition",
+            ))
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            repositories.registry._issue_atomic_scope(StateAtomicScope(
+                namespace=registry_scope.namespace,
+                partition="layout-1-bucket-0",
+            ))
+        copied_scheduler_scope = copy.copy(scheduler_scope)
+        self.assertIsNot(copied_scheduler_scope, scheduler_scope)
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(scheduler_scope, caller="forged")
+        object.__setattr__(
+            copied_scheduler_scope,
+            "capabilities",
+            frozenset(StateCallerCapability),
+        )
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await store.read(
+                scope=copied_scheduler_scope,
+                key=StateKey(
+                    namespace=copied_scheduler_scope.namespace,
+                    object_type="delivery",
+                    object_id="copied-scope",
+                ),
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+
+        async def denied_read(scope, object_type):
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await store.read(
+                    scope=scope,
+                    key=StateKey(
+                        namespace=scope.namespace,
+                        object_type=object_type,
+                        object_id="attack",
+                    ),
+                    consistency=StateConsistency.LINEARIZABLE,
+                )
+
+        await denied_read(scheduler_scope, "payload_body")
+        await denied_read(payload_scope, "delivery")
+        await denied_read(registry_scope, "delivery")
+
+        for object_type, schema_name in (
+            ("attempt", "delivery_attempt"),
+            ("delivery_owner", "delivery_owner"),
+            ("delivery_scheduler_cursor", "delivery_scheduler_cursor"),
+        ):
+            with self.subTest(admission_object=object_type):
+                with self.assertRaises(
+                    NsRuntimeStateStoreCapabilityUnavailableError,
+                ):
+                    await store.transact(StateTransaction(
+                        scope=admission_scope,
+                        mutations=(StateMutation(
+                            key=StateKey(
+                                namespace=admission_scope.namespace,
+                                object_type=object_type,
+                                object_id="attack",
+                            ),
+                            assertion=StateAssertion.absent(),
+                            kind=StateMutationKind.CREATE,
+                            document=StateDocument(
+                                schema_name=schema_name,
+                                schema_version=1,
+                                state_version=1,
+                                payload=b"{}",
+                            ),
+                        ),),
+                    ))
+
+        for scope, object_type, schema_name in (
+            (scheduler_scope, "unknown_object", "delivery_delivery"),
+            (scheduler_scope, "delivery", "unknown_schema"),
+            (registry_scope, "delivery_authority_layout", "unknown_schema"),
+        ):
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await store.transact(StateTransaction(
+                    scope=scope,
+                    mutations=(StateMutation(
+                        key=StateKey(
+                            namespace=scope.namespace,
+                            object_type=object_type,
+                            object_id="attack",
+                        ),
+                        assertion=StateAssertion.absent(),
+                        kind=StateMutationKind.CREATE,
+                        document=StateDocument(
+                            schema_name=schema_name,
+                            schema_version=1,
+                            state_version=1,
+                            payload=b"{}",
+                        ),
+                    ),),
+                ))
+
+        for scope, name in (
+            (scheduler_scope, "delivery.unknown"),
+            (registry_scope, "delivery.prepared"),
+        ):
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await store.read_ordered_index(
+                    scope=scope,
+                    index=StateOrderedIndexKey(
+                        namespace=scope.namespace,
+                        name=name,
+                        bucket="delivery",
+                    ),
+                    limit=1,
+                )
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await store.read_ordered_index(
+                scope=scheduler_scope,
+                index=StateOrderedIndexKey(
+                    namespace=scheduler_scope.namespace,
+                    name="delivery.ready",
+                    bucket="wrong-bucket",
+                ),
+                limit=1,
+            )
+
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await store.transact(StateTransaction(
+                scope=scheduler_scope,
+                mutations=(),
+                log_appends=(StateTransitionLogAppend(
+                    key=StateKey(
+                        namespace=scheduler_scope.namespace,
+                        object_type="unknown_log",
+                        object_id="attack",
+                    ),
+                    document=StateDocument(
+                        schema_name="unknown_log_schema",
+                        schema_version=1,
+                        state_version=1,
+                        payload=b"{}",
+                    ),
+                ),),
+            ))
+
+        audit_repository = composition.strong_audit_repository(
+            namespace=audit_namespace,
+        )
+        audit_scope = audit_repository.audit_scope()
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await store.append(
+                scope=audit_scope,
+                key=StateKey(
+                    namespace=audit_scope.namespace,
+                    object_type="unknown_audit_log",
+                    object_id="final",
+                ),
+                document=StateDocument(
+                    schema_name="runtime.unknown_audit",
+                    schema_version=1,
+                    state_version=1,
+                    payload=b"{}",
+                ),
+            )
 
     async def test_transaction_result_is_model_bound_and_replay_safe(
         self,

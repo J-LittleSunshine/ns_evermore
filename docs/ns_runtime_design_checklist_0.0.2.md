@@ -671,7 +671,11 @@
 ## 25. 明确禁止漂移的硬边界
 
 - production authorization、payload access 和 StateStore capability 必须由 composition root 控制的真实 adapter/repository authority 签发；公开 dataclass、摘要/fingerprint、`dataclasses.replace()`、subclass、fake dependency 或手工枚举不得产生新的 production authority。摘要只绑定内容，不能证明 IAM/backend 已作出授权决定；contract-test issuer 必须与 production issuer 使用不同且不可互认的 authority realm。
+- production `IamClient` 不得暴露可由普通模块调用的 factory 或自由 signer；production graph 必须绑定唯一 composition、精确 `NsHttpClientOwner` 和 owner-issued narrow HTTP authority handle。`object.__new__`、copy、subclass、method override、任意 composition object 或 contract-test adapter 均不得满足 production adapter 校验。
+- production IAM HTTP provenance 必须逐次绑定实际 `httpx.AsyncClient`、主 transport、mount/proxy transport、关键 class handler identity 和实例 substitution 状态；替换 `request/send/stream`、`_transport`、`_mounts` 或任一 `handle_async_request` 后必须立即 fail closed，关闭后的 handle 不得复用。
 - StateStore scope 必须绑定签发 store、caller、domain、namespace、tenant、runtime/plugin/partition 和精确 capability；Processor、plugin、EventBus subscriber 与 connection code 不得直接签发 scope，也不得引入全局 registry、service locator 或第二个 authority owner。
+- raw production StateStore 不得保存 repository owner、scope 私钥或 repository creation API；composition 必须一次性创建固定 repository set 后永久关闭创建。production scope 使用 repository 侧私钥签名，raw store 只持公钥验证材料；复制、属性遍历、name-mangled lookup、伪造 validator 或二次 composition 不得恢复签发权。
+- repository authority 必须按 operation、精确 `object_type/schema_name`、精确 ordered-index `name/bucket`、transition-log object/schema 和 namespace/partition 规则授权。admission、scheduler、payload、registry、audit 必须使用互不扩展的最小策略；未知资源和跨 repository 访问一律 fail closed，不得以宽字符串前缀代替 allowlist。
 - transport write 必须返回 typed outcome，至少区分 bytes 确定未开始、已经开始但结果未知、已确认成功。只有确定未开始才能进入 `write_failed`；开始后的 timeout、取消、connection close 或未知异常必须进入 `write_uncertain`、释放 owner 且禁止重发。
 - production module 默认入口必须启动唯一 StateStore、RuntimeService、TaskSupervisor/event loop/shutdown coordinator，并等待 signal、critical task failure 或显式 shutdown；self-check/diagnose 只能是显式有界命令，不能成为默认生产行为。
 - ordered-index cursor 的校验、定位、分页和总量读取必须在单次原子 provider 操作内完成或提供等价稳定语义；transaction provider result 的 record/log cardinality 与 mutation/append 数量必须精确相等，缺项、多项或错误类型一律 fail closed。

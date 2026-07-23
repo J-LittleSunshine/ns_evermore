@@ -581,7 +581,9 @@ class _NsHttpClientAuthorityBinding:
     """Opaque owner-issued proof for one unmodified production HTTP client."""
 
     __slots__ = (
-        "_owner", "_client", "_composition", "_transport_identity",
+        "_owner", "_client", "_composition", "_httpx_client",
+        "_transport", "_transport_handler", "_mounts", "_mount_entries",
+        "_mount_handlers",
     )
 
     def __init__(
@@ -600,7 +602,15 @@ class _NsHttpClientAuthorityBinding:
         self._owner = owner
         self._client = client
         self._composition = composition
-        self._transport_identity = id(client._client)
+        self._httpx_client = client._client
+        self._transport = client._client._transport
+        self._transport_handler = _transport_handler(self._transport)
+        self._mounts = client._client._mounts
+        self._mount_entries = tuple(client._client._mounts.items())
+        self._mount_handlers = tuple(
+            None if value is None else _transport_handler(value)
+            for _, value in self._mount_entries
+        )
 
     def is_current(
         self,
@@ -617,20 +627,51 @@ class _NsHttpClientAuthorityBinding:
             or type(owner) is not NsHttpClientOwner
             or type(owner.factory) is not NsHttpClientFactory
             or type(client) is not NsAsyncHttpClient
-            or id(getattr(client, "_client", None)) != self._transport_identity
-            or type(getattr(client, "_client", None)) is not httpx.AsyncClient
+            or getattr(client, "_client", None) is not self._httpx_client
+            or type(self._httpx_client) is not httpx.AsyncClient
+            or getattr(self._httpx_client, "_transport", None)
+            is not self._transport
+            or getattr(self._httpx_client, "_mounts", None) is not self._mounts
             or client not in owner.clients
             or not owner._owns_authority_binding(client, self)
             or owner.state is not NsHttpClientOwnerState.OPEN
+            or client.is_closed
+            or self._httpx_client.is_closed
         ):
             return False
         client_substitutions = {
             "request", "get", "post", "put", "delete",
         }.intersection(vars(client))
-        transport = client._client
+        transport = self._httpx_client
         transport_substitutions = {
             "request", "send", "stream",
         }.intersection(vars(transport))
+        current_mount_entries = tuple(self._mounts.items())
+        if (
+            len(current_mount_entries) != len(self._mount_entries)
+            or any(
+                current_key is not expected_key
+                or current_value is not expected_value
+                for (current_key, current_value), (
+                    expected_key, expected_value,
+                ) in zip(current_mount_entries, self._mount_entries)
+            )
+            or _transport_handler(self._transport)
+            is not self._transport_handler
+        ):
+            return False
+        for offset, (_, mounted) in enumerate(current_mount_entries):
+            expected_handler = self._mount_handlers[offset]
+            if mounted is None:
+                if expected_handler is not None:
+                    return False
+                continue
+            if (
+                expected_handler is None
+                or _transport_handler(mounted) is not expected_handler
+                or "handle_async_request" in vars(mounted)
+            ):
+                return False
         return bool(
             not client_substitutions
             and not transport_substitutions
@@ -642,9 +683,135 @@ class _NsHttpClientAuthorityBinding:
             and httpx.AsyncClient.request
             is getattr(type(transport), "request", None)
             and httpx.AsyncClient.send is getattr(type(transport), "send", None)
+            and httpx.AsyncClient.stream
+            is getattr(type(transport), "stream", None)
+            and "handle_async_request" not in vars(self._transport)
             and NsHttpClientFactory.create
             is getattr(type(owner.factory), "create", None)
         )
+
+    async def post(
+        self,
+        path: str,
+        *,
+        json_data: object,
+        bearer_token: str,
+        trace_id: str,
+        expected_statuses: Collection[int],
+    ) -> NsHttpResponse:
+        if not self.is_current(
+            owner=self._owner,
+            client=self._client,
+            composition=self._composition,
+        ):
+            raise NsValidationError(
+                "HTTP authority provenance is no longer valid.",
+                details={
+                    "component": "http_client_owner",
+                    "field": "authority_transport",
+                },
+            )
+        result = await self._client.post(
+            path,
+            json_data=json_data,
+            bearer_token=bearer_token,
+            trace_id=trace_id,
+            expected_statuses=expected_statuses,
+        )
+        if not self.is_current(
+            owner=self._owner,
+            client=self._client,
+            composition=self._composition,
+        ):
+            raise NsValidationError(
+                "HTTP authority provenance changed during request.",
+                details={
+                    "component": "http_client_owner",
+                    "field": "authority_transport",
+                },
+            )
+        return result
+
+
+class _NsHttpClientAuthorityHandle:
+    """Narrow IAM HTTP handle without a public mutable client reference."""
+
+    __slots__ = ("__binding",)
+
+    def __init__(
+        self,
+        *,
+        binding: _NsHttpClientAuthorityBinding,
+        _token: object,
+        owner: "NsHttpClientOwner",
+    ) -> None:
+        if (
+            type(self) is not _NsHttpClientAuthorityHandle
+            or type(binding) is not _NsHttpClientAuthorityBinding
+            or not owner._consume_authority_handle_token(_token)
+        ):
+            raise NsValidationError(
+                "HTTP authority handle issuer is invalid.",
+                details={
+                    "component": "http_client_owner",
+                    "field": "authority_handle",
+                },
+            )
+        self.__binding = binding
+
+    def is_current(self) -> bool:
+        binding = self.__binding
+        return binding.is_current(
+            owner=binding._owner,
+            client=binding._client,
+            composition=binding._composition,
+        )
+
+    async def post(
+        self,
+        path: str,
+        *,
+        json_data: object,
+        bearer_token: str,
+        trace_id: str,
+        expected_statuses: Collection[int],
+    ) -> NsHttpResponse:
+        return await self.__binding.post(
+            path,
+            json_data=json_data,
+            bearer_token=bearer_token,
+            trace_id=trace_id,
+            expected_statuses=expected_statuses,
+        )
+
+    def __copy__(self) -> "_NsHttpClientAuthorityHandle":
+        raise NsValidationError(
+            "HTTP authority handle cannot be copied.",
+            details={"component": "http_client_owner", "field": "copy"},
+        )
+
+    def __deepcopy__(
+        self,
+        memo: dict[int, object],
+    ) -> "_NsHttpClientAuthorityHandle":
+        del memo
+        raise NsValidationError(
+            "HTTP authority handle cannot be copied.",
+            details={"component": "http_client_owner", "field": "copy"},
+        )
+
+
+def _transport_handler(transport: object) -> object:
+    handler = getattr(type(transport), "handle_async_request", None)
+    if not callable(handler):
+        raise NsValidationError(
+            "HTTP transport handler is invalid.",
+            details={
+                "component": "http_client_owner",
+                "field": "transport_handler",
+            },
+        )
+    return handler
 
 
 class NsHttpClientFactory:
@@ -699,6 +866,7 @@ class NsHttpClientOwner:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._close_lock: asyncio.Lock | None = None
         self._pending_authority_binding_token: object | None = None
+        self._pending_authority_handle_token: object | None = None
         self._authority_bindings: dict[
             NsAsyncHttpClient, _NsHttpClientAuthorityBinding
         ] = {}
@@ -753,13 +921,13 @@ class NsHttpClientOwner:
             self._clients.append(client)
             return client
 
-    def _bind_authority_client(
+    def _create_authority_handle(
         self,
         *,
         client: NsAsyncHttpClient,
         composition: object,
-    ) -> _NsHttpClientAuthorityBinding:
-        """Bind an existing owned client to one composition instance."""
+    ) -> _NsHttpClientAuthorityHandle:
+        """Bind one owned client and return only a narrow IAM request handle."""
 
         with self._state_lock:
             self._ensure_open()
@@ -790,12 +958,27 @@ class NsHttpClientOwner:
             finally:
                 self._pending_authority_binding_token = None
             self._authority_bindings[client] = binding
-            return binding
+            handle_token = object()
+            self._pending_authority_handle_token = handle_token
+            try:
+                return _NsHttpClientAuthorityHandle(
+                    binding=binding,
+                    _token=handle_token,
+                    owner=self,
+                )
+            finally:
+                self._pending_authority_handle_token = None
 
     def _consume_authority_binding_token(self, token: object) -> bool:
         return (
             token is not None
             and self._pending_authority_binding_token is token
+        )
+
+    def _consume_authority_handle_token(self, token: object) -> bool:
+        return (
+            token is not None
+            and self._pending_authority_handle_token is token
         )
 
     def _owns_authority_binding(

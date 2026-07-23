@@ -219,7 +219,10 @@ def main(
         AuthorizationMode,
         MessageAuthorizationService,
     )
-    from ns_runtime.iam.client import IamClientFactory
+    from ns_runtime.iam.client import (
+        IamClient,
+        _ProductionIamCompositionProof,
+    )
     from ns_runtime.processor import (
         DefaultProcessorErrorMapper,
         EventBus,
@@ -281,6 +284,7 @@ def main(
     state_store_composition = create_state_store_composition(
         config=config.runtime.state_store,
         clock=context.clock,
+        runtime_id=runtime_id,
     )
     state_store = (
         None
@@ -299,21 +303,29 @@ def main(
             state_store=state_store,
         ),
     )
-    iam_client_factory = IamClientFactory(
-        http_owner=http_client_owner,
-        http_client=iam_http_client,
-        runtime_composition=context,
+    # This is the sole production IAM graph construction site.  The narrow
+    # HTTP handle and exact-client verifier are local to this invocation and
+    # cannot be reused to authorize a copied or independently created client.
+    iam_http_authority = http_client_owner._create_authority_handle(
+        client=iam_http_client,
+        composition=context,
     )
-    iam_client = iam_client_factory.create(
-        internal_service_credential=(
-            config.runtime.iam.internal_service_credential
-        ),
-        trace_id_factory=lambda: identifier_factory.generate(
-            NsIdentifierKind.OPERATION_ID,
-        ),
-        clock=context.clock,
-        iam_mode=config.runtime.iam.authorization_mode,
+    iam_client = object.__new__(IamClient)
+    iam_client._http_authority = iam_http_authority
+    iam_client._composition_proof = _ProductionIamCompositionProof(
+        client=iam_client,
+        http_authority=iam_http_authority,
     )
+    iam_client._service_credential = (
+        config.runtime.iam.internal_service_credential
+    )
+    iam_client._trace_id_factory = lambda: identifier_factory.generate(
+        NsIdentifierKind.OPERATION_ID,
+    )
+    iam_client._clock = context.clock
+    iam_client._iam_mode = config.runtime.iam.authorization_mode
+    iam_client._payload_revalidation_results = {}
+    iam_client._authorization_service = None
     message_authorization = MessageAuthorizationService(
         iam_client=iam_client,
         clock=context.clock,

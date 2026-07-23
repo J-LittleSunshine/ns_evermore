@@ -3,6 +3,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
+import sys
+from pathlib import Path
 from typing import Callable, Mapping
 
 from ns_common.exceptions import (
@@ -12,7 +17,7 @@ from ns_common.exceptions import (
     NsRuntimeIamUnavailableError,
     NsValidationError,
 )
-from ns_common.http_client import NsAsyncHttpClient, NsHttpClientOwner
+from ns_common.http_client import _NsHttpClientAuthorityHandle
 from ns_common.iam import (
     IamAccessCheckRequest,
     IamAccessDecision,
@@ -34,48 +39,90 @@ from ns_runtime.connection.iam import (
 from .models import PermissionSnapshot
 
 
+def _build_production_composition_proof_type() -> type:
+    signing_key = secrets.token_bytes(32)
+
+    class _ProductionIamCompositionProof:
+        """Exact-client proof constructible only while executing main()."""
+
+        __slots__ = ("_client", "_http_authority", "_signature")
+
+        def __init__(
+            self,
+            *,
+            client: "IamClient",
+            http_authority: _NsHttpClientAuthorityHandle,
+        ) -> None:
+            caller = sys._getframe(1)
+            if (
+                caller.f_code.co_name != "main"
+                or not str(
+                    Path(caller.f_code.co_filename).resolve(),
+                ).replace("\\", "/").casefold().endswith(
+                    "/ns_runtime/main.py",
+                )
+                or type(client) is not IamClient
+                or type(http_authority) is not _NsHttpClientAuthorityHandle
+                or not http_authority.is_current()
+            ):
+                _invalid("composition_authority")
+            self._client = client
+            self._http_authority = http_authority
+            self._signature = hmac.new(
+                signing_key,
+                f"{id(client)}:{id(http_authority)}".encode("ascii"),
+                hashlib.sha256,
+            ).digest()
+
+        def validates(
+            self,
+            client: "IamClient",
+            http_authority: _NsHttpClientAuthorityHandle,
+        ) -> bool:
+            if (
+                type(self) is not _ProductionIamCompositionProof
+                or self._client is not client
+                or self._http_authority is not http_authority
+            ):
+                return False
+            expected = hmac.new(
+                signing_key,
+                f"{id(client)}:{id(http_authority)}".encode("ascii"),
+                hashlib.sha256,
+            ).digest()
+            return bool(
+                hmac.compare_digest(self._signature, expected)
+                and http_authority.is_current()
+            )
+
+        def __copy__(self) -> "_ProductionIamCompositionProof":
+            _invalid("composition_authority.copy")
+
+        def __deepcopy__(
+            self,
+            memo: dict[int, object],
+        ) -> "_ProductionIamCompositionProof":
+            del memo
+            _invalid("composition_authority.copy")
+
+    return _ProductionIamCompositionProof
+
+
+_ProductionIamCompositionProof = _build_production_composition_proof_type()
+del _build_production_composition_proof_type
+_PRODUCTION_IAM_PROOF_VALIDATES = _ProductionIamCompositionProof.validates
+
+
 class IamClient(HandshakeIamAdapter):
     """One explicitly injected client; it never creates or finds HTTP globals."""
 
     def __init__(
         self,
-        *,
-        http_client: NsAsyncHttpClient,
-        internal_service_credential: str,
-        trace_id_factory: Callable[[], str],
-        clock: Clock,
-        iam_mode: str = "strict",
-        _factory: object | None = None,
-        _binding: object | None = None,
-        _construction_token: object | None = None,
+        *args: object,
+        **kwargs: object,
     ) -> None:
-        if (
-            type(self) is not IamClient
-            or type(_factory) is not IamClientFactory
-            or not _factory._consume_construction_token(_construction_token)
-        ):
-            _invalid("composition_factory")
-        if type(http_client) is not NsAsyncHttpClient:
-            _invalid("http_client")
-        if not isinstance(internal_service_credential, str) or len(internal_service_credential) < 32:
-            _invalid("internal_service_credential")
-        if not callable(trace_id_factory):
-            _invalid("trace_id_factory")
-        if not isinstance(clock, Clock):
-            _invalid("clock")
-        if iam_mode not in {"strict", "cache"}:
-            _invalid("iam_mode")
-        self._http = http_client
-        self._service_credential = internal_service_credential
-        self._trace_id_factory = trace_id_factory
-        self._clock = clock
-        self._iam_mode = iam_mode
-        self._composition_factory = _factory
-        self._http_binding = _binding
-        self._payload_revalidation_results: dict[
-            int, tuple[PayloadRefRevalidationRequest, PayloadRefRevalidationDecision]
-        ] = {}
-        self._authorization_service: object | None = None
+        del self, args, kwargs
+        _invalid("composition_authority")
 
     def __repr__(self) -> str:
         return "IamClient(explicit=True, credential=redacted)"
@@ -93,10 +140,19 @@ class IamClient(HandshakeIamAdapter):
         }.intersection(vars(self))
         return bool(
             type(self) is IamClient
-            and type(getattr(self, "_composition_factory", None))
-            is IamClientFactory
-            and self._composition_factory._owns(self)
-            and type(getattr(self, "_http", None)) is NsAsyncHttpClient
+            and type(getattr(self, "_http_authority", None))
+            is _NsHttpClientAuthorityHandle
+            and type(getattr(self, "_composition_proof", None))
+            is _ProductionIamCompositionProof
+            and getattr(
+                type(self._composition_proof),
+                "validates",
+                None,
+            ) is _PRODUCTION_IAM_PROOF_VALIDATES
+            and self._composition_proof.validates(
+                self,
+                self._http_authority,
+            )
             and not substituted
             and getattr(type(self), "revalidate_payload_ref", None)
             is IamClient.revalidate_payload_ref
@@ -290,11 +346,13 @@ class IamClient(HandshakeIamAdapter):
         path: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
+        if not self._is_production_adapter():
+            _invalid("production_provenance")
         trace_id = self._trace_id_factory()
         if not isinstance(trace_id, str) or not trace_id:
             raise _malformed("trace")
         try:
-            response = await self._http.post(
+            response = await self._http_authority.post(
                 path,
                 json_data=dict(payload),
                 bearer_token=self._service_credential,
@@ -338,89 +396,6 @@ class IamClient(HandshakeIamAdapter):
         _invalid("copy")
 
 
-class IamClientFactory:
-    """One composition-owned factory bound to an owner/client/context triple."""
-
-    __slots__ = (
-        "_owner", "_http_client", "_composition", "_binding",
-        "_pending_token", "_client",
-    )
-
-    def __init__(
-        self,
-        *,
-        http_owner: NsHttpClientOwner,
-        http_client: NsAsyncHttpClient,
-        runtime_composition: object,
-    ) -> None:
-        if (
-            type(self) is not IamClientFactory
-            or type(http_owner) is not NsHttpClientOwner
-            or type(http_client) is not NsAsyncHttpClient
-            or runtime_composition is None
-        ):
-            _invalid("factory")
-        self._owner = http_owner
-        self._http_client = http_client
-        self._composition = runtime_composition
-        self._binding = http_owner._bind_authority_client(
-            client=http_client,
-            composition=runtime_composition,
-        )
-        self._pending_token: object | None = None
-        self._client: IamClient | None = None
-
-    def create(
-        self,
-        *,
-        internal_service_credential: str,
-        trace_id_factory: Callable[[], str],
-        clock: Clock,
-        iam_mode: str = "strict",
-    ) -> IamClient:
-        if self._client is not None:
-            _invalid("factory.already_created")
-        token = object()
-        self._pending_token = token
-        try:
-            client = IamClient(
-                http_client=self._http_client,
-                internal_service_credential=internal_service_credential,
-                trace_id_factory=trace_id_factory,
-                clock=clock,
-                iam_mode=iam_mode,
-                _factory=self,
-                _binding=self._binding,
-                _construction_token=token,
-            )
-        finally:
-            self._pending_token = None
-        self._client = client
-        return client
-
-    def _consume_construction_token(self, token: object) -> bool:
-        return token is not None and self._pending_token is token
-
-    def _owns(self, client: IamClient) -> bool:
-        return bool(
-            type(self) is IamClientFactory
-            and self._client is client
-            and getattr(client, "_http_binding", None) is self._binding
-            and self._binding.is_current(
-                owner=self._owner,
-                client=self._http_client,
-                composition=self._composition,
-            )
-        )
-
-    def __copy__(self) -> "IamClientFactory":
-        _invalid("factory.copy")
-
-    def __deepcopy__(self, memo: dict[int, object]) -> "IamClientFactory":
-        del memo
-        _invalid("factory.copy")
-
-
 def _malformed(operation: str) -> NsRuntimeIamUnavailableError:
     return NsRuntimeIamUnavailableError(
         details={
@@ -438,4 +413,4 @@ def _invalid(field_name: str) -> None:
     )
 
 
-__all__ = ("IamClient", "IamClientFactory")
+__all__ = ("IamClient",)
