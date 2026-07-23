@@ -16,12 +16,13 @@ if TYPE_CHECKING:
     )
 
 
-async def _run_service_once(
+async def _run_service(
     service: RuntimeService,
     *,
     state_store: object | None = None,
+    self_check: bool = False,
 ) -> None:
-    """Run one listener self-check through the production shutdown path."""
+    """Run until signal, critical failure, explicit shutdown, or self-check."""
 
     from ns_runtime.shutdown import RuntimeShutdownReason
 
@@ -43,11 +44,26 @@ async def _run_service_once(
                 ):
                     raise
             raise
-        service.shutdown_coordinator.request_shutdown(
-            RuntimeShutdownReason.SELF_CHECK_COMPLETE,
-        )
+        if self_check:
+            service.shutdown_coordinator.request_shutdown(
+                RuntimeShutdownReason.SELF_CHECK_COMPLETE,
+            )
         await service.shutdown_coordinator.wait_requested()
         await service.stop()
+
+
+async def _run_service_once(
+    service: RuntimeService,
+    *,
+    state_store: object | None = None,
+) -> None:
+    """Bounded compatibility hook used only by lifecycle tests."""
+
+    await _run_service(
+        service,
+        state_store=state_store,
+        self_check=True,
+    )
 
 
 def main(
@@ -58,14 +74,15 @@ def main(
     startup_directories: RuntimeStartupDirectories | None = None,
     preflight: RuntimeStartupPreflight | None = None,
     transport_ssl_context: SSLContext | None = None,
+    self_check: bool = False,
 ) -> int:
     """Validate startup, run the configured transport service, and return status.
 
     Imports stay local so importing :mod:`ns_runtime` or this entry module does
     not load configuration, install an event-loop policy, or create resources.
     The current process performs preflight, starts its supervised internal
-    observers and listener, then exits through the same signal-aware shutdown
-    coordinator. Long-running signal wait remains outside this startup self-check.
+    observers and listener, then waits on the same signal-aware shutdown
+    coordinator. ``self_check`` is reserved for the explicit module command.
     """
 
     import logging
@@ -200,9 +217,9 @@ def main(
     )
     from ns_runtime.iam import (
         AuthorizationMode,
-        IamClient,
         MessageAuthorizationService,
     )
+    from ns_runtime.iam.client import _create_production_iam_client
     from ns_runtime.processor import (
         DefaultProcessorErrorMapper,
         EventBus,
@@ -277,7 +294,7 @@ def main(
             state_store=state_store,
         ),
     )
-    iam_client = IamClient(
+    iam_client = _create_production_iam_client(
         http_client=iam_http_client,
         internal_service_credential=(
             config.runtime.iam.internal_service_credential
@@ -376,7 +393,11 @@ def main(
         event_loop_monitor=event_loop_monitor,
         logical_connection_owner=logical_connection_manager,
     )
-    asyncio.run(_run_service_once(service, state_store=state_store))
+    asyncio.run(_run_service(
+        service,
+        state_store=state_store,
+        self_check=self_check,
+    ))
 
     return 0
 
@@ -455,7 +476,7 @@ def _module_main(argv: Sequence[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(prog="python -m ns_runtime.main")
-    parser.add_argument("command", nargs="?", choices=("diagnose",))
+    parser.add_argument("command", nargs="?", choices=("diagnose", "self-check"))
     parser.add_argument("--environment")
     parser.add_argument("--config", dest="config_path")
     parser.add_argument("--startup-root")
@@ -466,10 +487,17 @@ def _module_main(argv: Sequence[str] | None = None) -> int:
             config_path=arguments.config_path,
             startup_root=arguments.startup_root,
         )
-    return _run_local_diagnostic(
+    if arguments.command == "diagnose":
+        return _run_local_diagnostic(
+            environment=arguments.environment,
+            config_path=arguments.config_path,
+            startup_root=arguments.startup_root,
+        )
+    return main(
         environment=arguments.environment,
         config_path=arguments.config_path,
         startup_root=arguments.startup_root,
+        self_check=True,
     )
 
 

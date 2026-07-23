@@ -53,6 +53,7 @@ class DeterministicStateStoreContractModel(StateStore):
         super().__init__(
             capabilities=capabilities or StateStoreCapabilities.p08_contract(),
             clock=clock,
+            _contract_test_authority=True,
         )
         self.clock = clock
         self.events = events
@@ -101,6 +102,21 @@ class DeterministicStateStoreContractModel(StateStore):
         for (_, key), values in self._ordered_indexes.items():
             result.setdefault(key, {}).update(values)
         return result
+
+    def issue_contract_test_scope(
+        self,
+        *,
+        atomic_scope,
+        authority,
+        caller,
+        capabilities,
+    ) -> StateAccessScope:
+        return self._issue_access_scope(
+            atomic_scope=atomic_scope,
+            authority=authority,
+            caller=caller,
+            capabilities=capabilities,
+        )
 
     async def _open(self) -> None:
         self.open_count += 1

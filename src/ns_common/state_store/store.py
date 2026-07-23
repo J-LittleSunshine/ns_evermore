@@ -28,6 +28,8 @@ from .authority import (
     StateStoreCapabilities,
     StateStoreCapability,
     StateNamespaceKind,
+    _issue_state_access_scope,
+    _new_state_scope_issuer,
 )
 from .model import (
     StateAppendResult,
@@ -69,6 +71,7 @@ class StateStore(ABC):
         *,
         capabilities: StateStoreCapabilities,
         clock: Clock,
+        _contract_test_authority: bool = False,
     ) -> None:
         if not isinstance(capabilities, StateStoreCapabilities):
             _invalid("capabilities")
@@ -76,6 +79,11 @@ class StateStore(ABC):
             _invalid("clock")
         self._capabilities = capabilities
         self._clock = clock
+        if type(_contract_test_authority) is not bool:
+            _invalid("contract_test_authority")
+        self.__scope_issuer = _new_state_scope_issuer(
+            contract_test=_contract_test_authority,
+        )
         self._state = StateStoreLifecycleState.NEW
         self._lifecycle_condition = asyncio.Condition()
         self._active_operations = 0
@@ -86,6 +94,24 @@ class StateStore(ABC):
 
     def capabilities(self) -> StateStoreCapabilities:
         return self._capabilities
+
+    def _issue_access_scope(
+        self,
+        *,
+        atomic_scope,
+        authority,
+        caller,
+        capabilities,
+    ) -> StateAccessScope:
+        """Internal repository hook bound to this exact store instance."""
+
+        return _issue_state_access_scope(
+            self.__scope_issuer,
+            atomic_scope=atomic_scope,
+            authority=authority,
+            caller=caller,
+            capabilities=capabilities,
+        )
 
     async def open(self) -> None:
         async with self._lifecycle_condition:
@@ -348,11 +374,23 @@ class StateStore(ABC):
             self._validate_key_scope(scope, append.key)
         await self._enter_operation("transact")
         try:
-            return await self._run_write(
+            result = await self._run_write(
                 "transact",
                 self._transact(transaction),
                 expected_type=StateTransactionResult,
             )
+            if (
+                len(result.records) != len(transaction.mutations)
+                or len(result.log_positions) != len(transaction.log_appends)
+            ):
+                raise NsRuntimeStateStoreIndeterminateWriteError(
+                    details={
+                        "component": "state_store",
+                        "operation": "transact",
+                        "reason": "provider_result_cardinality_mismatch",
+                    },
+                )
+            return result
         finally:
             await self._exit_operation()
 
@@ -374,6 +412,12 @@ class StateStore(ABC):
         from .model import StateOrderedIndexCursor
         if start_after is not None and not isinstance(start_after, StateOrderedIndexCursor):
             _invalid("ordered_index.start_after")
+        if (
+            start_after is not None
+            and max_score is not None
+            and start_after.score > max_score
+        ):
+            _invalid("ordered_index.start_after_max_score")
         self._require_caller_capability(scope, StateCallerCapability.ORDERED_INDEX)
         self._require_authority(scope)
         self._require_store_capability(StateStoreCapability.ORDERED_INDEX)
@@ -527,6 +571,7 @@ class StateStore(ABC):
         scope: StateAccessScope,
         capability: StateCallerCapability,
     ) -> None:
+        self._require_scope_issuer(scope)
         if capability not in scope.capabilities:
             raise NsRuntimeStateStoreCapabilityUnavailableError(
                 details={
@@ -537,12 +582,27 @@ class StateStore(ABC):
             )
 
     def _require_authority(self, scope: StateAccessScope) -> None:
+        self._require_scope_issuer(scope)
         if scope.authority not in self._capabilities.authorities:
             raise NsRuntimeStateStoreCapabilityUnavailableError(
                 details={
                     "component": "state_store",
                     "capability": "authority",
                     "source": "store",
+                },
+            )
+
+    def _require_scope_issuer(self, scope: StateAccessScope) -> None:
+        if (
+            type(scope) is not StateAccessScope
+            or not scope._issued_by(self.__scope_issuer)
+        ):
+            raise NsRuntimeStateStoreCapabilityUnavailableError(
+                details={
+                    "component": "state_store",
+                    "capability": "authority",
+                    "source": "caller",
+                    "reason": "scope_issuer_mismatch",
                 },
             )
 

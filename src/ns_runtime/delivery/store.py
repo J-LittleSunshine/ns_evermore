@@ -167,6 +167,7 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
             layout=layout,
         )
         scope = delivery_scope(
+            self._store,
             value.root_summary.tenant_id,
             value.root_summary.authority_bucket_id,
             layout_generation=value.root_summary.authority_layout_generation,

@@ -93,7 +93,7 @@ class StateStoreStrongAuditAuthorityService(StrongAuditAuthorityService):
         ):
             _invalid("namespace")
         self._state_store = state_store
-        self._scope = StateAccessScope(
+        self._scope = state_store._issue_access_scope(
             atomic_scope=StateAtomicScope(
                 namespace=namespace,
                 partition="processor-final",

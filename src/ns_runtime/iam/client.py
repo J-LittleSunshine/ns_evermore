@@ -34,6 +34,9 @@ from ns_runtime.connection.iam import (
 from .models import PermissionSnapshot
 
 
+_IAM_CLIENT_COMPOSITION_ISSUER = object()
+
+
 class IamClient(HandshakeIamAdapter):
     """One explicitly injected client; it never creates or finds HTTP globals."""
 
@@ -45,8 +48,14 @@ class IamClient(HandshakeIamAdapter):
         trace_id_factory: Callable[[], str],
         clock: Clock,
         iam_mode: str = "strict",
+        _composition_issuer: object | None = None,
     ) -> None:
-        if not isinstance(http_client, NsAsyncHttpClient):
+        if (
+            type(self) is not IamClient
+            or _composition_issuer is not _IAM_CLIENT_COMPOSITION_ISSUER
+        ):
+            _invalid("composition_issuer")
+        if type(http_client) is not NsAsyncHttpClient:
             _invalid("http_client")
         if not isinstance(internal_service_credential, str) or len(internal_service_credential) < 32:
             _invalid("internal_service_credential")
@@ -61,9 +70,33 @@ class IamClient(HandshakeIamAdapter):
         self._trace_id_factory = trace_id_factory
         self._clock = clock
         self._iam_mode = iam_mode
+        self._composition_issuer = _composition_issuer
 
     def __repr__(self) -> str:
         return "IamClient(explicit=True, credential=redacted)"
+
+    def _is_production_adapter(self) -> bool:
+        """Fail closed for uninitialized instances and method substitution."""
+
+        substituted = {
+            "authenticate",
+            "access_check",
+            "refresh_permission_snapshot",
+            "validate_payload_ref",
+            "revalidate_payload_ref",
+            "_post",
+        }.intersection(vars(self))
+        return bool(
+            type(self) is IamClient
+            and getattr(self, "_composition_issuer", None)
+            is _IAM_CLIENT_COMPOSITION_ISSUER
+            and type(getattr(self, "_http", None)) is NsAsyncHttpClient
+            and not substituted
+            and getattr(type(self), "revalidate_payload_ref", None)
+            is IamClient.revalidate_payload_ref
+            and getattr(type(self), "access_check", None) is IamClient.access_check
+            and getattr(type(self), "_post", None) is IamClient._post
+        )
 
     async def authenticate(
         self,
@@ -266,6 +299,26 @@ def _malformed(operation: str) -> NsRuntimeIamUnavailableError:
             "operation": operation,
             "reason": "malformed_response",
         },
+    )
+
+
+def _create_production_iam_client(
+    *,
+    http_client: NsAsyncHttpClient,
+    internal_service_credential: str,
+    trace_id_factory: Callable[[], str],
+    clock: Clock,
+    iam_mode: str = "strict",
+) -> IamClient:
+    """Composition-root factory; deliberately absent from the public facade."""
+
+    return IamClient(
+        http_client=http_client,
+        internal_service_credential=internal_service_credential,
+        trace_id_factory=trace_id_factory,
+        clock=clock,
+        iam_mode=iam_mode,
+        _composition_issuer=_IAM_CLIENT_COMPOSITION_ISSUER,
     )
 
 

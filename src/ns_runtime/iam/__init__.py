@@ -4,6 +4,7 @@
 from .authorization import (
     AuthorizationMode,
     BackendUnavailablePolicy,
+    ContractTestIamAuthorizationAdapter,
     MessageAuthorizationService,
     OperationRiskContext,
 )
@@ -24,6 +25,7 @@ from .recovery import (
 __all__ = (
     "AuthorizationMode", "BackendRecoveryCoordinator",
     "BackendRecoveryState", "BackendUnavailablePolicy",
+    "ContractTestIamAuthorizationAdapter",
     "EncryptedCredentialCache", "IamClient", "MessageAuthorizationService",
     "OperationRiskContext", "PermissionSnapshot",
     "RecoveryRevalidationResult", "RecoveryRevalidator",

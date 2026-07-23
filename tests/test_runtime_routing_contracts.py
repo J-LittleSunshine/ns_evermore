@@ -26,6 +26,9 @@ from ns_runtime.processor import (
     RoutingPreparationOutcome,
     AuthorizationDecisionEvidence,
 )
+from ns_runtime.processor.testing import (
+    issue_contract_test_authorization_evidence,
+)
 from ns_runtime.processor.integration import (
     DeterministicTestProcessorAuthorization,
     IamProcessorAuthorization,
@@ -584,7 +587,7 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         iam = _Iam([True], self.clock)
-        service = MessageAuthorizationService(
+        service = MessageAuthorizationService.for_contract_tests(
             iam_client=iam,
             clock=self.clock,
             mode=AuthorizationMode.CACHE,
@@ -607,7 +610,7 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
             router=_router(index, self.clock),
             protocol_registry=registry,
         )
-        authorization = IamProcessorAuthorization(
+        authorization = IamProcessorAuthorization.for_contract_tests(
             service=service,
             protocol_registry=registry,
         )
@@ -664,13 +667,13 @@ def _bound_replace(
     values = {
         item.name: getattr(evidence, item.name)
         for item in dataclasses.fields(AuthorizationDecisionEvidence)
-        if item.name not in {
+        if not item.name.startswith("_") and item.name not in {
             "message_binding_reference",
             "semantic_decision_reference",
         }
     }
     values.update(changes)
-    return AuthorizationDecisionEvidence.bound(**values)  # type: ignore[arg-type]
+    return issue_contract_test_authorization_evidence(**values)
 
 
 if __name__ == "__main__":

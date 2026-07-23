@@ -6,10 +6,12 @@ from __future__ import annotations
 from ns_common.exceptions import NsValidationError
 from ns_runtime.connection.lifecycle import ConnectionLifecycleManager
 
-from .models import DeliveryRecord
+from .models import DeliveryRecord, DeliveryWriteFailure
 from .scheduling import (
     DeliveryTargetResolver,
     DeliveryTransportWriter,
+    DeliveryTransportWriteResult,
+    DeliveryTransportWriteState,
     LocalDeliveryTarget,
     OutboundDeliveryPayload,
 )
@@ -40,8 +42,38 @@ class ConnectionLifecycleDeliveryAdapter(
         *,
         target: LocalDeliveryTarget,
         payload: OutboundDeliveryPayload,
-    ) -> None:
-        await self._manager.write_local_delivery(target=target, payload=payload)
+    ) -> DeliveryTransportWriteResult:
+        from ns_runtime.transport import TransportWriteResult, TransportWriteState
+
+        try:
+            result = await self._manager.write_local_delivery(
+                target=target,
+                payload=payload,
+            )
+        except BaseException:
+            raise
+        if type(result) is not TransportWriteResult:
+            return DeliveryTransportWriteResult(
+                state=DeliveryTransportWriteState.UNCERTAIN,
+                failure=DeliveryWriteFailure.TRANSPORT_WRITE_FAILED,
+            )
+        if result.state is TransportWriteState.SUCCEEDED:
+            return DeliveryTransportWriteResult(
+                state=DeliveryTransportWriteState.SUCCEEDED,
+            )
+        failure = (
+            DeliveryWriteFailure.TRANSPORT_WRITE_TIMEOUT
+            if result.failure_reason == "send_timeout"
+            else DeliveryWriteFailure.TRANSPORT_WRITE_FAILED
+        )
+        return DeliveryTransportWriteResult(
+            state=(
+                DeliveryTransportWriteState.NOT_STARTED
+                if result.state is TransportWriteState.NOT_STARTED
+                else DeliveryTransportWriteState.UNCERTAIN
+            ),
+            failure=failure,
+        )
 
 
 __all__ = ("ConnectionLifecycleDeliveryAdapter",)

@@ -60,12 +60,15 @@ class DeliveryAuthorityLayout:
 
 
 def delivery_scope(
+    store: StateStore,
     tenant_id: str,
     bucket_id: int,
     *,
     layout_generation: int = AUTHORITY_LAYOUT_GENERATION,
     caller: str = "delivery.scheduling",
 ) -> StateAccessScope:
+    if not isinstance(store, StateStore):
+        _invalid("scope.store")
     if type(tenant_id) is not str or not tenant_id:
         _invalid("scope.tenant_id")
     if isinstance(bucket_id, bool) or not isinstance(bucket_id, int) or bucket_id < 0:
@@ -73,7 +76,7 @@ def delivery_scope(
     if isinstance(layout_generation, bool) or not isinstance(layout_generation, int) or layout_generation <= 0:
         _invalid("scope.layout_generation")
     namespace = StateNamespace.tenant(tenant_id=tenant_id, domain="delivery")
-    return StateAccessScope(
+    return store._issue_access_scope(
         atomic_scope=StateAtomicScope(
             namespace=namespace,
             partition=f"layout-{layout_generation}-bucket-{bucket_id}",
@@ -103,7 +106,7 @@ class StateStoreDeliveryAuthorityRegistry:
         self._runtime_id = runtime_id
         synthetic_tenant = "runtime-registry:" + hashlib.sha256(runtime_id.encode()).hexdigest()
         namespace = StateNamespace.tenant(tenant_id=synthetic_tenant, domain="delivery")
-        self._scope = StateAccessScope(
+        self._scope = store._issue_access_scope(
             atomic_scope=StateAtomicScope(namespace=namespace, partition="authority-registry"),
             authority=StateAuthorityKind.DELIVERY_ADMISSION,
             caller="delivery.authority_registry",

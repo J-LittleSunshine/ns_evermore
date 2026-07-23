@@ -322,6 +322,44 @@ return cjson.encode({revision = revision, position = tostring(position), committ
 """
 
 
+_ORDERED_INDEX_READ_SCRIPT = r"""
+local cursor_member = ARGV[1]
+local cursor_score = ARGV[2]
+local max_score = ARGV[3]
+local limit = tonumber(ARGV[4])
+local offset = 0
+
+if cursor_member ~= '' then
+    local rank = redis.call('ZRANK', KEYS[1], cursor_member)
+    local score = redis.call('ZSCORE', KEYS[1], cursor_member)
+    if rank == false or score == false or tonumber(score) ~= tonumber(cursor_score) then
+        return redis.error_reply('NS_STATE|conflict|cursor_stale|1')
+    end
+    offset = tonumber(rank) + 1
+end
+
+local values
+local total
+if max_score == '' then
+    values = redis.call(
+        'ZRANGE', KEYS[1], offset, offset + limit - 1, 'WITHSCORES'
+    )
+    total = redis.call('ZCARD', KEYS[1])
+else
+    values = redis.call(
+        'ZRANGEBYSCORE', KEYS[1], '-inf', max_score,
+        'WITHSCORES', 'LIMIT', offset, limit
+    )
+    total = redis.call('ZCOUNT', KEYS[1], '-inf', max_score)
+end
+return cjson.encode({
+    values = values,
+    total = tostring(total),
+    offset = tostring(offset)
+})
+"""
+
+
 _PROJECTION_TRANSACTION_SCRIPT = r"""
 local mutations = cjson.decode(ARGV[1])
 local index_ops = cjson.decode(ARGV[2])
@@ -667,42 +705,47 @@ class RedisValkeyStateStore(StateStore):
     ) -> StateOrderedIndexReadResult:
         client = self._require_client()
         key = self._ordered_index_key(scope, index)
-        offset = 0
-        if start_after is not None:
-            rank = await self._execute(
-                client.zrank(key, start_after.member),  # type: ignore[attr-defined]
-            )
-            score = await self._execute(
-                client.zscore(key, start_after.member),  # type: ignore[attr-defined]
-            )
-            if rank is None or score is None or float(score) != start_after.score:
-                raise NsRuntimeStateStoreConflictError(details={
-                    "component": "state_store_provider",
-                    "operation": "read_ordered_index",
-                    "reason": "cursor_stale",
-                })
-            offset = int(rank) + 1
-        pipeline = client.pipeline(transaction=True)  # type: ignore[attr-defined]
-        if max_score is None:
-            pipeline.zrange(key, offset, offset + limit - 1, withscores=True)
-            pipeline.zcard(key)
-        else:
-            pipeline.zrangebyscore(
-                key, "-inf", max_score, start=offset, num=limit, withscores=True,
-            )
-            pipeline.zcount(key, "-inf", max_score)
-        response = await self._execute(pipeline.execute())
-        if not isinstance(response, (list, tuple)) or len(response) != 2:
+        raw_result = await self._execute(client.eval(  # type: ignore[attr-defined]
+            _ORDERED_INDEX_READ_SCRIPT,
+            1,
+            key,
+            "" if start_after is None else start_after.member,
+            "" if start_after is None else str(start_after.score),
+            "" if max_score is None else str(max_score),
+            str(limit),
+        ))
+        response = _decode_json_result(raw_result)
+        if not isinstance(response, dict):
             raise RuntimeError("provider ordered index result invalid")
-        raw, total = response
-        if not isinstance(raw, (list, tuple)):
+        raw = response.get("values")
+        raw_total = response.get("total")
+        raw_offset = response.get("offset")
+        # Redis Lua cjson encodes an empty array-shaped table as ``{}``.
+        if raw == {}:
+            raw = []
+        if (
+            not isinstance(raw, list)
+            or not isinstance(raw_total, str)
+            or not isinstance(raw_offset, str)
+        ):
             raise RuntimeError("provider ordered index result invalid")
         entries: list[StateOrderedIndexEntry] = []
-        for item in raw:
-            if not isinstance(item, (list, tuple)) or len(item) != 2:
+        if len(raw) % 2:
+            raise RuntimeError("provider ordered index result invalid")
+        for position in range(0, len(raw), 2):
+            if not isinstance(raw[position], str) or not isinstance(
+                raw[position + 1],
+                str,
+            ):
                 raise RuntimeError("provider ordered index entry invalid")
-            entries.append(StateOrderedIndexEntry(member=_as_text(item[0]), score=float(item[1])))
-        if isinstance(total, bool) or not isinstance(total, int):
+            entries.append(StateOrderedIndexEntry(
+                member=raw[position],
+                score=float(raw[position + 1]),
+            ))
+        try:
+            total = int(raw_total)
+            offset = int(raw_offset)
+        except ValueError:
             raise RuntimeError("provider ordered index count invalid")
         return StateOrderedIndexReadResult(
             entries=tuple(entries), observed_at=self._clock.utc_now(), total_count=total,
@@ -858,6 +901,11 @@ class RedisValkeyStateStore(StateStore):
             positions = []
         if not isinstance(record_values, list) or not isinstance(positions, list):
             raise RuntimeError("provider projection transaction result invalid")
+        if (
+            len(record_values) != len(transaction.mutations)
+            or len(positions) != len(transaction.log_appends)
+        ):
+            raise RuntimeError("provider projection transaction cardinality invalid")
         records: list[StateRecord | None] = []
         for mutation, value in zip(transaction.mutations, record_values):
             if not isinstance(value, dict) or value.get("present") not in {"0", "1"}:

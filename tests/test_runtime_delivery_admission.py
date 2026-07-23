@@ -197,7 +197,7 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
         self.service = self._service()
 
     def _service(self, *, policy=None, store=None, payload_client=None):
-        return DeliveryAdmissionService(
+        return DeliveryAdmissionService.for_contract_tests(
             policy=policy or DefaultAdmissionPolicy(),
             policy_config=self.config, store=store or self.store,
             payload_ref_client=payload_client or self.payload_client,
@@ -523,7 +523,7 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             initialization_batch_size=2, activation_batch_size=1,
         )
         first_store = _Store()
-        first = DeliveryAdmissionService(
+        first = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(), policy_config=config,
             store=first_store, payload_ref_client=self.payload_client,
             clock=self.clock, identifier_factory=_ids,
@@ -544,7 +544,7 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             graph.root_summary.policy_decision.activation_batch_size,
         ))
         second_store = _Store()
-        second = DeliveryAdmissionService(
+        second = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(), policy_config=config,
             store=second_store, payload_ref_client=self.payload_client,
             clock=self.clock, identifier_factory=_ids,
@@ -721,7 +721,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
         )
         await model.open()
         store = StateStoreDeliveryAdmissionStore(model)
-        service = DeliveryAdmissionService(
+        service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",
@@ -763,7 +763,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             clock=clock, capabilities=StateStoreCapabilities.p10_contract(),
         )
         await model.open()
-        service = DeliveryAdmissionService(
+        service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",
@@ -819,7 +819,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             clock=clock, capabilities=StateStoreCapabilities.p10_contract(),
         )
         await model.open()
-        service = DeliveryAdmissionService(
+        service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",
@@ -861,7 +861,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
         )
         await failing.open()
         failing.write_error = RuntimeError("atomic-failure")
-        failed_service = DeliveryAdmissionService(
+        failed_service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",

@@ -5,9 +5,12 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -19,7 +22,7 @@ from ns_common.exceptions import (
     NsRuntimeTransportDisabledError,
 )
 from ns_common.logger import NsLogger, close_ns_loggers
-from ns_runtime.main import main
+from ns_runtime.main import main as _runtime_main
 from ns_runtime.startup import (
     RuntimeStartupDirectories,
     RuntimeStartupPreflight,
@@ -28,6 +31,11 @@ from ns_runtime.startup import (
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
+
+
+def main(**values: object) -> int:
+    values.setdefault("self_check", True)
+    return _runtime_main(**values)  # type: ignore[arg-type]
 
 
 def _write_config(
@@ -200,7 +208,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
         environment["PYTHONPATH"] = str(SRC_DIR)
 
         completed = subprocess.run(
-            [sys.executable, "-m", "ns_runtime.main"],
+            [sys.executable, "-m", "ns_runtime.main", "self-check"],
             cwd=ROOT_DIR,
             env=environment,
             capture_output=True,
@@ -225,6 +233,87 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             )
             self.assertEqual(0, summary["task_unfinished_count"])
             self.assertEqual(0, summary["cleanup_failure_count"])
+
+    def test_default_process_entry_stays_running_until_sigterm(self) -> None:
+        if importlib.util.find_spec("websockets") is None:
+            self.skipTest("websockets is unavailable")
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(SRC_DIR)
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            config_path = _write_config(root, {
+                "runtime": {
+                    "transport": {
+                        "listen_host": "127.0.0.1",
+                        "listen_port": port,
+                    },
+                    "state_store": {
+                        "backend": "sqlite",
+                        "sqlite_path": str(root / "data" / "runtime.sqlite3"),
+                    },
+                },
+            })
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "ns_runtime.main",
+                    "--environment",
+                    "test",
+                    "--config",
+                    str(config_path),
+                    "--startup-root",
+                    str(root / "runtime-root"),
+                ],
+                cwd=ROOT_DIR,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout = ""
+            stderr = ""
+            try:
+                deadline = time.monotonic() + 10
+                listener_ready = False
+                while time.monotonic() < deadline and process.poll() is None:
+                    with socket.socket(
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                    ) as probe:
+                        probe.settimeout(0.05)
+                        if probe.connect_ex(("127.0.0.1", port)) == 0:
+                            listener_ready = True
+                            break
+                    time.sleep(0.05)
+                self.assertTrue(listener_ready)
+                self.assertIsNone(
+                    process.poll(),
+                    "default module entry exited without a shutdown request",
+                )
+                process.send_signal(signal.SIGTERM)
+                stdout, stderr = process.communicate(timeout=10)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=5)
+
+        self.assertEqual(0, process.returncode, stderr)
+        summaries = []
+        for line in stdout.splitlines():
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if value.get("event") == "runtime_shutdown_summary":
+                summaries.append(value)
+        self.assertEqual(1, len(summaries), stdout)
+        self.assertEqual("sigterm", summaries[0]["shutdown_reason"])
 
     def test_main_normalizes_production_plaintext_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

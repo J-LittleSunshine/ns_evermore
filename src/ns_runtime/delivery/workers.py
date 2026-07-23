@@ -32,6 +32,8 @@ from .scheduling import (
     DeliverySchedulingPolicy,
     DeliveryTargetResolver,
     DeliveryTransportWriter,
+    DeliveryTransportWriteResult,
+    DeliveryTransportWriteState,
     LeaseRenewOutcome,
     LeaseRenewResult,
     LocalDeliveryTarget,
@@ -406,36 +408,51 @@ class SendWorker:
                 self._transport.write(target=target, payload=payload),
                 timeout=self._policy.write_timeout_seconds,
             )
-            if write_result is not None:
-                raise RuntimeError("transport writer returned a value")
         except asyncio.CancelledError:
             try:
-                await asyncio.shield(self._scheduler.complete_write_failure(
+                await asyncio.shield(self._record_write_uncertain(
                     claim=claim,
+                    delivery=transition.delivery,
                     failure=DeliveryWriteFailure.SHUTDOWN_INTERRUPTED,
                 ))
             except Exception:
                 pass
             raise
         except asyncio.TimeoutError:
-            failed = await self._scheduler.complete_write_failure(
+            return await self._record_write_uncertain(
                 claim=claim,
-                failure=DeliveryWriteFailure.TRANSPORT_WRITE_TIMEOUT,
-            )
-            return SendResult(
-                outcome=SendOutcome.WRITE_FAILED,
-                delivery=failed,
+                delivery=transition.delivery,
                 failure=DeliveryWriteFailure.TRANSPORT_WRITE_TIMEOUT,
             )
         except Exception:
+            return await self._record_write_uncertain(
+                claim=claim,
+                delivery=transition.delivery,
+                failure=DeliveryWriteFailure.TRANSPORT_WRITE_FAILED,
+            )
+        if type(write_result) is not DeliveryTransportWriteResult:
+            return await self._record_write_uncertain(
+                claim=claim,
+                delivery=transition.delivery,
+                failure=DeliveryWriteFailure.TRANSPORT_WRITE_FAILED,
+            )
+        if write_result.state is DeliveryTransportWriteState.NOT_STARTED:
+            assert write_result.failure is not None
             failed = await self._scheduler.complete_write_failure(
                 claim=claim,
-                failure=DeliveryWriteFailure.TRANSPORT_WRITE_FAILED,
+                failure=write_result.failure,
             )
             return SendResult(
                 outcome=SendOutcome.WRITE_FAILED,
                 delivery=failed,
-                failure=DeliveryWriteFailure.TRANSPORT_WRITE_FAILED,
+                failure=write_result.failure,
+            )
+        if write_result.state is DeliveryTransportWriteState.UNCERTAIN:
+            assert write_result.failure is not None
+            return await self._record_write_uncertain(
+                claim=claim,
+                delivery=transition.delivery,
+                failure=write_result.failure,
             )
         try:
             ack_waiting = await self._scheduler.complete_write_success(
@@ -456,12 +473,57 @@ class SendWorker:
                     outcome=SendOutcome.ACK_WAITING, delivery=reconciled,
                 )
             return SendResult(
-                outcome=SendOutcome.WRITE_FAILED, delivery=reconciled,
+                outcome=SendOutcome.WRITE_UNCERTAIN, delivery=reconciled,
                 failure=DeliveryWriteFailure.AUTHORITY_CONFLICT_AFTER_WRITE,
             )
         return SendResult(
             outcome=SendOutcome.ACK_WAITING,
             delivery=ack_waiting,
+        )
+
+    async def _record_write_uncertain(
+        self,
+        *,
+        claim: DeliveryClaim,
+        delivery,
+        failure: DeliveryWriteFailure,
+    ) -> SendResult:
+        try:
+            uncertain = await self._scheduler.mark_write_uncertain(
+                claim=claim,
+                failure=failure,
+            )
+        except (
+            NsRuntimeStateStoreError,
+            NsRuntimeDeliveryStateError,
+            NsRuntimeDeliveryLeaseExpiredError,
+            NsRuntimeOwnerMismatchError,
+        ):
+            try:
+                uncertain = await self._scheduler.reconcile_write_completion(
+                    claim=claim,
+                )
+            except (
+                NsRuntimeStateStoreError,
+                NsRuntimeDeliveryStateError,
+                NsRuntimeDeliveryLeaseExpiredError,
+                NsRuntimeOwnerMismatchError,
+            ):
+                return SendResult(
+                    outcome=SendOutcome.WRITE_OUTCOME_UNKNOWN,
+                    delivery=delivery,
+                    failure=failure,
+                )
+        if uncertain.status is not DeliveryRecordStatus.WRITE_UNCERTAIN:
+            return SendResult(
+                outcome=SendOutcome.WRITE_OUTCOME_UNKNOWN,
+                delivery=uncertain,
+                failure=failure,
+            )
+        return SendResult(
+            outcome=SendOutcome.WRITE_UNCERTAIN,
+            delivery=uncertain,
+            failure=failure,
         )
 
     async def _precheck_failure(

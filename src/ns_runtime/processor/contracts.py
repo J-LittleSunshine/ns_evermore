@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import math
 import re
+import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -118,9 +120,19 @@ class ProcessorSafeSummary:
         )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+_PRODUCTION_AUTHORIZATION_EVIDENCE_ISSUER = object()
+_CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER = object()
+_PRODUCTION_AUTHORIZATION_EVIDENCE_KEY = secrets.token_bytes(32)
+_CONTRACT_TEST_AUTHORIZATION_EVIDENCE_KEY = secrets.token_bytes(32)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, init=False)
 class AuthorizationDecisionEvidence:
-    """Immutable ALLOW evidence bound to one message authorization check."""
+    """Sealed ALLOW evidence bound to one message authorization check.
+
+    The hashes below are content bindings only.  Authority comes from the
+    module-private issuer seal, which is deliberately not an init field.
+    """
 
     message_binding_reference: str = field(repr=False)
     semantic_decision_reference: str = field(repr=False)
@@ -138,6 +150,62 @@ class AuthorizationDecisionEvidence:
     session_permission_snapshot_version: str = field(repr=False)
     effective_permission_snapshot_ref: str = field(repr=False)
     effective_permission_snapshot_version: str = field(repr=False)
+    _issuer: object = field(init=False, repr=False, compare=False)
+    _authority_signature: bytes = field(init=False, repr=False, compare=False)
+
+    def __init__(
+        self,
+        *,
+        message_binding_reference: str,
+        semantic_decision_reference: str,
+        semantic_access_check_reference: str,
+        decision_version: str,
+        decision_outcome: AuthorizationDecisionOutcome,
+        decision_reason: str,
+        message_reference: str,
+        message_type: str,
+        principal_tenant_id: str,
+        effective_tenant_id: str,
+        cross_tenant_authorized: bool,
+        authorized_target_reference: str,
+        session_permission_snapshot_ref: str,
+        session_permission_snapshot_version: str,
+        effective_permission_snapshot_ref: str,
+        effective_permission_snapshot_version: str,
+        _issuer: object | None = None,
+    ) -> None:
+        if type(self) is not AuthorizationDecisionEvidence or _issuer not in {
+            _PRODUCTION_AUTHORIZATION_EVIDENCE_ISSUER,
+            _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER,
+        }:
+            _invalid("authorization_evidence.issuer")
+        for name, value in (
+            ("message_binding_reference", message_binding_reference),
+            ("semantic_decision_reference", semantic_decision_reference),
+            ("semantic_access_check_reference", semantic_access_check_reference),
+            ("decision_version", decision_version),
+            ("decision_outcome", decision_outcome),
+            ("decision_reason", decision_reason),
+            ("message_reference", message_reference),
+            ("message_type", message_type),
+            ("principal_tenant_id", principal_tenant_id),
+            ("effective_tenant_id", effective_tenant_id),
+            ("cross_tenant_authorized", cross_tenant_authorized),
+            ("authorized_target_reference", authorized_target_reference),
+            ("session_permission_snapshot_ref", session_permission_snapshot_ref),
+            ("session_permission_snapshot_version", session_permission_snapshot_version),
+            ("effective_permission_snapshot_ref", effective_permission_snapshot_ref),
+            ("effective_permission_snapshot_version", effective_permission_snapshot_version),
+            ("_issuer", _issuer),
+            ("_authority_signature", b""),
+        ):
+            object.__setattr__(self, name, value)
+        self.__post_init__()
+        object.__setattr__(
+            self,
+            "_authority_signature",
+            _authorization_authority_signature(self, issuer=_issuer),
+        )
 
     def __post_init__(self) -> None:
         for name in (
@@ -180,6 +248,39 @@ class AuthorizationDecisionEvidence:
     def bound(
         cls,
         *,
+        decision_version: str,
+        decision_outcome: AuthorizationDecisionOutcome,
+        decision_reason: str,
+        semantic_access_check_reference: str,
+        message_reference: str,
+        message_type: str,
+        principal_tenant_id: str,
+        effective_tenant_id: str,
+        cross_tenant_authorized: bool,
+        authorized_target_reference: str,
+        session_permission_snapshot_ref: str,
+        session_permission_snapshot_version: str,
+        effective_permission_snapshot_ref: str,
+        effective_permission_snapshot_version: str,
+    ) -> "AuthorizationDecisionEvidence":
+        """Legacy public factory is intentionally no longer an authority."""
+
+        del (
+            decision_version, decision_outcome, decision_reason,
+            semantic_access_check_reference, message_reference, message_type,
+            principal_tenant_id, effective_tenant_id, cross_tenant_authorized,
+            authorized_target_reference, session_permission_snapshot_ref,
+            session_permission_snapshot_version,
+            effective_permission_snapshot_ref,
+            effective_permission_snapshot_version,
+        )
+        _invalid("authorization_evidence.issuer")
+
+    @classmethod
+    def _issued(
+        cls,
+        *,
+        issuer: object,
         decision_version: str,
         decision_outcome: AuthorizationDecisionOutcome,
         decision_reason: str,
@@ -241,6 +342,35 @@ class AuthorizationDecisionEvidence:
             session_permission_snapshot_version=session_permission_snapshot_version,
             effective_permission_snapshot_ref=effective_permission_snapshot_ref,
             effective_permission_snapshot_version=effective_permission_snapshot_version,
+            _issuer=issuer,
+        )
+
+    def is_production_authority(self) -> bool:
+        return (
+            type(self) is AuthorizationDecisionEvidence
+            and self._issuer is _PRODUCTION_AUTHORIZATION_EVIDENCE_ISSUER
+            and self.has_valid_binding()
+            and hmac.compare_digest(
+                self._authority_signature,
+                _authorization_authority_signature(
+                    self,
+                    issuer=_PRODUCTION_AUTHORIZATION_EVIDENCE_ISSUER,
+                ),
+            )
+        )
+
+    def is_contract_test_authority(self) -> bool:
+        return (
+            type(self) is AuthorizationDecisionEvidence
+            and self._issuer is _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER
+            and self.has_valid_binding()
+            and hmac.compare_digest(
+                self._authority_signature,
+                _authorization_authority_signature(
+                    self,
+                    issuer=_CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER,
+                ),
+            )
         )
 
     def has_valid_semantic_decision(self) -> bool:
@@ -294,6 +424,66 @@ class AuthorizationDecisionEvidence:
         )
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _issue_production_authorization_evidence(
+    **values: object,
+) -> AuthorizationDecisionEvidence:
+    """Issue only after the real MessageAuthorizationService returned ALLOW."""
+
+    return AuthorizationDecisionEvidence._issued(
+        issuer=_PRODUCTION_AUTHORIZATION_EVIDENCE_ISSUER,
+        **values,  # type: ignore[arg-type]
+    )
+
+
+def _issue_contract_test_authorization_evidence(
+    **values: object,
+) -> AuthorizationDecisionEvidence:
+    """Explicit non-production issuer for deterministic contract tests."""
+
+    return AuthorizationDecisionEvidence._issued(
+        issuer=_CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER,
+        **values,  # type: ignore[arg-type]
+    )
+
+
+def _authorization_authority_signature(
+    evidence: AuthorizationDecisionEvidence,
+    *,
+    issuer: object,
+) -> bytes:
+    if issuer is _PRODUCTION_AUTHORIZATION_EVIDENCE_ISSUER:
+        key = _PRODUCTION_AUTHORIZATION_EVIDENCE_KEY
+    elif issuer is _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER:
+        key = _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_KEY
+    else:
+        _invalid("authorization_evidence.issuer")
+    payload = json.dumps({
+        "message_binding_reference": evidence.message_binding_reference,
+        "semantic_decision_reference": evidence.semantic_decision_reference,
+        "semantic_access_check_reference": evidence.semantic_access_check_reference,
+        "decision_version": evidence.decision_version,
+        "decision_outcome": evidence.decision_outcome.value,
+        "decision_reason": evidence.decision_reason,
+        "message_reference": evidence.message_reference,
+        "message_type": evidence.message_type,
+        "principal_tenant_id": evidence.principal_tenant_id,
+        "effective_tenant_id": evidence.effective_tenant_id,
+        "cross_tenant_authorized": evidence.cross_tenant_authorized,
+        "authorized_target_reference": evidence.authorized_target_reference,
+        "session_permission_snapshot_ref": evidence.session_permission_snapshot_ref,
+        "session_permission_snapshot_version": (
+            evidence.session_permission_snapshot_version
+        ),
+        "effective_permission_snapshot_ref": (
+            evidence.effective_permission_snapshot_ref
+        ),
+        "effective_permission_snapshot_version": (
+            evidence.effective_permission_snapshot_version
+        ),
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hmac.new(key, payload, hashlib.sha256).digest()
 
 
 class ProcessorAuthorization(ABC):

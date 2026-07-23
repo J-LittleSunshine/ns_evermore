@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import dataclasses
 import unittest
 
@@ -44,6 +45,7 @@ from ns_common.state_store import (
     StateStoreHealthStatus,
     StateStoreLifecycleState,
     StateTransaction,
+    StateTransactionResult,
     StateTransitionLogAppend,
     StateRecordReadAssertion,
 )
@@ -53,11 +55,12 @@ from tests._state_store_contract_model import DeterministicStateStoreContractMod
 
 
 def _scope(
+    store: DeterministicStateStoreContractModel,
     namespace: StateNamespace | None = None,
     *,
     capabilities: frozenset[StateCallerCapability] | None = None,
 ) -> StateAccessScope:
-    return StateAccessScope(
+    return store.issue_contract_test_scope(
         atomic_scope=StateAtomicScope(
             namespace=namespace or StateNamespace.audit(domain="processor"),
             partition="contract",
@@ -227,8 +230,8 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.clock = ControlledClock()
-        self.scope = _scope()
         self.store = DeterministicStateStoreContractModel(clock=self.clock)
+        self.scope = _scope(self.store)
 
     async def asyncTearDown(self) -> None:
         await self.store.close()
@@ -252,12 +255,132 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
         await self.store.close()
         self.assertEqual(1, self.store.close_count)
         self.assertIs(StateStoreLifecycleState.CLOSED, self.store.state)
-        self.assertIs(StateStoreHealthStatus.CLOSED, (await self.store.health()).status)
+        self.assertIs(
+            StateStoreHealthStatus.CLOSED,
+            (await self.store.health()).status,
+        )
         with self.assertRaises(NsRuntimeStateStoreClosedError):
             await self.store.compare_and_set(
                 scope=self.scope,
                 mutation=_create(key),
             )
+
+    async def test_scope_authority_cannot_be_constructed_replaced_or_reused(
+        self,
+    ) -> None:
+        with self.assertRaises(NsValidationError):
+            StateAccessScope(
+                atomic_scope=self.scope.atomic_scope,
+                authority=self.scope.authority,
+                caller=self.scope.caller,
+                capabilities=frozenset(StateCallerCapability),
+            )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                self.scope,
+                capabilities=frozenset(StateCallerCapability),
+            )
+        narrow = self.store.issue_contract_test_scope(
+            atomic_scope=self.scope.atomic_scope,
+            authority=self.scope.authority,
+            caller=self.scope.caller,
+            capabilities=frozenset({StateCallerCapability.READ}),
+        )
+        copied = copy.copy(narrow)
+        object.__setattr__(
+            copied,
+            "capabilities",
+            frozenset(StateCallerCapability),
+        )
+
+        class ForgedScope(StateAccessScope):
+            pass
+
+        with self.assertRaises(NsValidationError):
+            ForgedScope(
+                atomic_scope=self.scope.atomic_scope,
+                authority=self.scope.authority,
+                caller=self.scope.caller,
+                capabilities=frozenset(StateCallerCapability),
+            )
+
+        other = DeterministicStateStoreContractModel(clock=self.clock)
+        self.addAsyncCleanup(other.close)
+        await other.open()
+        await self.store.open()
+        with self.assertRaises(NsRuntimeStateStoreCapabilityUnavailableError):
+            await self.store.read(
+                scope=copied,
+                key=_key(copied, "copied-scope"),
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+        with self.assertRaises(NsRuntimeStateStoreCapabilityUnavailableError):
+            await other.read(
+                scope=self.scope,
+                key=_key(self.scope, "cross-store"),
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+
+    async def test_transaction_result_cardinality_and_type_mismatch_fail_closed(
+        self,
+    ) -> None:
+        class WrongResultStore(DeterministicStateStoreContractModel):
+            mode = ""
+
+            async def _transact(self, transaction):
+                result = await super()._transact(transaction)
+                if self.mode == "records_missing":
+                    return StateTransactionResult(
+                        records=(),
+                        log_positions=result.log_positions,
+                    )
+                if self.mode == "records_extra":
+                    return StateTransactionResult(
+                        records=result.records + (None,),
+                        log_positions=result.log_positions,
+                    )
+                if self.mode == "logs_missing":
+                    return StateTransactionResult(
+                        records=result.records,
+                        log_positions=(),
+                    )
+                if self.mode == "logs_extra":
+                    return StateTransactionResult(
+                        records=result.records,
+                        log_positions=result.log_positions + (99,),
+                    )
+                return object()
+
+        for mode in (
+            "records_missing",
+            "records_extra",
+            "logs_missing",
+            "logs_extra",
+            "wrong_type",
+        ):
+            with self.subTest(mode=mode):
+                store = WrongResultStore(clock=self.clock)
+                store.mode = mode
+                self.addAsyncCleanup(store.close)
+                await store.open()
+                scope = _scope(store)
+                key = _key(scope, f"wrong-cardinality-{mode}")
+                transaction = StateTransaction(
+                    scope=scope,
+                    mutations=(_create(key),),
+                    log_appends=(
+                        (StateTransitionLogAppend(
+                            key=_key(scope, f"log-{mode}"),
+                            document=_document(1),
+                        ),)
+                        if mode in {"logs_missing", "logs_extra"}
+                        else ()
+                    ),
+                )
+                with self.assertRaises(
+                    NsRuntimeStateStoreIndeterminateWriteError,
+                ):
+                    await store.transact(transaction)
 
     async def test_contract_exposes_no_unconditional_put(self) -> None:
         self.assertFalse(hasattr(self.store, "put"))
@@ -298,7 +421,10 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
             )
         with self.assertRaises(NsValidationError):
             dataclasses.replace(first, next_cursor="0")
-        without_scan = _scope(capabilities=frozenset({StateCallerCapability.READ}))
+        without_scan = _scope(
+            self.store,
+            capabilities=frozenset({StateCallerCapability.READ}),
+        )
         with self.assertRaises(NsRuntimeStateStoreCapabilityUnavailableError):
             await self.store.scan(
                 scope=without_scan,
@@ -347,13 +473,16 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(restricted.close)
         with self.assertRaises(NsRuntimeStateStoreCapabilityUnavailableError):
             await restricted.compare_and_set(
-                scope=self.scope,
-                mutation=_create(_key(self.scope, "capability")),
+                scope=(restricted_scope := _scope(restricted)),
+                mutation=_create(_key(restricted_scope, "capability")),
             )
         self.assertEqual({}, restricted.records)
 
         await self.store.open()
-        other_scope = _scope(StateNamespace.audit(domain="other"))
+        other_scope = _scope(
+            self.store,
+            StateNamespace.audit(domain="other"),
+        )
         with self.assertRaises(NsRuntimeStateStoreNamespaceViolationError):
             await self.store.read(
                 scope=self.scope,

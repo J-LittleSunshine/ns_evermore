@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
@@ -79,6 +80,19 @@ class BackendUnavailablePolicy:
 
 
 SnapshotRefresher = Callable[[PermissionSnapshot], Awaitable[PermissionSnapshot]]
+_PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER = object()
+_CONTRACT_TEST_MESSAGE_AUTHORIZATION_ISSUER = object()
+
+
+class ContractTestIamAuthorizationAdapter(ABC):
+    """Explicit non-production backend used by authorization contract tests."""
+
+    @abstractmethod
+    async def access_check(
+        self,
+        request: IamAccessCheckRequest,
+    ) -> IamAccessDecision:
+        raise NotImplementedError
 
 
 class MessageAuthorizationService:
@@ -94,8 +108,65 @@ class MessageAuthorizationService:
         snapshot_refresher: SnapshotRefresher | None = None,
         unavailable_policy: BackendUnavailablePolicy | None = None,
     ) -> None:
-        if not isinstance(iam_client, IamClient):
+        if (
+            type(iam_client) is not IamClient
+            or not iam_client._is_production_adapter()
+        ):
             _invalid("iam_client")
+        self._initialize(
+            iam_client=iam_client,
+            clock=clock,
+            mode=mode,
+            cache_ttl_seconds=cache_ttl_seconds,
+            snapshot_refresher=snapshot_refresher,
+            unavailable_policy=unavailable_policy,
+            authority_issuer=_PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER,
+        )
+
+    @classmethod
+    def for_contract_tests(
+        cls,
+        *,
+        iam_client: ContractTestIamAuthorizationAdapter,
+        clock: Clock,
+        mode: AuthorizationMode,
+        cache_ttl_seconds: float,
+        snapshot_refresher: SnapshotRefresher | None = None,
+        unavailable_policy: BackendUnavailablePolicy | None = None,
+    ) -> "MessageAuthorizationService":
+        if type(iam_client) is ContractTestIamAuthorizationAdapter or not isinstance(
+            iam_client,
+            ContractTestIamAuthorizationAdapter,
+        ):
+            _invalid("test_iam_client")
+        value = object.__new__(cls)
+        value._initialize(
+            iam_client=iam_client,
+            clock=clock,
+            mode=mode,
+            cache_ttl_seconds=cache_ttl_seconds,
+            snapshot_refresher=snapshot_refresher,
+            unavailable_policy=unavailable_policy,
+            authority_issuer=_CONTRACT_TEST_MESSAGE_AUTHORIZATION_ISSUER,
+        )
+        return value
+
+    def _initialize(
+        self,
+        *,
+        iam_client: object,
+        clock: Clock,
+        mode: AuthorizationMode,
+        cache_ttl_seconds: float,
+        snapshot_refresher: SnapshotRefresher | None,
+        unavailable_policy: BackendUnavailablePolicy | None,
+        authority_issuer: object,
+    ) -> None:
+        if authority_issuer not in {
+            _PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER,
+            _CONTRACT_TEST_MESSAGE_AUTHORIZATION_ISSUER,
+        }:
+            _invalid("authority_issuer")
         if not isinstance(clock, Clock):
             _invalid("clock")
         if not isinstance(mode, AuthorizationMode):
@@ -114,9 +185,41 @@ class MessageAuthorizationService:
         self._ttl = float(cache_ttl_seconds)
         self._refresher = snapshot_refresher
         self._unavailable = unavailable_policy or BackendUnavailablePolicy()
+        self._authority_issuer = authority_issuer
         self._decisions: dict[tuple[object, ...], tuple[IamAccessDecision, float]] = {}
         self._invalidations: dict[str, PermissionInvalidation] = {}
         self._lock = asyncio.Lock()
+
+    @property
+    def production_authority(self) -> bool:
+        return self._has_authority(
+            _PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER,
+        )
+
+    @property
+    def contract_test_authority(self) -> bool:
+        return self._has_authority(
+            _CONTRACT_TEST_MESSAGE_AUTHORIZATION_ISSUER,
+        )
+
+    def _has_authority(self, issuer: object) -> bool:
+        if (
+            type(self) is not MessageAuthorizationService
+            or getattr(self, "_authority_issuer", None) is not issuer
+            or "authorize" in vars(self)
+            or getattr(type(self), "authorize", None)
+            is not MessageAuthorizationService.authorize
+        ):
+            return False
+        if issuer is _PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER:
+            return bool(
+                type(getattr(self, "_iam", None)) is IamClient
+                and self._iam._is_production_adapter()
+            )
+        return isinstance(
+            getattr(self, "_iam", None),
+            ContractTestIamAuthorizationAdapter,
+        )
 
     def invalidate(self, event: PermissionInvalidation) -> None:
         if not isinstance(event, PermissionInvalidation):
@@ -139,6 +242,11 @@ class MessageAuthorizationService:
             _invalid("request")
         if not isinstance(risk, OperationRiskContext):
             _invalid("risk")
+        if (
+            self._authority_issuer is _PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER
+            and not self.production_authority
+        ):
+            _invalid("iam_client")
         self._tenant_hard_check(snapshot=snapshot, request=request)
         effective_risk = OperationRiskContext(
             high_risk_control=(risk.high_risk_control or request.management),
@@ -300,5 +408,6 @@ def _invalid(field_name: str) -> None:
 
 __all__ = (
     "AuthorizationMode", "BackendUnavailablePolicy",
+    "ContractTestIamAuthorizationAdapter",
     "MessageAuthorizationService", "OperationRiskContext", "SnapshotRefresher",
 )

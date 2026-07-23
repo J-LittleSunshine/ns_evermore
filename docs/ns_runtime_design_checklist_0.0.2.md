@@ -670,6 +670,11 @@
 
 ## 25. 明确禁止漂移的硬边界
 
+- production authorization、payload access 和 StateStore capability 必须由 composition root 控制的真实 adapter/repository authority 签发；公开 dataclass、摘要/fingerprint、`dataclasses.replace()`、subclass、fake dependency 或手工枚举不得产生新的 production authority。摘要只绑定内容，不能证明 IAM/backend 已作出授权决定；contract-test issuer 必须与 production issuer 使用不同且不可互认的 authority realm。
+- StateStore scope 必须绑定签发 store、caller、domain、namespace、tenant、runtime/plugin/partition 和精确 capability；Processor、plugin、EventBus subscriber 与 connection code 不得直接签发 scope，也不得引入全局 registry、service locator 或第二个 authority owner。
+- transport write 必须返回 typed outcome，至少区分 bytes 确定未开始、已经开始但结果未知、已确认成功。只有确定未开始才能进入 `write_failed`；开始后的 timeout、取消、connection close 或未知异常必须进入 `write_uncertain`、释放 owner 且禁止重发。
+- production module 默认入口必须启动唯一 StateStore、RuntimeService、TaskSupervisor/event loop/shutdown coordinator，并等待 signal、critical task failure 或显式 shutdown；self-check/diagnose 只能是显式有界命令，不能成为默认生产行为。
+- ordered-index cursor 的校验、定位、分页和总量读取必须在单次原子 provider 操作内完成或提供等价稳定语义；transaction provider result 的 record/log cardinality 与 mutation/append 数量必须精确相等，缺项、多项或错误类型一律 fail closed。
 - ACK 只表示收到，不表示执行开始或执行完成；任何后续设计不得改变 ACK 语义。
 - 所有可执行行为都必须走 processor；ACK、NACK、Defer、健康检查和管理控制都不能绕开 processor。
 - source 和 auth_context 入站禁止携带，必须由 runtime 注入；这不是可配置项。

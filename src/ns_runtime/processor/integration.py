@@ -44,6 +44,8 @@ from .contracts import (
     RoutingPreparation,
     RoutingPreparationOutcome,
     RoutingPreparationResult,
+    _issue_contract_test_authorization_evidence,
+    _issue_production_authorization_evidence,
 )
 from .event_bus import EventBus
 from .pipeline import ProcessorExecutionResult, ProcessorPipeline, build_standard_stage_processors
@@ -64,12 +66,51 @@ class IamProcessorAuthorization(ProcessorAuthorization):
     ) -> None:
         from ns_runtime.iam import MessageAuthorizationService
 
-        if not isinstance(service, MessageAuthorizationService):
+        if (
+            type(service) is not MessageAuthorizationService
+            or not service.production_authority
+        ):
             _invalid("authorization.service")
+        self._initialize(
+            service=service,
+            protocol_registry=protocol_registry,
+            production_authority=True,
+        )
+
+    @classmethod
+    def for_contract_tests(
+        cls,
+        *,
+        service: MessageAuthorizationService,
+        protocol_registry: MessageTypeRegistry = BUILTIN_MESSAGE_REGISTRY,
+    ) -> "IamProcessorAuthorization":
+        from ns_runtime.iam import MessageAuthorizationService
+
+        if (
+            type(service) is not MessageAuthorizationService
+            or not service.contract_test_authority
+        ):
+            _invalid("test_authorization.service")
+        value = object.__new__(cls)
+        value._initialize(
+            service=service,
+            protocol_registry=protocol_registry,
+            production_authority=False,
+        )
+        return value
+
+    def _initialize(
+        self,
+        *,
+        service: MessageAuthorizationService,
+        protocol_registry: MessageTypeRegistry,
+        production_authority: bool,
+    ) -> None:
         if not isinstance(protocol_registry, MessageTypeRegistry):
             _invalid("authorization.protocol_registry")
         self._service = service
         self._registry = protocol_registry
+        self._production_authority = production_authority
 
     async def authorize(
         self,
@@ -79,6 +120,14 @@ class IamProcessorAuthorization(ProcessorAuthorization):
 
         if not isinstance(context, ProcessorContext):
             _invalid("authorization.context")
+        if (
+            self._production_authority
+            and not self._service.production_authority
+        ) or (
+            not self._production_authority
+            and not self._service.contract_test_authority
+        ):
+            _invalid("authorization.service_authority")
         contract = self._registry.require(context.envelope.message.type)
         session = context.session
         target = _target_context(context)
@@ -130,6 +179,7 @@ class IamProcessorAuthorization(ProcessorAuthorization):
             request=request,
             effective_snapshot=effective,
             decision=decision,
+            production_authority=self._production_authority,
         )
 
 
@@ -195,7 +245,7 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
             "management": False,
             "task_creation": context.envelope.message.type == "task.dispatch",
         }
-        return AuthorizationDecisionEvidence.bound(
+        return _issue_contract_test_authorization_evidence(
             decision_version="authorization-decision.v1",
             decision_outcome=AuthorizationDecisionOutcome.ALLOW,
             decision_reason="deterministic_allow",
@@ -524,6 +574,7 @@ def _authorization_evidence(
     request: IamAccessCheckRequest,
     effective_snapshot: object,
     decision: object,
+    production_authority: bool,
 ) -> AuthorizationDecisionEvidence:
     from ns_common.iam import IamAccessDecision
     from ns_runtime.iam import PermissionSnapshot
@@ -551,7 +602,12 @@ def _authorization_evidence(
         effective_snapshot.permission_snapshot_ref
     )
     effective_request["permission_version"] = effective_snapshot.permission_version
-    return AuthorizationDecisionEvidence.bound(
+    issuer = (
+        _issue_production_authorization_evidence
+        if production_authority
+        else _issue_contract_test_authorization_evidence
+    )
+    return issuer(
         decision_version="authorization-decision.v1",
         decision_outcome=AuthorizationDecisionOutcome.ALLOW,
         decision_reason=decision.reason,

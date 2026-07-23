@@ -39,6 +39,8 @@ from .models import (
     TransportErrorKind,
     TransportMessage,
     TransportSessionState,
+    TransportWriteResult,
+    TransportWriteState,
 )
 from .models import TransportCapabilities, TransportCapability
 
@@ -139,7 +141,7 @@ class WebSocketTcpAdapterOptions:
 @dataclass(slots=True)
 class _PendingWrite:
     text: str = field(repr=False)
-    completion: asyncio.Future[None] = field(repr=False)
+    completion: asyncio.Future[TransportWriteResult] = field(repr=False)
     started: bool = False
     cancelled: bool = False
     enqueued_at: float = 0.0
@@ -254,7 +256,7 @@ class WebSocketTcpSession(TransportSession):
                     continue
                 await self._read_ready.wait()
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str) -> TransportWriteResult:
         if not isinstance(text, str):
             raise NsValidationError(
                 "Transport send requires text.",
@@ -308,7 +310,7 @@ class WebSocketTcpSession(TransportSession):
         try:
             # This is the sole authoritative timeout for both queueing and the
             # underlying write.  The writer never starts a second budget.
-            await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 asyncio.shield(pending.completion),
                 timeout=self._options.send_timeout_seconds,
             )
@@ -332,7 +334,15 @@ class WebSocketTcpSession(TransportSession):
                     clean=False,
                     protocol_code=1011,
                 )
-            raise self._send_failure("send_timeout") from None
+            return TransportWriteResult(
+                state=(
+                    TransportWriteState.UNCERTAIN
+                    if pending.started
+                    else TransportWriteState.NOT_STARTED
+                ),
+                failure_reason="send_timeout",
+            )
+        return result
 
     async def _reader_loop(self) -> None:
         try:
@@ -414,7 +424,10 @@ class WebSocketTcpSession(TransportSession):
                         operation="send",
                     )
                     if not pending.completion.done():
-                        pending.completion.set_exception(failure.exception)
+                        pending.completion.set_result(TransportWriteResult(
+                            state=TransportWriteState.UNCERTAIN,
+                            failure_reason=str(failure.error.details["reason"]),
+                        ))
                     self._metrics.send_error(failure.error.code)
                     await self._close_with(
                         reason=TransportCloseReason.SEND_FAILED,
@@ -424,7 +437,9 @@ class WebSocketTcpSession(TransportSession):
                     )
                     return
                 if not pending.completion.done():
-                    pending.completion.set_result(None)
+                    pending.completion.set_result(TransportWriteResult(
+                        state=TransportWriteState.SUCCEEDED,
+                    ))
                 self._metrics.bytes_sent(len(pending.text.encode("utf-8")))
                 self._active_write = None
         except asyncio.CancelledError:
@@ -630,17 +645,20 @@ class WebSocketTcpSession(TransportSession):
             return close_info
 
     def _fail_pending_writes(self) -> None:
-        failure = self._send_failure("session_closing")
         active = self._active_write
         if active is not None and not active.completion.done():
-            active.completion.set_exception(failure)
+            active.completion.set_result(TransportWriteResult(
+                state=TransportWriteState.UNCERTAIN,
+                failure_reason="session_closing",
+            ))
         while not self._write_queue.empty():
             pending = self._write_queue.get_nowait()
             pending.cancelled = True
             if not pending.completion.done():
-                pending.completion.set_exception(
-                    self._send_failure("session_closing"),
-                )
+                pending.completion.set_result(TransportWriteResult(
+                    state=TransportWriteState.NOT_STARTED,
+                    failure_reason="session_closing",
+                ))
 
 
 class WebSocketTcpAdapter(TransportAdapter):

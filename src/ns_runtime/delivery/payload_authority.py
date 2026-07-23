@@ -36,7 +36,10 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
     """P11 production adapter for one live object and target IAM decision."""
 
     def __init__(self, *, iam_client: IamClient, clock: Clock) -> None:
-        if not isinstance(iam_client, IamClient):
+        if (
+            type(iam_client) is not IamClient
+            or not iam_client._is_production_adapter()
+        ):
             _invalid("iam_client")
         if not isinstance(clock, Clock):
             _invalid("clock")
@@ -51,6 +54,8 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
     ) -> PayloadValidationResult:
         if not isinstance(delivery, DeliveryRecord) or type(target) is not LocalDeliveryTarget:
             _invalid("reference_validator.request")
+        if not self._iam._is_production_adapter():
+            _invalid("iam_client")
         evidence = delivery.payload_evidence
         if evidence.kind is not PayloadKind.REFERENCE:
             _invalid("reference_validator.payload_kind")
@@ -93,8 +98,14 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
                     object_id=evidence.object_id,
                     object_version=evidence.object_version,
                     checksum=evidence.checksum,
+                    size_bytes=evidence.size_bytes,
+                    tenant_id=delivery.tenant_id,
                     target_fingerprint=delivery.target_fingerprint,
+                    admission_authority_reference=(
+                        delivery.policy_decision.request_fingerprint
+                    ),
                     permission_snapshot_reference=target.permission_snapshot_reference,
+                    permission_snapshot_fingerprint=target.access_decision_reference,
                     iam_decision_reference=decision.decision_reference,
                     iam_decision_version=decision.permission_version,
                     validated_at=decision.decided_at,
@@ -104,8 +115,14 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
                 object_id=evidence.object_id,
                 object_version=evidence.object_version,
                 checksum=evidence.checksum,
+                size_bytes=evidence.size_bytes,
+                tenant_id=delivery.tenant_id,
                 target_fingerprint=delivery.target_fingerprint,
+                admission_authority_reference=(
+                    delivery.policy_decision.request_fingerprint
+                ),
                 permission_snapshot_reference=target.permission_snapshot_reference,
+                permission_snapshot_fingerprint=target.access_decision_reference,
                 iam_decision_reference=decision.decision_reference,
                 iam_decision_version=decision.permission_version,
                 validated_at=decision.decided_at,
@@ -241,6 +258,7 @@ class StateStoreDeliveryPayloadAuthority(
         if evidence.body_ref is None:
             _invalid("inline.body_ref")
         scope = delivery_scope(
+            self._store,
             delivery.tenant_id,
             delivery.authority_bucket_id,
             layout_generation=delivery.authority_layout_generation,

@@ -74,6 +74,42 @@ class TransportSessionState(str, Enum):
     CLOSED = "closed"
 
 
+class TransportWriteState(str, Enum):
+    NOT_STARTED = "not_started"
+    UNCERTAIN = "uncertain"
+    SUCCEEDED = "succeeded"
+
+
+@dataclass(frozen=True, slots=True)
+class TransportWriteResult:
+    state: TransportWriteState
+    failure_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, TransportWriteState):
+            raise NsValidationError(
+                "Transport write result is invalid.",
+                details={"component": "transport", "field": "write_result.state"},
+            )
+        if self.failure_reason is not None and (
+            type(self.failure_reason) is not str
+            or not self.failure_reason
+            or len(self.failure_reason) > 128
+        ):
+            raise NsValidationError(
+                "Transport write result is invalid.",
+                details={"component": "transport", "field": "write_result.failure_reason"},
+            )
+        if (
+            self.state is TransportWriteState.SUCCEEDED
+            and self.failure_reason is not None
+        ):
+            raise NsValidationError(
+                "Transport write result is invalid.",
+                details={"component": "transport", "field": "write_result.success"},
+            )
+
+
 class TransportCloseInitiator(str, Enum):
     LOCAL = "local"
     REMOTE = "remote"
@@ -249,4 +285,3 @@ class TransportError:
                 )
             safe_details[key] = value
         object.__setattr__(self, "details", MappingProxyType(safe_details))
-

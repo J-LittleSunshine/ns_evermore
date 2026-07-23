@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import re
-from dataclasses import dataclass
+import secrets
+from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 from types import MappingProxyType
 from typing import Mapping
@@ -237,12 +241,57 @@ class StateAtomicScope:
         _validate_name(self.partition, "atomic_scope.partition")
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+class _StateScopeIssuer:
+    """One store-owned capability issuer; never shared through a registry."""
+
+    __slots__ = ("realm", "_key")
+
+    def __init__(self, *, realm: str) -> None:
+        if realm not in {"production", "contract_test"}:
+            _invalid("issuer.realm")
+        self.realm = realm
+        self._key = secrets.token_bytes(32)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, init=False)
 class StateAccessScope:
     atomic_scope: StateAtomicScope
     authority: StateAuthorityKind
     caller: str
     capabilities: frozenset[StateCallerCapability]
+    _issuer: _StateScopeIssuer = dataclass_field(
+        init=False, repr=False, compare=False,
+    )
+    _authority_signature: bytes = dataclass_field(
+        init=False, repr=False, compare=False,
+    )
+
+    def __init__(
+        self,
+        *,
+        atomic_scope: StateAtomicScope,
+        authority: StateAuthorityKind,
+        caller: str,
+        capabilities: frozenset[StateCallerCapability],
+        _issuer: _StateScopeIssuer | None = None,
+    ) -> None:
+        if type(self) is not StateAccessScope or type(_issuer) is not _StateScopeIssuer:
+            _invalid("access_scope.issuer")
+        for name, value in (
+            ("atomic_scope", atomic_scope),
+            ("authority", authority),
+            ("caller", caller),
+            ("capabilities", capabilities),
+            ("_issuer", _issuer),
+            ("_authority_signature", b""),
+        ):
+            object.__setattr__(self, name, value)
+        self.__post_init__()
+        object.__setattr__(
+            self,
+            "_authority_signature",
+            _state_scope_signature(self, issuer=_issuer),
+        )
 
     def __post_init__(self) -> None:
         if not isinstance(self.atomic_scope, StateAtomicScope):
@@ -272,6 +321,63 @@ class StateAccessScope:
     @property
     def namespace(self) -> StateNamespace:
         return self.atomic_scope.namespace
+
+    def _issued_by(self, issuer: _StateScopeIssuer) -> bool:
+        return bool(
+            type(self) is StateAccessScope
+            and self._issuer is issuer
+            and hmac.compare_digest(
+                self._authority_signature,
+                _state_scope_signature(self, issuer=issuer),
+            )
+        )
+
+
+def _new_state_scope_issuer(*, contract_test: bool = False) -> _StateScopeIssuer:
+    return _StateScopeIssuer(
+        realm="contract_test" if contract_test else "production",
+    )
+
+
+def _issue_state_access_scope(
+    issuer: _StateScopeIssuer,
+    *,
+    atomic_scope: StateAtomicScope,
+    authority: StateAuthorityKind,
+    caller: str,
+    capabilities: frozenset[StateCallerCapability],
+) -> StateAccessScope:
+    if type(issuer) is not _StateScopeIssuer:
+        _invalid("access_scope.issuer")
+    return StateAccessScope(
+        atomic_scope=atomic_scope,
+        authority=authority,
+        caller=caller,
+        capabilities=capabilities,
+        _issuer=issuer,
+    )
+
+
+def _state_scope_signature(
+    scope: StateAccessScope,
+    *,
+    issuer: _StateScopeIssuer,
+) -> bytes:
+    if type(issuer) is not _StateScopeIssuer:
+        _invalid("access_scope.issuer")
+    namespace = scope.atomic_scope.namespace
+    payload = json.dumps({
+        "namespace_kind": namespace.kind.value,
+        "domain": namespace.domain,
+        "tenant_id": namespace.tenant_id,
+        "runtime_id": namespace.runtime_id,
+        "plugin_name": namespace.plugin_name,
+        "partition": scope.atomic_scope.partition,
+        "authority": scope.authority.value,
+        "caller": scope.caller,
+        "capabilities": sorted(value.value for value in scope.capabilities),
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hmac.new(issuer._key, payload, hashlib.sha256).digest()
 
 
 def _validate_name(value: object, field_name: str) -> None:

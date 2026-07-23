@@ -11,6 +11,7 @@ from ns_common.exceptions import (
     NsRuntimeIamDeniedError,
     NsRuntimeIamTimeoutError,
     NsRuntimeIamUnavailableError,
+    NsValidationError,
 )
 from ns_common.http_client import NsAsyncHttpClient, NsHttpResponse
 from ns_common.iam import (
@@ -25,7 +26,13 @@ from ns_runtime.connection import (
     HandshakeIamRequest,
     PendingHelloClaims,
 )
-from ns_runtime.iam import IamClient, PermissionSnapshot
+from ns_runtime.iam import (
+    AuthorizationMode,
+    IamClient,
+    MessageAuthorizationService,
+    PermissionSnapshot,
+)
+from ns_runtime.iam.client import _create_production_iam_client
 from ns_runtime.protocol import ProtocolVersion
 
 
@@ -34,7 +41,7 @@ TOKEN = "user-access-token-must-never-leak"
 SERVICE = "internal-service-credential-at-least-32-chars"
 
 
-class _HttpClient(NsAsyncHttpClient):
+class _HttpClient:
     def __init__(self, outcomes: list[object]) -> None:
         self.outcomes = outcomes
         self.calls: list[dict[str, object]] = []
@@ -101,14 +108,58 @@ def _request(
 
 class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
     def _client(self, outcomes: list[object]) -> tuple[IamClient, _HttpClient]:
-        http = _HttpClient(outcomes)
-        client = IamClient(
+        captured = _HttpClient(outcomes)
+        http = NsAsyncHttpClient(
+            name="runtime-iam-test",
+            base_url="https://iam.test/",
+        )
+        http.post = captured.post  # type: ignore[method-assign]
+        self.addAsyncCleanup(http.aclose)
+        client = _create_production_iam_client(
             http_client=http,
             internal_service_credential=SERVICE,
             trace_id_factory=lambda: "operation:trace1",
             clock=ControlledClock(utc_start=NOW),
         )
-        return client, http
+        return client, captured
+
+    def test_production_iam_adapter_cannot_be_directly_built_or_impersonated(
+        self,
+    ) -> None:
+        http = NsAsyncHttpClient(
+            name="runtime-iam-negative",
+            base_url="https://iam.test/",
+        )
+        self.addAsyncCleanup(http.aclose)
+        values = {
+            "http_client": http,
+            "internal_service_credential": SERVICE,
+            "trace_id_factory": lambda: "operation:negative",
+            "clock": ControlledClock(utc_start=NOW),
+        }
+        with self.assertRaises(NsValidationError):
+            IamClient(**values)
+
+        class ForgedIamClient(IamClient):
+            async def access_check(self, request):
+                return object()
+
+        invalid_clients = (
+            object.__new__(IamClient),
+            object.__new__(ForgedIamClient),
+            object(),
+            {},
+            "iam-client",
+        )
+        for value in invalid_clients:
+            with self.subTest(client_type=type(value).__name__):
+                with self.assertRaises(NsValidationError):
+                    MessageAuthorizationService(
+                        iam_client=value,  # type: ignore[arg-type]
+                        clock=ControlledClock(utc_start=NOW),
+                        mode=AuthorizationMode.STRICT,
+                        cache_ttl_seconds=60,
+                    )
 
     async def test_valid_token_uses_internal_credential_and_trace_without_leak(self) -> None:
         client, http = self._client([{

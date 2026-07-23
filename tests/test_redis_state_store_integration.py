@@ -100,9 +100,9 @@ class _StaticPasswordSource(StateStorePasswordSource):
         return self.value
 
 
-def _scope() -> StateAccessScope:
+def _scope(store: RedisValkeyStateStore) -> StateAccessScope:
     namespace = StateNamespace.audit(domain="processor")
-    return StateAccessScope(
+    return store._issue_access_scope(
         atomic_scope=StateAtomicScope(namespace=namespace, partition="contract"),
         authority=StateAuthorityKind.STRONG_AUDIT,
         caller="redis-contract-test",
@@ -237,11 +237,16 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.aclose()
 
-    def _bucket_scope(self, *, bucket_id: int = 3) -> StateAccessScope:
+    def _bucket_scope(
+        self,
+        store: RedisValkeyStateStore,
+        *,
+        bucket_id: int = 3,
+    ) -> StateAccessScope:
         namespace = StateNamespace.tenant(
             tenant_id="tenant-a", domain="delivery",
         )
-        return StateAccessScope(
+        return store._issue_access_scope(
             atomic_scope=StateAtomicScope(
                 namespace=namespace, partition=f"bucket-{bucket_id}",
             ),
@@ -259,7 +264,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_cluster_transaction_keys_share_exact_tenant_bucket_slot(self) -> None:
         store = self._provider()
-        scope = self._bucket_scope(bucket_id=3)
+        scope = self._bucket_scope(store, bucket_id=3)
         key = StateKey(
             namespace=scope.namespace,
             object_type="delivery",
@@ -294,7 +299,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_legacy_physical_record_requires_explicit_migration(self) -> None:
         store = self._provider()
         await store.open()
-        scope = self._bucket_scope(bucket_id=4)
+        scope = self._bucket_scope(store, bucket_id=4)
         key = StateKey(
             namespace=scope.namespace,
             object_type="delivery",
@@ -317,8 +322,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_previous_bucket_tag_generation_requires_layout_migration(self) -> None:
         store = self._provider()
         await store.open()
-        base = self._bucket_scope(bucket_id=4)
-        scope = StateAccessScope(
+        base = self._bucket_scope(store, bucket_id=4)
+        scope = store._issue_access_scope(
             atomic_scope=StateAtomicScope(
                 namespace=base.namespace,
                 partition="layout-2-bucket-4",
@@ -420,14 +425,15 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         second = self._provider(namespace=self.namespace + ":second")
         await first.open()
         await second.open()
-        scope = _scope()
-        key = _key(scope, "same-logical-key")
+        first_scope = _scope(first)
+        second_scope = _scope(second)
+        key = _key(first_scope, "same-logical-key")
         first_record = await first.compare_and_set(
-            scope=scope,
+            scope=first_scope,
             mutation=_create(key, b"first"),
         )
         second_record = await second.compare_and_set(
-            scope=scope,
+            scope=second_scope,
             mutation=_create(key, b"second"),
         )
         assert first_record is not None and second_record is not None
@@ -446,7 +452,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_create_has_one_winner_and_cas_conflicts(self) -> None:
         store = self._provider()
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         key = _key(scope, "dedup")
         outcomes = await asyncio.gather(
             *(store.compare_and_set(scope=scope, mutation=_create(key))
@@ -566,7 +572,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_revision_order_and_schema_version_contract(self) -> None:
         store = self._provider()
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         old_key = _key(scope, "revision-old")
         new_key = _key(scope, "revision-new")
         old = await store.compare_and_set(
@@ -611,7 +617,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_failed_batch_rolls_back_every_create_on_conflict(self) -> None:
         store = self._provider()
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         existing_key = _key(scope, "existing")
         orphan_keys = tuple(
             _key(scope, f"must-not-exist-{index}") for index in range(32)
@@ -640,7 +646,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_failed_projection_batch_leaves_no_index_or_log_orphan(self) -> None:
         store = self._provider()
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         existing_key = _key(scope, "projection-existing")
         orphan_key = _key(scope, "projection-orphan")
         index = StateOrderedIndexKey(
@@ -682,10 +688,108 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], transition_keys)
         await store.close()
 
+    async def test_ordered_index_cursor_is_stable_across_between_page_mutations(
+        self,
+    ) -> None:
+        store = self._provider()
+        await store.open()
+        scope = _scope(store)
+        index = StateOrderedIndexKey(
+            namespace=scope.namespace,
+            name="delivery.cursor",
+            bucket="contract",
+        )
+
+        def change(
+            kind: StateOrderedIndexMutationKind,
+            member: str,
+            score: float | None = None,
+        ) -> StateOrderedIndexMutation:
+            return StateOrderedIndexMutation(
+                index=index,
+                kind=kind,
+                member=member,
+                score=score,
+            )
+
+        await store.transact(StateTransaction(
+            scope=scope,
+            mutations=(),
+            ordered_index_mutations=tuple(
+                change(StateOrderedIndexMutationKind.ADD, member, score)
+                for member, score in (
+                    ("delivery:a", 10.0),
+                    ("delivery:b", 20.0),
+                    ("delivery:c", 30.0),
+                    ("delivery:d", 40.0),
+                )
+            ),
+        ))
+        first = await store.read_ordered_index(
+            scope=scope,
+            index=index,
+            limit=2,
+        )
+        self.assertEqual(
+            ("delivery:a", "delivery:b"),
+            tuple(value.member for value in first.entries),
+        )
+        self.assertIsNotNone(first.next_cursor)
+
+        # Mutations occur between pages: one deletion and one insertion before
+        # the cursor, plus an insertion after it. Recomputing the cursor rank
+        # atomically must not duplicate or skip the surviving tail.
+        await store.transact(StateTransaction(
+            scope=scope,
+            mutations=(),
+            ordered_index_mutations=(
+                change(StateOrderedIndexMutationKind.REMOVE, "delivery:a"),
+                change(StateOrderedIndexMutationKind.ADD, "delivery:x", 15.0),
+                change(StateOrderedIndexMutationKind.ADD, "delivery:e", 35.0),
+            ),
+        ))
+        second = await store.read_ordered_index(
+            scope=scope,
+            index=index,
+            limit=2,
+            start_after=first.next_cursor,
+        )
+        third = await store.read_ordered_index(
+            scope=scope,
+            index=index,
+            limit=2,
+            start_after=second.next_cursor,
+        )
+        self.assertEqual(
+            ("delivery:c", "delivery:e", "delivery:d"),
+            tuple(value.member for value in (*second.entries, *third.entries)),
+        )
+        self.assertEqual(
+            len({value.member for value in (*first.entries, *second.entries, *third.entries)}),
+            len((*first.entries, *second.entries, *third.entries)),
+        )
+
+        assert second.next_cursor is not None
+        await store.transact(StateTransaction(
+            scope=scope,
+            mutations=(),
+            ordered_index_mutations=(
+                change(StateOrderedIndexMutationKind.REMOVE, "delivery:e"),
+            ),
+        ))
+        with self.assertRaises(NsRuntimeStateStoreConflictError):
+            await store.read_ordered_index(
+                scope=scope,
+                index=index,
+                limit=2,
+                start_after=second.next_cursor,
+            )
+        await store.close()
+
     async def test_read_precondition_conflict_is_zero_write_in_redis_lua(self) -> None:
         store = self._provider()
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         guarded_key = _key(scope, "assertion-guard")
         seed_key = _key(scope, "assertion-seed")
         orphan_key = _key(scope, "assertion-orphan")
@@ -764,7 +868,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         store = self._provider()
         self.assertIs(StateStoreHealthStatus.NOT_READY, (await store.health()).status)
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         key = StateKey(
             namespace=scope.namespace,
             object_type="audit_log",
@@ -820,18 +924,19 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         await store.open()
         raw = self._raw_client()
         await raw.execute_command("CLIENT", "PAUSE", 150)
+        scope = _scope(store)
         with self.assertRaises(NsRuntimeStateStoreTimeoutError):
             await store.read(
-                scope=_scope(),
-                key=_key(_scope(), "paused-read"),
+                scope=scope,
+                key=_key(scope, "paused-read"),
                 consistency=StateConsistency.LINEARIZABLE,
             )
         await asyncio.sleep(0.18)
         await raw.execute_command("CLIENT", "PAUSE", 150)
         with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
             await store.compare_and_set(
-                scope=_scope(),
-                mutation=_create(_key(_scope(), "paused-write")),
+                scope=scope,
+                mutation=_create(_key(scope, "paused-write")),
             )
         await asyncio.sleep(0.18)
         await raw.aclose()
@@ -876,7 +981,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             hashlib.sha256(request.message_id.encode("utf-8")).digest()[:8],
             "big",
         ) % 8
-        scope = StateAccessScope(
+        scope = store._issue_access_scope(
             atomic_scope=StateAtomicScope(
                 namespace=namespace,
                 partition=f"layout-2-bucket-{bucket_id}",
@@ -939,7 +1044,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertIs(AdmissionOutcome.ACCEPTED, accepted.outcome)
                 summary_id = accepted.response.summary_id
-                scope, namespace = self._delivery_scope(request_a.tenant_id)
+                scope, namespace = self._delivery_scope(
+                    store_a,
+                    request_a.tenant_id,
+                )
                 record_keys = {
                     "root": StateKey(
                         namespace=namespace,
@@ -999,6 +1107,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                     clock=clock_b,
                 )
                 scope_b, namespace_b = self._delivery_scope(
+                    store_b,
                     request_b.tenant_id,
                 )
                 recovered_keys = {
@@ -1095,7 +1204,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         return "sha256:" + hashlib.sha256(identifier.encode()).hexdigest()
 
     @staticmethod
-    def _delivery_scope(tenant_id: str) -> tuple[StateAccessScope, StateNamespace]:
+    def _delivery_scope(
+        store: RedisValkeyStateStore,
+        tenant_id: str,
+    ) -> tuple[StateAccessScope, StateNamespace]:
         namespace = StateNamespace.tenant(
             tenant_id=tenant_id,
             domain="delivery",
@@ -1103,7 +1215,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         bucket_id = int.from_bytes(
             hashlib.sha256(MESSAGE_ID.encode("utf-8")).digest()[:8], "big",
         ) % 8
-        return StateAccessScope(
+        return store._issue_access_scope(
             atomic_scope=StateAtomicScope(
                 namespace=namespace,
                 partition=f"layout-2-bucket-{bucket_id}",
@@ -1124,7 +1236,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         clock: ControlledClock | None = None,
     ):
         service_clock = clock or self.clock
-        service = DeliveryAdmissionService(
+        service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1",

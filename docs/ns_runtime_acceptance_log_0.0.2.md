@@ -2231,6 +2231,34 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - P13 DeadLetterRecord/replay/一般cancel/hold、P14 health scoring/fair scheduling、P17 leader lease/cluster fencing、Redis Cluster运行、master query、remote forwarding、跨runtime ownership均未实现；没有第二TaskSupervisor/event loop/shutdown owner。
 - Valkey仍只是driver compatibility，不声明valkey-server、Sentinel、Cluster、failover或replica read；production `task.dispatch`继续disabled。
 
+## P02/P08/P09/P11 authority、write uncertainty 与默认入口 Blocker 修复
+
+- 工作包：`P02-FIX-06`、`P08-FIX-01`、`P09-FIX-05`、`P11-FIX-06`。
+- 状态：`VERIFIED / F3 (local only)`；P12继续`BLOCKED / F0`，production `task.dispatch`继续disabled。
+- 完成时间：`2026-07-23`（Asia/Shanghai）。本轮启动分支为`codex/ns-runtime-implementation`，HEAD为`ca439c6424bdafec2badb5887e0260ddf95e30de`，启动worktree干净；只形成未提交的本地工作区修改。
+- 修改文件：design checklist、implementation plan、ADR-045及本验收日志；common StateStore authority/model/store/Redis provider；runtime IAM/processor/routing/delivery/transport/connection/main/state authority；对应StateStore、Redis、IAM、routing、delivery、main与transport测试及显式processor contract-test issuer。
+- IAM authorization authority：production evidence只由精确、完整初始化且composition-controlled的`MessageAuthorizationService`经`IamProcessorAuthorization`签发。issuer seal绑定message、tenant、target、permission snapshots、policy及decision reference；公开构造、旧factory、replace、字段复制、subclass、fake service/issuer和test realm evidence不能形成production ALLOW authority。SHA-256仅保留内容绑定作用。
+- payload IAM authority：production validator只接受精确、完整初始化、未覆写方法且composition-controlled的production `IamClient`；测试替身使用显式contract-test adapter或在真实client以下替换HTTP边界。payload evidence保持private issuer并绑定object/version/checksum/size、tenant、target、permission snapshot、admission authority、decision ref/version/time/expiry；mapping/object/str subclass、未初始化subclass、method override、malformed/wrong provider result均fail closed。
+- StateStore authority与provider：每个store拥有唯一production或contract-test issuer realm，scope seal精确绑定caller/domain/namespace/tenant/runtime/plugin/partition/capabilities并在每次操作复验；public/replace/subclass/手工capability/cross-store scope不能扩权。transaction result的records/log_positions必须与mutations/appends精确等长且类型正确。公共record/index read assertion从model与facade一致导出。Redis ordered-index由单个Lua调用原子验证cursor、定位、分页和total，并对cursor删除/score变化返回typed conflict。
+- transport与入口：transport write返回`NOT_STARTED`、`UNCERTAIN`或`SUCCEEDED`；只有确定未开始才进入`WRITE_FAILED`，started-write的timeout/cancel/close/unknown exception进入`WRITE_UNCERTAIN`、释放owner并停止renew/重发。默认`python -m ns_runtime.main`启动唯一StateStore和RuntimeService并等待同一shutdown coordinator；SIGINT/SIGTERM、critical task failure和显式shutdown走统一清理，`self-check`/`diagnose`改为显式有界命令，启动原异常保留并best-effort cleanup。
+
+### 实际测试命令与结果
+
+- processor/routing/IAM：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_runtime_processor_boundaries tests.test_runtime_processor_pipeline tests.test_runtime_routing tests.test_runtime_routing_contracts tests.test_runtime_iam_authorization tests.test_runtime_iam_client`，`Ran 76 tests in 2.628s`，`OK`。
+- payload authority、delivery admission与scheduling：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling`，`Ran 62 tests in 49.712s`，`OK`。
+- StateStore contract/provider：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_state_store tests.test_runtime_state_store tests.test_redis_state_store_provider`，`Ran 39 tests in 0.838s`，`OK`。
+- 真实Redis standalone：`PYTHONPATH=src python3 -m unittest tests.test_redis_state_store_provider tests.test_redis_state_store_integration`，`Ran 30 tests in 48.697s`，`OK`。本机实际发现并启动`/usr/bin/redis-server`；结论不覆盖Valkey server、Sentinel、Cluster、replica或failover。
+- main、shutdown、critical failure与transport：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_runtime_event_loop_observability tests.test_runtime_shutdown tests.test_runtime_service tests.test_runtime_main tests.test_runtime_transport_metrics tests.test_runtime_transport_lifecycle tests.test_runtime_transport_identity tests.test_runtime_transport_errors tests.test_runtime_transport_contracts tests.test_runtime_transport_conformance tests.test_runtime_transport_backpressure tests.test_runtime_transport_websocket_tcp tests.test_runtime_transport_registry`，最终`Ran 110 tests in 7.493s`，`OK`。
+- import/dependency boundary：`tests.test_requirements tests.test_runtime_bootstrap tests.test_runtime_processor_boundaries`为`Ran 19 tests in 2.980s, OK`；六个修改边界模块独立子进程冷导入输出`COLD_IMPORT_BOUNDARIES_OK`；runtime/backend项目虚拟环境`pip check`均输出`No broken requirements found.`。未隔离系统Python的`pip check`报告宿主`pygobject 3.42.1 requires pycairo`，因此该宿主环境不记为通过。
+- 全仓可执行测试集：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py' -q`，`Ran 865 tests in 133.895s`，`OK (skipped=1)`；唯一skip为既有平台条件。
+- 静态与边界：`python3 -m compileall -q src tests`、公共assertion/transport type import、`git diff --check`、P12+新增源码扫描和scope issuer调用点白名单均通过；输出分别为`PUBLIC_IMPORTS_OK`、`P12_PLUS_ADDED_SOURCE_SCAN_OK`和`STATE_SCOPE_ISSUER_BOUNDARY_OK`。Git仅提示仓库既有autocrlf行尾转换告警，不是diff whitespace错误。
+
+### 已知限制与冻结范围
+
+- 仍只支持`prepared -> queued -> sending -> ack_waiting`及typed failure/uncertainty；`WRITE_UNCERTAIN`不恢复、不重发，留给后续独立阶段。
+- 未运行uvloop全树、backend/Django全树、Valkey/Sentinel/Redis Cluster或远程CI；这些不能从本地standard asyncio与Redis standalone结果推断为通过。
+- P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay/cancel/hold、P14 health/fair scheduling、P17 leader/cluster ownership和P22 production验收均未实现；没有新增第二event loop、TaskSupervisor、RuntimeService、shutdown owner、global authority registry或service locator，production `task.dispatch`仍关闭。
+
 ## 新记录模板
 
 - 工作包：

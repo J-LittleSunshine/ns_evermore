@@ -123,12 +123,16 @@ class AdmissionServiceLimits:
             _invalid("limits.initialization_batch_size")
 
 
+_CONTRACT_TEST_ADMISSION_AUTHORITY = object()
+
+
 class DeliveryAdmissionService:
     def __init__(
         self, *, policy: AdmissionPolicy, policy_config: AdmissionPolicyConfig,
         store: DeliveryAdmissionStore, payload_ref_client: PayloadRefClient,
         clock: Clock, identifier_factory: Callable[[str, int], str],
         limits: AdmissionServiceLimits = AdmissionServiceLimits(),
+        _authority: object | None = None,
     ) -> None:
         if not isinstance(policy, AdmissionPolicy):
             _invalid("service.policy")
@@ -151,6 +155,18 @@ class DeliveryAdmissionService:
         self._clock = clock
         self._ids = identifier_factory
         self._limits = limits
+        self._accept_contract_test_authority = (
+            _authority is _CONTRACT_TEST_ADMISSION_AUTHORITY
+        )
+        if _authority not in {None, _CONTRACT_TEST_ADMISSION_AUTHORITY}:
+            _invalid("service.authority")
+
+    @classmethod
+    def for_contract_tests(cls, **values: object) -> "DeliveryAdmissionService":
+        return cls(
+            **values,  # type: ignore[arg-type]
+            _authority=_CONTRACT_TEST_ADMISSION_AUTHORITY,
+        )
 
     async def admit(
         self, request: AdmissionRequest, *, trace: AdmissionTrace,
@@ -162,6 +178,13 @@ class DeliveryAdmissionService:
         # Revalidate the RP-1 constructor graph by using its typed properties;
         # no dict/wire/JSON path and no Router dependency exists here.
         plan = request.plan
+        evidence = plan.authorization_evidence
+        if not (
+            evidence.is_contract_test_authority()
+            if self._accept_contract_test_authority
+            else evidence.is_production_authority()
+        ):
+            _invalid("admit.authorization_authority")
         if compute_target_fingerprint(plan) != compute_target_fingerprint(request.plan):
             _invalid("admit.plan")
         now = self._clock.utc_now()

@@ -51,6 +51,7 @@ RP1_SCHEMA_VERSION = "rp-1"
 FALLBACK_SCORER_SOURCE = "runtime_fallback"
 FALLBACK_SCORER_VERSION = "fallback.v1"
 FALLBACK_SCORER_IDENTITY = RoutingScorerIdentity.fallback()
+_CONTRACT_TEST_ROUTER_AUTHORITY = object()
 
 
 class LocalRouter:
@@ -67,6 +68,7 @@ class LocalRouter:
         consistency_policy: RoutingConsistencyPolicy | None = None,
         plan_recorder: RoutingPlanRecorder | None = None,
         strong_authority: StrongRoutingPlanAuthority | None = None,
+        _authority: object | None = None,
     ) -> None:
         if not isinstance(connection_index, LocalConnectionIndex):
             _invalid("connection_index")
@@ -94,12 +96,26 @@ class LocalRouter:
         self._consistency = consistency_policy or LocalRoutingConsistencyPolicy()
         self._recorder = plan_recorder or NoopRoutingPlanRecorder()
         self._strong = strong_authority or UnavailableStrongRoutingPlanAuthority()
+        self._accept_contract_test_authority = (
+            _authority is _CONTRACT_TEST_ROUTER_AUTHORITY
+        )
+        if _authority not in {None, _CONTRACT_TEST_ROUTER_AUTHORITY}:
+            _invalid("authority")
         if not isinstance(self._consistency, RoutingConsistencyPolicy):
             _invalid("consistency_policy")
         if not isinstance(self._recorder, RoutingPlanRecorder):
             _invalid("plan_recorder")
         if not isinstance(self._strong, StrongRoutingPlanAuthority):
             _invalid("strong_authority")
+
+    @classmethod
+    def for_contract_tests(cls, **values: object) -> "LocalRouter":
+        """Explicit non-production router for sealed contract-test evidence."""
+
+        return cls(
+            **values,  # type: ignore[arg-type]
+            _authority=_CONTRACT_TEST_ROUTER_AUTHORITY,
+        )
 
     async def route(
         self,
@@ -109,6 +125,13 @@ class LocalRouter:
     ) -> RoutingDecision:
         if not isinstance(request, RoutingRequest):
             _invalid("request")
+        evidence = request.authorization_evidence
+        if not (
+            evidence.is_contract_test_authority()
+            if self._accept_contract_test_authority
+            else evidence.is_production_authority()
+        ):
+            _invalid("request.authorization_authority")
         if previous is not None and not isinstance(
             previous,
             PreviousRoutingPlanContext,

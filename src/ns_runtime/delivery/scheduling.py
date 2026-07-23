@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import math
+import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -47,8 +49,30 @@ class SendOutcome(str, Enum):
     ACK_WAITING = "ack_waiting"
     PRECHECK_FAILED = "precheck_failed"
     WRITE_FAILED = "write_failed"
+    WRITE_UNCERTAIN = "write_uncertain"
     OWNER_RISK = "owner_risk"
     WRITE_OUTCOME_UNKNOWN = "write_outcome_unknown"
+
+
+class DeliveryTransportWriteState(str, Enum):
+    NOT_STARTED = "not_started"
+    UNCERTAIN = "uncertain"
+    SUCCEEDED = "succeeded"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DeliveryTransportWriteResult:
+    state: DeliveryTransportWriteState
+    failure: DeliveryWriteFailure | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, DeliveryTransportWriteState):
+            _invalid("transport_write_result.state")
+        if self.state is DeliveryTransportWriteState.SUCCEEDED:
+            if self.failure is not None:
+                _invalid("transport_write_result.success")
+        elif not isinstance(self.failure, DeliveryWriteFailure):
+            _invalid("transport_write_result.failure")
 
 
 class LeaseRenewOutcome(str, Enum):
@@ -263,6 +287,7 @@ class ClaimResult:
 
 
 _PAYLOAD_ACCESS_EVIDENCE_ISSUER = object()
+_PAYLOAD_ACCESS_EVIDENCE_KEY = secrets.token_bytes(32)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, init=False)
@@ -273,12 +298,18 @@ class PayloadAccessDecisionEvidence:
     object_id: str
     object_version: str
     checksum: str
+    size_bytes: int
+    tenant_id: str = field(repr=False)
     target_fingerprint: str
+    admission_authority_reference: str = field(repr=False)
     permission_snapshot_reference: str = field(repr=False)
+    permission_snapshot_fingerprint: str = field(repr=False)
     iam_decision_reference: str = field(repr=False)
     iam_decision_version: str = field(repr=False)
     validated_at: datetime
     expires_at: datetime
+    _authority_seal: object = field(init=False, repr=False, compare=False)
+    _authority_signature: bytes = field(init=False, repr=False, compare=False)
 
     def __init__(
         self,
@@ -289,8 +320,12 @@ class PayloadAccessDecisionEvidence:
         object_id: str,
         object_version: str,
         checksum: str,
+        size_bytes: int,
+        tenant_id: str,
         target_fingerprint: str,
+        admission_authority_reference: str,
         permission_snapshot_reference: str,
+        permission_snapshot_fingerprint: str,
         iam_decision_reference: str,
         iam_decision_version: str,
         validated_at: datetime,
@@ -306,15 +341,26 @@ class PayloadAccessDecisionEvidence:
             ("object_id", object_id),
             ("object_version", object_version),
             ("checksum", checksum),
+            ("size_bytes", size_bytes),
+            ("tenant_id", tenant_id),
             ("target_fingerprint", target_fingerprint),
+            ("admission_authority_reference", admission_authority_reference),
             ("permission_snapshot_reference", permission_snapshot_reference),
+            ("permission_snapshot_fingerprint", permission_snapshot_fingerprint),
             ("iam_decision_reference", iam_decision_reference),
             ("iam_decision_version", iam_decision_version),
             ("validated_at", validated_at),
             ("expires_at", expires_at),
+            ("_authority_seal", _issuer),
+            ("_authority_signature", b""),
         ):
             object.__setattr__(self, name, value)
         self.__post_init__()
+        object.__setattr__(
+            self,
+            "_authority_signature",
+            _payload_access_authority_signature(self),
+        )
 
     def __post_init__(self) -> None:
         if type(self.allowed) is not bool:
@@ -322,10 +368,12 @@ class PayloadAccessDecisionEvidence:
         for name in (
             "evidence_fingerprint", "request_fingerprint", "object_id",
             "object_version", "checksum", "target_fingerprint",
+            "tenant_id", "admission_authority_reference",
             "permission_snapshot_reference", "iam_decision_reference",
-            "iam_decision_version",
+            "permission_snapshot_fingerprint", "iam_decision_version",
         ):
             _text(getattr(self, name), f"payload_access.{name}")
+        _nonnegative(self.size_bytes, "payload_access.size_bytes")
         validated_at = utc(self.validated_at, "payload_access.validated_at")
         expires_at = utc(self.expires_at, "payload_access.expires_at")
         if expires_at <= validated_at:
@@ -338,14 +386,28 @@ class PayloadAccessDecisionEvidence:
             object_id=self.object_id,
             object_version=self.object_version,
             checksum=self.checksum,
+            size_bytes=self.size_bytes,
+            tenant_id=self.tenant_id,
             target_fingerprint=self.target_fingerprint,
+            admission_authority_reference=self.admission_authority_reference,
             permission_snapshot_reference=self.permission_snapshot_reference,
+            permission_snapshot_fingerprint=self.permission_snapshot_fingerprint,
             iam_decision_reference=self.iam_decision_reference,
             iam_decision_version=self.iam_decision_version,
             validated_at=self.validated_at,
             expires_at=self.expires_at,
         ):
             _invalid("payload_access.evidence_fingerprint")
+
+    def is_production_authority(self) -> bool:
+        return (
+            type(self) is PayloadAccessDecisionEvidence
+            and self._authority_seal is _PAYLOAD_ACCESS_EVIDENCE_ISSUER
+            and hmac.compare_digest(
+                self._authority_signature,
+                _payload_access_authority_signature(self),
+            )
+        )
 
 
 def _issue_payload_access_decision_evidence(
@@ -357,6 +419,40 @@ def _issue_payload_access_decision_evidence(
         **values,  # type: ignore[arg-type]
         _issuer=_PAYLOAD_ACCESS_EVIDENCE_ISSUER,
     )
+
+
+def _payload_access_authority_signature(
+    evidence: PayloadAccessDecisionEvidence,
+) -> bytes:
+    payload = json.dumps({
+        "allowed": evidence.allowed,
+        "evidence_fingerprint": evidence.evidence_fingerprint,
+        "request_fingerprint": evidence.request_fingerprint,
+        "object_id": evidence.object_id,
+        "object_version": evidence.object_version,
+        "checksum": evidence.checksum,
+        "size_bytes": evidence.size_bytes,
+        "tenant_id": evidence.tenant_id,
+        "target_fingerprint": evidence.target_fingerprint,
+        "admission_authority_reference": (
+            evidence.admission_authority_reference
+        ),
+        "permission_snapshot_reference": (
+            evidence.permission_snapshot_reference
+        ),
+        "permission_snapshot_fingerprint": (
+            evidence.permission_snapshot_fingerprint
+        ),
+        "iam_decision_reference": evidence.iam_decision_reference,
+        "iam_decision_version": evidence.iam_decision_version,
+        "validated_at": evidence.validated_at.isoformat(),
+        "expires_at": evidence.expires_at.isoformat(),
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hmac.new(
+        _PAYLOAD_ACCESS_EVIDENCE_KEY,
+        payload,
+        hashlib.sha256,
+    ).digest()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -527,7 +623,7 @@ class DeliveryTransportWriter(ABC):
         *,
         target: LocalDeliveryTarget,
         payload: OutboundDeliveryPayload,
-    ) -> None:
+    ) -> DeliveryTransportWriteResult:
         raise NotImplementedError
 
 
@@ -582,15 +678,22 @@ def validate_payload_authority(
             result.object_id == evidence.object_id
             and result.object_version == evidence.object_version
             and type(access) is PayloadAccessDecisionEvidence
+            and access.is_production_authority()
             and access.allowed
             and access.request_fingerprint
             == payload_access_decision_request_fingerprint(delivery, target=target)
             and access.object_id == evidence.object_id
             and access.object_version == evidence.object_version
             and access.checksum == evidence.checksum
+            and access.size_bytes == evidence.size_bytes
+            and access.tenant_id == delivery.tenant_id
             and access.target_fingerprint == delivery.target_fingerprint
+            and access.admission_authority_reference
+            == delivery.policy_decision.request_fingerprint
             and access.permission_snapshot_reference
             == target.permission_snapshot_reference
+            and access.permission_snapshot_fingerprint
+            == target.access_decision_reference
             and access.iam_decision_version == target.permission_version
             and access.validated_at <= current < access.expires_at
             and evidence.expires_at is not None
@@ -615,6 +718,9 @@ def payload_access_decision_request_fingerprint(
         "object_id": evidence.object_id,
         "object_version": evidence.object_version,
         "checksum": evidence.checksum,
+        "size_bytes": evidence.size_bytes,
+        "tenant_id": delivery.tenant_id,
+        "admission_authority_reference": delivery.policy_decision.request_fingerprint,
         "request_binding_fingerprint": delivery.policy_decision.request_fingerprint,
         "target_binding_fingerprint": delivery.target_fingerprint,
         "target_runtime_id": target.runtime_id,
@@ -637,8 +743,12 @@ def payload_access_evidence_fingerprint(
     object_id: str,
     object_version: str,
     checksum: str,
+    size_bytes: int,
+    tenant_id: str,
     target_fingerprint: str,
+    admission_authority_reference: str,
     permission_snapshot_reference: str,
+    permission_snapshot_fingerprint: str,
     iam_decision_reference: str,
     iam_decision_version: str,
     validated_at: datetime,
@@ -650,8 +760,12 @@ def payload_access_evidence_fingerprint(
         "object_id": object_id,
         "object_version": object_version,
         "checksum": checksum,
+        "size_bytes": size_bytes,
+        "tenant_id": tenant_id,
         "target_fingerprint": target_fingerprint,
+        "admission_authority_reference": admission_authority_reference,
         "permission_snapshot_reference": permission_snapshot_reference,
+        "permission_snapshot_fingerprint": permission_snapshot_fingerprint,
         "iam_decision_reference": iam_decision_reference,
         "iam_decision_version": iam_decision_version,
         "validated_at": utc(validated_at, "payload_access.validated_at").isoformat(),
@@ -733,7 +847,8 @@ __all__ = (
     "ActivationResult", "ActivationSkipReason", "ClaimOutcome", "ClaimResult",
     "DeliveryClaim", "DeliveryPayloadResolver", "DeliveryPayloadValidator",
     "DeliveryResourceCounts", "DeliverySchedulingPolicy", "DeliveryTargetResolver",
-    "DeliveryTransportWriter",
+    "DeliveryTransportWriter", "DeliveryTransportWriteResult",
+    "DeliveryTransportWriteState",
     "LeaseRenewOutcome", "LeaseRenewResult", "LocalDeliveryTarget",
     "OutboundDeliveryMaterial", "OutboundDeliveryPayload", "OwnerRiskGuard",
     "PayloadAccessDecisionEvidence", "PayloadValidationResult",

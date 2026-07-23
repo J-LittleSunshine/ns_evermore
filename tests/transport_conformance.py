@@ -19,6 +19,8 @@ from ns_runtime.transport import (
     TransportCloseReason,
     TransportSession,
     TransportSessionState,
+    TransportWriteResult,
+    TransportWriteState,
 )
 
 
@@ -72,7 +74,11 @@ class TransportConformanceSuiteMixin:
             harness.session.send(message)
             for message in messages
         ))
-        self.assertEqual([None] * len(messages), results)  # type: ignore[attr-defined]
+        self.assertTrue(all(  # type: ignore[attr-defined]
+            type(result) is TransportWriteResult
+            and result.state is TransportWriteState.SUCCEEDED
+            for result in results
+        ))
         received = [
             await harness.client_receive_text()
             for _ in messages
@@ -111,4 +117,3 @@ class TransportConformanceSuiteMixin:
         closes = await asyncio.gather(*(harness.session.close() for _ in range(8)))
         self.assertTrue(all(item is closes[0] for item in closes))  # type: ignore[attr-defined]
         self.assertEqual(TransportCloseReason.NORMAL, closes[0].reason)  # type: ignore[attr-defined]
-
