@@ -2128,6 +2128,56 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - P13 DeadLetterRecord/replay/一般cancel/hold、P14 health scoring/fair scheduling、P17 leader lease/cluster fencing、Redis Cluster运行、master query、remote forwarding、跨runtime ownership均未实现；没有第二TaskSupervisor/event loop/shutdown owner。
 - Redis服务证据仍为standalone；Valkey只是driver compatibility，不声明valkey-server、Sentinel、Cluster、failover或replica read。production `task.dispatch`继续disabled。
 
+## P11-FIX-04 修复启动记录
+
+- 工作包：`P11-FIX-04`。
+- 状态：`IN_PROGRESS`；P10保持`VERIFIED/F3 (local only)`，P11既有VERIFIED结论在修复与联合复验期间撤回；P12继续`BLOCKED`，production `task.dispatch`继续disabled。
+- 开始时间：`2026-07-23`（Asia/Shanghai）。
+- 基线：分支`codex/ns-runtime-implementation`，启动HEAD与upstream均为`3ad2cd5d57d862f2177659e1d336164584b16be7`，worktree启动时干净。
+- 复核范围：prepared/ready/lease ordered-index跨调用及跨provider重建进展、同bucket stale投影原子修复与安全日志；transport成功后的completion异常全闭集reconcile；production payload_ref实时IAM access decision evidence及完整绑定。
+- 冻结边界：ENV-1、PC-1、IAM-R1、RP-1、P08 StateStore与P10 admission contract保持；不调用Router、不重选target、不修改RoutingPlan；不新增TaskSupervisor、event loop或shutdown owner。
+- 明确不实施：P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay/cancel/hold、P14健康/公平调度、P17 leader/cluster coordination、remote/master routing或production task.dispatch enable。
+- 恢复条件：源码与指定攻击面测试、真实Redis standalone/provider A-B恢复、P03-P11、asyncio/uvloop/backend全量、compileall/pip/diff/cold-import/banned scan全部通过并完成ADR/plan/log；任一证据缺失则保持`IN_PROGRESS`。
+
+## P11-FIX-04 最终验收记录
+
+- 工作包：`P11-FIX-04`。
+- 状态：`VERIFIED / F3 (local only)`；P10继续`VERIFIED/F3 (local only)`，P11恢复VERIFIED，P12继续`BLOCKED`，production `task.dispatch`继续disabled。
+- 完成时间：`2026-07-23`（Asia/Shanghai）。启动基线为`3ad2cd5d57d862f2177659e1d336164584b16be7`；本记录只有local verification，没有远程CI，不声明CI passed、production可靠可用或ACK可靠投递闭环完成。
+- 修改文件：implementation plan、ADR-043、本验收日志；`src/ns_runtime/connection/lifecycle.py`；`src/ns_runtime/delivery/payload_authority.py`、`scheduling.py`、`scheduling_store.py`、`workers.py`；`tests/test_runtime_delivery_scheduling.py`、`tests/test_redis_state_store_integration.py`。
+- ordered-index进展与修复：prepared、ready、lease及bucket rotation使用StateStore持久CAS cursor，跨调用、scheduler重建和Redis provider A/B继续推进；cursor失效按权威索引重锚。缺record/malformed、错误状态、owner缺失、foreign owner和旧lease score只在可证明投影分歧时同scope原子remove/repair，风险项写quarantine；安全日志只写member digest、固定reason和布尔元数据。backend unavailable或migration错误不触发误修复。
+- 写后对账：transport返回成功后的所有typed completion StateStore/state异常都重读DeliveryRecord与当前DeliveryAttempt，并校验attempt id/count、原claim token、fencing和owner epoch。已提交ACK_WAITING即使lease随后过期仍接受；仍为SENDING即使lease过期或owner被更高fencing替换也只转WRITE_UNCERTAIN；其他状态typed conflict或WRITE_OUTCOME_UNKNOWN，不重发、不伪造成功。
+- payload IAM evidence：新增production `IamDeliveryPayloadReferenceValidator`，实时调用`IamClient.validate_payload_ref`与`access_check`；typed `PayloadAccessDecisionEvidence`绑定对象/version/checksum、request、target/session/identity、当前permission snapshot/fingerprint/version、IAM decision/time/expiry。denied、expired、旧version、非法dependency及`dataclasses.replace()`篡改均在transport前fail closed。
+- 冻结边界：ENV-1、PC-1、IAM-R1、RP-1、P08 authority owner和P10 DR-1/prepared初始化未改变；没有调用Router、重选target、修改RoutingPlan，也没有新增TaskSupervisor、event loop或shutdown owner。
+
+### 实际测试命令与真实结果
+
+- P10/P11定向：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling`，最终`Ran 56 tests in 43.439s`，`OK`。新增覆盖prepared cursor跨scheduler重建、ready前16条existing wrong-status后第17条claim、lease前16条foreign owner后第17条恢复、stale repair安全日志、lease在transport返回后过期、已提交ACK后lease过期、高fencing replacement、production IAM evidence及公共replace篡改。
+- 真实Redis standalone：`PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_integration`，`Ran 16 tests in 44.692s`，`OK`；其中provider A/B专项单独复跑`Ran 1 test in 40.504s`，`OK`。关闭provider A后，全新provider B读取持久cursor并继续activation与claim；证据仍只表示Redis standalone。
+- 标准asyncio全树：`PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py' -q`，最终`Ran 848 tests in 128.535s`，`OK (skipped=1)`；跳过为既有平台条件。
+- runtime uvloop：按DEP-1排除Django-only `test_cache.py`，显式安装`uvloop.EventLoopPolicy()`后运行同一模块集，最终`Ran 837 tests in 148.447s`，`OK (skipped=1)`。
+- backend/Django全树首次运行`Ran 832 tests in 70.756s`，出现既有`test_django_timeout_default_uses_common_default_ttl` SQLite cache TTL时间敏感失败；该用例立即单独复跑`Ran 1 test in 1.273s`，`OK`，随后同一完整命令顺序复跑`Ran 832 tests in 71.132s`，`OK (skipped=50)`。该初次失败不计作通过且在此保留真实记录。
+- 依赖与静态：`python3 -m compileall -q src tests`、runtime/backend两个项目隔离环境`python -m pip check`、`git diff --check`均通过；cold import输出`DELIVERY_COLD_IMPORT=OK`，RP-1相对基线为`RP1_ZERO_DIFF=OK`，P12+禁止项新增源码扫描为`NO_MATCH`。未限定的系统`python3 -m pip check`另报告宿主`pygobject`缺少`pycairo`；该解释器不是项目隔离环境，未把此宿主依赖问题记为通过，项目要求的两环境均实际输出`No broken requirements found.`。
+
+### P11-W01至W11完成映射
+
+- W01：持久prepared cursor、bounded scan、跨provider继续推进和stale修复补齐既有分批激活、水位、版本与原因记录。
+- W02：ready cursor越过错误状态前缀后仍由权威事务唯一claim；多worker与duplicate claim保持。
+- W03：lease cursor越过不可恢复前缀并只恢复同local runtime；没有P17 fencing或伪造transfer。
+- W04：发送前继续重读status/owner/session/target/payload/config/expiry；payload_ref增加实时IAM证据完整绑定。
+- W05：queued -> sending和DeliveryAttempt继续同一事务；fake transport不能绕过。
+- W06-W07：ack deadline只记录；transport success只进入ack_waiting，写后异常按attempt authority对账。
+- W08：write failure继续typed一致；没有production retry_scheduled或dead letter。
+- W09：risk窗口继续阻止扩大写入；expired/higher-fencing post-write只进入uncertain或接受已提交ACK。
+- W10：prepared/queued/active/inflight计数迁移保持原子；新增cursor/repair不伪造资源计数。
+- W11：local experimental feature保持显式注入和默认false；P12前禁止production enable。
+
+### 未实现限制
+
+- P11只完成`prepared -> queued -> sending -> ack_waiting`以及typed waiting/failure/uncertain保护；transport write成功不等于delivery success。P12 ACK/NACK/Defer、AckRecord、ACK timeout scanner、retry worker/budget与delivery success终态均未实现。
+- P13 DeadLetterRecord/replay/一般cancel/hold、P14 health scoring/fair scheduling、P17 leader lease/cluster fencing、Redis Cluster运行、master query、remote forwarding、跨runtime ownership均未实现；没有第二TaskSupervisor/event loop/shutdown owner。
+- Valkey仍只是driver compatibility，不声明valkey-server、Sentinel、Cluster、failover或replica read；production `task.dispatch`继续disabled。
+
 ## 新记录模板
 
 - 工作包：

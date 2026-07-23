@@ -539,10 +539,26 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         scheduler_b = StateStoreDeliveryScheduler(store=store_b, clock=self.clock)
         recovered = await scheduler_b.load_claimed(claim=claimed.claim)
         self.assertEqual(claimed.claim.fencing, recovered.owner.fencing)
+        activated_b = await scheduler_b.activate_prepared(
+            tenant_id=plan.authorization_evidence.effective_tenant_id,
+            policy=policy,
+        )
+        self.assertEqual(1, len(activated_b.activated))
+        claimed_b = await ClaimWorker(
+            scheduler=scheduler_b,
+            policy=policy,
+            runtime_id=plan.selected_bindings[0].runtime_id,
+            worker_id="redis-provider-b",
+            token_factory=lambda: "redis-provider-b-claim",
+        ).run_once(
+            tenant_id=plan.authorization_evidence.effective_tenant_id,
+        )
+        self.assertIs(ClaimOutcome.CLAIMED, claimed_b.outcome)
+        self.assertNotEqual(claimed.claim.delivery_id, claimed_b.claim.delivery_id)
         counts = await scheduler_b.resource_counts(
             tenant_id=plan.authorization_evidence.effective_tenant_id,
         )
-        self.assertEqual((2, 1), (counts.prepared, counts.queued))
+        self.assertEqual((1, 2), (counts.prepared, counts.queued))
         await store_b.close()
 
     async def test_revision_order_and_schema_version_contract(self) -> None:

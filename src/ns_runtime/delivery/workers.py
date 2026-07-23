@@ -11,6 +11,7 @@ from typing import Callable
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import (
+    NsRuntimeDeliveryStateError,
     NsRuntimeStateStoreError,
     NsValidationError,
 )
@@ -306,6 +307,7 @@ class SendWorker:
             delivery,
             validation,
             target=target,
+            now=self._clock.utc_now(),
         ):
             return await self._precheck_failure(
                 claim,
@@ -392,10 +394,10 @@ class SendWorker:
                 claim=claim,
                 expected_state_version=transition.delivery.state_version,
             )
-        except NsRuntimeStateStoreError:
+        except (NsRuntimeStateStoreError, NsRuntimeDeliveryStateError):
             try:
                 reconciled = await self._scheduler.reconcile_write_completion(claim=claim)
-            except NsRuntimeStateStoreError:
+            except (NsRuntimeStateStoreError, NsRuntimeDeliveryStateError):
                 return SendResult(
                     outcome=SendOutcome.WRITE_OUTCOME_UNKNOWN,
                     delivery=transition.delivery,

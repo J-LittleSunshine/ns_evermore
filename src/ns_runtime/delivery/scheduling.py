@@ -263,6 +263,61 @@ class ClaimResult:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class PayloadAccessDecisionEvidence:
+    allowed: bool
+    evidence_fingerprint: str
+    request_fingerprint: str
+    object_id: str
+    object_version: str
+    checksum: str
+    target_fingerprint: str
+    permission_snapshot_reference: str = field(repr=False)
+    iam_decision_reference: str = field(repr=False)
+    iam_decision_version: str = field(repr=False)
+    validated_at: datetime
+    expires_at: datetime
+
+    def __post_init__(self) -> None:
+        if type(self.allowed) is not bool:
+            _invalid("payload_access.allowed")
+        for name in (
+            "evidence_fingerprint", "request_fingerprint", "object_id",
+            "object_version", "checksum", "target_fingerprint",
+            "permission_snapshot_reference", "iam_decision_reference",
+            "iam_decision_version",
+        ):
+            _text(getattr(self, name), f"payload_access.{name}")
+        validated_at = utc(self.validated_at, "payload_access.validated_at")
+        expires_at = utc(self.expires_at, "payload_access.expires_at")
+        if expires_at <= validated_at:
+            _invalid("payload_access.expires_at")
+        object.__setattr__(self, "validated_at", validated_at)
+        object.__setattr__(self, "expires_at", expires_at)
+        if self.iam_decision_reference != payload_access_decision_reference(
+            allowed=self.allowed,
+            request_fingerprint=self.request_fingerprint,
+            permission_snapshot_reference=self.permission_snapshot_reference,
+            iam_decision_version=self.iam_decision_version,
+            validated_at=self.validated_at,
+        ):
+            _invalid("payload_access.iam_decision_reference")
+        if self.evidence_fingerprint != payload_access_evidence_fingerprint(
+            allowed=self.allowed,
+            request_fingerprint=self.request_fingerprint,
+            object_id=self.object_id,
+            object_version=self.object_version,
+            checksum=self.checksum,
+            target_fingerprint=self.target_fingerprint,
+            permission_snapshot_reference=self.permission_snapshot_reference,
+            iam_decision_reference=self.iam_decision_reference,
+            iam_decision_version=self.iam_decision_version,
+            validated_at=self.validated_at,
+            expires_at=self.expires_at,
+        ):
+            _invalid("payload_access.evidence_fingerprint")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PayloadValidationResult:
     valid: bool
     evidence_fingerprint: str
@@ -272,9 +327,10 @@ class PayloadValidationResult:
     tenant_id: str = field(repr=False)
     request_binding_fingerprint: str
     target_binding_fingerprint: str
-    target_permission_snapshot_reference: str = field(repr=False)
-    access_decision_request_fingerprint: str
-    target_access_decision_reference: str = field(repr=False)
+    access_decision_evidence: PayloadAccessDecisionEvidence | None = field(
+        default=None,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         if type(self.valid) is not bool:
@@ -282,15 +338,18 @@ class PayloadValidationResult:
         for name in (
             "evidence_fingerprint", "checksum", "tenant_id",
             "request_binding_fingerprint", "target_binding_fingerprint",
-            "target_permission_snapshot_reference",
-            "access_decision_request_fingerprint",
-            "target_access_decision_reference",
         ):
             _text(getattr(self, name), f"payload_validation.{name}")
         if self.object_id is not None:
             _text(self.object_id, "payload_validation.object_id")
         if self.object_version is not None:
             _text(self.object_version, "payload_validation.object_version")
+        if (
+            self.access_decision_evidence is not None
+            and type(self.access_decision_evidence)
+            is not PayloadAccessDecisionEvidence
+        ):
+            _invalid("payload_validation.access_decision_evidence")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -333,12 +392,15 @@ class LocalDeliveryTarget:
     protocol: ProtocolGroup
     protocol_schema_key: str
     access_decision_reference: str = field(repr=False)
+    permission_snapshot_reference: str = field(repr=False)
+    permission_version: str = field(repr=False)
 
     def __post_init__(self) -> None:
         for name in (
             "runtime_id", "connection_id", "session_id", "tenant_id", "identity",
             "protocol_schema_key",
             "access_decision_reference",
+            "permission_snapshot_reference", "permission_version",
         ):
             _text(getattr(self, name), f"target.{name}")
         _nonnegative(self.connection_epoch, "target.connection_epoch")
@@ -454,6 +516,7 @@ def validate_payload_authority(
     result: PayloadValidationResult,
     *,
     target: LocalDeliveryTarget,
+    now: datetime,
 ) -> bool:
     if (not isinstance(delivery, DeliveryRecord)
             or not isinstance(result, PayloadValidationResult)
@@ -468,18 +531,34 @@ def validate_payload_authority(
         or result.request_binding_fingerprint
         != delivery.policy_decision.request_fingerprint
         or result.target_binding_fingerprint != delivery.target_fingerprint
-        or result.target_permission_snapshot_reference
-        != target.access_decision_reference
-        or result.access_decision_request_fingerprint
-        != payload_access_decision_request_fingerprint(delivery, target=target)
     ):
         return False
     if evidence.kind is PayloadKind.REFERENCE:
+        access = result.access_decision_evidence
+        current = utc(now, "payload_authority.now")
         return (
             result.object_id == evidence.object_id
             and result.object_version == evidence.object_version
+            and type(access) is PayloadAccessDecisionEvidence
+            and access.allowed
+            and access.request_fingerprint
+            == payload_access_decision_request_fingerprint(delivery, target=target)
+            and access.object_id == evidence.object_id
+            and access.object_version == evidence.object_version
+            and access.checksum == evidence.checksum
+            and access.target_fingerprint == delivery.target_fingerprint
+            and access.permission_snapshot_reference
+            == target.permission_snapshot_reference
+            and access.iam_decision_version == target.permission_version
+            and access.validated_at <= current < access.expires_at
+            and evidence.expires_at is not None
+            and current < evidence.expires_at
         )
-    return result.object_id is None and result.object_version is None
+    return (
+        result.object_id is None
+        and result.object_version is None
+        and result.access_decision_evidence is None
+    )
 
 
 def payload_access_decision_request_fingerprint(
@@ -502,7 +581,57 @@ def payload_access_decision_request_fingerprint(
         "target_connection_epoch": target.connection_epoch,
         "target_tenant_id": target.tenant_id,
         "target_identity": target.identity,
-        "current_permission_snapshot_reference": target.access_decision_reference,
+        "current_permission_snapshot_reference": target.permission_snapshot_reference,
+        "current_permission_version": target.permission_version,
+        "current_permission_snapshot_fingerprint": target.access_decision_reference,
+    }, sort_keys=True, separators=(",", ":")).encode()
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def payload_access_decision_reference(
+    *,
+    allowed: bool,
+    request_fingerprint: str,
+    permission_snapshot_reference: str,
+    iam_decision_version: str,
+    validated_at: datetime,
+) -> str:
+    raw = json.dumps({
+        "allowed": allowed,
+        "request_fingerprint": request_fingerprint,
+        "permission_snapshot_reference": permission_snapshot_reference,
+        "iam_decision_version": iam_decision_version,
+        "validated_at": utc(validated_at, "payload_access.validated_at").isoformat(),
+    }, sort_keys=True, separators=(",", ":")).encode()
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def payload_access_evidence_fingerprint(
+    *,
+    allowed: bool,
+    request_fingerprint: str,
+    object_id: str,
+    object_version: str,
+    checksum: str,
+    target_fingerprint: str,
+    permission_snapshot_reference: str,
+    iam_decision_reference: str,
+    iam_decision_version: str,
+    validated_at: datetime,
+    expires_at: datetime,
+) -> str:
+    raw = json.dumps({
+        "allowed": allowed,
+        "request_fingerprint": request_fingerprint,
+        "object_id": object_id,
+        "object_version": object_version,
+        "checksum": checksum,
+        "target_fingerprint": target_fingerprint,
+        "permission_snapshot_reference": permission_snapshot_reference,
+        "iam_decision_reference": iam_decision_reference,
+        "iam_decision_version": iam_decision_version,
+        "validated_at": utc(validated_at, "payload_access.validated_at").isoformat(),
+        "expires_at": utc(expires_at, "payload_access.expires_at").isoformat(),
     }, sort_keys=True, separators=(",", ":")).encode()
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
@@ -583,7 +712,10 @@ __all__ = (
     "DeliveryTransportWriter",
     "LeaseRenewOutcome", "LeaseRenewResult", "LocalDeliveryTarget",
     "OutboundDeliveryMaterial", "OutboundDeliveryPayload", "OwnerRiskGuard",
-    "PayloadValidationResult", "SendOutcome", "SendResult", "SendingTransition",
-    "payload_access_decision_request_fingerprint", "policy_message_group",
+    "PayloadAccessDecisionEvidence", "PayloadValidationResult",
+    "SendOutcome", "SendResult", "SendingTransition",
+    "payload_access_decision_reference",
+    "payload_access_decision_request_fingerprint",
+    "payload_access_evidence_fingerprint", "policy_message_group",
     "validate_outbound_payload", "validate_payload_authority",
 )

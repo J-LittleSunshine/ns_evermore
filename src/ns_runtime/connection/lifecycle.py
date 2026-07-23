@@ -367,6 +367,12 @@ class ConnectionLifecycleManager:
                 ).hexdigest()
                 if context is not None else "inactive"
             ),
+            permission_snapshot_reference=(
+                context.permission_snapshot_ref if context is not None else "inactive"
+            ),
+            permission_version=(
+                context.permission_version if context is not None else "inactive"
+            ),
         )
 
     async def write_local_delivery(self, *, target, payload) -> None:
@@ -399,6 +405,9 @@ class ConnectionLifecycleManager:
                  context.protocol_version.patch)
             == (target.protocol.major, target.protocol.minor, target.protocol.patch)
             and context.protocol_schema_key == target.protocol_schema_key
+            and context.permission_snapshot_ref
+            == target.permission_snapshot_reference
+            and context.permission_version == target.permission_version
             and target.access_decision_reference == "sha256:" + hashlib.sha256(
                 (context.permission_snapshot_ref + "\0"
                  + context.permission_digest + "\0"
