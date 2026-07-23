@@ -38,6 +38,11 @@ from ns_common.state_store import (
     StateTransactionResult,
 )
 from ns_common.time import Clock
+from ns_common.state_store.authority import (
+    _issue_state_access_scope,
+    _new_state_scope_issuer,
+)
+from ns_common.state_store.composition import StateStoreComposition
 
 
 class DeterministicStateStoreContractModel(StateStore):
@@ -50,10 +55,16 @@ class DeterministicStateStoreContractModel(StateStore):
         capabilities: StateStoreCapabilities | None = None,
         events: list[str] | None = None,
     ) -> None:
+        self._contract_scope_issuer = _new_state_scope_issuer(
+            contract_test=True,
+        )
+        self._repository_owner = object()
         super().__init__(
             capabilities=capabilities or StateStoreCapabilities.p08_contract(),
             clock=clock,
             _contract_test_authority=True,
+            _scope_issuer=self._contract_scope_issuer,
+            _repository_owner=self._repository_owner,
         )
         self.clock = clock
         self.events = events
@@ -111,11 +122,18 @@ class DeterministicStateStoreContractModel(StateStore):
         caller,
         capabilities,
     ) -> StateAccessScope:
-        return self._issue_access_scope(
+        return _issue_state_access_scope(
+            self._contract_scope_issuer,
             atomic_scope=atomic_scope,
             authority=authority,
             caller=caller,
             capabilities=capabilities,
+        )
+
+    def repository_composition(self) -> StateStoreComposition:
+        return StateStoreComposition(
+            store=self,
+            owner=self._repository_owner,
         )
 
     async def _open(self) -> None:
@@ -248,8 +266,10 @@ class DeterministicStateStoreContractModel(StateStore):
                 revision = self._next_revision()
                 entries.append((append.document, revision))
                 positions.append(len(entries))
-            result = StateTransactionResult(
-                records=records, log_positions=tuple(positions),
+            result = StateTransactionResult.for_transaction(
+                transaction,
+                records=records,
+                log_positions=tuple(positions),
             )
             if self.indeterminate_after_transaction:
                 self.indeterminate_after_transaction = False

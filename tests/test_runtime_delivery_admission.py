@@ -720,7 +720,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             clock=clock, capabilities=StateStoreCapabilities.p10_contract(),
         )
         await model.open()
-        store = StateStoreDeliveryAdmissionStore(model)
+        store = _state_admission_store(model)
         service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
@@ -768,7 +768,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",
             ),
-            store=StateStoreDeliveryAdmissionStore(model),
+            store=_state_admission_store(model),
             payload_ref_client=_PayloadClient(clock), clock=clock,
             identifier_factory=_ids,
         )
@@ -824,7 +824,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",
             ),
-            store=StateStoreDeliveryAdmissionStore(model),
+            store=_state_admission_store(model),
             payload_ref_client=_PayloadClient(clock), clock=clock,
             identifier_factory=_ids,
         )
@@ -866,7 +866,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",
             ),
-            store=StateStoreDeliveryAdmissionStore(failing),
+            store=_state_admission_store(failing),
             payload_ref_client=_PayloadClient(clock), clock=clock,
             identifier_factory=_ids,
         )
@@ -900,3 +900,11 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+def _state_admission_store(model):
+    repositories = model.repository_composition().delivery_repositories(
+        runtime_id="runtime-local",
+    )
+    return StateStoreDeliveryAdmissionStore(
+        repository=repositories.admission,
+        registry_repository=repositories.registry,
+    )

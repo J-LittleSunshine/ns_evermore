@@ -4,6 +4,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import json
+import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -95,6 +99,91 @@ class ContractTestIamAuthorizationAdapter(ABC):
         raise NotImplementedError
 
 
+@dataclass(frozen=True, slots=True, kw_only=True, init=False)
+class MessageAuthorizationResult:
+    """One service-issued result bound to its exact request and snapshots."""
+
+    request: IamAccessCheckRequest
+    session_snapshot: PermissionSnapshot
+    effective_snapshot: PermissionSnapshot
+    decision: IamAccessDecision
+    risk: OperationRiskContext
+    _service: object
+    _signature: bytes
+
+    def __init__(
+        self,
+        *,
+        request: IamAccessCheckRequest,
+        session_snapshot: PermissionSnapshot,
+        effective_snapshot: PermissionSnapshot,
+        decision: IamAccessDecision,
+        risk: OperationRiskContext,
+        _service: object | None = None,
+        _signature: bytes | None = None,
+        _construction_token: object | None = None,
+    ) -> None:
+        if (
+            type(self) is not MessageAuthorizationResult
+            or type(_service) is not MessageAuthorizationService
+            or not isinstance(_signature, bytes)
+            or not _service._consume_authorization_result_token(
+                _construction_token,
+            )
+        ):
+            _invalid("authorization_result.issuer")
+        for name, value in (
+            ("request", request),
+            ("session_snapshot", session_snapshot),
+            ("effective_snapshot", effective_snapshot),
+            ("decision", decision),
+            ("risk", risk),
+            ("_service", _service),
+            ("_signature", _signature),
+        ):
+            object.__setattr__(self, name, value)
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, IamAccessCheckRequest):
+            _invalid("authorization_result.request")
+        if not isinstance(self.session_snapshot, PermissionSnapshot):
+            _invalid("authorization_result.session_snapshot")
+        if not isinstance(self.effective_snapshot, PermissionSnapshot):
+            _invalid("authorization_result.effective_snapshot")
+        if not isinstance(self.decision, IamAccessDecision) or not self.decision.allowed:
+            _invalid("authorization_result.decision")
+        if not isinstance(self.risk, OperationRiskContext):
+            _invalid("authorization_result.risk")
+
+    def is_issued_by(self, service: "MessageAuthorizationService") -> bool:
+        if type(service) is not MessageAuthorizationService:
+            return False
+        try:
+            expected = service._authorization_result_signature(
+                request=self.request,
+                session_snapshot=self.session_snapshot,
+                effective_snapshot=self.effective_snapshot,
+                decision=self.decision,
+                risk=self.risk,
+            )
+        except (AttributeError, NsValidationError):
+            return False
+        return bool(
+            type(self) is MessageAuthorizationResult
+            and self._service is service
+            and hmac.compare_digest(self._signature, expected)
+        )
+
+    def __copy__(self) -> "MessageAuthorizationResult":
+        del self
+        _invalid("authorization_result.copy")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "MessageAuthorizationResult":
+        del self, memo
+        _invalid("authorization_result.copy")
+
+
 class MessageAuthorizationService:
     """Perform tenant hard check, then permission check, before any processor."""
 
@@ -122,6 +211,7 @@ class MessageAuthorizationService:
             unavailable_policy=unavailable_policy,
             authority_issuer=_PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER,
         )
+        iam_client._bind_authorization_service(self)
 
     @classmethod
     def for_contract_tests(
@@ -186,6 +276,8 @@ class MessageAuthorizationService:
         self._refresher = snapshot_refresher
         self._unavailable = unavailable_policy or BackendUnavailablePolicy()
         self._authority_issuer = authority_issuer
+        self._authorization_result_key = secrets.token_bytes(32)
+        self._pending_authorization_result_token: object | None = None
         self._decisions: dict[tuple[object, ...], tuple[IamAccessDecision, float]] = {}
         self._invalidations: dict[str, PermissionInvalidation] = {}
         self._lock = asyncio.Lock()
@@ -215,6 +307,7 @@ class MessageAuthorizationService:
             return bool(
                 type(getattr(self, "_iam", None)) is IamClient
                 and self._iam._is_production_adapter()
+                and self._iam._owns_authorization_service(self)
             )
         return isinstance(
             getattr(self, "_iam", None),
@@ -229,13 +322,23 @@ class MessageAuthorizationService:
             if key[0] == event.permission_snapshot_ref:
                 del self._decisions[key]
 
+    def __copy__(self) -> "MessageAuthorizationService":
+        _invalid("authorization_service.copy")
+
+    def __deepcopy__(
+        self,
+        memo: dict[int, object],
+    ) -> "MessageAuthorizationService":
+        del memo
+        _invalid("authorization_service.copy")
+
     async def authorize(
         self,
         *,
         snapshot: PermissionSnapshot,
         request: IamAccessCheckRequest,
         risk: OperationRiskContext,
-    ) -> tuple[PermissionSnapshot, IamAccessDecision]:
+    ) -> MessageAuthorizationResult:
         if not isinstance(snapshot, PermissionSnapshot):
             _invalid("snapshot")
         if not isinstance(request, IamAccessCheckRequest):
@@ -278,7 +381,13 @@ class MessageAuthorizationService:
             and cached is not None
             and not effective_risk.requires_backend_authority
         ):
-            return effective, self._require_allow(cached)
+            return self._issue_authorization_result(
+                request=request,
+                session_snapshot=snapshot,
+                effective_snapshot=effective,
+                decision=self._require_allow(cached),
+                risk=effective_risk,
+            )
         try:
             decision = await self._iam.access_check(request)
         except NsRuntimeIamUnavailableError:
@@ -289,7 +398,13 @@ class MessageAuthorizationService:
                 snapshot_current=effective.is_current(now),
                 risk=effective_risk,
             )
-            return effective, degraded
+            return self._issue_authorization_result(
+                request=request,
+                session_snapshot=snapshot,
+                effective_snapshot=effective,
+                decision=degraded,
+                risk=effective_risk,
+            )
         if decision.permission_version != effective.permission_version:
             self._drop_snapshot_decisions(effective.permission_snapshot_ref)
             raise _denied("permission_version_changed")
@@ -299,7 +414,80 @@ class MessageAuthorizationService:
         if self._mode is AuthorizationMode.CACHE:
             async with self._lock:
                 self._decisions[key] = (decision, self._clock.monotonic())
-        return effective, self._require_allow(decision)
+        return self._issue_authorization_result(
+            request=request,
+            session_snapshot=snapshot,
+            effective_snapshot=effective,
+            decision=self._require_allow(decision),
+            risk=effective_risk,
+        )
+
+    def _issue_authorization_result(
+        self,
+        *,
+        request: IamAccessCheckRequest,
+        session_snapshot: PermissionSnapshot,
+        effective_snapshot: PermissionSnapshot,
+        decision: IamAccessDecision,
+        risk: OperationRiskContext,
+    ) -> MessageAuthorizationResult:
+        signature = self._authorization_result_signature(
+            request=request,
+            session_snapshot=session_snapshot,
+            effective_snapshot=effective_snapshot,
+            decision=decision,
+            risk=risk,
+        )
+        token = object()
+        self._pending_authorization_result_token = token
+        try:
+            return MessageAuthorizationResult(
+                request=request,
+                session_snapshot=session_snapshot,
+                effective_snapshot=effective_snapshot,
+                decision=decision,
+                risk=risk,
+                _service=self,
+                _signature=signature,
+                _construction_token=token,
+            )
+        finally:
+            self._pending_authorization_result_token = None
+
+    def _consume_authorization_result_token(self, token: object) -> bool:
+        return (
+            token is not None
+            and self._pending_authorization_result_token is token
+        )
+
+    def _authorization_result_signature(
+        self,
+        *,
+        request: IamAccessCheckRequest,
+        session_snapshot: PermissionSnapshot,
+        effective_snapshot: PermissionSnapshot,
+        decision: IamAccessDecision,
+        risk: OperationRiskContext,
+    ) -> bytes:
+        if not self._has_authority(getattr(self, "_authority_issuer", None)):
+            _invalid("authorization_result.service")
+        payload = json.dumps({
+            "request": request.to_wire(),
+            "session_snapshot": _snapshot_binding(session_snapshot),
+            "effective_snapshot": _snapshot_binding(effective_snapshot),
+            "decision": decision.to_wire(),
+            "risk": {
+                "high_risk_control": risk.high_risk_control,
+                "cross_tenant": risk.cross_tenant,
+                "new_configuration": risk.new_configuration,
+                "global_coordination_write": risk.global_coordination_write,
+            },
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hmac.new(
+            self._authorization_result_key,
+            payload,
+            hashlib.sha256,
+        ).digest()
 
     async def _refresh_if_invalidated(
         self,
@@ -399,6 +587,25 @@ def _denied(reason: str) -> NsRuntimeIamDeniedError:
     )
 
 
+def _snapshot_binding(snapshot: PermissionSnapshot) -> dict[str, object]:
+    if not isinstance(snapshot, PermissionSnapshot):
+        _invalid("authorization_result.snapshot")
+    return {
+        "identity": snapshot.identity,
+        "tenant_id": snapshot.tenant_id,
+        "principal_type": snapshot.principal_type.value,
+        "component_type": snapshot.component_type,
+        "capabilities": sorted(snapshot.capabilities),
+        "permission_snapshot_ref": snapshot.permission_snapshot_ref,
+        "permission_digest": snapshot.permission_digest,
+        "permission_version": snapshot.permission_version,
+        "iam_mode": snapshot.iam_mode,
+        "issued_at": snapshot.issued_at.isoformat(),
+        "expires_at": snapshot.expires_at.isoformat(),
+        "resume_eligible": snapshot.resume_eligible,
+    }
+
+
 def _invalid(field_name: str) -> None:
     raise NsValidationError(
         "Runtime authorization value is invalid.",
@@ -409,5 +616,6 @@ def _invalid(field_name: str) -> None:
 __all__ = (
     "AuthorizationMode", "BackendUnavailablePolicy",
     "ContractTestIamAuthorizationAdapter",
-    "MessageAuthorizationService", "OperationRiskContext", "SnapshotRefresher",
+    "MessageAuthorizationResult", "MessageAuthorizationService",
+    "OperationRiskContext", "SnapshotRefresher",
 )

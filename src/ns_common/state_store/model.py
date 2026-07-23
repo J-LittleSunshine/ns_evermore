@@ -5,6 +5,10 @@ from __future__ import annotations
 
 import math
 import re
+import hashlib
+import hmac
+import json
+import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -392,6 +396,16 @@ class StateTransaction:
     log_appends: tuple[StateTransitionLogAppend, ...] = ()
     record_assertions: tuple[StateRecordReadAssertion, ...] = ()
     ordered_index_assertions: tuple[StateOrderedIndexReadAssertion, ...] = ()
+    _result_binding: object = field(
+        default_factory=object, init=False, repr=False, compare=False,
+    )
+    _result_key: bytes = field(
+        default_factory=lambda: secrets.token_bytes(32),
+        init=False, repr=False, compare=False,
+    )
+    _pending_result_token: object | None = field(
+        default=None, init=False, repr=False, compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, StateAccessScope):
@@ -433,13 +447,89 @@ class StateTransaction:
         if len(set(asserted_index_members)) != len(asserted_index_members):
             _invalid("transaction.duplicate_ordered_index_assertion")
 
+    def _begin_result_construction(self) -> object:
+        token = object()
+        object.__setattr__(self, "_pending_result_token", token)
+        return token
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+    def _consume_result_token(self, token: object) -> bool:
+        return token is not None and self._pending_result_token is token
+
+    def _end_result_construction(self, token: object) -> None:
+        if self._pending_result_token is token:
+            object.__setattr__(self, "_pending_result_token", None)
+
+    def __copy__(self) -> "StateTransaction":
+        del self
+        _invalid("transaction.copy")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "StateTransaction":
+        del self, memo
+        _invalid("transaction.copy")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, init=False)
 class StateTransactionResult:
     records: tuple[StateRecord | None, ...]
     log_positions: tuple[int, ...] = ()
+    transaction_fingerprint: str
+    _transaction_identity: StateTransaction = field(repr=False, compare=False)
+    _transaction_binding: object = field(repr=False, compare=False)
+    _binding_signature: bytes = field(repr=False, compare=False)
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        records: tuple[StateRecord | None, ...],
+        log_positions: tuple[int, ...] = (),
+        _transaction: StateTransaction | None = None,
+        _construction_token: object | None = None,
+    ) -> None:
+        if (
+            type(self) is not StateTransactionResult
+            or type(_transaction) is not StateTransaction
+            or not _transaction._consume_result_token(_construction_token)
+        ):
+            _invalid("transaction_result.issuer")
+        transaction_fingerprint = _state_transaction_fingerprint(_transaction)
+        for name, value in (
+            ("records", records),
+            ("log_positions", log_positions),
+            ("transaction_fingerprint", transaction_fingerprint),
+            ("_transaction_identity", _transaction),
+            ("_transaction_binding", _transaction._result_binding),
+            ("_binding_signature", b""),
+        ):
+            object.__setattr__(self, name, value)
+        self._validate_for_transaction(_transaction)
+        object.__setattr__(
+            self,
+            "_binding_signature",
+            _state_transaction_result_signature(self, _transaction),
+        )
+
+    @classmethod
+    def for_transaction(
+        cls,
+        transaction: StateTransaction,
+        *,
+        records: tuple[StateRecord | None, ...],
+        log_positions: tuple[int, ...] = (),
+    ) -> "StateTransactionResult":
+        if cls is not StateTransactionResult or type(transaction) is not StateTransaction:
+            _invalid("transaction_result.transaction")
+        token = transaction._begin_result_construction()
+        try:
+            return cls(
+                records=records,
+                log_positions=log_positions,
+                _transaction=transaction,
+                _construction_token=token,
+            )
+        finally:
+            transaction._end_result_construction(token)
+
+    def _validate_for_transaction(self, transaction: StateTransaction) -> None:
         if not isinstance(self.records, tuple) or any(
             value is not None and not isinstance(value, StateRecord)
             for value in self.records
@@ -450,6 +540,125 @@ class StateTransactionResult:
             for value in self.log_positions
         ):
             _invalid("transaction_result.log_positions")
+        if len(self.records) != len(transaction.mutations):
+            _invalid("transaction_result.records_cardinality")
+        if len(self.log_positions) != len(transaction.log_appends):
+            _invalid("transaction_result.log_positions_cardinality")
+        for mutation, record in zip(transaction.mutations, self.records):
+            if mutation.kind is StateMutationKind.DELETE:
+                if record is not None:
+                    _invalid("transaction_result.deleted_record")
+                continue
+            if (
+                not isinstance(record, StateRecord)
+                or record.key != mutation.key
+                or record.document != mutation.document
+            ):
+                _invalid("transaction_result.record_binding")
+        if (
+            self.transaction_fingerprint
+            != _state_transaction_fingerprint(transaction)
+        ):
+            _invalid("transaction_result.transaction_fingerprint")
+
+    def is_for_transaction(self, transaction: StateTransaction) -> bool:
+        if type(transaction) is not StateTransaction:
+            return False
+        try:
+            self._validate_for_transaction(transaction)
+        except NsValidationError:
+            return False
+        return bool(
+            type(self) is StateTransactionResult
+            and self._transaction_identity is transaction
+            and self._transaction_binding is transaction._result_binding
+            and hmac.compare_digest(
+                self._binding_signature,
+                _state_transaction_result_signature(self, transaction),
+            )
+        )
+
+    def __copy__(self) -> "StateTransactionResult":
+        del self
+        _invalid("transaction_result.copy")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "StateTransactionResult":
+        del self, memo
+        _invalid("transaction_result.copy")
+
+
+def _state_transaction_fingerprint(transaction: StateTransaction) -> str:
+    def document_value(document: StateDocument | None) -> object:
+        if document is None:
+            return None
+        return {
+            "schema_name": document.schema_name,
+            "schema_version": document.schema_version,
+            "state_version": document.state_version,
+            "epoch": document.epoch,
+            "payload_sha256": hashlib.sha256(document.payload).hexdigest(),
+        }
+
+    payload = {
+        "scope": {
+            "namespace": repr(transaction.scope.namespace),
+            "partition": transaction.scope.atomic_scope.partition,
+            "authority": transaction.scope.authority.value,
+            "caller": transaction.scope.caller,
+            "capabilities": sorted(
+                capability.value for capability in transaction.scope.capabilities
+            ),
+        },
+        "mutations": [{
+            "key": repr(value.key),
+            "kind": value.kind.value,
+            "assertion": repr(value.assertion),
+            "document": document_value(value.document),
+        } for value in transaction.mutations],
+        "ordered_index_mutations": [
+            repr(value) for value in transaction.ordered_index_mutations
+        ],
+        "log_appends": [{
+            "key": repr(value.key),
+            "document": document_value(value.document),
+        } for value in transaction.log_appends],
+        "record_assertions": [
+            repr(value) for value in transaction.record_assertions
+        ],
+        "ordered_index_assertions": [
+            repr(value) for value in transaction.ordered_index_assertions
+        ],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _state_transaction_result_signature(
+    result: StateTransactionResult,
+    transaction: StateTransaction,
+) -> bytes:
+    payload = json.dumps({
+        "transaction_fingerprint": result.transaction_fingerprint,
+        "records": [
+            None if record is None else {
+                "key": repr(record.key),
+                "document": {
+                    "schema_name": record.document.schema_name,
+                    "schema_version": record.document.schema_version,
+                    "state_version": record.document.state_version,
+                    "epoch": record.document.epoch,
+                    "payload_sha256": hashlib.sha256(
+                        record.document.payload,
+                    ).hexdigest(),
+                },
+                "revision": record.revision._provider_token(),
+                "committed_at": record.committed_at.isoformat(),
+            }
+            for record in result.records
+        ],
+        "log_positions": result.log_positions,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hmac.new(transaction._result_key, payload, hashlib.sha256).digest()
 
 
 class StateConsistency(str, Enum):

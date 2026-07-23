@@ -44,8 +44,8 @@ from .contracts import (
     RoutingPreparation,
     RoutingPreparationOutcome,
     RoutingPreparationResult,
+    _ProductionAuthorizationEvidenceIssuer,
     _issue_contract_test_authorization_evidence,
-    _issue_production_authorization_evidence,
 )
 from .event_bus import EventBus
 from .pipeline import ProcessorExecutionResult, ProcessorPipeline, build_standard_stage_processors
@@ -111,6 +111,11 @@ class IamProcessorAuthorization(ProcessorAuthorization):
         self._service = service
         self._registry = protocol_registry
         self._production_authority = production_authority
+        self._evidence_issuer = (
+            _ProductionAuthorizationEvidenceIssuer(service)
+            if production_authority
+            else None
+        )
 
     async def authorize(
         self,
@@ -169,17 +174,18 @@ class IamProcessorAuthorization(ProcessorAuthorization):
             expires_at=session.session_expires_at,
             resume_eligible=session.resume_eligible,
         )
-        effective, decision = await self._service.authorize(
+        result = await self._service.authorize(
             snapshot=snapshot,
             request=request,
             risk=_risk_context(contract, crosses_tenant=crosses_tenant),
         )
+        if self._production_authority:
+            if type(self._evidence_issuer) is not _ProductionAuthorizationEvidenceIssuer:
+                _invalid("authorization.evidence_issuer")
+            return self._evidence_issuer.issue(result, context)
         return _authorization_evidence(
             context=context,
-            request=request,
-            effective_snapshot=effective,
-            decision=decision,
-            production_authority=self._production_authority,
+            result=result,
         )
 
 
@@ -254,6 +260,8 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
             ),
             message_reference=message_reference,
             message_type=context.envelope.message.type,
+            config_version=context.config_version,
+            policy_version=context.policy_version,
             principal_tenant_id=context.session.tenant_id,
             effective_tenant_id=(target_tenant if crosses_tenant else context.session.tenant_id),
             cross_tenant_authorized=(
@@ -571,18 +579,15 @@ def _target_context(context: ProcessorContext) -> IamTargetContext:
 def _authorization_evidence(
     *,
     context: ProcessorContext,
-    request: IamAccessCheckRequest,
-    effective_snapshot: object,
-    decision: object,
-    production_authority: bool,
+    result: object,
 ) -> AuthorizationDecisionEvidence:
-    from ns_common.iam import IamAccessDecision
-    from ns_runtime.iam import PermissionSnapshot
+    from ns_runtime.iam import MessageAuthorizationResult
 
-    if not isinstance(effective_snapshot, PermissionSnapshot):
-        _invalid("authorization.effective_snapshot")
-    if not isinstance(decision, IamAccessDecision) or not decision.allowed:
-        _invalid("authorization.decision")
+    if type(result) is not MessageAuthorizationResult:
+        _invalid("authorization.result")
+    request = result.request
+    effective_snapshot = result.effective_snapshot
+    decision = result.decision
     message_reference = ProcessorSafeSummary.from_envelope(
         context.envelope,
     ).object_reference
@@ -602,18 +607,15 @@ def _authorization_evidence(
         effective_snapshot.permission_snapshot_ref
     )
     effective_request["permission_version"] = effective_snapshot.permission_version
-    issuer = (
-        _issue_production_authorization_evidence
-        if production_authority
-        else _issue_contract_test_authorization_evidence
-    )
-    return issuer(
+    return _issue_contract_test_authorization_evidence(
         decision_version="authorization-decision.v1",
         decision_outcome=AuthorizationDecisionOutcome.ALLOW,
         decision_reason=decision.reason,
         semantic_access_check_reference=_decision_digest(effective_request),
         message_reference=message_reference,
         message_type=context.envelope.message.type,
+        config_version=context.config_version,
+        policy_version=context.policy_version,
         principal_tenant_id=context.session.tenant_id,
         effective_tenant_id=effective_tenant_id,
         cross_tenant_authorized=(decision.allowed and request.cross_tenant),

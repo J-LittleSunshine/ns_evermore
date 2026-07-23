@@ -577,6 +577,76 @@ class NsHttpClientOwnerState(str, Enum):
     CLOSED = "closed"
 
 
+class _NsHttpClientAuthorityBinding:
+    """Opaque owner-issued proof for one unmodified production HTTP client."""
+
+    __slots__ = (
+        "_owner", "_client", "_composition", "_transport_identity",
+    )
+
+    def __init__(
+        self,
+        *,
+        owner: "NsHttpClientOwner",
+        client: NsAsyncHttpClient,
+        composition: object,
+        _token: object,
+    ) -> None:
+        if not owner._consume_authority_binding_token(_token):
+            raise NsValidationError(
+                "HTTP client authority binding issuer is invalid.",
+                details={"component": "http_client_owner", "field": "authority_binding"},
+            )
+        self._owner = owner
+        self._client = client
+        self._composition = composition
+        self._transport_identity = id(client._client)
+
+    def is_current(
+        self,
+        *,
+        owner: "NsHttpClientOwner",
+        client: NsAsyncHttpClient,
+        composition: object,
+    ) -> bool:
+        if (
+            type(self) is not _NsHttpClientAuthorityBinding
+            or self._owner is not owner
+            or self._client is not client
+            or self._composition is not composition
+            or type(owner) is not NsHttpClientOwner
+            or type(owner.factory) is not NsHttpClientFactory
+            or type(client) is not NsAsyncHttpClient
+            or id(getattr(client, "_client", None)) != self._transport_identity
+            or type(getattr(client, "_client", None)) is not httpx.AsyncClient
+            or client not in owner.clients
+            or not owner._owns_authority_binding(client, self)
+            or owner.state is not NsHttpClientOwnerState.OPEN
+        ):
+            return False
+        client_substitutions = {
+            "request", "get", "post", "put", "delete",
+        }.intersection(vars(client))
+        transport = client._client
+        transport_substitutions = {
+            "request", "send", "stream",
+        }.intersection(vars(transport))
+        return bool(
+            not client_substitutions
+            and not transport_substitutions
+            and NsAsyncHttpClient.request is getattr(type(client), "request", None)
+            and NsAsyncHttpClient.post is getattr(type(client), "post", None)
+            and NsAsyncHttpClient.get is getattr(type(client), "get", None)
+            and NsAsyncHttpClient.put is getattr(type(client), "put", None)
+            and NsAsyncHttpClient.delete is getattr(type(client), "delete", None)
+            and httpx.AsyncClient.request
+            is getattr(type(transport), "request", None)
+            and httpx.AsyncClient.send is getattr(type(transport), "send", None)
+            and NsHttpClientFactory.create
+            is getattr(type(owner.factory), "create", None)
+        )
+
+
 class NsHttpClientFactory:
     """Create independent HTTP clients without registering global state.
 
@@ -628,6 +698,10 @@ class NsHttpClientOwner:
         self._state_lock = RLock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._close_lock: asyncio.Lock | None = None
+        self._pending_authority_binding_token: object | None = None
+        self._authority_bindings: dict[
+            NsAsyncHttpClient, _NsHttpClientAuthorityBinding
+        ] = {}
 
     @property
     def factory(self) -> NsHttpClientFactory:
@@ -678,6 +752,75 @@ class NsHttpClientOwner:
                 )
             self._clients.append(client)
             return client
+
+    def _bind_authority_client(
+        self,
+        *,
+        client: NsAsyncHttpClient,
+        composition: object,
+    ) -> _NsHttpClientAuthorityBinding:
+        """Bind an existing owned client to one composition instance."""
+
+        with self._state_lock:
+            self._ensure_open()
+            if (
+                type(self) is not NsHttpClientOwner
+                or type(self._factory) is not NsHttpClientFactory
+                or type(client) is not NsAsyncHttpClient
+                or not any(client is current for current in self._clients)
+                or client in self._authority_bindings
+                or composition is None
+            ):
+                raise NsValidationError(
+                    "HTTP client authority binding is invalid.",
+                    details={
+                        "component": "http_client_owner",
+                        "field": "authority_client",
+                    },
+                )
+            token = object()
+            self._pending_authority_binding_token = token
+            try:
+                binding = _NsHttpClientAuthorityBinding(
+                    owner=self,
+                    client=client,
+                    composition=composition,
+                    _token=token,
+                )
+            finally:
+                self._pending_authority_binding_token = None
+            self._authority_bindings[client] = binding
+            return binding
+
+    def _consume_authority_binding_token(self, token: object) -> bool:
+        return (
+            token is not None
+            and self._pending_authority_binding_token is token
+        )
+
+    def _owns_authority_binding(
+        self,
+        client: NsAsyncHttpClient,
+        binding: _NsHttpClientAuthorityBinding,
+    ) -> bool:
+        with self._state_lock:
+            return self._authority_bindings.get(client) is binding
+
+    def __copy__(self) -> "NsHttpClientOwner":
+        raise NsValidationError(
+            "HTTP client owner cannot be copied.",
+            details={"component": "http_client_owner", "field": "copy"},
+        )
+
+    def __deepcopy__(
+        self,
+        memo: dict[int, object],
+    ) -> "NsHttpClientOwner":
+        del memo
+        raise NsValidationError(
+            "HTTP client owner cannot be copied.",
+            details={"component": "http_client_owner", "field": "copy"},
+        )
 
     async def aclose(self) -> None:
         loop = asyncio.get_running_loop()

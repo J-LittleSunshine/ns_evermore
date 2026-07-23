@@ -60,6 +60,11 @@ from ns_common.state_store import (
     StateTransitionLogAppend,
 )
 from ns_common.time import ControlledClock
+from ns_common.state_store.authority import (
+    _issue_state_access_scope,
+    _new_state_scope_issuer,
+)
+from ns_common.state_store.composition import StateStoreComposition
 from ns_runtime.delivery import (
     AdmissionOutcome,
     AdmissionPolicyConfig,
@@ -102,12 +107,27 @@ class _StaticPasswordSource(StateStorePasswordSource):
 
 def _scope(store: RedisValkeyStateStore) -> StateAccessScope:
     namespace = StateNamespace.audit(domain="processor")
-    return store._issue_access_scope(
+    return _issue_test_scope(
+        store,
         atomic_scope=StateAtomicScope(namespace=namespace, partition="contract"),
         authority=StateAuthorityKind.STRONG_AUDIT,
         caller="redis-contract-test",
         capabilities=frozenset(StateCallerCapability),
     )
+
+
+def _issue_test_scope(store: RedisValkeyStateStore, **values) -> StateAccessScope:
+    issuer = getattr(store, "_contract_test_scope_issuer", None)
+    if issuer is None:
+        raise AssertionError("contract-test StateStore issuer is unavailable")
+    return _issue_state_access_scope(issuer, **values)
+
+
+def _repositories(store: RedisValkeyStateStore, *, runtime_id="runtime-local"):
+    composition = getattr(store, "_contract_test_repository_composition", None)
+    if not isinstance(composition, StateStoreComposition):
+        raise AssertionError("contract-test repository composition is unavailable")
+    return composition.delivery_repositories(runtime_id=runtime_id)
 
 
 def _key(scope: StateAccessScope, object_id: str) -> StateKey:
@@ -246,7 +266,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         namespace = StateNamespace.tenant(
             tenant_id="tenant-a", domain="delivery",
         )
-        return store._issue_access_scope(
+        return _issue_test_scope(
+            store,
             atomic_scope=StateAtomicScope(
                 namespace=namespace, partition=f"bucket-{bucket_id}",
             ),
@@ -323,7 +344,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         store = self._provider()
         await store.open()
         base = self._bucket_scope(store, bucket_id=4)
-        scope = store._issue_access_scope(
+        scope = _issue_test_scope(
+            store,
             atomic_scope=StateAtomicScope(
                 namespace=base.namespace,
                 partition="layout-2-bucket-4",
@@ -390,7 +412,9 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         timeout: float = 1.0,
         clock: ControlledClock | None = None,
     ) -> RedisValkeyStateStore:
-        return RedisValkeyStateStore(
+        scope_issuer = _new_state_scope_issuer(contract_test=True)
+        repository_owner = object()
+        store = RedisValkeyStateStore(
             options=RedisStateStoreOptions(
                 backend=backend,
                 endpoint=f"redis://127.0.0.1:{port or self._port}/0",
@@ -403,7 +427,16 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             capabilities=StateStoreCapabilities.p10_contract(),
             clock=clock or self.clock,
+            _contract_test_authority=True,
+            _scope_issuer=scope_issuer,
+            _repository_owner=repository_owner,
         )
+        store._contract_test_scope_issuer = scope_issuer
+        store._contract_test_repository_composition = StateStoreComposition(
+            store=store,
+            owner=repository_owner,
+        )
+        return store
 
     async def test_redis_server_authentication_with_both_protocol_drivers(self) -> None:
         for backend in ("redis", "valkey"):
@@ -502,7 +535,12 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             trace=AdmissionTrace(trace_id="trace-p11-redis"),
         )
         self.assertIs(AdmissionOutcome.ACCEPTED, admitted.outcome)
-        scheduler = StateStoreDeliveryScheduler(store=store, clock=self.clock)
+        repositories = _repositories(store)
+        scheduler = StateStoreDeliveryScheduler(
+            repository=repositories.scheduler,
+            registry_repository=repositories.registry,
+            clock=self.clock,
+        )
         policy = DeliverySchedulingPolicy(
             config_version="c1",
             policy_version="p1",
@@ -544,7 +582,12 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         await store.close()
         store_b = self._provider(timeout=5.0)
         await store_b.open()
-        scheduler_b = StateStoreDeliveryScheduler(store=store_b, clock=self.clock)
+        repositories_b = _repositories(store_b)
+        scheduler_b = StateStoreDeliveryScheduler(
+            repository=repositories_b.scheduler,
+            registry_repository=repositories_b.registry,
+            clock=self.clock,
+        )
         recovered = await scheduler_b.load_claimed(claim=claimed.claim)
         self.assertEqual(claimed.claim.fencing, recovered.owner.fencing)
         activated_b = await scheduler_b.activate_prepared(
@@ -981,7 +1024,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             hashlib.sha256(request.message_id.encode("utf-8")).digest()[:8],
             "big",
         ) % 8
-        scope = store._issue_access_scope(
+        scope = _issue_test_scope(
+            store,
             atomic_scope=StateAtomicScope(
                 namespace=namespace,
                 partition=f"layout-2-bucket-{bucket_id}",
@@ -1192,7 +1236,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 )
                 with self.assertRaises(NsRuntimeStateStoreVersionMismatchError):
                     await StateStoreDeliveryAuthorityRegistry(
-                        store=store_b,
+                        repository=_repositories(store_b).registry,
                     ).ensure_registered(
                         tenant_id=request_b.tenant_id,
                         layout=DeliveryAuthorityLayout(bucket_count=16),
@@ -1215,17 +1259,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         bucket_id = int.from_bytes(
             hashlib.sha256(MESSAGE_ID.encode("utf-8")).digest()[:8], "big",
         ) % 8
-        return store._issue_access_scope(
-            atomic_scope=StateAtomicScope(
-                namespace=namespace,
-                partition=f"layout-2-bucket-{bucket_id}",
-            ),
-            authority=StateAuthorityKind.DELIVERY_ADMISSION,
-            caller="delivery.admission",
-            capabilities=frozenset({
-                StateCallerCapability.READ,
-                StateCallerCapability.TRANSACT,
-            }),
+        return _repositories(store).admission.delivery_scope(
+            tenant_id=tenant_id,
+            bucket_id=bucket_id,
+            layout_generation=2,
         ), namespace
 
     def _admission_service(
@@ -1236,13 +1273,17 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         clock: ControlledClock | None = None,
     ):
         service_clock = clock or self.clock
+        repositories = _repositories(store)
         service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1",
                 policy_version="p1",
             ),
-            store=StateStoreDeliveryAdmissionStore(store),
+            store=StateStoreDeliveryAdmissionStore(
+                repository=repositories.admission,
+                registry_repository=repositories.registry,
+            ),
             payload_ref_client=_PayloadClient(service_clock),
             clock=service_clock,
             identifier_factory=_ids,

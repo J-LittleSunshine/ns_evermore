@@ -40,8 +40,18 @@ from .model import (
     StateTransactionResult,
     StateTransitionLogAppend,
 )
-from .store import StateStore, StateStoreLifecycleState
-from .composition import create_state_store_provider
+from .store import (
+    StateStore,
+    StateStoreDeliveryRepositories,
+    StateStoreLifecycleState,
+    StateStoreRepository,
+    StateStoreRepositoryRole,
+)
+from .composition import (
+    StateStoreComposition,
+    create_state_store_composition,
+    create_state_store_provider,
+)
 from .redis_provider import (
     EnvironmentStateStorePassword,
     FileStateStorePassword,
@@ -84,9 +94,13 @@ __all__ = (
     "StateStore",
     "StateStoreCapabilities",
     "StateStoreCapability",
+    "StateStoreComposition",
+    "StateStoreDeliveryRepositories",
     "StateStoreHealth",
     "StateStoreHealthStatus",
     "StateStoreLifecycleState",
+    "StateStoreRepository",
+    "StateStoreRepositoryRole",
     "EnvironmentStateStorePassword",
     "FileStateStorePassword",
     "NoStateStorePassword",
@@ -97,6 +111,7 @@ __all__ = (
     "StateTransactionResult",
     "StateTransitionLogAppend",
     "classify_state_authority",
+    "create_state_store_composition",
     "create_state_store_provider",
     "password_source_from_reference",
 )

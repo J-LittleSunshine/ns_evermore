@@ -668,6 +668,8 @@ class RoutingRequest:
         if (
             evidence.message_reference != self.message_reference
             or evidence.message_type != self.message_type
+            or evidence.config_version != self.policy_decision.config_version
+            or evidence.policy_version != self.policy_decision.policy_version
             or evidence.decision_outcome is not AuthorizationDecisionOutcome.ALLOW
             or evidence.authorized_target_reference != expected_target_reference
             or evidence.cross_tenant_authorized is not crosses_tenant

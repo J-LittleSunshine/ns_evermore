@@ -114,7 +114,7 @@
 | 当前工作包状态 | `BLOCKED`（等待独立实施授权） |
 | 当前阶段状态 | `NOT_STARTED / F0` |
 | 最近已验证阶段 | `P11 本地可靠投递调度与发送`（`F3 / local only`） |
-| 最近已验证工作包 | `P11-FIX-06` |
+| 最近已验证工作包 | `P11-FIX-07` |
 | 下一阶段 | `P12-W01`（等待独立实施授权） |
 | 当前阻塞项 | P12尚未授权；production task.dispatch继续关闭，transport write只允许到ack_waiting，不等于delivery成功 |
 | 设计基线版本 | `0.0.2` |
@@ -867,6 +867,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `P08-W07` | `VERIFIED` | Strong Audit Authority Boundary：建立 `AuditSink -> StrongAuditAuthorityService -> StateStore` 窄调用链 | Processor 不直接依赖 StateStore；strong audit 失败阻断 success |
 | `P08-W08` | `VERIFIED` | Contract Verification：确定性 model/harness 覆盖 CAS、transaction、lifecycle、namespace、failure、ownership 和 audit | 不启动真实 Redis/Valkey/SQLite/Sentinel/Cluster |
 | `P08-FIX-01` | `VERIFIED` | issuer-sealed scope/capability、transaction result cardinality与Redis ordered-index原子cursor分页 | public/replace/subclass/cross-store不能扩权；records/log positions精确计数；并发分页无静默跳项/重复 |
+| `P08-FIX-02` | `VERIFIED` | composition-owned固定role repository与transaction-bound provider result | raw store不能签发任意capability；admission/scheduler/payload/registry/audit最小权限隔离；result拒绝direct/replace/copy/错序/cross-transaction replay；见ADR-046 |
 
 ### Contract 测试矩阵
 
@@ -952,6 +953,12 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 - 状态：`VERIFIED`。production `AuthorizationDecisionEvidence`只由真实`IamProcessorAuthorization -> MessageAuthorizationService`链签发；Router/admission逐次验证production issuer seal与全部message/tenant/target/permission/policy绑定。
 - public direct construction、旧`bound()` factory、`dataclasses.replace()`、字段复制、subclass、fake service/issuer和contract-test evidence进入production均fail closed；SHA-256只作为内容绑定，不再充当ALLOW authority。
 - 范围仍是P09 local-only RoutingPlan authority闭合；没有remote/master routing、P14 scorer、P17 ownership、P12 ACK/retry或production task.dispatch。
+
+### P09-FIX-06 composition-owned authorization authority
+
+- 状态：`VERIFIED`。删除自由production signer；实例issuer绑定精确production MessageAuthorizationService并只消费该service本次sealed typed result与当前ProcessorContext，evidence绑定config/policy版本。
+- production IamClient由绑定NsHttpClientOwner、精确HTTP client、底层httpx transport和runtime composition的实例factory一次性创建；HTTP关键方法替换、copy/subclass、未初始化对象、重复composition binding和fake service均fail closed。
+- 范围仍是P09 local-only authority closure；P12、P14、P17和production task.dispatch保持未实现/关闭；见ADR-046。
 
 ### 测试矩阵
 
@@ -1058,6 +1065,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `P11-FIX-04` | `VERIFIED` | authority-backed ordered-index cursor与stale投影修复、完整post-write reconcile、production payload_ref IAM decision evidence | prepared/ready/lease跨调用与provider A-B继续推进；错状态/缺record/旧lease投影修复带摘要日志；expired lease、已提交ACK及高fencing写后对账和实时IAM证据攻击面通过 |
 | `P11-FIX-05` | `VERIFIED` | ordered-index repair前置断言、统一cursor身份、renew handle生命周期、不可伪造IAM evidence及backend对象级判定 | record/index read assertion在写前原子校验且冲突零落地；cursor v2迁移门禁、renew显式stop/join、backend对象级ACL与三套全量通过；见ADR-044和最终验收记录 |
 | `P11-FIX-06` | `VERIFIED` | production IAM/payload authority seal与typed transport write uncertainty闭合 | fake/replace/subclass/未初始化adapter不能签发；started write只到WRITE_UNCERTAIN，before-start failure才到WRITE_FAILED；见ADR-045 |
+| `P11-FIX-07` | `VERIFIED` | validator-owned payload issuer与composition-owned最小delivery repositories | payload decision一次性绑定真实request/client/clock/delivery/target；admission/scheduler/payload/registry不可跨role调用或共享全能力scope；见ADR-046 |
 
 ### 测试矩阵
 

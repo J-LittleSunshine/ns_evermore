@@ -44,6 +44,8 @@ from ns_common.state_store import (
     StateStoreCapability,
     StateStoreHealthStatus,
     StateStoreLifecycleState,
+    StateStoreRepository,
+    StateStoreRepositoryRole,
     StateTransaction,
     StateTransactionResult,
     StateTransitionLogAppend,
@@ -268,6 +270,21 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_scope_authority_cannot_be_constructed_replaced_or_reused(
         self,
     ) -> None:
+        self.assertFalse(hasattr(self.store, "_issue_access_scope"))
+        with self.assertRaises(NsValidationError):
+            self.store._create_repository(
+                owner=object(),
+                role=StateStoreRepositoryRole.DELIVERY_SCHEDULER,
+                runtime_id="runtime-forged",
+            )
+        with self.assertRaises(NsValidationError):
+            StateStoreRepository(
+                store=self.store,
+                role=StateStoreRepositoryRole.DELIVERY_SCHEDULER,
+                runtime_id="runtime-forged",
+                audit_namespace=None,
+                _token=None,
+            )
         with self.assertRaises(NsValidationError):
             StateAccessScope(
                 atomic_scope=self.scope.atomic_scope,
@@ -381,6 +398,108 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
                     NsRuntimeStateStoreIndeterminateWriteError,
                 ):
                     await store.transact(transaction)
+
+    async def test_repository_capabilities_are_fixed_and_cross_role_denied(
+        self,
+    ) -> None:
+        repositories = self.store.repository_composition().delivery_repositories(
+            runtime_id="runtime-contract",
+        )
+        self.assertNotEqual(
+            repositories.payload.role,
+            repositories.scheduler.role,
+        )
+        with self.assertRaises(NsValidationError):
+            repositories.payload.registry_scope()
+        with self.assertRaises(NsValidationError):
+            repositories.registry.delivery_scope(
+                tenant_id="tenant-1",
+                bucket_id=0,
+                layout_generation=1,
+            )
+        with self.assertRaises(NsValidationError):
+            copy.copy(repositories.scheduler)
+        await self.store.open()
+        payload_scope = repositories.payload.delivery_scope(
+            tenant_id="tenant-1",
+            bucket_id=0,
+            layout_generation=1,
+        )
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await self.store.transact(StateTransaction(
+                scope=payload_scope,
+                mutations=(_create(_key(payload_scope, "payload-write")),),
+            ))
+
+    async def test_transaction_result_is_model_bound_and_replay_safe(
+        self,
+    ) -> None:
+        await self.store.open()
+        first_key = _key(self.scope, "result-binding-1")
+        transaction = StateTransaction(
+            scope=self.scope,
+            mutations=(_create(first_key),),
+        )
+        result = await self.store.transact(transaction)
+        same_shape = StateTransaction(
+            scope=self.scope,
+            mutations=(_create(first_key),),
+        )
+        self.assertTrue(result.is_for_transaction(transaction))
+        self.assertFalse(result.is_for_transaction(same_shape))
+        with self.assertRaises(NsValidationError):
+            copy.copy(transaction)
+        cloned_transaction = object.__new__(StateTransaction)
+        for field in dataclasses.fields(StateTransaction):
+            object.__setattr__(
+                cloned_transaction,
+                field.name,
+                getattr(transaction, field.name),
+            )
+        self.assertFalse(result.is_for_transaction(cloned_transaction))
+        with self.assertRaises(NsValidationError):
+            StateTransactionResult(
+                records=result.records,
+                log_positions=result.log_positions,
+            )
+        with self.assertRaises((NsValidationError, TypeError)):
+            dataclasses.replace(result, records=result.records)
+        with self.assertRaises(NsValidationError):
+            copy.copy(result)
+        with self.assertRaises(NsValidationError):
+            copy.deepcopy(result)
+
+        forged = object.__new__(StateTransactionResult)
+        for field in dataclasses.fields(StateTransactionResult):
+            object.__setattr__(forged, field.name, getattr(result, field.name))
+        object.__setattr__(forged, "_transaction_binding", object())
+        self.assertFalse(forged.is_for_transaction(transaction))
+
+        second_key = _key(self.scope, "result-binding-2")
+        two_mutations = StateTransaction(
+            scope=self.scope,
+            mutations=(
+                _create(second_key),
+                _create(_key(self.scope, "result-binding-3")),
+            ),
+        )
+        second_result = await self.store.transact(two_mutations)
+        with self.assertRaises(NsValidationError):
+            StateTransactionResult.for_transaction(
+                two_mutations,
+                records=tuple(reversed(second_result.records)),
+            )
+
+        class ResultSubclass(StateTransactionResult):
+            pass
+
+        with self.assertRaises(NsValidationError):
+            ResultSubclass.for_transaction(
+                transaction,
+                records=result.records,
+            )
 
     async def test_contract_exposes_no_unconditional_put(self) -> None:
         self.assertFalse(hasattr(self.store, "put"))

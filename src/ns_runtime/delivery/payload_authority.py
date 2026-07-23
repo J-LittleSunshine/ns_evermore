@@ -13,22 +13,19 @@ from ns_common.iam import (
     PayloadRefRevalidationRequest,
 )
 from ns_common.state_store import (
-    StateAccessScope, StateAtomicScope, StateAuthorityKind,
-    StateCallerCapability, StateConsistency, StateKey, StateNamespace, StateStore,
+    StateConsistency, StateKey,
+    StateStoreRepository, StateStoreRepositoryRole,
 )
 from ns_common.time import Clock
 from ns_runtime.iam.client import IamClient
 from ns_runtime.protocol import PayloadGroup
 
 from .models import DeliveryRecord, PayloadKind
-from .authority_layout import delivery_scope
 from .scheduling import (
     DeliveryPayloadResolver, DeliveryPayloadValidator,
     LocalDeliveryTarget, OutboundDeliveryMaterial,
     PayloadValidationResult,
-    _issue_payload_access_decision_evidence,
-    payload_access_decision_request_fingerprint,
-    payload_access_evidence_fingerprint,
+    _PayloadAccessEvidenceIssuer,
 )
 
 
@@ -45,6 +42,10 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
             _invalid("clock")
         self._iam = iam_client
         self._clock = clock
+        self._evidence_issuer = _PayloadAccessEvidenceIssuer(
+            iam_client=iam_client,
+            clock=clock,
+        )
 
     async def validate(
         self,
@@ -61,93 +62,32 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
             _invalid("reference_validator.payload_kind")
         if evidence.object_id is None or evidence.object_version is None:
             _invalid("reference_validator.object")
-        decision = await self._iam.revalidate_payload_ref(
-            PayloadRefRevalidationRequest(
-                object_id=evidence.object_id,
-                version=evidence.object_version,
-                checksum=evidence.checksum,
-                size_bytes=evidence.size_bytes,
-                tenant_id=delivery.tenant_id,
-                target_principal=target.identity,
-                target_tenant_id=target.tenant_id,
-                target_fingerprint=delivery.target_fingerprint,
-                permission_snapshot_ref=target.permission_snapshot_reference,
-                permission_version=target.permission_version,
-                admission_authority_reference=(
-                    delivery.policy_decision.request_fingerprint
-                ),
+        request = PayloadRefRevalidationRequest(
+            object_id=evidence.object_id,
+            version=evidence.object_version,
+            checksum=evidence.checksum,
+            size_bytes=evidence.size_bytes,
+            tenant_id=delivery.tenant_id,
+            target_principal=target.identity,
+            target_tenant_id=target.tenant_id,
+            target_fingerprint=delivery.target_fingerprint,
+            permission_snapshot_ref=target.permission_snapshot_reference,
+            permission_version=target.permission_version,
+            admission_authority_reference=(
+                delivery.policy_decision.request_fingerprint
             ),
         )
+        decision = await self._iam.revalidate_payload_ref(request)
         if type(decision) is not PayloadRefRevalidationDecision:
             _invalid("reference_validator.revalidation_result")
-        request_fingerprint = payload_access_decision_request_fingerprint(
-            delivery,
+        access_evidence = self._evidence_issuer.issue(
+            request=request,
+            decision=decision,
+            delivery=delivery,
             target=target,
         )
-        expires_at = min(
-            decision.expires_at,
-            delivery.policy_decision.expires_at,
-        )
-        access_evidence = None
-        if expires_at > decision.decided_at:
-            access_evidence = _issue_payload_access_decision_evidence(
-                allowed=decision.allowed,
-                evidence_fingerprint=payload_access_evidence_fingerprint(
-                    allowed=decision.allowed,
-                    request_fingerprint=request_fingerprint,
-                    object_id=evidence.object_id,
-                    object_version=evidence.object_version,
-                    checksum=evidence.checksum,
-                    size_bytes=evidence.size_bytes,
-                    tenant_id=delivery.tenant_id,
-                    target_fingerprint=delivery.target_fingerprint,
-                    admission_authority_reference=(
-                        delivery.policy_decision.request_fingerprint
-                    ),
-                    permission_snapshot_reference=target.permission_snapshot_reference,
-                    permission_snapshot_fingerprint=target.access_decision_reference,
-                    iam_decision_reference=decision.decision_reference,
-                    iam_decision_version=decision.permission_version,
-                    validated_at=decision.decided_at,
-                    expires_at=expires_at,
-                ),
-                request_fingerprint=request_fingerprint,
-                object_id=evidence.object_id,
-                object_version=evidence.object_version,
-                checksum=evidence.checksum,
-                size_bytes=evidence.size_bytes,
-                tenant_id=delivery.tenant_id,
-                target_fingerprint=delivery.target_fingerprint,
-                admission_authority_reference=(
-                    delivery.policy_decision.request_fingerprint
-                ),
-                permission_snapshot_reference=target.permission_snapshot_reference,
-                permission_snapshot_fingerprint=target.access_decision_reference,
-                iam_decision_reference=decision.decision_reference,
-                iam_decision_version=decision.permission_version,
-                validated_at=decision.decided_at,
-                expires_at=expires_at,
-            )
-        now = self._clock.utc_now()
-        valid = bool(
-            decision.valid
-            and decision.object_id == evidence.object_id
-            and decision.version == evidence.object_version
-            and decision.checksum == evidence.checksum
-            and decision.tenant_id == delivery.tenant_id
-            and decision.size_bytes == evidence.size_bytes
-            and decision.target_principal == target.identity
-            and decision.target_fingerprint == delivery.target_fingerprint
-            and decision.permission_snapshot_ref
-            == target.permission_snapshot_reference
-            and decision.expires_at > now
-            and decision.allowed
-            and not decision.refresh_required
-            and decision.permission_version == target.permission_version
-            and decision.decided_at <= now < expires_at
-        )
         return PayloadValidationResult(
-            valid=valid,
+            valid=access_evidence is not None,
             evidence_fingerprint=evidence.evidence_fingerprint,
             object_id=evidence.object_id,
             object_version=evidence.object_version,
@@ -168,12 +108,14 @@ class StateStoreDeliveryPayloadAuthority(
     def __init__(
         self,
         *,
-        store: StateStore,
+        repository: StateStoreRepository,
         reference_validator: DeliveryPayloadValidator | None = None,
     ) -> None:
-        if not isinstance(store, StateStore):
-            _invalid("store")
-        self._store = store
+        if not isinstance(repository, StateStoreRepository):
+            _invalid("repository")
+        repository._require_role(StateStoreRepositoryRole.DELIVERY_PAYLOAD)
+        self._repository = repository
+        self._store = repository._store
         if (
             reference_validator is not None
             and type(reference_validator)
@@ -257,12 +199,10 @@ class StateStoreDeliveryPayloadAuthority(
         evidence = delivery.payload_evidence
         if evidence.body_ref is None:
             _invalid("inline.body_ref")
-        scope = delivery_scope(
-            self._store,
-            delivery.tenant_id,
-            delivery.authority_bucket_id,
+        scope = self._repository.delivery_scope(
+            tenant_id=delivery.tenant_id,
+            bucket_id=delivery.authority_bucket_id,
             layout_generation=delivery.authority_layout_generation,
-            caller="delivery.payload_authority",
         )
         namespace = scope.namespace
         result = await self._store.read(

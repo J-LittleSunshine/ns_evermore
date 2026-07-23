@@ -10,17 +10,12 @@ from datetime import datetime
 
 from ns_common.exceptions import NsValidationError
 from ns_common.state_store import (
-    StateAccessScope,
     StateAppendResult,
-    StateAtomicScope,
-    StateAuthorityKind,
-    StateCallerCapability,
     StateDocument,
     StateKey,
-    StateNamespace,
-    StateNamespaceKind,
     StateRevision,
-    StateStore,
+    StateStoreRepository,
+    StateStoreRepositoryRole,
 )
 from ns_runtime.processor.audit import (
     AuditConsistency,
@@ -82,26 +77,14 @@ class StateStoreStrongAuditAuthorityService(StrongAuditAuthorityService):
     def __init__(
         self,
         *,
-        state_store: StateStore,
-        namespace: StateNamespace,
+        repository: StateStoreRepository,
     ) -> None:
-        if not isinstance(state_store, StateStore):
-            _invalid("state_store")
-        if (
-            not isinstance(namespace, StateNamespace)
-            or namespace.kind is not StateNamespaceKind.AUDIT
-        ):
-            _invalid("namespace")
-        self._state_store = state_store
-        self._scope = state_store._issue_access_scope(
-            atomic_scope=StateAtomicScope(
-                namespace=namespace,
-                partition="processor-final",
-            ),
-            authority=StateAuthorityKind.STRONG_AUDIT,
-            caller="strong-audit-authority",
-            capabilities=frozenset({StateCallerCapability.APPEND}),
-        )
+        if not isinstance(repository, StateStoreRepository):
+            _invalid("repository")
+        repository._require_role(StateStoreRepositoryRole.STRONG_AUDIT)
+        self._state_store = repository._store
+        self._scope = repository.audit_scope()
+        namespace = self._scope.namespace
         self._key = StateKey(
             namespace=namespace,
             object_type="processor_audit_log",

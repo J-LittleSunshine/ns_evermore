@@ -2259,6 +2259,33 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 未运行uvloop全树、backend/Django全树、Valkey/Sentinel/Redis Cluster或远程CI；这些不能从本地standard asyncio与Redis standalone结果推断为通过。
 - P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay/cancel/hold、P14 health/fair scheduling、P17 leader/cluster ownership和P22 production验收均未实现；没有新增第二event loop、TaskSupervisor、RuntimeService、shutdown owner、global authority registry或service locator，production `task.dispatch`仍关闭。
 
+## P08/P09/P11 composition-owned authority 复核修复
+
+- 工作包：`P08-FIX-02`、`P09-FIX-06`、`P11-FIX-07`。
+- 状态：`VERIFIED / F3 (local only)`；P12继续`BLOCKED / F0`，production `task.dispatch`继续disabled。
+- 完成时间：`2026-07-23`（Asia/Shanghai）。本轮启动分支为`codex/ns-runtime-implementation`，HEAD为`7b9cad3a95af9d00d23be220ac0dd5187ade2c00`，启动worktree干净；只形成未提交的本地工作区修改。
+- production authorization evidence：删除可自由导入的production signer，改为由composition-owned `IamProcessorAuthorization`持有的实例级issuer。issuer绑定精确且完整初始化的`MessageAuthorizationService`，只消费该service本次`authorize()`返回的sealed typed result，并在内部绑定request、session/effective permission snapshot、backend decision、config/policy version及当前message context；direct construction、module attribute、replace、copy、subclass、fake/test issuer及cross-service result均不能形成production authority。
+- IAM client与HTTP provenance：删除module-level production client factory，改为由composition root创建的实例级`IamClientFactory`。factory绑定精确`NsHttpClientOwner`、owner创建的`NsAsyncHttpClient`、底层`httpx.AsyncClient`、transport与当前runtime composition；关键class method identity、实例`__dict__` substitution、owner-issued one-shot binding和exact identity均逐次验证。monkey patch `post/request/send`、copy、subclass、method override、`object.__new__`未初始化对象及duplicate binding均fail closed。
+- payload evidence：删除module-level payload production signer；production validator持有绑定同一production `IamClient`与clock的实例级issuer。issuer只消费原始revalidation request和该client本次真实返回的typed decision，并内部交叉验证delivery、target、permission snapshot、admission authority、object/version/checksum/size、decision reference/time/expiry；fake validator/test adapter、replace/copy/subclass与cross-request decision均不能进入production realm。
+- StateStore repositories：删除`StateStore._issue_access_scope(...)`及自由`delivery_scope(..., caller=...)`。唯一composition owner创建固定role/caller/domain/namespace/runtime/plugin/partition规则与精确capability集合的admission、scheduler、payload、registry、audit repositories；业务调用只能提供tenant、bucket与layout generation等业务维度。payload repository仅有READ，scheduler/admission/registry/audit互不共享全能力scope；持有raw store、跨repository调用、直接构造、copy或错误owner均不能签发或扩权，未引入global registry、service locator或第二StateStore owner。
+- transaction result：`StateTransactionResult`改为只经`for_transaction(transaction, ...)`的one-shot transaction binding构造；模型级验证records与mutations、log_positions与log_appends精确等长、类型和mutation顺序/内容一致，并绑定transaction实例identity、canonical fingerprint和私有seal。direct constructor、replace/copy/subclass、缺项/多项/错序/错类型、同长度cross-transaction replay及克隆transaction复用均fail closed；provider在任何zip前完成绑定和cardinality验证。
+
+### 本轮实际测试命令与结果
+
+- processor/routing/IAM authority与client composition：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_backend_runtime_iam tests.test_runtime_connection_processors tests.test_runtime_iam_authorization tests.test_runtime_iam_client tests.test_runtime_iam_credential_recovery tests.test_runtime_processor_boundaries tests.test_runtime_processor_pipeline tests.test_runtime_protocol_processors tests.test_runtime_routing tests.test_runtime_routing_contracts`，`Ran 93 tests in 3.340s`，`OK`。
+- payload authority、delivery admission与scheduling：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling`，`Ran 62 tests in 50.344s`，`OK`。
+- StateStore contract/provider：`PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_provider tests.test_state_store tests.test_runtime_state_store`，`Ran 41 tests in 0.835s`，`OK`；最终模型专项`tests.test_state_store tests.test_redis_state_store_provider`为`Ran 32 tests in 0.817s`，`OK`。
+- Redis provider与真实Redis standalone：`PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_provider tests.test_redis_state_store_integration`，`Ran 30 tests in 49.330s`，`OK`。本机实际使用`/usr/bin/redis-server`；未验证Valkey server、Sentinel、Cluster、replica或failover。
+- main、shutdown、critical failure与transport：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest -q tests.test_runtime_event_loop_observability tests.test_runtime_shutdown tests.test_runtime_service tests.test_runtime_main tests.test_runtime_transport_metrics tests.test_runtime_transport_lifecycle tests.test_runtime_transport_identity tests.test_runtime_transport_errors tests.test_runtime_transport_contracts tests.test_runtime_transport_conformance tests.test_runtime_transport_backpressure tests.test_runtime_transport_websocket_tcp tests.test_runtime_transport_registry`，`Ran 110 tests in 7.799s`，`OK`。
+- 全仓可执行测试集：`PYTHONASYNCIODEBUG=0 PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py' -q`，`Ran 869 tests in 138.174s`，`OK (skipped=1)`；唯一skip为非Windows平台上的真实Windows event-loop policy条件。
+- compile/import/dependency boundary：`python3 -m compileall -q src tests`与`git diff --check`通过；cold import输出`COLD_IMPORT_BOUNDARIES_OK`及`PUBLIC_IMPORTS_OK`；runtime/backend项目虚拟环境`pip check`均输出`No broken requirements found.`。边界测试的首次命令误写了两个不存在的module name，产生2个loader error；更正为`PYTHONPATH=src python3 -m unittest -q tests.test_requirements tests.test_runtime_bootstrap tests.test_runtime_processor_boundaries`后`Ran 19 tests in 2.940s`，`OK`，未把误写命令记作通过。
+
+### 冻结边界与未验证范围
+
+- 状态机仍严格为`prepared -> queued -> sending -> ack_waiting`；`WRITE_UNCERTAIN`不重发，也未新增第二event loop、TaskSupervisor、RuntimeService、shutdown owner、global authority registry或service locator。
+- 未实现P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership或P22 production验收；production `task.dispatch`继续disabled。
+- 本轮未运行uvloop全树、backend/Django全树、Valkey/Sentinel/Redis Cluster、replica/failover或远程CI，不从standard asyncio与Redis standalone结果推断这些环境通过。
+
 ## 新记录模板
 
 - 工作包：

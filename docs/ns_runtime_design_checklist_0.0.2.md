@@ -690,3 +690,13 @@
 - 同一 runtime 内的 QUIC/WebTransport network path migration 可以保持 connection_id、connection_epoch 和 session_id 不变；跨 runtime 节点的透明 logical session migration 仍不属于当前边界。
 - `uvloop` 是可配置的事件循环实现，不是业务层依赖；标准 `asyncio` 兼容路径不得删除，event loop 不能在进程运行期间热切换。
 - `websocket_http3`、`webtransport_http3` 和 `quic_native` 的配置与观测扩展点必须保留，但在对应 adapter 未完成生产验收前默认禁用且不得宣称可用。
+- production authorization evidence 的权限来源必须是 composition root 持有的实例级 issuer；issuer 必须绑定精确、完整初始化且仍具 production provenance 的 MessageAuthorizationService，并直接消费该 service 本次 `authorize()` 返回的 sealed typed result。不得存在接收 caller-supplied 全量 decision 字段的 module-level production signer。
+- MessageAuthorizationService 的 typed result 必须绑定原始 request、session/effective permission snapshot、backend decision、risk 和 service 实例；直接构造、copy、`dataclasses.replace()`、字段替换、subclass、fake service 和 cross-service replay 均不能形成可签发 production authority。
+- AuthorizationDecisionEvidence 必须同时绑定 message、tenant、target、permission snapshot/version、config/policy version 和 backend access decision；SHA-256 只承担内容绑定，不能独立证明 IAM backend 已允许。
+- production IamClient 只能由 composition-owned 实例 factory 创建；factory 必须绑定精确 NsHttpClientOwner、该 owner 创建的精确 NsAsyncHttpClient、底层 HTTP client 和当前 runtime composition。同一 HTTP client 不得重复绑定第二 composition，不得存在按普通参数创建 production client 的 module-level factory。
+- production IAM HTTP provenance 必须拒绝 instance-level `post/request/send` 等关键方法替换、底层 client method substitution、copy、subclass 和未初始化对象。fake HTTP response 只能位于显式 test realm，或通过 composition root 以下的真实测试 transport 输入。
+- payload access evidence 必须由 production validator 私有持有的实例 issuer 签发；issuer绑定同一个 production IamClient 和 Clock，并一次性消费该 client 对原始 request 返回的精确 PayloadRefRevalidationDecision。不得存在接收 caller-supplied 全量 payload decision 字段的 module-level production signer。
+- StateStore 不得暴露接收 caller、authority 或任意 capability 集合的 scope issuer。composition root 只创建固定 role 的 repository handle；每个 handle 固定 store、caller、authority kind、namespace/domain、tenant/runtime/plugin 维度、partition 规则和最小 capability 集合，业务调用只能提供必要 tenant/bucket/layout 等维度。
+- delivery admission、scheduler、payload、registry 和 strong audit 必须使用不同 repository handle。scheduler 不获得 payload authority，payload repository 只读且不能使用 scheduler 的 transaction/index/append 权限；持有原始 StateStore、其他 repository、public dataclass、replace、copy 或 subclass 均不能扩权。
+- StateTransactionResult 必须与精确 StateTransaction 实例、fingerprint、mutation 顺序和 log append cardinality绑定。provider必须在任何 zip/投影前验证 records/log_positions 的容器、元素类型与数量；直接构造、replace、copy、subclass、错序和同形状 cross-transaction replay必须 fail closed。
+- 上述 production/test realm 隔离不得通过全局 registry、service locator、第二 authority owner、第二 event loop、第二 TaskSupervisor、第二 RuntimeService 或第二 shutdown coordinator实现。

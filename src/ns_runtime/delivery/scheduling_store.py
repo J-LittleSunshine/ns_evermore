@@ -40,6 +40,7 @@ from ns_common.state_store import (
     StateOrderedIndexMutation, StateOrderedIndexReadAssertion,
     StateOrderedIndexMutationKind, StateOrderedIndexReadResult,
     StateTransitionLogAppend,
+    StateStoreRepository, StateStoreRepositoryRole,
 )
 from ns_common.time import Clock
 
@@ -79,7 +80,6 @@ from .serde import (
 from .authority_layout import (
     DeliveryAuthorityLayout,
     StateStoreDeliveryAuthorityRegistry,
-    delivery_scope,
 )
 
 
@@ -107,17 +107,27 @@ class StateStoreDeliveryScheduler:
     """Single-runtime scheduler; Redis records remain the only state authority."""
 
     def __init__(
-        self, *, store: StateStore, clock: Clock,
-        authority_runtime_id: str = "runtime-local",
+        self, *, repository: StateStoreRepository,
+        registry_repository: StateStoreRepository,
+        clock: Clock,
     ) -> None:
-        if not isinstance(store, StateStore):
-            _invalid("store")
+        if not isinstance(repository, StateStoreRepository):
+            _invalid("repository")
+        repository._require_role(StateStoreRepositoryRole.DELIVERY_SCHEDULER)
+        if not isinstance(registry_repository, StateStoreRepository):
+            _invalid("registry_repository")
+        registry_repository._require_role(
+            StateStoreRepositoryRole.DELIVERY_REGISTRY,
+        )
+        if repository._store is not registry_repository._store:
+            _invalid("repository_store")
         if not isinstance(clock, Clock):
             _invalid("clock")
-        self._store = store
+        self._store = repository._store
+        self._repository = repository
         self._clock = clock
         self._registry = StateStoreDeliveryAuthorityRegistry(
-            store=store, runtime_id=authority_runtime_id,
+            repository=registry_repository,
         )
         self._activation_lock = asyncio.Lock()
         self._claim_lock = asyncio.Lock()
@@ -137,7 +147,7 @@ class StateStoreDeliveryScheduler:
         operation: str,
     ) -> tuple[int, ...]:
         scope = _scope(
-            self._store,
+            self._repository,
             tenant_id,
             0,
             layout_generation=policy.authority_layout_generation,
@@ -521,7 +531,7 @@ class StateStoreDeliveryScheduler:
         layout = _layout(policy)
         await self._registry.ensure_registered(tenant_id=tenant_id, layout=layout)
         scope = _scope(
-            self._store,
+            self._repository,
             tenant_id, 0, layout_generation=policy.authority_layout_generation,
         )
         now = self._clock.utc_now()
@@ -882,7 +892,7 @@ class StateStoreDeliveryScheduler:
         results = await asyncio.gather(*(
             self._store.read_ordered_index(
                 scope=(scope := _scope(
-                    self._store,
+                    self._repository,
                     tenant_id,
                     bucket_id,
                     layout_generation=policy.authority_layout_generation,
@@ -909,7 +919,7 @@ class StateStoreDeliveryScheduler:
                 if remaining <= 0:
                     break
                 scope = _scope(
-                    self._store,
+                    self._repository,
                     tenant_id,
                     bucket_id,
                     layout_generation=policy.authority_layout_generation,
@@ -941,7 +951,7 @@ class StateStoreDeliveryScheduler:
         if fallback is not None:
             return fallback
         scope = _scope(
-            self._store,
+            self._repository,
             tenant_id,
             bucket_order[0],
             layout_generation=policy.authority_layout_generation,
@@ -968,7 +978,7 @@ class StateStoreDeliveryScheduler:
         requests = []
         for bucket_id in range(authority_bucket_count):
             scope = _scope(
-                self._store,
+                self._repository,
                 tenant_id, bucket_id,
                 layout_generation=authority_layout_generation,
             )
@@ -1057,7 +1067,7 @@ class StateStoreDeliveryScheduler:
             if remaining <= 0:
                 break
             scope = _scope(
-                self._store,
+                self._repository,
                 tenant_id, bucket_id,
                 layout_generation=policy.authority_layout_generation,
             )
@@ -1199,7 +1209,7 @@ class StateStoreDeliveryScheduler:
             _invalid("renew.claim")
         if not isinstance(policy, DeliverySchedulingPolicy):
             _invalid("renew.policy")
-        scope = _claim_scope(self._store, claim)
+        scope = _claim_scope(self._repository, claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         owner = _require_owner(authority.value, claim, self._clock.utc_now(), allow_risk=True)
         now = self._clock.utc_now()
@@ -1237,7 +1247,7 @@ class StateStoreDeliveryScheduler:
             _invalid("owner_risk.claim")
         if not isinstance(policy, DeliverySchedulingPolicy):
             _invalid("owner_risk.policy")
-        scope = _claim_scope(self._store, claim)
+        scope = _claim_scope(self._repository, claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         now = self._clock.utc_now()
         owner = _require_owner(authority.value, claim, now, allow_risk=True)
@@ -1273,7 +1283,7 @@ class StateStoreDeliveryScheduler:
     async def release_claim(self, *, claim: DeliveryClaim) -> DeliveryRecord:
         if not isinstance(claim, DeliveryClaim):
             _invalid("release.claim")
-        scope = _claim_scope(self._store, claim)
+        scope = _claim_scope(self._repository, claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         _require_owner(authority.value, claim, self._clock.utc_now(), allow_risk=True)
         if authority.value.status is not DeliveryRecordStatus.QUEUED:
@@ -1305,7 +1315,7 @@ class StateStoreDeliveryScheduler:
     ) -> DeliveryRecord:
         if not isinstance(claim, DeliveryClaim) or not isinstance(failure, DeliveryWriteFailure):
             _invalid("precheck")
-        scope = _claim_scope(self._store, claim)
+        scope = _claim_scope(self._repository, claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         now = self._clock.utc_now()
         _require_owner(authority.value, claim, now, allow_risk=True)
@@ -1589,7 +1599,7 @@ class StateStoreDeliveryScheduler:
         _text(attempt_id, "start.attempt_id")
         if not isinstance(policy, DeliverySchedulingPolicy):
             _invalid("start.policy")
-        scope = _claim_scope(self._store, claim)
+        scope = _claim_scope(self._repository, claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         now = self._clock.utc_now()
         owner = _require_owner(authority.value, claim, now, allow_risk=False)
@@ -1705,7 +1715,7 @@ class StateStoreDeliveryScheduler:
             }
         ):
             _invalid("uncertain.claim")
-        scope = _claim_scope(self._store, claim)
+        scope = _claim_scope(self._repository, claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         now = self._clock.utc_now()
         _require_owner(authority.value, claim, now, allow_risk=True)
@@ -1748,7 +1758,7 @@ class StateStoreDeliveryScheduler:
         """Resolve every typed completion anomaly after transport accepted bytes."""
         if not isinstance(claim, DeliveryClaim):
             _invalid("reconcile.claim")
-        scope = _claim_scope(self._store, claim)
+        scope = _claim_scope(self._repository, claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         value = authority.value
         if value.current_attempt_id is None:
@@ -1856,7 +1866,7 @@ class StateStoreDeliveryScheduler:
         if not isinstance(claim, DeliveryClaim):
             _invalid("load.claim")
         authority = await self._read_delivery(
-            _claim_scope(self._store, claim),
+            _claim_scope(self._repository, claim),
             claim.delivery_id,
         )
         _require_owner(authority.value, claim, self._clock.utc_now(), allow_risk=True)
@@ -1871,7 +1881,7 @@ class StateStoreDeliveryScheduler:
     ) -> DeliveryRecord:
         if not isinstance(claim, DeliveryClaim):
             _invalid("complete.claim")
-        scope = _claim_scope(self._store, claim)
+        scope = _claim_scope(self._repository, claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         if (
             expected_state_version is not None
@@ -2081,21 +2091,23 @@ async def _read_record(
 
 
 def _scope(
-    store: StateStore,
+    repository: StateStoreRepository,
     tenant_id: str, bucket_id: int, *, layout_generation: int = 2,
 ) -> StateAccessScope:
-    return delivery_scope(
-        store, tenant_id, bucket_id, layout_generation=layout_generation,
-        caller="delivery.scheduling",
+    repository._require_role(StateStoreRepositoryRole.DELIVERY_SCHEDULER)
+    return repository.delivery_scope(
+        tenant_id=tenant_id,
+        bucket_id=bucket_id,
+        layout_generation=layout_generation,
     )
 
 
 def _claim_scope(
-    store: StateStore,
+    repository: StateStoreRepository,
     claim: DeliveryClaim,
 ) -> StateAccessScope:
     return _scope(
-        store,
+        repository,
         claim.tenant_id,
         claim.authority_bucket_id,
         layout_generation=claim.authority_layout_generation,

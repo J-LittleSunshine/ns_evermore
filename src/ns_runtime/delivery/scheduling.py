@@ -286,8 +286,150 @@ class ClaimResult:
             _invalid("claim_result.empty")
 
 
-_PAYLOAD_ACCESS_EVIDENCE_ISSUER = object()
-_PAYLOAD_ACCESS_EVIDENCE_KEY = secrets.token_bytes(32)
+class _PayloadAccessEvidenceIssuer:
+    """One validator-owned capability bound to its exact production IAM client."""
+
+    __slots__ = ("_iam", "_clock", "_key", "_pending_token")
+
+    def __init__(self, *, iam_client: object, clock: object) -> None:
+        from ns_common.time import Clock
+        from ns_runtime.iam.client import IamClient
+
+        if (
+            type(iam_client) is not IamClient
+            or not iam_client._is_production_adapter()
+            or not isinstance(clock, Clock)
+        ):
+            _invalid("payload_access_issuer.composition")
+        self._iam = iam_client
+        self._clock = clock
+        self._key = secrets.token_bytes(32)
+        self._pending_token: object | None = None
+
+    def issue(
+        self,
+        *,
+        request: object,
+        decision: object,
+        delivery: DeliveryRecord,
+        target: object,
+    ) -> "PayloadAccessDecisionEvidence | None":
+        from ns_common.iam import (
+            PayloadRefRevalidationDecision,
+            PayloadRefRevalidationRequest,
+        )
+
+        if (
+            not self._iam._is_production_adapter()
+            or type(request) is not PayloadRefRevalidationRequest
+            or type(decision) is not PayloadRefRevalidationDecision
+            or not self._iam._consume_payload_revalidation(
+                request=request,
+                decision=decision,
+            )
+            or not isinstance(delivery, DeliveryRecord)
+            or type(target) is not LocalDeliveryTarget
+        ):
+            _invalid("payload_access_issuer.result")
+        evidence = delivery.payload_evidence
+        now = self._clock.utc_now()
+        expires_at = min(decision.expires_at, delivery.policy_decision.expires_at)
+        if not (
+            evidence.kind is PayloadKind.REFERENCE
+            and evidence.object_id is not None
+            and evidence.object_version is not None
+            and request.object_id == evidence.object_id
+            and request.version == evidence.object_version
+            and request.checksum == evidence.checksum
+            and request.size_bytes == evidence.size_bytes
+            and request.tenant_id == delivery.tenant_id
+            and request.target_principal == target.identity
+            and request.target_tenant_id == target.tenant_id
+            and request.target_fingerprint == delivery.target_fingerprint
+            and request.permission_snapshot_ref
+            == target.permission_snapshot_reference
+            and request.permission_version == target.permission_version
+            and request.admission_authority_reference
+            == delivery.policy_decision.request_fingerprint
+            and decision.valid
+            and decision.allowed
+            and not decision.refresh_required
+            and decision.object_id == request.object_id
+            and decision.version == request.version
+            and decision.checksum == request.checksum
+            and decision.size_bytes == request.size_bytes
+            and decision.tenant_id == request.tenant_id
+            and decision.target_principal == request.target_principal
+            and decision.target_fingerprint == request.target_fingerprint
+            and decision.permission_snapshot_ref
+            == request.permission_snapshot_ref
+            and decision.permission_version == request.permission_version
+            and decision.decided_at <= now < expires_at
+        ):
+            return None
+        request_fingerprint = payload_access_decision_request_fingerprint(
+            delivery,
+            target=target,
+        )
+        values = {
+            "allowed": True,
+            "request_fingerprint": request_fingerprint,
+            "object_id": evidence.object_id,
+            "object_version": evidence.object_version,
+            "checksum": evidence.checksum,
+            "size_bytes": evidence.size_bytes,
+            "tenant_id": delivery.tenant_id,
+            "target_fingerprint": delivery.target_fingerprint,
+            "admission_authority_reference": (
+                delivery.policy_decision.request_fingerprint
+            ),
+            "permission_snapshot_reference": (
+                target.permission_snapshot_reference
+            ),
+            "permission_snapshot_fingerprint": (
+                target.access_decision_reference
+            ),
+            "iam_decision_reference": decision.decision_reference,
+            "iam_decision_version": decision.permission_version,
+            "validated_at": decision.decided_at,
+            "expires_at": expires_at,
+        }
+        evidence_fingerprint = payload_access_evidence_fingerprint(
+            **values,
+        )
+        token = object()
+        self._pending_token = token
+        try:
+            return PayloadAccessDecisionEvidence(
+                evidence_fingerprint=evidence_fingerprint,
+                **values,
+                _issuer=self,
+                _construction_token=token,
+            )
+        finally:
+            self._pending_token = None
+
+    def _consume_construction_token(self, token: object) -> bool:
+        return token is not None and self._pending_token is token
+
+    def _verify(self, evidence: "PayloadAccessDecisionEvidence") -> bool:
+        return bool(
+            self._iam._is_production_adapter()
+            and hmac.compare_digest(
+                evidence._authority_signature,
+                _payload_access_authority_signature(evidence, issuer=self),
+            )
+        )
+
+    def __copy__(self) -> "_PayloadAccessEvidenceIssuer":
+        _invalid("payload_access_issuer.copy")
+
+    def __deepcopy__(
+        self,
+        memo: dict[int, object],
+    ) -> "_PayloadAccessEvidenceIssuer":
+        del memo
+        _invalid("payload_access_issuer.copy")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, init=False)
@@ -331,8 +473,13 @@ class PayloadAccessDecisionEvidence:
         validated_at: datetime,
         expires_at: datetime,
         _issuer: object | None = None,
+        _construction_token: object | None = None,
     ) -> None:
-        if _issuer is not _PAYLOAD_ACCESS_EVIDENCE_ISSUER:
+        if (
+            type(self) is not PayloadAccessDecisionEvidence
+            or type(_issuer) is not _PayloadAccessEvidenceIssuer
+            or not _issuer._consume_construction_token(_construction_token)
+        ):
             _invalid("payload_access.issuer")
         for name, value in (
             ("allowed", allowed),
@@ -359,7 +506,7 @@ class PayloadAccessDecisionEvidence:
         object.__setattr__(
             self,
             "_authority_signature",
-            _payload_access_authority_signature(self),
+            _payload_access_authority_signature(self, issuer=_issuer),
         )
 
     def __post_init__(self) -> None:
@@ -402,27 +549,25 @@ class PayloadAccessDecisionEvidence:
     def is_production_authority(self) -> bool:
         return (
             type(self) is PayloadAccessDecisionEvidence
-            and self._authority_seal is _PAYLOAD_ACCESS_EVIDENCE_ISSUER
-            and hmac.compare_digest(
-                self._authority_signature,
-                _payload_access_authority_signature(self),
-            )
+            and type(self._authority_seal) is _PayloadAccessEvidenceIssuer
+            and self._authority_seal._verify(self)
         )
 
+    def __copy__(self) -> "PayloadAccessDecisionEvidence":
+        del self
+        _invalid("payload_access.copy")
 
-def _issue_payload_access_decision_evidence(
-    **values: object,
-) -> PayloadAccessDecisionEvidence:
-    """Module-private issuer used only after the production IAM client boundary."""
-
-    return PayloadAccessDecisionEvidence(
-        **values,  # type: ignore[arg-type]
-        _issuer=_PAYLOAD_ACCESS_EVIDENCE_ISSUER,
-    )
-
+    def __deepcopy__(
+        self,
+        memo: dict[int, object],
+    ) -> "PayloadAccessDecisionEvidence":
+        del self, memo
+        _invalid("payload_access.copy")
 
 def _payload_access_authority_signature(
     evidence: PayloadAccessDecisionEvidence,
+    *,
+    issuer: _PayloadAccessEvidenceIssuer,
 ) -> bytes:
     payload = json.dumps({
         "allowed": evidence.allowed,
@@ -449,7 +594,7 @@ def _payload_access_authority_signature(
         "expires_at": evidence.expires_at.isoformat(),
     }, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hmac.new(
-        _PAYLOAD_ACCESS_EVIDENCE_KEY,
+        issuer._key,
         payload,
         hashlib.sha256,
     ).digest()

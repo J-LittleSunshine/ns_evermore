@@ -219,7 +219,7 @@ def main(
         AuthorizationMode,
         MessageAuthorizationService,
     )
-    from ns_runtime.iam.client import _create_production_iam_client
+    from ns_runtime.iam.client import IamClientFactory
     from ns_runtime.processor import (
         DefaultProcessorErrorMapper,
         EventBus,
@@ -276,11 +276,16 @@ def main(
         base_url=config.runtime.iam.base_url,
         timeout_seconds=config.runtime.iam.request_timeout_seconds,
     )
-    from ns_common.state_store import create_state_store_provider
+    from ns_common.state_store import create_state_store_composition
 
-    state_store = create_state_store_provider(
+    state_store_composition = create_state_store_composition(
         config=config.runtime.state_store,
         clock=context.clock,
+    )
+    state_store = (
+        None
+        if state_store_composition is None
+        else state_store_composition.store
     )
     context = RuntimeContext(
         config=config,
@@ -294,8 +299,12 @@ def main(
             state_store=state_store,
         ),
     )
-    iam_client = _create_production_iam_client(
+    iam_client_factory = IamClientFactory(
+        http_owner=http_client_owner,
         http_client=iam_http_client,
+        runtime_composition=context,
+    )
+    iam_client = iam_client_factory.create(
         internal_service_credential=(
             config.runtime.iam.internal_service_credential
         ),

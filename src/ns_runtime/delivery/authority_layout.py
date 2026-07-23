@@ -19,21 +19,17 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.state_store import (
-    StateAccessScope,
     StateAssertion,
-    StateAtomicScope,
-    StateAuthorityKind,
-    StateCallerCapability,
     StateConsistency,
     StateDocument,
     StateKey,
     StateMutation,
     StateMutationKind,
-    StateNamespace,
     StateOrderedIndexKey,
     StateOrderedIndexMutation,
     StateOrderedIndexMutationKind,
-    StateStore,
+    StateStoreRepository,
+    StateStoreRepositoryRole,
     StateTransaction,
 )
 
@@ -59,63 +55,16 @@ class DeliveryAuthorityLayout:
             _invalid("layout.bucket_count")
 
 
-def delivery_scope(
-    store: StateStore,
-    tenant_id: str,
-    bucket_id: int,
-    *,
-    layout_generation: int = AUTHORITY_LAYOUT_GENERATION,
-    caller: str = "delivery.scheduling",
-) -> StateAccessScope:
-    if not isinstance(store, StateStore):
-        _invalid("scope.store")
-    if type(tenant_id) is not str or not tenant_id:
-        _invalid("scope.tenant_id")
-    if isinstance(bucket_id, bool) or not isinstance(bucket_id, int) or bucket_id < 0:
-        _invalid("scope.bucket_id")
-    if isinstance(layout_generation, bool) or not isinstance(layout_generation, int) or layout_generation <= 0:
-        _invalid("scope.layout_generation")
-    namespace = StateNamespace.tenant(tenant_id=tenant_id, domain="delivery")
-    return store._issue_access_scope(
-        atomic_scope=StateAtomicScope(
-            namespace=namespace,
-            partition=f"layout-{layout_generation}-bucket-{bucket_id}",
-        ),
-        authority=StateAuthorityKind.DELIVERY_ADMISSION,
-        caller=caller,
-        capabilities=frozenset({
-            StateCallerCapability.READ,
-            StateCallerCapability.SCAN,
-            StateCallerCapability.COMPARE_AND_SET,
-            StateCallerCapability.TRANSACT,
-            StateCallerCapability.ORDERED_INDEX,
-            StateCallerCapability.APPEND,
-        }),
-    )
-
-
 class StateStoreDeliveryAuthorityRegistry:
     """Durable runtime-wide list of tenants and one immutable layout."""
 
-    def __init__(self, *, store: StateStore, runtime_id: str = "runtime-local") -> None:
-        if not isinstance(store, StateStore):
-            _invalid("registry.store")
-        if type(runtime_id) is not str or not runtime_id:
-            _invalid("registry.runtime_id")
-        self._store = store
-        self._runtime_id = runtime_id
-        synthetic_tenant = "runtime-registry:" + hashlib.sha256(runtime_id.encode()).hexdigest()
-        namespace = StateNamespace.tenant(tenant_id=synthetic_tenant, domain="delivery")
-        self._scope = store._issue_access_scope(
-            atomic_scope=StateAtomicScope(namespace=namespace, partition="authority-registry"),
-            authority=StateAuthorityKind.DELIVERY_ADMISSION,
-            caller="delivery.authority_registry",
-            capabilities=frozenset({
-                StateCallerCapability.READ,
-                StateCallerCapability.TRANSACT,
-                StateCallerCapability.ORDERED_INDEX,
-            }),
-        )
+    def __init__(self, *, repository: StateStoreRepository) -> None:
+        if not isinstance(repository, StateStoreRepository):
+            _invalid("registry.repository")
+        repository._require_role(StateStoreRepositoryRole.DELIVERY_REGISTRY)
+        self._store = repository._store
+        self._runtime_id = repository._runtime_id
+        self._scope = repository.registry_scope()
 
     async def ensure_registered(
         self, *, tenant_id: str, layout: DeliveryAuthorityLayout,
@@ -334,5 +283,4 @@ def _invalid(field: str):
 __all__ = (
     "DeliveryAuthorityLayout",
     "StateStoreDeliveryAuthorityRegistry",
-    "delivery_scope",
 )

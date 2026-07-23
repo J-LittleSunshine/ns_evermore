@@ -12,7 +12,7 @@ from ns_common.exceptions import (
     NsRuntimeIamUnavailableError,
     NsValidationError,
 )
-from ns_common.http_client import NsAsyncHttpClient
+from ns_common.http_client import NsAsyncHttpClient, NsHttpClientOwner
 from ns_common.iam import (
     IamAccessCheckRequest,
     IamAccessDecision,
@@ -34,9 +34,6 @@ from ns_runtime.connection.iam import (
 from .models import PermissionSnapshot
 
 
-_IAM_CLIENT_COMPOSITION_ISSUER = object()
-
-
 class IamClient(HandshakeIamAdapter):
     """One explicitly injected client; it never creates or finds HTTP globals."""
 
@@ -48,13 +45,16 @@ class IamClient(HandshakeIamAdapter):
         trace_id_factory: Callable[[], str],
         clock: Clock,
         iam_mode: str = "strict",
-        _composition_issuer: object | None = None,
+        _factory: object | None = None,
+        _binding: object | None = None,
+        _construction_token: object | None = None,
     ) -> None:
         if (
             type(self) is not IamClient
-            or _composition_issuer is not _IAM_CLIENT_COMPOSITION_ISSUER
+            or type(_factory) is not IamClientFactory
+            or not _factory._consume_construction_token(_construction_token)
         ):
-            _invalid("composition_issuer")
+            _invalid("composition_factory")
         if type(http_client) is not NsAsyncHttpClient:
             _invalid("http_client")
         if not isinstance(internal_service_credential, str) or len(internal_service_credential) < 32:
@@ -70,7 +70,12 @@ class IamClient(HandshakeIamAdapter):
         self._trace_id_factory = trace_id_factory
         self._clock = clock
         self._iam_mode = iam_mode
-        self._composition_issuer = _composition_issuer
+        self._composition_factory = _factory
+        self._http_binding = _binding
+        self._payload_revalidation_results: dict[
+            int, tuple[PayloadRefRevalidationRequest, PayloadRefRevalidationDecision]
+        ] = {}
+        self._authorization_service: object | None = None
 
     def __repr__(self) -> str:
         return "IamClient(explicit=True, credential=redacted)"
@@ -88,8 +93,9 @@ class IamClient(HandshakeIamAdapter):
         }.intersection(vars(self))
         return bool(
             type(self) is IamClient
-            and getattr(self, "_composition_issuer", None)
-            is _IAM_CLIENT_COMPOSITION_ISSUER
+            and type(getattr(self, "_composition_factory", None))
+            is IamClientFactory
+            and self._composition_factory._owns(self)
             and type(getattr(self, "_http", None)) is NsAsyncHttpClient
             and not substituted
             and getattr(type(self), "revalidate_payload_ref", None)
@@ -243,9 +249,41 @@ class IamClient(HandshakeIamAdapter):
             request.to_wire(),
         )
         try:
-            return PayloadRefRevalidationDecision.from_wire(data)
+            decision = PayloadRefRevalidationDecision.from_wire(data)
         except NsValidationError:
             raise _malformed("payload_ref_revalidation") from None
+        self._payload_revalidation_results[id(decision)] = (request, decision)
+        return decision
+
+    def _consume_payload_revalidation(
+        self,
+        *,
+        request: PayloadRefRevalidationRequest,
+        decision: PayloadRefRevalidationDecision,
+    ) -> bool:
+        if not self._is_production_adapter():
+            return False
+        issued = self._payload_revalidation_results.pop(id(decision), None)
+        return bool(
+            issued is not None
+            and issued[0] is request
+            and issued[1] is decision
+        )
+
+    def _bind_authorization_service(self, service: object) -> None:
+        if (
+            not self._is_production_adapter()
+            or service is None
+            or self._authorization_service is not None
+        ):
+            _invalid("authorization_service")
+        self._authorization_service = service
+
+    def _owns_authorization_service(self, service: object) -> bool:
+        return bool(
+            self._is_production_adapter()
+            and self._authorization_service is service
+        )
 
     async def _post(
         self,
@@ -291,6 +329,97 @@ class IamClient(HandshakeIamAdapter):
             raise _malformed("response.data")
         return dict(data)
 
+    def __copy__(self) -> "IamClient":
+        del self
+        _invalid("copy")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "IamClient":
+        del self, memo
+        _invalid("copy")
+
+
+class IamClientFactory:
+    """One composition-owned factory bound to an owner/client/context triple."""
+
+    __slots__ = (
+        "_owner", "_http_client", "_composition", "_binding",
+        "_pending_token", "_client",
+    )
+
+    def __init__(
+        self,
+        *,
+        http_owner: NsHttpClientOwner,
+        http_client: NsAsyncHttpClient,
+        runtime_composition: object,
+    ) -> None:
+        if (
+            type(self) is not IamClientFactory
+            or type(http_owner) is not NsHttpClientOwner
+            or type(http_client) is not NsAsyncHttpClient
+            or runtime_composition is None
+        ):
+            _invalid("factory")
+        self._owner = http_owner
+        self._http_client = http_client
+        self._composition = runtime_composition
+        self._binding = http_owner._bind_authority_client(
+            client=http_client,
+            composition=runtime_composition,
+        )
+        self._pending_token: object | None = None
+        self._client: IamClient | None = None
+
+    def create(
+        self,
+        *,
+        internal_service_credential: str,
+        trace_id_factory: Callable[[], str],
+        clock: Clock,
+        iam_mode: str = "strict",
+    ) -> IamClient:
+        if self._client is not None:
+            _invalid("factory.already_created")
+        token = object()
+        self._pending_token = token
+        try:
+            client = IamClient(
+                http_client=self._http_client,
+                internal_service_credential=internal_service_credential,
+                trace_id_factory=trace_id_factory,
+                clock=clock,
+                iam_mode=iam_mode,
+                _factory=self,
+                _binding=self._binding,
+                _construction_token=token,
+            )
+        finally:
+            self._pending_token = None
+        self._client = client
+        return client
+
+    def _consume_construction_token(self, token: object) -> bool:
+        return token is not None and self._pending_token is token
+
+    def _owns(self, client: IamClient) -> bool:
+        return bool(
+            type(self) is IamClientFactory
+            and self._client is client
+            and getattr(client, "_http_binding", None) is self._binding
+            and self._binding.is_current(
+                owner=self._owner,
+                client=self._http_client,
+                composition=self._composition,
+            )
+        )
+
+    def __copy__(self) -> "IamClientFactory":
+        _invalid("factory.copy")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "IamClientFactory":
+        del memo
+        _invalid("factory.copy")
+
 
 def _malformed(operation: str) -> NsRuntimeIamUnavailableError:
     return NsRuntimeIamUnavailableError(
@@ -302,26 +431,6 @@ def _malformed(operation: str) -> NsRuntimeIamUnavailableError:
     )
 
 
-def _create_production_iam_client(
-    *,
-    http_client: NsAsyncHttpClient,
-    internal_service_credential: str,
-    trace_id_factory: Callable[[], str],
-    clock: Clock,
-    iam_mode: str = "strict",
-) -> IamClient:
-    """Composition-root factory; deliberately absent from the public facade."""
-
-    return IamClient(
-        http_client=http_client,
-        internal_service_credential=internal_service_credential,
-        trace_id_factory=trace_id_factory,
-        clock=clock,
-        iam_mode=iam_mode,
-        _composition_issuer=_IAM_CLIENT_COMPOSITION_ISSUER,
-    )
-
-
 def _invalid(field_name: str) -> None:
     raise NsValidationError(
         "Runtime IAM client value is invalid.",
@@ -329,4 +438,4 @@ def _invalid(field_name: str) -> None:
     )
 
 
-__all__ = ("IamClient",)
+__all__ = ("IamClient", "IamClientFactory")

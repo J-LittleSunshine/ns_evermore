@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
+import copy
 from datetime import datetime, timedelta, timezone
 import json
 import unittest
@@ -13,7 +15,10 @@ from ns_common.exceptions import (
     NsRuntimeIamUnavailableError,
     NsValidationError,
 )
-from ns_common.http_client import NsAsyncHttpClient, NsHttpResponse
+from ns_common.http_client import (
+    NsAsyncHttpClient,
+    NsHttpClientOwner,
+)
 from ns_common.iam import (
     IamCredentialStatus, IamIntrospectionResult, IamPrincipalType,
     IamTargetContext, PayloadRefValidationRequest, PayloadRefValidationResult,
@@ -32,7 +37,8 @@ from ns_runtime.iam import (
     MessageAuthorizationService,
     PermissionSnapshot,
 )
-from ns_runtime.iam.client import _create_production_iam_client
+from ns_runtime.iam.client import IamClientFactory
+import ns_runtime.iam.client as iam_client_module
 from ns_runtime.protocol import ProtocolVersion
 
 
@@ -41,23 +47,74 @@ TOKEN = "user-access-token-must-never-leak"
 SERVICE = "internal-service-credential-at-least-32-chars"
 
 
-class _HttpClient:
+class _HttpServer:
     def __init__(self, outcomes: list[object]) -> None:
         self.outcomes = outcomes
         self.calls: list[dict[str, object]] = []
+        self.server: asyncio.AbstractServer | None = None
 
-    async def post(self, url: str, **kwargs: object) -> NsHttpResponse:
-        self.calls.append({"url": url, **kwargs})
-        outcome = self.outcomes.pop(0)
-        if isinstance(outcome, Exception):
-            raise outcome
-        return NsHttpResponse(
-            status_code=200,
-            headers={"content-type": "application/json"},
-            text=json.dumps(_wrap(outcome)),
-            url="https://iam.test/internal",
-            method="POST",
+    async def start(self) -> str:
+        self.server = await asyncio.start_server(
+            self._handle,
+            "127.0.0.1",
+            0,
         )
+        port = self.server.sockets[0].getsockname()[1]
+        return f"http://127.0.0.1:{port}/"
+
+    async def close(self) -> None:
+        if self.server is None:
+            return
+        self.server.close()
+        await self.server.wait_closed()
+
+    async def _handle(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        header_bytes = await reader.readuntil(b"\r\n\r\n")
+        header_text = header_bytes.decode("iso-8859-1")
+        lines = header_text.split("\r\n")
+        method, target, _ = lines[0].split(" ", 2)
+        headers = {
+            name.strip().casefold(): value.strip()
+            for line in lines[1:]
+            if ":" in line
+            for name, value in (line.split(":", 1),)
+        }
+        length = int(headers.get("content-length", "0"))
+        body = await reader.readexactly(length) if length else b""
+        payload = json.loads(body) if body else None
+        authorization = headers.get("authorization", "")
+        self.calls.append({
+            "url": target.lstrip("/"),
+            "method": method,
+            "bearer_token": authorization.removeprefix("Bearer "),
+            "trace_id": headers.get("x-trace-id"),
+            "json_data": payload,
+        })
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, NsDependencyError) and "timeout_seconds" in outcome.details:
+            await asyncio.sleep(0.2)
+            writer.close()
+            await writer.wait_closed()
+            return
+        status = 503 if isinstance(outcome, Exception) else 200
+        response_body = json.dumps(
+            _wrap({}) if isinstance(outcome, Exception) else _wrap(outcome),
+        ).encode()
+        reason = "OK" if status == 200 else "Service Unavailable"
+        writer.write(
+            f"HTTP/1.1 {status} {reason}\r\n".encode()
+            + b"Content-Type: application/json\r\n"
+            + f"Content-Length: {len(response_body)}\r\n".encode()
+            + b"Connection: close\r\n\r\n"
+            + response_body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
 
 
 def _wrap(data: object) -> dict[str, object]:
@@ -107,16 +164,23 @@ def _request(
 
 
 class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
-    def _client(self, outcomes: list[object]) -> tuple[IamClient, _HttpClient]:
-        captured = _HttpClient(outcomes)
-        http = NsAsyncHttpClient(
+    async def _client(self, outcomes: list[object]) -> tuple[IamClient, _HttpServer]:
+        captured = _HttpServer(outcomes)
+        base_url = await captured.start()
+        owner = NsHttpClientOwner()
+        http = owner.create(
             name="runtime-iam-test",
-            base_url="https://iam.test/",
+            base_url=base_url,
+            timeout_seconds=0.05,
         )
-        http.post = captured.post  # type: ignore[method-assign]
-        self.addAsyncCleanup(http.aclose)
-        client = _create_production_iam_client(
+        self.addAsyncCleanup(captured.close)
+        self.addAsyncCleanup(owner.aclose)
+        factory = IamClientFactory(
+            http_owner=owner,
             http_client=http,
+            runtime_composition=object(),
+        )
+        client = factory.create(
             internal_service_credential=SERVICE,
             trace_id_factory=lambda: "operation:trace1",
             clock=ControlledClock(utc_start=NOW),
@@ -126,6 +190,14 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
     def test_production_iam_adapter_cannot_be_directly_built_or_impersonated(
         self,
     ) -> None:
+        with self.assertRaises(ImportError):
+            from ns_runtime.iam.client import (  # type: ignore[attr-defined]  # noqa: F401
+                _create_production_iam_client,
+            )
+        self.assertFalse(hasattr(
+            iam_client_module,
+            "_create_production_iam_client",
+        ))
         http = NsAsyncHttpClient(
             name="runtime-iam-negative",
             base_url="https://iam.test/",
@@ -161,8 +233,86 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
                         cache_ttl_seconds=60,
                     )
 
+    async def test_owner_provenance_rejects_http_method_substitution_and_copy(
+        self,
+    ) -> None:
+        client, _ = await self._client([])
+        http = client._http
+        with self.assertRaises(NsValidationError):
+            copy.copy(client._composition_factory._owner)
+        with self.assertRaises(NsValidationError):
+            IamClientFactory(
+                http_owner=client._composition_factory._owner,
+                http_client=http,
+                runtime_composition=object(),
+            )
+
+        async def fake_post(*args, **kwargs):
+            del args, kwargs
+            return object()
+
+        http.post = fake_post
+        self.assertFalse(client._is_production_adapter())
+        with self.assertRaises(NsValidationError):
+            MessageAuthorizationService(
+                iam_client=client,
+                clock=ControlledClock(utc_start=NOW),
+                mode=AuthorizationMode.STRICT,
+                cache_ttl_seconds=60,
+            )
+        del http.post
+        self.assertTrue(client._is_production_adapter())
+
+        async def fake_request(*args, **kwargs):
+            del args, kwargs
+            return object()
+
+        http._client.request = fake_request
+        self.assertFalse(client._is_production_adapter())
+        del http._client.request
+        self.assertTrue(client._is_production_adapter())
+
+        async def fake_send(*args, **kwargs):
+            del args, kwargs
+            return object()
+
+        http._client.send = fake_send
+        self.assertFalse(client._is_production_adapter())
+        del http._client.send
+        self.assertTrue(client._is_production_adapter())
+        copied_http = copy.copy(http)
+        with self.assertRaises(NsValidationError):
+            IamClientFactory(
+                http_owner=client._composition_factory._owner,
+                http_client=copied_http,
+                runtime_composition=object(),
+            )
+
+        with self.assertRaises(NsValidationError):
+            copy.copy(client)
+        with self.assertRaises(NsValidationError):
+            copy.deepcopy(client)
+        with self.assertRaises(NsValidationError):
+            copy.copy(client._composition_factory)
+        service = MessageAuthorizationService(
+            iam_client=client,
+            clock=ControlledClock(utc_start=NOW),
+            mode=AuthorizationMode.STRICT,
+            cache_ttl_seconds=60,
+        )
+        with self.assertRaises(NsValidationError):
+            copy.copy(service)
+        with self.assertRaises(NsValidationError):
+            MessageAuthorizationService(
+                iam_client=client,
+                clock=ControlledClock(utc_start=NOW),
+                mode=AuthorizationMode.STRICT,
+                cache_ttl_seconds=60,
+            )
+        self.assertFalse(object.__new__(IamClient)._is_production_adapter())
+
     async def test_valid_token_uses_internal_credential_and_trace_without_leak(self) -> None:
-        client, http = self._client([{
+        client, http = await self._client([{
             "active": True,
             "reason": "TOKEN_ACTIVE",
             "authority": _result().to_wire(),
@@ -185,7 +335,7 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
             version="version:1", checksum="sha256:abcd",
             tenant_id="tenant:1", size_bytes=123,
         )
-        client, http = self._client([expected.to_wire()])
+        client, http = await self._client([expected.to_wire()])
         request = PayloadRefValidationRequest(
             object_id="object:1", version="version:1", checksum="sha256:abcd",
             tenant_id="tenant:1", owner_identity="user:1",
@@ -231,7 +381,7 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
             decided_at=NOW,
             expires_at=NOW + timedelta(minutes=2),
         )
-        client, http = self._client([expected.to_wire()])
+        client, http = await self._client([expected.to_wire()])
         self.assertEqual(
             expected,
             await client.revalidate_payload_ref(request),
@@ -263,7 +413,7 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
         )
         for outcome in cases:
             with self.subTest(reason=outcome["reason"]):
-                client, _ = self._client([outcome])
+                client, _ = await self._client([outcome])
                 with self.assertRaises(NsRuntimeIamDeniedError):
                     await client.authenticate(_request())
 
@@ -273,7 +423,7 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
             _result(capabilities=frozenset({"runtime.connection", "runtime.management"})),
         )
         for result in hostile:
-            client, _ = self._client([{
+            client, _ = await self._client([{
                 "active": True,
                 "reason": "TOKEN_ACTIVE",
                 "authority": result.to_wire(),
@@ -291,7 +441,7 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
         )
         for outcome, expected in cases:
             with self.subTest(expected=expected.__name__):
-                client, _ = self._client([outcome])
+                client, _ = await self._client([outcome])
                 request = _request()
                 with self.assertRaises(expected):
                     await client.authenticate(request)

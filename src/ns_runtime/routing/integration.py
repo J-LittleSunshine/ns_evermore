@@ -104,6 +104,8 @@ class LocalRoutingPreparation(RoutingPreparation):
         if (
             value.message_reference != message_reference
             or value.message_type != contract.message_type
+            or value.config_version != context.config_version
+            or value.policy_version != context.policy_version
             or value.principal_tenant_id != context.session.tenant_id
             or value.session_permission_snapshot_ref
             != context.session.permission_snapshot_ref

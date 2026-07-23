@@ -210,9 +210,11 @@ class StrongAuditAuthorityTestCase(unittest.IsolatedAsyncioTestCase):
         self.clock = ControlledClock(utc_start=NOW)
         self.store = DeterministicStateStoreContractModel(clock=self.clock)
         await self.store.open()
-        self.authority = StateStoreStrongAuditAuthorityService(
-            state_store=self.store,
+        repository = self.store.repository_composition().strong_audit_repository(
             namespace=StateNamespace.audit(domain="processor"),
+        )
+        self.authority = StateStoreStrongAuditAuthorityService(
+            repository=repository,
         )
         self.ordinary = DeterministicTestAuditSink()
         self.sink = AuthorityRoutingAuditSink(

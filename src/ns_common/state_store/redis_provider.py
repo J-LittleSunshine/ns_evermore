@@ -504,10 +504,19 @@ class RedisValkeyStateStore(StateStore):
         options: RedisStateStoreOptions,
         capabilities: StateStoreCapabilities,
         clock: Clock,
+        _repository_owner: object | None = None,
+        _contract_test_authority: bool = False,
+        _scope_issuer: object | None = None,
     ) -> None:
         if not isinstance(options, RedisStateStoreOptions):
             _invalid("provider.options")
-        super().__init__(capabilities=capabilities, clock=clock)
+        super().__init__(
+            capabilities=capabilities,
+            clock=clock,
+            _repository_owner=_repository_owner,
+            _contract_test_authority=_contract_test_authority,
+            _scope_issuer=_scope_issuer,
+        )
         self._options = options
         self._prefix = options.namespace.rstrip(":") + ":"
         self._client: object | None = None
@@ -627,8 +636,7 @@ class RedisValkeyStateStore(StateStore):
         mutation: StateMutation,
     ) -> StateRecord | None:
         result = await self._execute_transaction(
-            scope=scope,
-            mutations=(mutation,),
+            StateTransaction(scope=scope, mutations=(mutation,)),
         )
         return result.records[0]
 
@@ -696,7 +704,7 @@ class RedisValkeyStateStore(StateStore):
             or transaction.ordered_index_assertions
         ):
             return await self._execute_projection_transaction(transaction)
-        return await self._execute_transaction(scope=transaction.scope, mutations=transaction.mutations)
+        return await self._execute_transaction(transaction)
 
     async def _read_ordered_index(
         self, *, scope: StateAccessScope, index: StateOrderedIndexKey,
@@ -801,10 +809,10 @@ class RedisValkeyStateStore(StateStore):
 
     async def _execute_transaction(
         self,
-        *,
-        scope: StateAccessScope,
-        mutations: tuple[StateMutation, ...],
+        transaction: StateTransaction,
     ) -> StateTransactionResult:
+        scope = transaction.scope
+        mutations = transaction.mutations
         client = self._require_client()
         committed_at = self._clock.utc_now()
         payload = tuple(_mutation_payload(mutation) for mutation in mutations)
@@ -830,14 +838,17 @@ class RedisValkeyStateStore(StateStore):
             raise RuntimeError("provider transaction result invalid")
         records: list[StateRecord | None] = []
         for mutation, value in zip(mutations, values):
-            if not isinstance(value, dict) or value.get("present") not in {"0", "1"}:
+            if type(value) is not dict or value.get("present") not in {"0", "1"}:
                 raise RuntimeError("provider mutation result invalid")
             records.append(
                 None
                 if value["present"] == "0"
                 else self._record_from_wire(mutation.key, value)
             )
-        return StateTransactionResult(records=tuple(records))
+        return StateTransactionResult.for_transaction(
+            transaction,
+            records=tuple(records),
+        )
 
     async def _execute_projection_transaction(
         self, transaction: StateTransaction,
@@ -904,16 +915,18 @@ class RedisValkeyStateStore(StateStore):
         if (
             len(record_values) != len(transaction.mutations)
             or len(positions) != len(transaction.log_appends)
+            or any(type(value) is not int or value <= 0 for value in positions)
         ):
             raise RuntimeError("provider projection transaction cardinality invalid")
         records: list[StateRecord | None] = []
         for mutation, value in zip(transaction.mutations, record_values):
-            if not isinstance(value, dict) or value.get("present") not in {"0", "1"}:
+            if type(value) is not dict or value.get("present") not in {"0", "1"}:
                 raise RuntimeError("provider projection mutation result invalid")
             records.append(None if value["present"] == "0" else self._record_from_wire(mutation.key, value))
-        return StateTransactionResult(
+        return StateTransactionResult.for_transaction(
+            transaction,
             records=tuple(records),
-            log_positions=tuple(int(value) for value in positions),
+            log_positions=tuple(positions),
         )
 
     async def _execute(self, awaitable: object) -> object:

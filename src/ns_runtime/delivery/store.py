@@ -23,6 +23,7 @@ from ns_common.state_store import (
     StateRecord, StateTransaction, StateTransactionResult,
     StateOrderedIndexKey, StateOrderedIndexMutation,
     StateOrderedIndexMutationKind, StateTransitionLogAppend,
+    StateStoreRepository, StateStoreRepositoryRole,
 )
 
 from .models import (
@@ -37,7 +38,6 @@ from .serde import delivery_to_dict, summary_to_dict
 from .authority_layout import (
     DeliveryAuthorityLayout,
     StateStoreDeliveryAuthorityRegistry,
-    delivery_scope,
 )
 
 
@@ -146,12 +146,26 @@ class UnavailableDeliveryAdmissionStore(DeliveryAdmissionStore):
 class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
     """Production adapter. It never falls back to cache or process memory."""
 
-    def __init__(self, store: StateStore, *, authority_runtime_id: str = "runtime-local") -> None:
-        if not isinstance(store, StateStore):
-            _invalid("store")
-        self._store = store
+    def __init__(
+        self,
+        *,
+        repository: StateStoreRepository,
+        registry_repository: StateStoreRepository,
+    ) -> None:
+        if not isinstance(repository, StateStoreRepository):
+            _invalid("repository")
+        repository._require_role(StateStoreRepositoryRole.DELIVERY_ADMISSION)
+        if not isinstance(registry_repository, StateStoreRepository):
+            _invalid("registry_repository")
+        registry_repository._require_role(
+            StateStoreRepositoryRole.DELIVERY_REGISTRY,
+        )
+        if repository._store is not registry_repository._store:
+            _invalid("repository_store")
+        self._store = repository._store
+        self._repository = repository
         self._registry = StateStoreDeliveryAuthorityRegistry(
-            store=store, runtime_id=authority_runtime_id,
+            repository=registry_repository,
         )
 
     async def initialize(self, value: AdmissionInitialization) -> AtomicAdmissionResult:
@@ -166,12 +180,10 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
             tenant_id=value.root_summary.tenant_id,
             layout=layout,
         )
-        scope = delivery_scope(
-            self._store,
-            value.root_summary.tenant_id,
-            value.root_summary.authority_bucket_id,
+        scope = self._repository.delivery_scope(
+            tenant_id=value.root_summary.tenant_id,
+            bucket_id=value.root_summary.authority_bucket_id,
             layout_generation=value.root_summary.authority_layout_generation,
-            caller="delivery.admission",
         )
         namespace = scope.namespace
         dedup_key = StateKey(

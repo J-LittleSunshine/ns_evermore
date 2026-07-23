@@ -123,7 +123,15 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
             )
         with self.assertRaises(NsValidationError):
             dataclasses.replace(evidence, decision_reason="forged")
-        copied = copy.copy(evidence)
+        with self.assertRaises(NsValidationError):
+            copy.copy(evidence)
+        copied = object.__new__(AuthorizationDecisionEvidence)
+        for field in dataclasses.fields(AuthorizationDecisionEvidence):
+            object.__setattr__(
+                copied,
+                field.name,
+                getattr(evidence, field.name),
+            )
         object.__setattr__(copied, "decision_reason", "forged")
         self.assertFalse(copied.is_contract_test_authority())
 
@@ -1527,6 +1535,8 @@ def _request(
         semantic_access_check_reference=iam_decision_result_reference,
         message_reference=message_reference,
         message_type="task.dispatch",
+        config_version=decision.config_version,
+        policy_version=decision.policy_version,
         principal_tenant_id=principal_tenant_id,
         effective_tenant_id=target_tenant if crosses else principal_tenant_id,
         cross_tenant_authorized=crosses,
