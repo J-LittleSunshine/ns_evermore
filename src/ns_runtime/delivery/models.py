@@ -15,6 +15,9 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from ns_common.exceptions import NsValidationError
+from ns_runtime.protocol import (
+    AuthContextGroup, MessageGroup, ProtocolGroup, SourceGroup, TraceGroup,
+)
 from ns_runtime.routing import ResolvedRoutingPlan, RoutingStrategy, SelectedRoutingBinding
 
 
@@ -159,24 +162,28 @@ class AdmissionTrace:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DeliveryEnvelopeAuthority:
-    message_type: str
-    source_identity: str = field(repr=False)
-    authorization_binding_reference: str = field(repr=False)
-    permission_snapshot_ref: str = field(repr=False)
-    permission_snapshot_version: str
-    iam_decision_reference: str = field(repr=False)
-    iam_decision_version: str
-    trace: AdmissionTrace
+    """Safe, runtime-injected inbound groups reused for outbound delivery.
+
+    Raw identities, credentials, and IAM decision fields intentionally do not
+    belong to this durable authority value.
+    """
+
+    protocol: ProtocolGroup
+    message: MessageGroup
+    source: SourceGroup
+    auth_context: AuthContextGroup
+    trace: TraceGroup
 
     def __post_init__(self) -> None:
-        for name in (
-            "message_type", "source_identity", "authorization_binding_reference",
-            "permission_snapshot_ref", "permission_snapshot_version",
-            "iam_decision_reference", "iam_decision_version",
+        for name, expected in (
+            ("protocol", ProtocolGroup), ("message", MessageGroup),
+            ("source", SourceGroup), ("auth_context", AuthContextGroup),
+            ("trace", TraceGroup),
         ):
-            _text(getattr(self, name), f"envelope_authority.{name}")
-        if not isinstance(self.trace, AdmissionTrace):
-            _invalid("envelope_authority.trace")
+            if type(getattr(self, name)) is not expected:
+                _invalid(f"envelope_authority.{name}")
+        if self.message.message_id == "" or self.source.tenant_id == "":
+            _invalid("envelope_authority.binding")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -198,6 +205,38 @@ class InlinePayload:
                 _invalid("inline.value")
         else:
             _invalid("inline.media_type")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InlinePayloadDescriptor:
+    media_type: str
+    size_bytes: int
+    digest: str
+    observed_depth: int
+    application_limit_bytes: int
+    transport_limit_bytes: int
+    canonical_bytes: bytes | None = field(default=None, repr=False)
+    rejection_reason: RejectionReason | None = None
+
+    def __post_init__(self) -> None:
+        _text(self.media_type, "inline_descriptor.media_type")
+        _nonnegative(self.size_bytes, "inline_descriptor.size_bytes")
+        _digest(self.digest, "inline_descriptor.digest")
+        _nonnegative(self.observed_depth, "inline_descriptor.observed_depth")
+        _positive(self.application_limit_bytes, "inline_descriptor.application_limit_bytes")
+        _positive(self.transport_limit_bytes, "inline_descriptor.transport_limit_bytes")
+        if self.rejection_reason is None:
+            if not isinstance(self.canonical_bytes, bytes):
+                _invalid("inline_descriptor.canonical_bytes")
+            if self.size_bytes != len(self.canonical_bytes):
+                _invalid("inline_descriptor.size_bytes")
+            if self.digest != "sha256:" + hashlib.sha256(self.canonical_bytes).hexdigest():
+                _invalid("inline_descriptor.digest")
+        elif (
+            not isinstance(self.rejection_reason, RejectionReason)
+            or self.canonical_bytes is not None
+        ):
+            _invalid("inline_descriptor.rejection_reason")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -318,6 +357,7 @@ class AdmissionPolicyDecision:
     shard_bucket_size: int
     initialization_batch_size: int
     activation_batch_size: int
+    authority_bucket_count: int
     rejection_reason: RejectionReason | None = None
 
     def __post_init__(self) -> None:
@@ -337,6 +377,7 @@ class AdmissionPolicyDecision:
                      "fanout_shard_threshold", "shard_bucket_size",
                      "initialization_batch_size", "activation_batch_size"):
             _positive(getattr(self, name), f"policy_decision.{name}")
+        _positive(self.authority_bucket_count, "policy_decision.authority_bucket_count")
         if self.activation_batch_size > MAX_ACTIVATION_BATCH_SIZE:
             _invalid("policy_decision.activation_batch_size")
         if self.accepted is (self.rejection_reason is not None):
@@ -387,6 +428,7 @@ class DeliveryOwner:
     renew_failures: int
     risk: DeliveryOwnerRisk
     fencing: int
+    owner_epoch: int
     risk_since: datetime | None = None
     protection_until: datetime | None = None
 
@@ -401,6 +443,7 @@ class DeliveryOwner:
             _invalid("owner.lease_expires_at")
         _nonnegative(self.renew_failures, "owner.renew_failures")
         _positive(self.fencing, "owner.fencing")
+        _positive(self.owner_epoch, "owner.owner_epoch")
         if not isinstance(self.risk, DeliveryOwnerRisk):
             _invalid("owner.risk")
         if self.risk is DeliveryOwnerRisk.HEALTHY:
@@ -424,6 +467,7 @@ class DeliveryAttempt:
     owner_worker_id: str
     owner_claim_token: str = field(repr=False)
     owner_fencing: int
+    owner_epoch: int
     config_version: str
     policy_version: str
     target_fingerprint: str
@@ -443,6 +487,7 @@ class DeliveryAttempt:
             _text(getattr(self, name), f"attempt.{name}")
         _positive(self.attempt_number, "attempt.attempt_number")
         _positive(self.owner_fencing, "attempt.owner_fencing")
+        _positive(self.owner_epoch, "attempt.owner_epoch")
         _text(self.config_version, "attempt.config_version")
         _text(self.policy_version, "attempt.policy_version")
         _digest(self.target_fingerprint, "attempt.target_fingerprint")
@@ -479,6 +524,8 @@ class MessageDeliverySummary:
     plan_version: int
     plan_decision_fingerprint: str
     target_fingerprint: str
+    authority_bucket_count: int
+    authority_bucket_id: int
     status: DeliverySummaryStatus
     total_count: int
     accepted_count: int
@@ -498,6 +545,10 @@ class MessageDeliverySummary:
     sending_count: int = 0
     ack_waiting_count: int = 0
     write_failed_count: int = 0
+    waiting_count: int = 0
+    expired_count: int = 0
+    payload_rejected_count: int = 0
+    write_uncertain_count: int = 0
 
     def __post_init__(self) -> None:
         if self.schema_version != DR1_SCHEMA_VERSION:
@@ -505,6 +556,10 @@ class MessageDeliverySummary:
         for name in ("summary_id", "root_summary_id", "message_id", "tenant_id", "plan_id"):
             _text(getattr(self, name), f"summary.{name}")
         _positive(self.plan_version, "summary.plan_version")
+        _positive(self.authority_bucket_count, "summary.authority_bucket_count")
+        _nonnegative(self.authority_bucket_id, "summary.authority_bucket_id")
+        if self.authority_bucket_id >= self.authority_bucket_count:
+            _invalid("summary.authority_bucket_id")
         _digest(self.plan_decision_fingerprint, "summary.plan_decision_fingerprint")
         _digest(self.target_fingerprint, "summary.target_fingerprint")
         if not isinstance(self.status, DeliverySummaryStatus):
@@ -522,7 +577,9 @@ class MessageDeliverySummary:
                   self.prepared_count, self.cancelled_count,
                   self.not_initialized_count, self.active_count, self.inflight_count,
                   self.queued_count, self.sending_count,
-                  self.ack_waiting_count, self.write_failed_count)
+                  self.ack_waiting_count, self.write_failed_count,
+                  self.waiting_count, self.expired_count,
+                  self.payload_rejected_count, self.write_uncertain_count)
         for value in counts:
             _nonnegative(value, "summary.count")
         if self.total_count != self.accepted_count + self.rejected_count + self.not_initialized_count:
@@ -530,6 +587,8 @@ class MessageDeliverySummary:
         if (
             self.prepared_count + self.queued_count + self.sending_count
             + self.ack_waiting_count + self.write_failed_count
+            + self.waiting_count + self.expired_count
+            + self.payload_rejected_count + self.write_uncertain_count
             + self.cancelled_count != self.accepted_count
         ):
             _invalid("summary.delivery_count")
@@ -575,11 +634,14 @@ class DeliveryRecord:
     target_fingerprint: str
     target_set_fingerprint: str
     target_index: int
+    authority_bucket_count: int
+    authority_bucket_id: int
     binding: SelectedRoutingBinding = field(repr=False)
     status: DeliveryRecordStatus
     payload_evidence: PayloadEvidence
     policy_decision: AdmissionPolicyDecision
     envelope_authority: DeliveryEnvelopeAuthority
+    envelope_authority_fingerprint: str
     state_version: int
     created_at: datetime
     updated_at: datetime
@@ -589,6 +651,9 @@ class DeliveryRecord:
     attempt_count: int = 0
     ack_deadline: datetime | None = None
     last_failure: DeliveryWriteFailure | None = None
+    target_access_decision_reference: str = field(default="", repr=False)
+    last_fencing: int = 0
+    owner_epoch: int = 0
 
     def __post_init__(self) -> None:
         if self.schema_version != DR1_SCHEMA_VERSION:
@@ -600,6 +665,10 @@ class DeliveryRecord:
         if self.shard_index is not None:
             _nonnegative(self.shard_index, "delivery.shard_index")
         _nonnegative(self.target_index, "delivery.target_index")
+        _positive(self.authority_bucket_count, "delivery.authority_bucket_count")
+        _nonnegative(self.authority_bucket_id, "delivery.authority_bucket_id")
+        if self.authority_bucket_id >= self.authority_bucket_count:
+            _invalid("delivery.authority_bucket_id")
         if (self.shard_index is None) is not (self.summary_id == self.root_summary_id):
             _invalid("delivery.summary_binding")
         for name in ("plan_decision_fingerprint", "target_fingerprint", "target_set_fingerprint"):
@@ -614,6 +683,14 @@ class DeliveryRecord:
             _invalid("delivery.policy_decision")
         if not isinstance(self.envelope_authority, DeliveryEnvelopeAuthority):
             _invalid("delivery.envelope_authority")
+        _digest(
+            self.envelope_authority_fingerprint,
+            "delivery.envelope_authority_fingerprint",
+        )
+        if self.envelope_authority_fingerprint != compute_envelope_authority_fingerprint(
+            self.envelope_authority
+        ):
+            _invalid("delivery.envelope_authority_binding")
         if (self.payload_evidence.request_binding_fingerprint
                 != self.policy_decision.request_fingerprint
                 or self.payload_evidence.target_binding_fingerprint
@@ -630,6 +707,14 @@ class DeliveryRecord:
             object.__setattr__(self, "ack_deadline", _utc(self.ack_deadline, "delivery.ack_deadline"))
         if self.last_failure is not None and not isinstance(self.last_failure, DeliveryWriteFailure):
             _invalid("delivery.last_failure")
+        _text(self.target_access_decision_reference, "delivery.target_access_decision_reference")
+        _nonnegative(self.last_fencing, "delivery.last_fencing")
+        _nonnegative(self.owner_epoch, "delivery.owner_epoch")
+        if self.owner is not None and (
+            self.owner.fencing != self.last_fencing
+            or self.owner.owner_epoch != self.owner_epoch
+        ):
+            _invalid("delivery.owner_history")
         _validate_delivery_dispatch_state(self)
 
 
@@ -672,6 +757,18 @@ def compute_target_fingerprint(plan: ResolvedRoutingPlan) -> str:
         _invalid("target_fingerprint.plan")
     values = [_binding_projection(value) for value in plan.selected_bindings]
     return _sha({"selected_bindings": values})
+
+
+def compute_envelope_authority_fingerprint(
+    value: DeliveryEnvelopeAuthority,
+) -> str:
+    if not isinstance(value, DeliveryEnvelopeAuthority):
+        _invalid("envelope_authority_fingerprint.value")
+    return _sha({
+        "protocol": value.protocol.to_dict(), "message": value.message.to_dict(),
+        "source": value.source.to_dict(),
+        "auth_context": value.auth_context.to_dict(), "trace": value.trace.to_dict(),
+    })
 
 
 def compute_binding_fingerprint(binding: SelectedRoutingBinding) -> str:
@@ -764,6 +861,7 @@ def validate_initialization_graph(
         "schema_version", "root_summary_id", "shard_count", "message_id",
         "tenant_id", "plan_id", "plan_version", "plan_decision_fingerprint",
         "target_fingerprint", "payload_evidence", "policy_decision",
+        "authority_bucket_count", "authority_bucket_id",
     )
     if any(
         any(getattr(value, field_name) != getattr(root, field_name)
@@ -793,6 +891,8 @@ def validate_initialization_graph(
         or value.plan_decision_fingerprint != root.plan_decision_fingerprint
         or value.payload_evidence != root.payload_evidence
         or value.policy_decision != root.policy_decision
+        or value.authority_bucket_count != root.authority_bucket_count
+        or value.authority_bucket_id != root.authority_bucket_id
         or value.target_fingerprint != compute_binding_fingerprint(value.binding)
         or value.target_set_fingerprint != root.target_fingerprint
         for value in deliveries
@@ -840,12 +940,20 @@ def validate_initialization_graph(
 
 
 def _validate_summary_status(value: MessageDeliverySummary) -> None:
+    if value.status in {
+        DeliverySummaryStatus.PARTIAL_ACKED,
+        DeliverySummaryStatus.ALL_ACKED,
+        DeliverySummaryStatus.PARTIAL_FAILED,
+    }:
+        _invalid("summary.p12_status_reserved")
     if value.status is DeliverySummaryStatus.INITIALIZING:
         if (
             value.cancelled_count
             or value.prepared_count != value.accepted_count
             or any((value.queued_count, value.sending_count,
-                    value.ack_waiting_count, value.write_failed_count))
+                    value.ack_waiting_count, value.write_failed_count,
+                    value.waiting_count, value.expired_count,
+                    value.payload_rejected_count, value.write_uncertain_count))
         ):
             _invalid("summary.initializing_counts")
     elif value.status is DeliverySummaryStatus.PENDING:
@@ -859,7 +967,9 @@ def _validate_summary_status(value: MessageDeliverySummary) -> None:
             value.prepared_count
             or value.cancelled_count != value.accepted_count
             or any((value.queued_count, value.sending_count,
-                    value.ack_waiting_count, value.write_failed_count))
+                    value.ack_waiting_count, value.write_failed_count,
+                    value.waiting_count, value.expired_count,
+                    value.payload_rejected_count, value.write_uncertain_count))
         ):
             _invalid("summary.cancelled_counts")
 
@@ -1004,28 +1114,77 @@ def canonical_inline_payload(payload: InlinePayload, *, max_depth: int) -> bytes
         _invalid("inline.value")
 
 
-def _validate_json(value: object, *, max_depth: int) -> None:
-    stack = [(value, 1)]
-    seen: set[int] = set()
+def describe_inline_payload(
+    payload: InlinePayload, *, max_depth: int = 4096,
+) -> InlinePayloadDescriptor:
+    if not isinstance(payload, InlinePayload):
+        _invalid("inline_descriptor.payload")
+    try:
+        if payload.media_type == "application/octet-stream":
+            raw = bytes(payload.value)  # type: ignore[arg-type]
+            observed_depth = 0
+        else:
+            observed_depth = _validate_json(payload.value, max_depth=max_depth)
+            raw = json.dumps(
+                payload.value, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False,
+            ).encode("utf-8")
+    except _PayloadDepthError:
+        reason = RejectionReason.INLINE_TOO_DEEP
+    except (NsValidationError, TypeError, ValueError, UnicodeError):
+        reason = RejectionReason.INLINE_TYPE_INVALID
+    else:
+        return InlinePayloadDescriptor(
+            media_type=payload.media_type, size_bytes=len(raw),
+            digest="sha256:" + hashlib.sha256(raw).hexdigest(),
+            observed_depth=observed_depth,
+            application_limit_bytes=payload.application_limit_bytes,
+            transport_limit_bytes=payload.transport_limit_bytes,
+            canonical_bytes=raw,
+        )
+    digest = "sha256:" + hashlib.sha256(
+        f"{payload.media_type}:{reason.value}".encode("utf-8")
+    ).hexdigest()
+    return InlinePayloadDescriptor(
+        media_type=payload.media_type, size_bytes=0, digest=digest,
+        observed_depth=max_depth + 1,
+        application_limit_bytes=payload.application_limit_bytes,
+        transport_limit_bytes=payload.transport_limit_bytes,
+        rejection_reason=reason,
+    )
+
+
+def _validate_json(value: object, *, max_depth: int) -> int:
+    stack = [(value, 1, False)]
+    active_containers: set[int] = set()
+    observed_depth = 0
     while stack:
-        item, depth = stack.pop()
+        item, depth, exiting = stack.pop()
+        if exiting:
+            active_containers.remove(id(item))
+            continue
+        observed_depth = max(observed_depth, depth)
         if depth > max_depth:
             raise _PayloadDepthError
         if item is None or type(item) in {bool, int, float, str}:
             continue
         if isinstance(item, (list, dict)):
             marker = id(item)
-            if marker in seen:
+            if marker in active_containers:
                 _invalid("inline.cycle")
-            seen.add(marker)
+            active_containers.add(marker)
+            stack.append((item, depth, True))
             if isinstance(item, dict):
                 if any(not isinstance(key, str) for key in item):
                     _invalid("inline.key_type")
-                stack.extend((child, depth + 1) for child in item.values())
+                stack.extend(
+                    (child, depth + 1, False) for child in item.values()
+                )
             else:
-                stack.extend((child, depth + 1) for child in item)
+                stack.extend((child, depth + 1, False) for child in item)
             continue
         _invalid("inline.value_type")
+    return observed_depth
 
 
 class _PayloadDepthError(ValueError):
@@ -1083,13 +1242,15 @@ __all__ = (
     "AdmissionOutcome", "AdmissionPriority",
     "AdmissionReliability", "AdmissionPolicyDecision", "AdmissionTrace",
     "DedupEvidence", "DeliveryActivationEvidence", "DeliveryAttempt",
-    "DeliveryAttemptStatus", "DeliveryOwner", "DeliveryOwnerRisk",
+    "DeliveryAttemptStatus", "DeliveryEnvelopeAuthority", "DeliveryOwner", "DeliveryOwnerRisk",
     "DeliveryRecord", "DeliveryRecordStatus", "DeliveryWriteFailure",
     "DeliverySummaryStatus", "DuplicateLifecycle", "InlinePayload",
+    "InlinePayloadDescriptor",
     "MessageDeliverySummary", "PayloadDependencyDisposition",
     "PayloadEvidence", "PayloadKind", "PayloadReference", "RejectionReason",
     "TargetRejection", "cancel_initializing_graph",
-    "canonical_inline_payload", "compute_binding_fingerprint",
+    "canonical_inline_payload", "describe_inline_payload", "compute_binding_fingerprint",
+    "compute_envelope_authority_fingerprint",
     "compute_dedup_evidence_fingerprint", "compute_payload_evidence_fingerprint",
     "compute_target_fingerprint",
     "validate_initialization_graph",

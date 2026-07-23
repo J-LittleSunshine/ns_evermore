@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+import asyncio
 import hashlib
 import json
 from dataclasses import dataclass
@@ -34,7 +35,8 @@ from ns_common.state_store import (
     StateTransaction,
     StateTransactionResult,
     StateOrderedIndexKey, StateOrderedIndexMutation,
-    StateOrderedIndexMutationKind, StateTransitionLogAppend,
+    StateOrderedIndexMutationKind, StateOrderedIndexReadResult,
+    StateTransitionLogAppend,
 )
 from ns_common.time import Clock
 
@@ -113,20 +115,47 @@ class StateStoreDeliveryScheduler:
         _text(tenant_id, "activate.tenant_id")
         if not isinstance(policy, DeliverySchedulingPolicy):
             _invalid("activate.policy")
-        scope = _scope(tenant_id)
+        scope = _scope(tenant_id, 0)
+        candidate_page = None
+        page_size = min(64, policy.activation_scan_budget)
+        for bucket_id in range(policy.authority_bucket_count):
+            candidate_scope = _scope(tenant_id, bucket_id)
+            page = await self._store.read_ordered_index(
+                scope=candidate_scope,
+                index=_index(candidate_scope, "delivery.prepared"),
+                limit=page_size,
+            )
+            if page.total_count:
+                scope = candidate_scope
+                candidate_page = page
+                break
+        if candidate_page is None:
+            candidate_page = await self._store.read_ordered_index(
+                scope=scope, index=_index(scope, "delivery.prepared"), limit=1,
+            )
+        elif candidate_page.next_cursor is not None:
+            entries = list(candidate_page.entries)
+            cursor = candidate_page.next_cursor
+            while cursor is not None and len(entries) < policy.activation_scan_budget:
+                page = await self._store.read_ordered_index(
+                    scope=scope, index=_index(scope, "delivery.prepared"),
+                    limit=min(page_size, policy.activation_scan_budget - len(entries)),
+                    start_after=cursor,
+                )
+                entries.extend(page.entries)
+                cursor = page.next_cursor
+            candidate_page = StateOrderedIndexReadResult(
+                entries=tuple(entries), observed_at=candidate_page.observed_at,
+                total_count=candidate_page.total_count,
+                next_cursor=(cursor if cursor is not None and entries else None),
+            )
         prepared_index = _index(scope, "delivery.prepared")
-        candidate_page = await self._store.read_ordered_index(
-            scope=scope, index=prepared_index,
-            limit=min(MAX_ACTIVATION_BATCH_SIZE, max(
-                policy.activation_batch_size * 4,
-                policy.activation_batch_size,
-            )),
+        counts = await self.resource_counts(
+            tenant_id=tenant_id,
+            authority_bucket_count=policy.authority_bucket_count,
         )
-        counts = await self.resource_counts(tenant_id=tenant_id)
         queued_before = counts.queued
-        authoritative_global = (await self._store.read_ordered_index(
-            scope=scope, index=_global_ready_index(), limit=1,
-        )).total_count
+        authoritative_global = counts.queued
         if global_queued_before is None:
             global_queued_before = authoritative_global
         if (
@@ -145,8 +174,26 @@ class StateStoreDeliveryScheduler:
         selected_policy_snapshot: tuple[str, str] | None = None
         selected_batch_limit = policy.activation_batch_size
         for entry in candidate_page.entries:
-            item = await self._read_delivery(scope, entry.member)
+            try:
+                item = await self._read_delivery(scope, entry.member)
+            except NsRuntimeStateStoreUnavailableError:
+                await self._store.transact(StateTransaction(
+                    scope=scope, mutations=(), ordered_index_mutations=(
+                        _index_remove(prepared_index, entry.member),
+                    ),
+                ))
+                continue
             value = item.value
+            bucket_id = int(scope.atomic_scope.partition.removeprefix("bucket-"))
+            if (
+                value.authority_bucket_count != policy.authority_bucket_count
+                or value.authority_bucket_id != bucket_id
+            ):
+                raise NsRuntimeDeliveryStateError(details={
+                    "component": "delivery_scheduler",
+                    "operation": "activate_prepared",
+                    "reason": "authority_bucket_mismatch",
+                })
             if value.status is not DeliveryRecordStatus.PREPARED:
                 continue
             if value.policy_decision.expires_at <= now:
@@ -269,7 +316,7 @@ class StateStoreDeliveryScheduler:
                     authority.value,
                     prepared=-(queued_count + expired_count),
                     queued=queued_count,
-                    write_failed=expired_count,
+                    expired=expired_count,
                     now=now,
                 ),
             ))
@@ -292,15 +339,15 @@ class StateStoreDeliveryScheduler:
                 _index_add(_target_index(scope, value.target_fingerprint),
                            value.delivery_id, selected_scores[value.delivery_id]),
                 _index_add(
-                    _global_ready_index(),
-                    _global_member(value.tenant_id, value.delivery_id),
+                    _runtime_ready_index(scope),
+                    value.delivery_id,
                     selected_scores[value.delivery_id],
                 ),
             ))
         for value in expired_values:
             index_mutations.extend((
                 _index_remove(prepared_index, value.delivery_id),
-                _index_add(_index(scope, "delivery.failed"), value.delivery_id,
+                _index_add(_index(scope, "delivery.expired"), value.delivery_id,
                            expired_scores[value.delivery_id]),
             ))
         evidence_delivery = activated[0] if activated else expired_values[0]
@@ -325,22 +372,40 @@ class StateStoreDeliveryScheduler:
             ),
         )
 
-    async def resource_counts(self, *, tenant_id: str) -> DeliveryResourceCounts:
+    async def resource_counts(
+        self, *, tenant_id: str, authority_bucket_count: int = 8,
+    ) -> DeliveryResourceCounts:
         """Rebuild P11 resource counts from authoritative delivery records."""
 
         _text(tenant_id, "resource_counts.tenant_id")
-        scope = _scope(tenant_id)
-        async def count(name: str) -> int:
-            return (await self._store.read_ordered_index(
-                scope=scope, index=_index(scope, name), limit=1,
-            )).total_count
+        names = (
+            "delivery.prepared", "delivery.ready", "delivery.claimed",
+            "delivery.sending", "delivery.ack", "delivery.write_failed",
+            "delivery.waiting", "delivery.expired",
+            "delivery.payload_rejected", "delivery.write_uncertain",
+        )
+        requests = []
+        for bucket_id in range(authority_bucket_count):
+            scope = _scope(tenant_id, bucket_id)
+            for name in names:
+                requests.append(self._store.read_ordered_index(
+                    scope=scope, index=_index(scope, name), limit=1,
+                ))
+        results = await asyncio.gather(*requests)
+        totals = {name: 0 for name in names}
+        for offset, result in enumerate(results):
+            totals[names[offset % len(names)]] += result.total_count
         counts = DeliveryResourceCounts(
             tenant_id=tenant_id,
-            prepared=await count("delivery.prepared"),
-            queued=await count("delivery.ready") + await count("delivery.claimed"),
-            sending=await count("delivery.sending"),
-            ack_waiting=await count("delivery.ack"),
-            write_failed=await count("delivery.failed"),
+            prepared=totals["delivery.prepared"],
+            queued=totals["delivery.ready"] + totals["delivery.claimed"],
+            sending=totals["delivery.sending"],
+            ack_waiting=totals["delivery.ack"],
+            write_failed=totals["delivery.write_failed"],
+            waiting=totals["delivery.waiting"],
+            expired=totals["delivery.expired"],
+            payload_rejected=totals["delivery.payload_rejected"],
+            write_uncertain=totals["delivery.write_uncertain"],
         )
         return counts
 
@@ -360,27 +425,61 @@ class StateStoreDeliveryScheduler:
             _text(value, f"claim.{field}")
         if not isinstance(policy, DeliverySchedulingPolicy):
             _invalid("claim.policy")
-        scope = _scope(tenant_id)
+        scope = _scope(tenant_id, 0)
         now = self._clock.utc_now()
-        ready = await self._store.read_ordered_index(
-            scope=scope, index=_index(scope, "delivery.ready"), limit=16,
-        )
+        ready = None
+        for bucket_id in range(policy.authority_bucket_count):
+            candidate_scope = _scope(tenant_id, bucket_id)
+            page = await self._store.read_ordered_index(
+                scope=candidate_scope, index=_index(candidate_scope, "delivery.ready"),
+                limit=16,
+            )
+            if page.entries:
+                scope, ready = candidate_scope, page
+                break
+        if ready is None:
+            for bucket_id in range(policy.authority_bucket_count):
+                candidate_scope = _scope(tenant_id, bucket_id)
+                due = await self._store.read_ordered_index(
+                    scope=candidate_scope,
+                    index=_index(candidate_scope, "delivery.lease"),
+                    limit=1, max_score=now.timestamp(),
+                )
+                if due.entries:
+                    scope = candidate_scope
+                    break
+            ready = await self._store.read_ordered_index(
+                scope=scope, index=_index(scope, "delivery.ready"), limit=16,
+            )
         contended = False
         for entry in ready.entries:
             authority = await self._read_delivery(scope, entry.member)
+            bucket_id = int(scope.atomic_scope.partition.removeprefix("bucket-"))
+            if (
+                authority.value.authority_bucket_count
+                != policy.authority_bucket_count
+                or authority.value.authority_bucket_id != bucket_id
+            ):
+                raise NsRuntimeDeliveryStateError(details={
+                    "component": "delivery_scheduler",
+                    "operation": "claim_next",
+                    "reason": "authority_bucket_mismatch",
+                })
             if authority.value.status is not DeliveryRecordStatus.QUEUED or authority.value.owner is not None:
                 continue
-            fencing = 1
+            fencing = authority.value.last_fencing + 1
+            owner_epoch = authority.value.owner_epoch + 1
             owner = DeliveryOwner(
                 schema_version=P11_OWNER_SCHEMA_VERSION,
                 runtime_id=runtime_id, worker_id=worker_id,
                 claim_token=claim_token, claimed_at=now,
                 lease_expires_at=now + timedelta(seconds=policy.lease_ttl_seconds),
                 renew_failures=0, risk=DeliveryOwnerRisk.HEALTHY,
-                fencing=fencing,
+                fencing=fencing, owner_epoch=owner_epoch,
             )
             claimed = dataclasses.replace(
-                authority.value, owner=owner,
+                authority.value, owner=owner, last_fencing=fencing,
+                owner_epoch=owner_epoch,
                 state_version=authority.value.state_version + 1, updated_at=now,
             )
             indexes = (
@@ -403,6 +502,9 @@ class StateStoreDeliveryScheduler:
                 tenant_id=tenant_id, delivery_id=claimed.delivery_id,
                 runtime_id=runtime_id, worker_id=worker_id,
                 claim_token=claim_token, fencing=fencing,
+                owner_epoch=owner_epoch,
+                authority_bucket_count=claimed.authority_bucket_count,
+                authority_bucket_id=claimed.authority_bucket_id,
             )
             return ClaimResult(outcome=ClaimOutcome.CLAIMED, claim=claim, delivery=claimed)
         recovered = await self._recover_expired_for_claim(
@@ -426,7 +528,7 @@ class StateStoreDeliveryScheduler:
             _invalid("renew.claim")
         if not isinstance(policy, DeliverySchedulingPolicy):
             _invalid("renew.policy")
-        scope = _scope(claim.tenant_id)
+        scope = _claim_scope(claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         owner = _require_owner(authority.value, claim, self._clock.utc_now(), allow_risk=True)
         now = self._clock.utc_now()
@@ -464,7 +566,7 @@ class StateStoreDeliveryScheduler:
             _invalid("owner_risk.claim")
         if not isinstance(policy, DeliverySchedulingPolicy):
             _invalid("owner_risk.policy")
-        scope = _scope(claim.tenant_id)
+        scope = _claim_scope(claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         now = self._clock.utc_now()
         owner = _require_owner(authority.value, claim, now, allow_risk=True)
@@ -500,7 +602,7 @@ class StateStoreDeliveryScheduler:
     async def release_claim(self, *, claim: DeliveryClaim) -> DeliveryRecord:
         if not isinstance(claim, DeliveryClaim):
             _invalid("release.claim")
-        scope = _scope(claim.tenant_id)
+        scope = _claim_scope(claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         _require_owner(authority.value, claim, self._clock.utc_now(), allow_risk=True)
         if authority.value.status is not DeliveryRecordStatus.QUEUED:
@@ -532,7 +634,7 @@ class StateStoreDeliveryScheduler:
     ) -> DeliveryRecord:
         if not isinstance(claim, DeliveryClaim) or not isinstance(failure, DeliveryWriteFailure):
             _invalid("precheck")
-        scope = _scope(claim.tenant_id)
+        scope = _claim_scope(claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         now = self._clock.utc_now()
         _require_owner(authority.value, claim, now, allow_risk=True)
@@ -552,8 +654,13 @@ class StateStoreDeliveryScheduler:
             authority.value, status=status, owner=None, last_failure=failure,
             state_version=authority.value.state_version + 1, updated_at=now,
         )
+        summary_delta = {
+            DeliveryRecordStatus.TARGET_WAITING: {"waiting": 1},
+            DeliveryRecordStatus.EXPIRED: {"expired": 1},
+            DeliveryRecordStatus.PAYLOAD_REJECTED: {"payload_rejected": 1},
+        }[status]
         summary_mutations = await self._summary_mutations(
-            scope, authority.value, queued=-1, write_failed=1, now=now,
+            scope, authority.value, queued=-1, now=now, **summary_delta,
         )
         mutations = (_replace_delivery(authority.record, updated),) + summary_mutations
         result = await self._store.transact(_transition(
@@ -561,9 +668,12 @@ class StateStoreDeliveryScheduler:
                 _index_remove(_index(scope, "delivery.claimed"), updated.delivery_id),
                 _index_remove(_index(scope, "delivery.lease"), updated.delivery_id),
                 _index_remove(_target_index(scope, updated.target_fingerprint), updated.delivery_id),
-                _index_remove(_global_ready_index(),
-                              _global_member(updated.tenant_id, updated.delivery_id)),
-                _index_add(_index(scope, "delivery.failed"), updated.delivery_id, now.timestamp()),
+                _index_remove(_runtime_ready_index(scope), updated.delivery_id),
+                _index_add(_index(scope, {
+                    DeliveryRecordStatus.TARGET_WAITING: "delivery.waiting",
+                    DeliveryRecordStatus.EXPIRED: "delivery.expired",
+                    DeliveryRecordStatus.PAYLOAD_REJECTED: "delivery.payload_rejected",
+                }[status]), updated.delivery_id, now.timestamp()),
             ), operation="precheck_failed", delivery=updated, now=now,
         ))
         _validate_transaction(result, mutations, "fail_precheck")
@@ -591,10 +701,12 @@ class StateStoreDeliveryScheduler:
                     claim_token=claim_token, claimed_at=now,
                     lease_expires_at=now + timedelta(seconds=policy.lease_ttl_seconds),
                     renew_failures=0, risk=DeliveryOwnerRisk.HEALTHY,
-                    fencing=old.fencing + 1,
+                    fencing=authority.value.last_fencing + 1,
+                    owner_epoch=authority.value.owner_epoch + 1,
                 )
                 updated = dataclasses.replace(
-                    authority.value, owner=owner,
+                    authority.value, owner=owner, last_fencing=owner.fencing,
+                    owner_epoch=owner.owner_epoch,
                     state_version=authority.value.state_version + 1, updated_at=now,
                 )
                 mutation = _replace_delivery(authority.record, updated)
@@ -612,6 +724,9 @@ class StateStoreDeliveryScheduler:
                     tenant_id=updated.tenant_id, delivery_id=updated.delivery_id,
                     runtime_id=runtime_id, worker_id=worker_id,
                     claim_token=claim_token, fencing=owner.fencing,
+                    owner_epoch=owner.owner_epoch,
+                    authority_bucket_count=updated.authority_bucket_count,
+                    authority_bucket_id=updated.authority_bucket_id,
                 )
                 return ClaimResult(outcome=ClaimOutcome.CLAIMED, claim=claim, delivery=updated)
             if authority.value.status is DeliveryRecordStatus.SENDING:
@@ -630,7 +745,7 @@ class StateStoreDeliveryScheduler:
                     failure=DeliveryWriteFailure.AUTHORITY_CONFLICT_AFTER_WRITE,
                 )
                 summaries = await self._summary_mutations(
-                    scope, authority.value, sending=-1, write_failed=1, now=now,
+                    scope, authority.value, sending=-1, write_uncertain=1, now=now,
                 )
                 mutations = (_replace_delivery(authority.record, uncertain),
                              _replace_attempt(attempt_record, uncertain_attempt)) + summaries
@@ -639,7 +754,7 @@ class StateStoreDeliveryScheduler:
                         scope=scope, mutations=mutations, index_mutations=(
                             _index_remove(_index(scope, "delivery.lease"), uncertain.delivery_id),
                             _index_remove(_index(scope, "delivery.sending"), uncertain.delivery_id),
-                            _index_add(_index(scope, "delivery.failed"), uncertain.delivery_id, now.timestamp()),
+                            _index_add(_index(scope, "delivery.write_uncertain"), uncertain.delivery_id, now.timestamp()),
                         ), operation="write_uncertain", delivery=uncertain, now=now,
                     ))
                 except NsRuntimeStateStoreConflictError:
@@ -649,15 +764,17 @@ class StateStoreDeliveryScheduler:
             if authority.value.status is DeliveryRecordStatus.ACK_WAITING:
                 owner = dataclasses.replace(
                     old, worker_id=worker_id, claim_token=claim_token,
-                    claimed_at=now, lease_expires_at=max(
-                        authority.value.ack_deadline,
-                        now + timedelta(seconds=policy.lease_ttl_seconds),
-                    ), fencing=old.fencing + 1, renew_failures=0,
+                    claimed_at=now,
+                    lease_expires_at=now + timedelta(seconds=policy.lease_ttl_seconds),
+                    fencing=authority.value.last_fencing + 1,
+                    owner_epoch=authority.value.owner_epoch + 1,
+                    renew_failures=0,
                     risk=DeliveryOwnerRisk.HEALTHY, risk_since=None,
                     protection_until=None,
                 )
                 updated = dataclasses.replace(
-                    authority.value, owner=owner,
+                    authority.value, owner=owner, last_fencing=owner.fencing,
+                    owner_epoch=owner.owner_epoch,
                     state_version=authority.value.state_version + 1, updated_at=now,
                 )
                 mutation = _replace_delivery(authority.record, updated)
@@ -685,7 +802,7 @@ class StateStoreDeliveryScheduler:
         _text(attempt_id, "start.attempt_id")
         if not isinstance(policy, DeliverySchedulingPolicy):
             _invalid("start.policy")
-        scope = _scope(claim.tenant_id)
+        scope = _claim_scope(claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         now = self._clock.utc_now()
         owner = _require_owner(authority.value, claim, now, allow_risk=False)
@@ -716,6 +833,7 @@ class StateStoreDeliveryScheduler:
             owner_worker_id=owner.worker_id,
             owner_claim_token=owner.claim_token,
             owner_fencing=owner.fencing,
+            owner_epoch=owner.owner_epoch,
             config_version=value.policy_decision.config_version,
             policy_version=value.policy_decision.policy_version,
             target_fingerprint=value.target_fingerprint,
@@ -742,8 +860,7 @@ class StateStoreDeliveryScheduler:
         indexes = (
             _index_remove(_index(scope, "delivery.claimed"), value.delivery_id),
             _index_remove(_target_index(scope, value.target_fingerprint), value.delivery_id),
-            _index_remove(_global_ready_index(),
-                          _global_member(value.tenant_id, value.delivery_id)),
+            _index_remove(_runtime_ready_index(scope), value.delivery_id),
             _index_add(_index(scope, "delivery.sending"), value.delivery_id, now.timestamp()),
         )
         result = await self._store.transact(_transition(
@@ -773,7 +890,7 @@ class StateStoreDeliveryScheduler:
     async def mark_write_uncertain(self, *, claim: DeliveryClaim) -> DeliveryRecord:
         if not isinstance(claim, DeliveryClaim):
             _invalid("uncertain.claim")
-        scope = _scope(claim.tenant_id)
+        scope = _claim_scope(claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         now = self._clock.utc_now()
         _require_owner(authority.value, claim, now, allow_risk=True)
@@ -796,7 +913,7 @@ class StateStoreDeliveryScheduler:
             failure=DeliveryWriteFailure.AUTHORITY_CONFLICT_AFTER_WRITE,
         )
         summaries = await self._summary_mutations(
-            scope, value, sending=-1, write_failed=1, now=now,
+            scope, value, sending=-1, write_uncertain=1, now=now,
         )
         mutations = (_replace_delivery(authority.record, uncertain),
                      _replace_attempt(attempt_record, uncertain_attempt)) + summaries
@@ -804,16 +921,54 @@ class StateStoreDeliveryScheduler:
             scope=scope, mutations=mutations, index_mutations=(
                 _index_remove(_index(scope, "delivery.lease"), value.delivery_id),
                 _index_remove(_index(scope, "delivery.sending"), value.delivery_id),
-                _index_add(_index(scope, "delivery.failed"), value.delivery_id, now.timestamp()),
+                _index_add(_index(scope, "delivery.write_uncertain"), value.delivery_id, now.timestamp()),
             ), operation="write_uncertain", delivery=uncertain, now=now,
         ))
         _validate_transaction(result, mutations, "mark_write_uncertain")
         return uncertain
 
+    async def reconcile_write_completion(
+        self, *, claim: DeliveryClaim,
+    ) -> DeliveryRecord:
+        """Resolve only an indeterminate post-write authority commit."""
+        if not isinstance(claim, DeliveryClaim):
+            _invalid("reconcile.claim")
+        scope = _claim_scope(claim)
+        authority = await self._read_delivery(scope, claim.delivery_id)
+        value = authority.value
+        if value.status is DeliveryRecordStatus.ACK_WAITING:
+            _require_owner(value, claim, self._clock.utc_now(), allow_risk=True)
+            if value.current_attempt_id is None:
+                raise NsRuntimeDeliveryStateError(details={
+                    "component": "delivery_scheduler",
+                    "operation": "reconcile_write_completion",
+                    "reason": "attempt_required",
+                })
+            attempt, _ = await self._read_attempt(scope, value.current_attempt_id)
+            if (
+                attempt.status is not DeliveryAttemptStatus.WRITE_SUCCEEDED
+                or attempt.owner_fencing != claim.fencing
+                or attempt.owner_epoch != claim.owner_epoch
+            ):
+                raise NsRuntimeDeliveryStateError(details={
+                    "component": "delivery_scheduler",
+                    "operation": "reconcile_write_completion",
+                    "reason": "committed_attempt_mismatch",
+                })
+            return value
+        if value.status is DeliveryRecordStatus.SENDING:
+            return await self.mark_write_uncertain(claim=claim)
+        raise NsRuntimeDeliveryStateError(details={
+            "component": "delivery_scheduler",
+            "operation": "reconcile_write_completion",
+            "reason": "completion_reconcile_conflict",
+            "status": value.status.value,
+        })
+
     async def load_claimed(self, *, claim: DeliveryClaim) -> DeliveryRecord:
         if not isinstance(claim, DeliveryClaim):
             _invalid("load.claim")
-        authority = await self._read_delivery(_scope(claim.tenant_id), claim.delivery_id)
+        authority = await self._read_delivery(_claim_scope(claim), claim.delivery_id)
         _require_owner(authority.value, claim, self._clock.utc_now(), allow_risk=True)
         return authority.value
 
@@ -825,7 +980,7 @@ class StateStoreDeliveryScheduler:
     ) -> DeliveryRecord:
         if not isinstance(claim, DeliveryClaim):
             _invalid("complete.claim")
-        scope = _scope(claim.tenant_id)
+        scope = _claim_scope(claim)
         authority = await self._read_delivery(scope, claim.delivery_id)
         now = self._clock.utc_now()
         owner = _require_owner(authority.value, claim, now, allow_risk=True)
@@ -859,6 +1014,7 @@ class StateStoreDeliveryScheduler:
             or attempt.delivery_id != value.delivery_id
             or attempt.owner_claim_token != claim.claim_token
             or attempt.owner_fencing != claim.fencing
+            or attempt.owner_epoch != claim.owner_epoch
             or attempt.attempt_number != value.attempt_count
         ):
             raise NsRuntimeDeliveryStateError(details={
@@ -885,7 +1041,7 @@ class StateStoreDeliveryScheduler:
                 _index_add(_index(scope, "delivery.ack"), value.delivery_id,
                            value.ack_deadline.timestamp()),
                 _index_add(_index(scope, "delivery.lease"), value.delivery_id,
-                           value.ack_deadline.timestamp()),
+                           owner.lease_expires_at.timestamp()),
             )
         else:
             updated = dataclasses.replace(
@@ -909,7 +1065,7 @@ class StateStoreDeliveryScheduler:
             index_mutations = (
                 _index_remove(_index(scope, "delivery.sending"), value.delivery_id),
                 _index_remove(_index(scope, "delivery.lease"), value.delivery_id),
-                _index_add(_index(scope, "delivery.failed"), value.delivery_id, now.timestamp()),
+                _index_add(_index(scope, "delivery.write_failed"), value.delivery_id, now.timestamp()),
             )
         attempt_record = attempt_authority[1]
         mutations = (
@@ -961,7 +1117,9 @@ class StateStoreDeliveryScheduler:
     async def _summary_mutations(
         self, scope: StateAccessScope, delivery: DeliveryRecord, *,
         prepared: int = 0, queued: int = 0, sending: int = 0,
-        ack_waiting: int = 0, write_failed: int = 0, now,
+        ack_waiting: int = 0, write_failed: int = 0, waiting: int = 0,
+        expired: int = 0, payload_rejected: int = 0,
+        write_uncertain: int = 0, now,
     ) -> tuple[StateMutation, ...]:
         identifiers = (delivery.root_summary_id,) if (
             delivery.summary_id == delivery.root_summary_id
@@ -972,7 +1130,9 @@ class StateStoreDeliveryScheduler:
             updated = _summary_delta(
                 authority.value, prepared=prepared, queued=queued,
                 sending=sending, ack_waiting=ack_waiting,
-                write_failed=write_failed, now=now,
+                write_failed=write_failed, waiting=waiting, expired=expired,
+                payload_rejected=payload_rejected,
+                write_uncertain=write_uncertain, now=now,
             )
             values.append(_replace_summary(authority.record, updated))
         return tuple(values)
@@ -1020,10 +1180,12 @@ async def _read_record(
     return result.record
 
 
-def _scope(tenant_id: str) -> StateAccessScope:
+def _scope(tenant_id: str, bucket_id: int) -> StateAccessScope:
     namespace = StateNamespace.tenant(tenant_id=tenant_id, domain="delivery")
     return StateAccessScope(
-        atomic_scope=StateAtomicScope(namespace=namespace, partition="scheduling"),
+        atomic_scope=StateAtomicScope(
+            namespace=namespace, partition=f"bucket-{bucket_id}",
+        ),
         authority=StateAuthorityKind.DELIVERY_ADMISSION,
         caller="delivery.scheduling",
         capabilities=frozenset({
@@ -1035,6 +1197,10 @@ def _scope(tenant_id: str) -> StateAccessScope:
             StateCallerCapability.APPEND,
         }),
     )
+
+
+def _claim_scope(claim: DeliveryClaim) -> StateAccessScope:
+    return _scope(claim.tenant_id, claim.authority_bucket_id)
 
 
 def _replace_delivery(record: StateRecord, value: DeliveryRecord) -> StateMutation:
@@ -1100,6 +1266,10 @@ def _summary_delta(
     sending: int = 0,
     ack_waiting: int = 0,
     write_failed: int = 0,
+    waiting: int = 0,
+    expired: int = 0,
+    payload_rejected: int = 0,
+    write_uncertain: int = 0,
 ) -> MessageDeliverySummary:
     return dataclasses.replace(
         value,
@@ -1108,6 +1278,10 @@ def _summary_delta(
         sending_count=value.sending_count + sending,
         ack_waiting_count=value.ack_waiting_count + ack_waiting,
         write_failed_count=value.write_failed_count + write_failed,
+        waiting_count=value.waiting_count + waiting,
+        expired_count=value.expired_count + expired,
+        payload_rejected_count=value.payload_rejected_count + payload_rejected,
+        write_uncertain_count=value.write_uncertain_count + write_uncertain,
         active_count=value.active_count + sending,
         inflight_count=value.inflight_count + ack_waiting,
         state_version=value.state_version + 1,
@@ -1129,6 +1303,11 @@ def _require_owner(
         or owner.worker_id != claim.worker_id
         or owner.claim_token != claim.claim_token
         or owner.fencing != claim.fencing
+        or owner.owner_epoch != claim.owner_epoch
+        or value.last_fencing != claim.fencing
+        or value.owner_epoch != claim.owner_epoch
+        or value.authority_bucket_count != claim.authority_bucket_count
+        or value.authority_bucket_id != claim.authority_bucket_id
     ):
         raise NsRuntimeOwnerMismatchError(details={
             "component": "delivery_scheduler", "reason": "claim_mismatch",
@@ -1201,15 +1380,8 @@ def _target_index(
     return _index(scope, "delivery.target." + target_fingerprint.removeprefix("sha256:"))
 
 
-def _global_ready_index() -> StateOrderedIndexKey:
-    return StateOrderedIndexKey(
-        namespace=StateNamespace.system(domain="delivery"),
-        name="delivery.global.ready", bucket="global",
-    )
-
-
-def _global_member(tenant_id: str, delivery_id: str) -> str:
-    return _key_digest(tenant_id, delivery_id)
+def _runtime_ready_index(scope: StateAccessScope) -> StateOrderedIndexKey:
+    return _index(scope, "delivery.runtime.ready")
 
 
 def _index_add(

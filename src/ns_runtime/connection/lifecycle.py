@@ -323,6 +323,7 @@ class ConnectionLifecycleManager:
     async def resolve_local_delivery_target(self, binding):
         """Resolve the current local transport owner without rerouting."""
         from ns_runtime.delivery.scheduling import LocalDeliveryTarget
+        from ns_runtime.protocol import ProtocolGroup
         from ns_runtime.routing import SelectedRoutingBinding
 
         if not isinstance(binding, SelectedRoutingBinding):
@@ -350,6 +351,22 @@ class ConnectionLifecycleManager:
             tenant_id=binding.tenant_id,
             identity=binding.identity_reference.value,
             active=active,
+            protocol=ProtocolGroup(
+                major=context.protocol_version.major,
+                minor=context.protocol_version.minor,
+                patch=context.protocol_version.patch,
+            ) if context is not None else ProtocolGroup(major=0, minor=0, patch=0),
+            protocol_schema_key=(
+                context.protocol_schema_key if context is not None else "inactive"
+            ),
+            access_decision_reference=(
+                "sha256:" + hashlib.sha256(
+                    (context.permission_snapshot_ref + "\0"
+                     + context.permission_digest + "\0"
+                     + context.permission_version).encode("utf-8")
+                ).hexdigest()
+                if context is not None else "inactive"
+            ),
         )
 
     async def write_local_delivery(self, *, target, payload) -> None:
@@ -378,6 +395,15 @@ class ConnectionLifecycleManager:
             and context.connection_epoch == target.connection_epoch
             and context.tenant_id == target.tenant_id
             and context.identity == target.identity
+            and (context.protocol_version.major, context.protocol_version.minor,
+                 context.protocol_version.patch)
+            == (target.protocol.major, target.protocol.minor, target.protocol.patch)
+            and context.protocol_schema_key == target.protocol_schema_key
+            and target.access_decision_reference == "sha256:" + hashlib.sha256(
+                (context.permission_snapshot_ref + "\0"
+                 + context.permission_digest + "\0"
+                 + context.permission_version).encode("utf-8")
+            ).hexdigest()
         ):
             raise NsStateError(
                 "Local delivery target is no longer active.",

@@ -153,7 +153,10 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
             tenant_id=value.root_summary.tenant_id, domain="delivery",
         )
         scope = StateAccessScope(
-            atomic_scope=StateAtomicScope(namespace=namespace, partition="admission"),
+            atomic_scope=StateAtomicScope(
+                namespace=namespace,
+                partition=f"bucket-{value.root_summary.authority_bucket_id}",
+            ),
             authority=StateAuthorityKind.DELIVERY_ADMISSION,
             caller="delivery.admission",
             capabilities=frozenset({

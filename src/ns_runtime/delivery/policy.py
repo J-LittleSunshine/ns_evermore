@@ -14,8 +14,9 @@ from ns_runtime.routing import ResolvedRoutingPlan, RoutingStrategy
 
 from .models import (
     AdmissionPolicyDecision, AdmissionPriority, AdmissionReliability,
-    InlinePayload, PayloadDependencyDisposition, PayloadReference,
-    RejectionReason, MAX_ACTIVATION_BATCH_SIZE, canonical_inline_payload,
+    DeliveryEnvelopeAuthority, InlinePayload, InlinePayloadDescriptor,
+    PayloadDependencyDisposition, PayloadReference, RejectionReason,
+    MAX_ACTIVATION_BATCH_SIZE, describe_inline_payload,
 )
 
 
@@ -34,6 +35,7 @@ class AdmissionPolicyConfig:
     shard_bucket_size: int = 1000
     initialization_batch_size: int = 500
     activation_batch_size: int = 200
+    authority_bucket_count: int = 8
 
     def __post_init__(self) -> None:
         for name in ("config_version", "policy_version"):
@@ -44,7 +46,7 @@ class AdmissionPolicyConfig:
                      "min_delivery_window_seconds", "max_ack_timeout_seconds",
                      "dedup_ttl_seconds", "fanout_shard_threshold",
                      "shard_bucket_size", "initialization_batch_size",
-                     "activation_batch_size"):
+                     "activation_batch_size", "authority_bucket_count"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 _invalid(f"config.{name}")
@@ -66,7 +68,9 @@ class AdmissionRequest:
     tenant_id: str = field(repr=False)
     source_identity: str = field(repr=False)
     authorization_binding_reference: str = field(repr=False)
+    envelope_authority: DeliveryEnvelopeAuthority = field(repr=False)
     payload: InlinePayload | PayloadReference = field(repr=False)
+    inline_descriptor: InlinePayloadDescriptor | None = field(repr=False)
     requested_priority: AdmissionPriority | None
     requested_reliability: AdmissionReliability | None
     requested_expires_at: datetime
@@ -76,6 +80,7 @@ class AdmissionRequest:
     def __init__(
         self, *, plan: ResolvedRoutingPlan, message_id: str, tenant_id: str,
         source_identity: str, authorization_binding_reference: str,
+        envelope_authority: DeliveryEnvelopeAuthority,
         payload: InlinePayload | PayloadReference,
         requested_priority: AdmissionPriority | None,
         requested_reliability: AdmissionReliability | None,
@@ -88,6 +93,7 @@ class AdmissionRequest:
             ("plan", plan), ("message_id", message_id),
             ("tenant_id", tenant_id), ("source_identity", source_identity),
             ("authorization_binding_reference", authorization_binding_reference),
+            ("envelope_authority", envelope_authority),
             ("payload", payload), ("requested_priority", requested_priority),
             ("requested_reliability", requested_reliability),
             ("requested_expires_at", requested_expires_at),
@@ -95,12 +101,17 @@ class AdmissionRequest:
             ("requested_target_strategy", requested_target_strategy),
         ):
             object.__setattr__(self, name, value)
+        object.__setattr__(
+            self, "inline_descriptor",
+            describe_inline_payload(payload) if isinstance(payload, InlinePayload) else None,
+        )
         self.__post_init__()
 
     @classmethod
     def from_stage_six(
         cls, *, stage_six: object, message_id: str, tenant_id: str,
         source_identity: str, authorization_binding_reference: str,
+        envelope_authority: DeliveryEnvelopeAuthority,
         payload: InlinePayload | PayloadReference,
         requested_priority: AdmissionPriority | None,
         requested_reliability: AdmissionReliability | None,
@@ -114,7 +125,9 @@ class AdmissionRequest:
             plan=stage_six.plan, message_id=message_id, tenant_id=tenant_id,
             source_identity=source_identity,
             authorization_binding_reference=authorization_binding_reference,
-            payload=payload, requested_priority=requested_priority,
+            envelope_authority=envelope_authority,
+            payload=payload,
+            requested_priority=requested_priority,
             requested_reliability=requested_reliability,
             requested_expires_at=requested_expires_at,
             requested_ack_timeout_seconds=requested_ack_timeout_seconds,
@@ -141,6 +154,19 @@ class AdmissionRequest:
             _invalid("request.plan_authority_chain")
         if not isinstance(self.payload, (InlinePayload, PayloadReference)):
             _invalid("request.payload")
+        if isinstance(self.payload, InlinePayload):
+            if not isinstance(self.inline_descriptor, InlinePayloadDescriptor):
+                _invalid("request.inline_descriptor")
+        elif self.inline_descriptor is not None:
+            _invalid("request.inline_descriptor")
+        if type(self.envelope_authority) is not DeliveryEnvelopeAuthority:
+            _invalid("request.envelope_authority")
+        if (
+            self.envelope_authority.message.message_id != self.message_id
+            or self.envelope_authority.message.type != authorization.message_type
+            or self.envelope_authority.source.tenant_id != self.tenant_id
+        ):
+            _invalid("request.envelope_authority_binding")
         if self.requested_priority is not None and not isinstance(
             self.requested_priority, AdmissionPriority
         ):
@@ -168,10 +194,16 @@ class AdmissionRequest:
     def fingerprint_for_config(self, config: AdmissionPolicyConfig | None) -> str:
         payload = self.payload
         if isinstance(payload, InlinePayload):
-            raw = canonical_inline_payload(payload, max_depth=4096)
-            descriptor = {"kind": "inline", "media_type": payload.media_type,
-                          "size_bytes": len(raw),
-                          "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+            inline = self.inline_descriptor
+            assert inline is not None
+            descriptor = {"kind": "inline", "media_type": inline.media_type,
+                          "size_bytes": inline.size_bytes,
+                          "digest": inline.digest,
+                          "observed_depth": inline.observed_depth,
+                          "rejection_reason": (
+                              None if inline.rejection_reason is None
+                              else inline.rejection_reason.value
+                          ),
                           "application_limit": payload.application_limit_bytes,
                           "transport_limit": payload.transport_limit_bytes}
         else:
@@ -187,8 +219,11 @@ class AdmissionRequest:
             "plan_version": self.plan.plan_version,
             "plan_decision_fingerprint": self.plan.decision_fingerprint,
             "message_id": self.message_id, "tenant_id": self.tenant_id,
-            "source_identity": self.source_identity,
-            "authorization_binding_reference": self.authorization_binding_reference,
+            "source": self.envelope_authority.source.to_dict(),
+            "auth_context": self.envelope_authority.auth_context.to_dict(),
+            "protocol": self.envelope_authority.protocol.to_dict(),
+            "message": self.envelope_authority.message.to_dict(),
+            "trace": self.envelope_authority.trace.to_dict(),
             "payload": descriptor,
             "requested_priority": self.requested_priority.value if self.requested_priority else None,
             "requested_reliability": self.requested_reliability.value if self.requested_reliability else None,
@@ -202,6 +237,7 @@ class AdmissionRequest:
                 "shard_bucket_size": config.shard_bucket_size,
                 "initialization_batch_size": config.initialization_batch_size,
                 "activation_batch_size": config.activation_batch_size,
+                "authority_bucket_count": config.authority_bucket_count,
             }),
         }
         raw = json.dumps(values, sort_keys=True, separators=(",", ":")).encode()
@@ -228,7 +264,13 @@ class DefaultAdmissionPolicy(AdmissionPolicy):
             _invalid("policy.config")
         now = _utc(now, "policy.now")
         reason = None
-        if request.requested_expires_at <= now:
+        if (request.inline_descriptor is not None
+                and request.inline_descriptor.rejection_reason is not None):
+            reason = request.inline_descriptor.rejection_reason
+        elif (request.inline_descriptor is not None
+              and request.inline_descriptor.observed_depth > config.max_json_depth):
+            reason = RejectionReason.INLINE_TOO_DEEP
+        elif request.requested_expires_at <= now:
             reason = RejectionReason.EXPIRED
         elif request.requested_expires_at < now + timedelta(
             seconds=config.min_delivery_window_seconds
@@ -262,6 +304,7 @@ class DefaultAdmissionPolicy(AdmissionPolicy):
             shard_bucket_size=config.shard_bucket_size,
             initialization_batch_size=config.initialization_batch_size,
             activation_batch_size=config.activation_batch_size,
+            authority_bucket_count=config.authority_bucket_count,
             rejection_reason=reason,
         )
 
@@ -285,6 +328,7 @@ def validate_policy_decision(
             or decision.shard_bucket_size != config.shard_bucket_size
             or decision.initialization_batch_size != config.initialization_batch_size
             or decision.activation_batch_size != config.activation_batch_size
+            or decision.authority_bucket_count != config.authority_bucket_count
             or decision.ack_timeout_seconds > config.max_ack_timeout_seconds
             or decision.ack_timeout_seconds > request.requested_ack_timeout_seconds
             or decision.expires_at != request.requested_expires_at):
@@ -295,6 +339,11 @@ def validate_policy_decision(
     )
     if decision.accepted and (expired or short):
         _invalid("policy_result.expiry_bypass")
+    if decision.accepted and request.inline_descriptor is not None and (
+        request.inline_descriptor.rejection_reason is not None
+        or request.inline_descriptor.observed_depth > config.max_json_depth
+    ):
+        _invalid("policy_result.inline_descriptor_bypass")
     if (not decision.accepted and decision.rejection_reason is None):
         _invalid("policy_result.rejection")
     return decision

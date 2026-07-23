@@ -26,9 +26,9 @@ from .models import (
     DeliveryRecordStatus, DeliverySummaryStatus, DuplicateLifecycle,
     InlinePayload, MessageDeliverySummary, PayloadDependencyDisposition,
     PayloadEvidence, PayloadKind, PayloadReference, RejectionReason,
-    TargetRejection, canonical_inline_payload, compute_binding_fingerprint,
+    TargetRejection, compute_binding_fingerprint,
     compute_dedup_evidence_fingerprint, compute_payload_evidence_fingerprint,
-    compute_target_fingerprint,
+    compute_target_fingerprint, compute_envelope_authority_fingerprint,
     DeliveryEnvelopeAuthority,
 )
 from .policy import (
@@ -165,14 +165,10 @@ class DeliveryAdmissionService:
         if compute_target_fingerprint(plan) != compute_target_fingerprint(request.plan):
             _invalid("admit.plan")
         now = self._clock.utc_now()
-        inline_raw: bytes | None = None
-        if isinstance(request.payload, InlinePayload):
-            # Build the trusted canonical descriptor before invoking policy.
-            # Policy therefore never fingerprints sender-provided object identity.
-            try:
-                inline_raw = canonical_inline_payload(request.payload, max_depth=4096)
-            except (NsValidationError, ValueError):
-                inline_raw = None
+        inline_raw = (
+            request.inline_descriptor.canonical_bytes
+            if request.inline_descriptor is not None else None
+        )
         decision = validate_policy_decision(
             self._policy.decide(request, now=now, config=self._config),
             request=request, config=self._config, now=now,
@@ -188,16 +184,24 @@ class DeliveryAdmissionService:
                 target_fingerprint=compute_binding_fingerprint(binding), reason=reason,
             ) for binding in bindings]
         elif isinstance(request.payload, InlinePayload):
-            try:
-                raw = canonical_inline_payload(
-                    request.payload, max_depth=decision.max_json_depth,
+            descriptor = request.inline_descriptor
+            if descriptor is None or descriptor.rejection_reason is not None:
+                return await self._commit_all_rejected(
+                    request=request, decision=decision, trace=trace, now=now,
+                    reason=(
+                        RejectionReason.INLINE_TYPE_INVALID if descriptor is None
+                        else descriptor.rejection_reason
+                    ),
+                    payload_evidence=None,
                 )
-            except (NsValidationError, ValueError):
+            if descriptor.observed_depth > decision.max_json_depth:
                 return await self._commit_all_rejected(
                     request=request, decision=decision, trace=trace, now=now,
                     reason=RejectionReason.INLINE_TOO_DEEP,
                     payload_evidence=None,
                 )
+            raw = descriptor.canonical_bytes
+            assert raw is not None
             limit = min(
                 decision.max_inline_bytes,
                 request.payload.application_limit_bytes,
@@ -209,7 +213,7 @@ class DeliveryAdmissionService:
                     reason=RejectionReason.INLINE_TOO_LARGE,
                     payload_evidence=None,
                 )
-            digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+            digest = descriptor.digest
             body_ref = self._id("payload_body", 0)
             request_binding = decision.request_fingerprint
             target_binding = compute_target_fingerprint(plan)
@@ -495,6 +499,9 @@ class DeliveryAdmissionService:
             _invalid("initialization.payload_evidence")
         summary_id = self._id("summary", 0)
         target_fingerprint = compute_target_fingerprint(plan)
+        authority_bucket_id = int.from_bytes(
+            hashlib.sha256(request.message_id.encode("utf-8")).digest()[:8], "big",
+        ) % decision.authority_bucket_count
         status = _summary_status(total, accepted_count, rejected_count)
         threshold = decision.fanout_shard_threshold
         bucket_size = decision.shard_bucket_size
@@ -513,6 +520,8 @@ class DeliveryAdmissionService:
             plan_version=plan.plan_version,
             plan_decision_fingerprint=plan.decision_fingerprint,
             target_fingerprint=target_fingerprint,
+            authority_bucket_count=decision.authority_bucket_count,
+            authority_bucket_id=authority_bucket_id,
             payload_evidence=payload_evidence, policy_decision=decision,
             state_version=final_state_version, created_at=now, updated_at=now,
             active_count=0, inflight_count=0, cancelled_count=0,
@@ -562,18 +571,15 @@ class DeliveryAdmissionService:
                 target_fingerprint=compute_binding_fingerprint(binding),
                 target_set_fingerprint=target_fingerprint,
                 target_index=index, binding=binding,
+                authority_bucket_count=decision.authority_bucket_count,
+                authority_bucket_id=authority_bucket_id,
                 status=DeliveryRecordStatus.PREPARED,
                 payload_evidence=payload_evidence, policy_decision=decision,
-                envelope_authority=DeliveryEnvelopeAuthority(
-                    message_type=plan.authorization_evidence.message_type,
-                    source_identity=request.source_identity,
-                    authorization_binding_reference=request.authorization_binding_reference,
-                    permission_snapshot_ref=plan.effective_permission_snapshot_ref,
-                    permission_snapshot_version=plan.effective_permission_snapshot_version,
-                    iam_decision_reference=plan.iam_decision_reference,
-                    iam_decision_version=plan.iam_decision_version,
-                    trace=trace,
+                envelope_authority=request.envelope_authority,
+                envelope_authority_fingerprint=compute_envelope_authority_fingerprint(
+                    request.envelope_authority
                 ),
+                target_access_decision_reference=plan.iam_decision_reference,
                 state_version=1, created_at=now, updated_at=now,
             ))
         dedup_expires = now + timedelta(seconds=decision.dedup_ttl_seconds)

@@ -224,10 +224,20 @@ class StateOrderedIndexEntry:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class StateOrderedIndexCursor:
+    member: str
+    score: float
+
+    def __post_init__(self) -> None:
+        StateOrderedIndexEntry(member=self.member, score=self.score)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StateOrderedIndexReadResult:
     entries: tuple[StateOrderedIndexEntry, ...]
     observed_at: datetime
     total_count: int
+    next_cursor: StateOrderedIndexCursor | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.entries, tuple) or any(
@@ -238,6 +248,14 @@ class StateOrderedIndexReadResult:
         _non_negative_int(self.total_count, "ordered_index_result.total_count")
         if self.total_count < len(self.entries):
             _invalid("ordered_index_result.total_count")
+        if self.next_cursor is not None:
+            if not isinstance(self.next_cursor, StateOrderedIndexCursor):
+                _invalid("ordered_index_result.next_cursor")
+            if not self.entries or (
+                self.next_cursor.member != self.entries[-1].member
+                or self.next_cursor.score != self.entries[-1].score
+            ):
+                _invalid("ordered_index_result.next_cursor_binding")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -445,6 +463,7 @@ __all__ = (
     "StateMutation",
     "StateMutationKind",
     "StateOrderedIndexEntry",
+    "StateOrderedIndexCursor",
     "StateOrderedIndexKey",
     "StateOrderedIndexMutation",
     "StateOrderedIndexMutationKind",

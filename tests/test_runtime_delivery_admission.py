@@ -5,6 +5,7 @@ import asyncio
 import dataclasses
 from datetime import timedelta
 import json
+import math
 import unittest
 
 from ns_common.exceptions import (
@@ -20,7 +21,8 @@ from ns_runtime.delivery import (
     AdmissionReliability, AdmissionRequest, AdmissionResponseSender,
     AdmissionResult, AdmissionTrace, AtomicAdmissionOutcome,
     AtomicAdmissionResult, DefaultAdmissionPolicy, DeliveryAcceptedResponse,
-    DeliveryAdmissionService, DeliveryAdmissionStore, DeliveryRecordStatus,
+    DeliveryAdmissionService, DeliveryAdmissionStore, DeliveryEnvelopeAuthority,
+    DeliveryRecordStatus,
     DeliverySummaryStatus, DuplicateLifecycle, InlinePayload,
     PayloadDependencyDisposition, PayloadRefClient, PayloadReference,
     RejectionReason, StageSixAdmissionInput, StateStoreDeliveryAdmissionStore,
@@ -29,7 +31,10 @@ from ns_runtime.delivery import (
     BoundPayloadRefValidationResult,
     delivery_from_dict, delivery_to_dict,
 )
-from ns_runtime.protocol import TargetGroup
+from ns_runtime.protocol import (
+    AuthContextGroup, MessageGroup, ProtocolGroup, SourceGroup, TargetGroup,
+    TraceGroup,
+)
 from ns_runtime.routing import ResolvedRoutingPlan
 from ns_runtime.processor import RoutingPreparationResult
 
@@ -48,6 +53,33 @@ MESSAGE_REFERENCE = "sha256:" + __import__("hashlib").sha256(
 
 def _ids(kind: str, index: int) -> str:
     return f"{kind}:{index}"
+
+
+def _envelope_authority(plan: ResolvedRoutingPlan) -> DeliveryEnvelopeAuthority:
+    return DeliveryEnvelopeAuthority(
+        protocol=ProtocolGroup(major=1, minor=0, patch=0),
+        message=MessageGroup(
+            message_id=MESSAGE_ID,
+            type=plan.authorization_evidence.message_type,
+            category="task",
+            priority=20,
+            created_at=UTC_START.isoformat(),
+            expires_at=(UTC_START + timedelta(minutes=5)).isoformat(),
+            reliability="at_least_once",
+        ),
+        source=SourceGroup(
+            runtime_id="runtime-source", connection_id="connection-source",
+            identity_digest="sha256:" + "1" * 64, tenant_id="tenant-a",
+            component_type="client", capabilities_digest="sha256:" + "2" * 64,
+        ),
+        auth_context=AuthContextGroup(
+            permission_snapshot_ref=plan.effective_permission_snapshot_ref,
+            permission_digest="sha256:" + "3" * 64,
+            iam_mode="strict", issued_at=UTC_START.isoformat(),
+            expires_at=(UTC_START + timedelta(minutes=5)).isoformat(),
+        ),
+        trace=TraceGroup(trace_id="trace-original", request_id="request-original"),
+    )
 
 
 async def _plan(count: int = 3) -> ResolvedRoutingPlan:
@@ -181,6 +213,7 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             authorization_binding_reference=(
                 self.plan.authorization_evidence.message_binding_reference
             ),
+            envelope_authority=_envelope_authority(self.plan),
             payload=payload or InlinePayload(
                 value={"safe": [1, 2]}, media_type="application/json",
                 application_limit_bytes=128, transport_limit_bytes=128,
@@ -236,6 +269,7 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
                 authorization_binding_reference=(
                     self.plan.authorization_evidence.message_binding_reference
                 ),
+                envelope_authority=_envelope_authority(self.plan),
                 payload=InlinePayload(
                     value={}, media_type="application/json",
                     application_limit_bytes=128, transport_limit_bytes=128,
@@ -289,6 +323,46 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(NsValidationError):
             dataclasses.replace(evidence, size_bytes=evidence.size_bytes + 1)
         self.assertNotIn("safe", repr(accepted_store.values[0]))
+
+    async def test_fix04_inline_descriptor_rejects_cycle_and_nonfinite_once(self):
+        cyclic: list[object] = []
+        cyclic.append(cyclic)
+        cases = (
+            (cyclic, RejectionReason.INLINE_TYPE_INVALID),
+            ({"value": math.nan}, RejectionReason.INLINE_TYPE_INVALID),
+            ({"a": {"b": {"c": {"d": {"e": 1}}}}},
+             RejectionReason.INLINE_TOO_DEEP),
+        )
+        for position, (value, reason) in enumerate(cases):
+            store = _Store()
+            result = await self._service(store=store).admit(
+                self._request(payload=InlinePayload(
+                    value=value,
+                    media_type="application/json",
+                    application_limit_bytes=128,
+                    transport_limit_bytes=128,
+                )),
+                trace=AdmissionTrace(trace_id=f"trace-invalid-inline-{position}"),
+            )
+            self.assertIs(AdmissionOutcome.REJECTED, result.outcome)
+            self.assertIs(reason, result.response.reason)
+            self.assertIs(
+                DeliverySummaryStatus.FAILED,
+                store.values[0].root_summary.status,
+            )
+            self.assertFalse(store.values[0].deliveries)
+        shared = {"safe": [1, 2]}
+        shared_store = _Store()
+        shared_result = await self._service(store=shared_store).admit(
+            self._request(payload=InlinePayload(
+                value=[shared, shared],
+                media_type="application/json",
+                application_limit_bytes=128,
+                transport_limit_bytes=128,
+            )),
+            trace=AdmissionTrace(trace_id="trace-shared-inline"),
+        )
+        self.assertIs(AdmissionOutcome.ACCEPTED, shared_result.outcome)
 
     async def test_w04_w05_payload_ref_partial_invalid_and_dependency_dispositions(self):
         ref = PayloadReference(
@@ -485,6 +559,14 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, root.inflight_count)
         with self.assertRaises(NsValidationError):
             dataclasses.replace(root, status="queued")
+        for reserved in (
+            DeliverySummaryStatus.PARTIAL_ACKED,
+            DeliverySummaryStatus.ALL_ACKED,
+            DeliverySummaryStatus.PARTIAL_FAILED,
+        ):
+            with self.subTest(reserved=reserved.value):
+                with self.assertRaises(NsValidationError):
+                    dataclasses.replace(root, status=reserved)
         with self.assertRaises(NsValidationError):
             dataclasses.replace(self.store.values[0].deliveries[0], status="queued")
         initialization = self.store.values[0]
@@ -614,6 +696,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             tenant_id=plan.authorization_evidence.effective_tenant_id,
             source_identity="identity-source",
             authorization_binding_reference=plan.authorization_evidence.message_binding_reference,
+            envelope_authority=_envelope_authority(plan),
             payload=InlinePayload(
                 value={"business_secret": "never-store-me"},
                 media_type="application/json", application_limit_bytes=4096,
@@ -656,6 +739,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             tenant_id=plan.authorization_evidence.effective_tenant_id,
             source_identity="identity-source",
             authorization_binding_reference=plan.authorization_evidence.message_binding_reference,
+            envelope_authority=_envelope_authority(plan),
             payload=InlinePayload(
                 value={"v": 1}, media_type="application/json",
                 application_limit_bytes=4096, transport_limit_bytes=4096,
@@ -711,6 +795,7 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             tenant_id=plan.authorization_evidence.effective_tenant_id,
             source_identity="identity-source",
             authorization_binding_reference=plan.authorization_evidence.message_binding_reference,
+            envelope_authority=_envelope_authority(plan),
             payload=InlinePayload(
                 value={"v": 1}, media_type="application/json",
                 application_limit_bytes=4096, transport_limit_bytes=4096,

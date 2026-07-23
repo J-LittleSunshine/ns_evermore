@@ -13,9 +13,11 @@ from ns_runtime.processor import (
     RoutingPreparationResult,
 )
 from ns_runtime.routing import ResolvedRoutingPlan
+from ns_runtime.protocol import TraceGroup
 
 from .models import (
     AdmissionOutcome, AdmissionPriority, AdmissionReliability, AdmissionTrace,
+    DeliveryEnvelopeAuthority,
     InlinePayload,
     PayloadReference,
 )
@@ -79,7 +81,8 @@ class EnvelopeAdmissionRequestFactory(AdmissionRequestFactory):
             _invalid("factory.stage_six")
         plan = stage_six.plan
         envelope = context.envelope
-        if envelope.message.type != "task.dispatch" or envelope.payload is None:
+        if (envelope.message.type != "task.dispatch" or envelope.payload is None
+                or envelope.source is None or envelope.auth_context is None):
             _invalid("factory.message_contract")
         payload_group = envelope.payload
         if payload_group.mode == "inline":
@@ -119,6 +122,15 @@ class EnvelopeAdmissionRequestFactory(AdmissionRequestFactory):
             source_identity=context.session.identity,
             authorization_binding_reference=(
                 plan.authorization_evidence.message_binding_reference
+            ),
+            envelope_authority=DeliveryEnvelopeAuthority(
+                protocol=envelope.protocol,
+                message=envelope.message,
+                source=envelope.source,
+                auth_context=envelope.auth_context,
+                trace=(envelope.trace if envelope.trace is not None else TraceGroup(
+                    trace_id=context.trace.value,
+                )),
             ),
             payload=payload,
             requested_priority=_priority(envelope.message.priority),

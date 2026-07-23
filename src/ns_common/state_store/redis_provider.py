@@ -35,6 +35,7 @@ from .model import (
     StateKey,
     StateMutation,
     StateMutationKind,
+    StateOrderedIndexCursor,
     StateOrderedIndexEntry,
     StateOrderedIndexKey,
     StateOrderedIndexMutationKind,
@@ -507,11 +508,22 @@ class RedisValkeyStateStore(StateStore):
         consistency: StateConsistency,
         minimum_revision: StateRevision | None,
     ) -> StateReadResult:
-        del scope, consistency
+        del consistency
         client = self._require_client()
+        physical_key = self._record_key(scope, key)
         raw = await self._execute(
-            client.hgetall(self._record_key(key)),  # type: ignore[attr-defined]
+            client.hgetall(physical_key),  # type: ignore[attr-defined]
         )
+        if not raw:
+            legacy_exists = await self._execute(
+                client.exists(self._legacy_record_key(key)),  # type: ignore[attr-defined]
+            )
+            if legacy_exists:
+                raise NsRuntimeStateStoreVersionMismatchError(details={
+                    "component": "state_store_provider",
+                    "operation": "read",
+                    "reason": "legacy_physical_key_migration_required",
+                })
         record = None if not raw else self._record_from_hash(key, raw)
         stale = False
         if minimum_revision is not None:
@@ -548,7 +560,7 @@ class RedisValkeyStateStore(StateStore):
     ) -> StateScanResult:
         client = self._require_client()
         offset = 0 if cursor is None else int(cursor)
-        index_key = self._index_key(scope.namespace, object_type)
+        index_key = self._index_key(scope, scope.namespace, object_type)
         raw_keys = await self._execute(
             client.zrange(index_key, offset, offset + limit - 1),  # type: ignore[attr-defined]
         )
@@ -602,15 +614,34 @@ class RedisValkeyStateStore(StateStore):
     async def _read_ordered_index(
         self, *, scope: StateAccessScope, index: StateOrderedIndexKey,
         limit: int, max_score: float | None,
+        start_after: StateOrderedIndexCursor | None,
     ) -> StateOrderedIndexReadResult:
         client = self._require_client()
-        key = self._ordered_index_key(index)
+        key = self._ordered_index_key(scope, index)
+        offset = 0
+        if start_after is not None:
+            rank = await self._execute(
+                client.zrank(key, start_after.member),  # type: ignore[attr-defined]
+            )
+            score = await self._execute(
+                client.zscore(key, start_after.member),  # type: ignore[attr-defined]
+            )
+            if rank is None or score is None or float(score) != start_after.score:
+                raise NsRuntimeStateStoreConflictError(details={
+                    "component": "state_store_provider",
+                    "operation": "read_ordered_index",
+                    "reason": "cursor_stale",
+                })
+            offset = int(rank) + 1
         pipeline = client.pipeline(transaction=True)  # type: ignore[attr-defined]
         if max_score is None:
-            pipeline.zrange(key, 0, limit - 1, withscores=True)
+            pipeline.zrange(key, offset, offset + limit - 1, withscores=True)
+            pipeline.zcard(key)
         else:
-            pipeline.zrangebyscore(key, "-inf", max_score, start=0, num=limit, withscores=True)
-        pipeline.zcard(key)
+            pipeline.zrangebyscore(
+                key, "-inf", max_score, start=offset, num=limit, withscores=True,
+            )
+            pipeline.zcount(key, "-inf", max_score)
         response = await self._execute(pipeline.execute())
         if not isinstance(response, (list, tuple)) or len(response) != 2:
             raise RuntimeError("provider ordered index result invalid")
@@ -626,6 +657,11 @@ class RedisValkeyStateStore(StateStore):
             raise RuntimeError("provider ordered index count invalid")
         return StateOrderedIndexReadResult(
             entries=tuple(entries), observed_at=self._clock.utc_now(), total_count=total,
+            next_cursor=(
+                StateOrderedIndexCursor(
+                    member=entries[-1].member, score=entries[-1].score,
+                ) if entries and offset + len(entries) < total else None
+            ),
         )
 
     async def _append(
@@ -636,7 +672,6 @@ class RedisValkeyStateStore(StateStore):
         document: StateDocument,
         assertion: StateAssertion | None,
     ) -> StateAppendResult:
-        del scope
         client = self._require_client()
         committed_at = self._clock.utc_now()
         assertion_payload = _append_assertion_payload(assertion)
@@ -644,9 +679,9 @@ class RedisValkeyStateStore(StateStore):
             client.eval(  # type: ignore[attr-defined]
                 _APPEND_SCRIPT,
                 3,
-                self._revision_key,
-                self._append_key(key),
-                self._append_meta_key(key),
+                self._revision_key(scope),
+                self._append_key(scope, key),
+                self._append_meta_key(scope, key),
                 _canonical_json(assertion_payload),
                 _canonical_json(_document_payload(document)),
                 committed_at.isoformat(),
@@ -678,18 +713,17 @@ class RedisValkeyStateStore(StateStore):
         scope: StateAccessScope,
         mutations: tuple[StateMutation, ...],
     ) -> StateTransactionResult:
-        del scope
         client = self._require_client()
         committed_at = self._clock.utc_now()
         payload = tuple(_mutation_payload(mutation) for mutation in mutations)
         record_keys = tuple(
-            self._record_key(mutation.key) for mutation in mutations
+            self._record_key(scope, mutation.key) for mutation in mutations
         )
         index_keys = tuple(
-            self._index_key(mutation.key.namespace, mutation.key.object_type)
+            self._index_key(scope, mutation.key.namespace, mutation.key.object_type)
             for mutation in mutations
         )
-        keys = (self._revision_key,) + record_keys + index_keys
+        keys = (self._revision_key(scope),) + record_keys + index_keys
         raw = await self._execute(
             client.eval(  # type: ignore[attr-defined]
                 _TRANSACTION_SCRIPT,
@@ -718,7 +752,8 @@ class RedisValkeyStateStore(StateStore):
     ) -> StateTransactionResult:
         client = self._require_client()
         committed_at = self._clock.utc_now()
-        keys: list[str] = [self._revision_key]
+        scope = transaction.scope
+        keys: list[str] = [self._revision_key(scope)]
         key_positions: dict[str, int] = {keys[0]: 1}
 
         def position(key: str) -> int:
@@ -730,19 +765,19 @@ class RedisValkeyStateStore(StateStore):
         mutations = []
         for mutation in transaction.mutations:
             value = _mutation_payload(mutation)
-            value["record_key_index"] = position(self._record_key(mutation.key))
+            value["record_key_index"] = position(self._record_key(scope, mutation.key))
             value["scan_key_index"] = position(self._index_key(
-                mutation.key.namespace, mutation.key.object_type,
+                scope, mutation.key.namespace, mutation.key.object_type,
             ))
             mutations.append(value)
         index_ops = [{
-            "key_index": position(self._ordered_index_key(value.index)),
+            "key_index": position(self._ordered_index_key(scope, value.index)),
             "kind": value.kind.value,
             "member": value.member,
             "score": value.score,
         } for value in transaction.ordered_index_mutations]
         logs = [{
-            "key_index": position(self._transition_log_key(value.key)),
+            "key_index": position(self._transition_log_key(scope, value.key)),
             "document": _document_payload(value.document),
         } for value in transaction.log_appends]
         raw = await self._execute(client.eval(  # type: ignore[attr-defined]
@@ -841,33 +876,66 @@ class RedisValkeyStateStore(StateStore):
             raise RuntimeError("provider client unavailable")
         return self._client
 
-    @property
-    def _revision_key(self) -> str:
-        return self._prefix + "meta:revision"
+    def _slot_tag(self, scope: StateAccessScope) -> str:
+        namespace = scope.namespace
+        partition = scope.atomic_scope.partition
+        bucket = partition.removeprefix("bucket-")
+        if namespace.tenant_id is not None and partition.startswith("bucket-"):
+            return f"{namespace.tenant_id}:{bucket}"
+        return f"{_namespace_digest(namespace)}:{partition}"
 
-    def _record_key(self, key: StateKey) -> str:
+    def _revision_key(self, scope: StateAccessScope) -> str:
+        return self._prefix + "meta:{" + self._slot_tag(scope) + "}:revision"
+
+    def _record_key(self, scope: StateAccessScope, key: StateKey) -> str:
+        return (self._prefix + "record:{" + self._slot_tag(scope) + "}:"
+                + _state_key_digest(key))
+
+    def _legacy_record_key(self, key: StateKey) -> str:
         return self._prefix + "record:" + _state_key_digest(key)
 
-    def _index_key(self, namespace: StateNamespace, object_type: str) -> str:
+    def _index_key(
+        self, scope: StateAccessScope, namespace: StateNamespace, object_type: str,
+    ) -> str:
         return (
-            self._prefix + "index:" + _namespace_digest(namespace)
+            self._prefix + "index:{" + self._slot_tag(scope) + "}:"
+            + _namespace_digest(namespace)
             + ":" + hashlib.sha256(object_type.encode("utf-8")).hexdigest()
         )
 
-    def _append_key(self, key: StateKey) -> str:
-        return self._prefix + "append:" + _state_key_digest(key)
+    def _append_key(self, scope: StateAccessScope, key: StateKey) -> str:
+        return (self._prefix + "append:{" + self._slot_tag(scope) + "}:"
+                + _state_key_digest(key))
 
-    def _append_meta_key(self, key: StateKey) -> str:
-        return self._prefix + "append-meta:" + _state_key_digest(key)
+    def _append_meta_key(self, scope: StateAccessScope, key: StateKey) -> str:
+        return (self._prefix + "append-meta:{" + self._slot_tag(scope) + "}:"
+                + _state_key_digest(key))
 
-    def _ordered_index_key(self, index: StateOrderedIndexKey) -> str:
-        tag = _namespace_digest(index.namespace) + ":" + index.bucket
-        return (self._prefix + "ordered:{" + tag + "}:"
+    def _ordered_index_key(
+        self, scope: StateAccessScope, index: StateOrderedIndexKey,
+    ) -> str:
+        return (self._prefix + "ordered:{" + self._slot_tag(scope) + "}:"
                 + hashlib.sha256(index.name.encode("utf-8")).hexdigest())
 
-    def _transition_log_key(self, key: StateKey) -> str:
-        tag = _namespace_digest(key.namespace) + ":delivery"
-        return self._prefix + "transition:{" + tag + "}:" + _state_key_digest(key)
+    def _transition_log_key(self, scope: StateAccessScope, key: StateKey) -> str:
+        return (self._prefix + "transition:{" + self._slot_tag(scope) + "}:"
+                + _state_key_digest(key))
+
+    def _transaction_physical_keys(self, transaction: StateTransaction) -> tuple[str, ...]:
+        """Test-visible projection of every key passed to one Lua invocation."""
+        scope = transaction.scope
+        values = [self._revision_key(scope)]
+        values.extend(self._record_key(scope, item.key) for item in transaction.mutations)
+        values.extend(self._index_key(
+            scope, item.key.namespace, item.key.object_type,
+        ) for item in transaction.mutations)
+        values.extend(self._ordered_index_key(
+            scope, item.index,
+        ) for item in transaction.ordered_index_mutations)
+        values.extend(self._transition_log_key(
+            scope, item.key,
+        ) for item in transaction.log_appends)
+        return tuple(dict.fromkeys(values))
 
     @staticmethod
     def _record_from_hash(key: StateKey, raw: object) -> StateRecord:

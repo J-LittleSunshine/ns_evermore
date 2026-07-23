@@ -10,12 +10,14 @@ import json
 from typing import Callable
 
 from ns_common.async_runtime import TaskSupervisor
-from ns_common.exceptions import NsRuntimeStateStoreError, NsValidationError
+from ns_common.exceptions import (
+    NsRuntimeStateStoreError, NsRuntimeStateStoreIndeterminateWriteError,
+    NsValidationError,
+)
 from ns_common.time import Clock
 from ns_runtime.protocol import (
-    AuthContextGroup, DeliveryGroup, Envelope, MessageGroup, PayloadGroup,
-    ProtocolGroup, SourceGroup, TargetGroup, TraceGroup,
-    canonical_checksum, canonical_serialize,
+    DeliveryGroup, Envelope, TargetGroup, canonical_checksum,
+    canonical_serialize,
 )
 
 from .models import DeliveryOwnerRisk, DeliveryRecordStatus, DeliveryWriteFailure
@@ -283,8 +285,14 @@ class SendWorker:
                 delivery,
                 DeliveryWriteFailure.TARGET_IDENTITY_MISMATCH,
             )
+        if not _protocol_compatible(delivery, target):
+            return await self._precheck_failure(
+                claim,
+                delivery,
+                DeliveryWriteFailure.POLICY_VERSION_MISMATCH,
+            )
         try:
-            validation = await self._payload_validation.validate(delivery)
+            validation = await self._payload_validation.validate(delivery, target=target)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -296,6 +304,7 @@ class SendWorker:
         if type(validation) is not PayloadValidationResult or not validate_payload_authority(
             delivery,
             validation,
+            target=target,
         ):
             return await self._precheck_failure(
                 claim,
@@ -330,7 +339,7 @@ class SendWorker:
             policy=self._policy,
         )
         try:
-            payload = _build_outbound_payload(transition.delivery, material)
+            payload = _build_outbound_payload(transition.delivery, material, target)
         except Exception:
             failed = await self._scheduler.complete_write_failure(
                 claim=claim, failure=DeliveryWriteFailure.PAYLOAD_INVALID,
@@ -379,10 +388,14 @@ class SendWorker:
             )
         try:
             ack_waiting = await self._scheduler.complete_write_success(claim=claim)
-        except NsRuntimeStateStoreError:
-            uncertain = await self._scheduler.mark_write_uncertain(claim=claim)
+        except NsRuntimeStateStoreIndeterminateWriteError:
+            reconciled = await self._scheduler.reconcile_write_completion(claim=claim)
+            if reconciled.status is DeliveryRecordStatus.ACK_WAITING:
+                return SendResult(
+                    outcome=SendOutcome.ACK_WAITING, delivery=reconciled,
+                )
             return SendResult(
-                outcome=SendOutcome.WRITE_FAILED, delivery=uncertain,
+                outcome=SendOutcome.WRITE_FAILED, delivery=reconciled,
                 failure=DeliveryWriteFailure.AUTHORITY_CONFLICT_AFTER_WRITE,
             )
         return SendResult(
@@ -412,7 +425,7 @@ class SendWorker:
 
 
 def _build_outbound_payload(
-    delivery, material: OutboundDeliveryMaterial,
+    delivery, material: OutboundDeliveryMaterial, target: LocalDeliveryTarget,
 ) -> OutboundDeliveryPayload:
     authority = delivery.envelope_authority
     binding = delivery.binding
@@ -450,33 +463,12 @@ def _build_outbound_payload(
                 or reference.get("version") != evidence.object_version
                 or reference.get("checksum") != evidence.checksum):
             _invalid("outbound.payload_reference")
-    identity_digest = "sha256:" + hashlib.sha256(
-        authority.source_identity.encode("utf-8")
-    ).hexdigest()
-    capabilities_digest = "sha256:" + hashlib.sha256(
-        "\0".join(sorted(binding.required_capabilities)).encode("utf-8")
-    ).hexdigest()
+    if not _protocol_compatible(delivery, target):
+        _invalid("outbound.protocol")
     envelope = Envelope(
-        protocol=ProtocolGroup(major=1, minor=0, patch=0),
-        message=MessageGroup(
-            message_id=delivery.message_id,
-            type=authority.message_type,
-            category="task",
-            priority={"low": -10, "normal": 0, "high": 10, "critical": 20}[
-                delivery.policy_decision.priority.value
-            ],
-            created_at=delivery.created_at.isoformat(),
-            expires_at=delivery.policy_decision.expires_at.isoformat(),
-            reliability=delivery.policy_decision.reliability.value,
-        ),
-        source=SourceGroup(
-            runtime_id=binding.runtime_id,
-            connection_id=authority.authorization_binding_reference,
-            identity_digest=identity_digest,
-            tenant_id=delivery.tenant_id,
-            component_type="runtime",
-            capabilities_digest=capabilities_digest,
-        ),
+        protocol=target.protocol,
+        message=authority.message,
+        source=authority.source,
         target=TargetGroup(
             kind="connection", connection_id=binding.connection_id,
             connection_epoch=binding.connection_epoch,
@@ -491,15 +483,9 @@ def _build_outbound_payload(
             summary_id=delivery.summary_id,
             ack_timeout_ms=delivery.policy_decision.ack_timeout_seconds * 1000,
         ),
-        auth_context=AuthContextGroup(
-            permission_snapshot_ref=authority.permission_snapshot_ref,
-            permission_digest=authority.iam_decision_reference,
-            iam_mode=authority.iam_decision_version,
-            issued_at=delivery.created_at.isoformat(),
-            expires_at=delivery.policy_decision.expires_at.isoformat(),
-        ),
+        auth_context=authority.auth_context,
         payload=material.payload,
-        trace=TraceGroup(**authority.trace.to_wire()),
+        trace=authority.trace,
     )
     raw = canonical_serialize(envelope)
     return OutboundDeliveryPayload(
@@ -518,6 +504,17 @@ def _target_matches(delivery, target: LocalDeliveryTarget) -> bool:
         and target.connection_epoch == binding.connection_epoch
         and target.tenant_id == binding.tenant_id
         and target.identity == binding.identity_reference.value
+    )
+
+
+def _protocol_compatible(delivery, target: LocalDeliveryTarget) -> bool:
+    """No schema translation exists in P11, so compatibility is exact."""
+    source = delivery.envelope_authority.protocol
+    selected = target.protocol
+    return (
+        (source.major, source.minor, source.patch)
+        == (selected.major, selected.minor, selected.patch)
+        and bool(target.protocol_schema_key)
     )
 
 

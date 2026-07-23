@@ -82,6 +82,7 @@ from tests.test_runtime_delivery_admission import (
     MESSAGE_ID,
     UTC_START,
     _PayloadClient,
+    _envelope_authority,
     _ids,
     _plan,
 )
@@ -231,6 +232,83 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 await client.unlink(*keys)
         finally:
             await client.aclose()
+
+    def _bucket_scope(self, *, bucket_id: int = 3) -> StateAccessScope:
+        namespace = StateNamespace.tenant(
+            tenant_id="tenant-a", domain="delivery",
+        )
+        return StateAccessScope(
+            atomic_scope=StateAtomicScope(
+                namespace=namespace, partition=f"bucket-{bucket_id}",
+            ),
+            authority=StateAuthorityKind.DELIVERY_ADMISSION,
+            caller="delivery.scheduling",
+            capabilities=frozenset({
+                StateCallerCapability.READ,
+                StateCallerCapability.SCAN,
+                StateCallerCapability.COMPARE_AND_SET,
+                StateCallerCapability.TRANSACT,
+                StateCallerCapability.ORDERED_INDEX,
+                StateCallerCapability.APPEND,
+            }),
+        )
+
+    async def test_cluster_transaction_keys_share_exact_tenant_bucket_slot(self) -> None:
+        store = self._provider()
+        scope = self._bucket_scope(bucket_id=3)
+        key = StateKey(
+            namespace=scope.namespace,
+            object_type="delivery",
+            object_id="cluster-slot-proof",
+        )
+        index = StateOrderedIndexKey(
+            namespace=scope.namespace,
+            name="delivery.ready",
+            bucket="delivery",
+        )
+        transaction = StateTransaction(
+            scope=scope,
+            mutations=(_create(key),),
+            ordered_index_mutations=(StateOrderedIndexMutation(
+                index=index,
+                kind=StateOrderedIndexMutationKind.ADD,
+                member=key.object_id,
+                score=1.0,
+            ),),
+            log_appends=(StateTransitionLogAppend(
+                key=key,
+                document=_document(1, b'{"operation":"slot-proof"}'),
+            ),),
+        )
+        physical_keys = store._transaction_physical_keys(transaction)
+        self.assertGreaterEqual(len(physical_keys), 5)
+        self.assertTrue(all("{tenant-a:3}" in value for value in physical_keys))
+        slots = {redis.cluster.key_slot(value.encode("utf-8"))
+                 for value in physical_keys}
+        self.assertEqual(1, len(slots))
+
+    async def test_legacy_physical_record_requires_explicit_migration(self) -> None:
+        store = self._provider()
+        await store.open()
+        scope = self._bucket_scope(bucket_id=4)
+        key = StateKey(
+            namespace=scope.namespace,
+            object_type="delivery",
+            object_id="legacy-layout-proof",
+        )
+        client = store._require_client()
+        await client.hset(store._legacy_record_key(key), mapping={"legacy": "1"})
+        with self.assertRaises(NsRuntimeStateStoreVersionMismatchError) as caught:
+            await store.read(
+                scope=scope,
+                key=key,
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+        self.assertEqual(
+            "legacy_physical_key_migration_required",
+            caught.exception.details["reason"],
+        )
+        await store.close()
 
     def _raw_client(self, *, timeout: float = 1.0):
         return redis_async.Redis(
@@ -661,10 +739,14 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             tenant_id=request.tenant_id,
             domain="delivery",
         )
+        bucket_id = int.from_bytes(
+            hashlib.sha256(request.message_id.encode("utf-8")).digest()[:8],
+            "big",
+        ) % 8
         scope = StateAccessScope(
             atomic_scope=StateAtomicScope(
                 namespace=namespace,
-                partition="admission",
+                partition=f"bucket-{bucket_id}",
             ),
             authority=StateAuthorityKind.DELIVERY_ADMISSION,
             caller="delivery.admission",
@@ -878,10 +960,13 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             tenant_id=tenant_id,
             domain="delivery",
         )
+        bucket_id = int.from_bytes(
+            hashlib.sha256(MESSAGE_ID.encode("utf-8")).digest()[:8], "big",
+        ) % 8
         return StateAccessScope(
             atomic_scope=StateAtomicScope(
                 namespace=namespace,
-                partition="admission",
+                partition=f"bucket-{bucket_id}",
             ),
             authority=StateAuthorityKind.DELIVERY_ADMISSION,
             caller="delivery.admission",
@@ -921,6 +1006,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             authorization_binding_reference=(
                 plan.authorization_evidence.message_binding_reference
             ),
+            envelope_authority=_envelope_authority(plan),
             payload=InlinePayload(
                 value={"v": 1},
                 media_type="application/json",

@@ -6,6 +6,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from ns_common.exceptions import NsValidationError
+from ns_runtime.protocol import (
+    AuthContextGroup, MessageGroup, ProtocolGroup, SourceGroup, TraceGroup,
+)
 from ns_runtime.routing import (
     RebindPolicy,
     RoutingIdentityReference,
@@ -27,7 +30,6 @@ from .models import (
     DeliverySummaryStatus,
     DeliveryWriteFailure,
     DeliveryEnvelopeAuthority,
-    AdmissionTrace,
     MessageDeliverySummary,
     PayloadDependencyDisposition,
     PayloadEvidence,
@@ -55,20 +57,20 @@ def delivery_to_dict(value: DeliveryRecord) -> dict[str, object]:
         "target_fingerprint": value.target_fingerprint,
         "target_set_fingerprint": value.target_set_fingerprint,
         "target_index": value.target_index,
+        "authority_bucket_count": value.authority_bucket_count,
+        "authority_bucket_id": value.authority_bucket_id,
         "binding": _binding_to_dict(value.binding),
         "status": value.status.value,
         "payload_evidence": payload_evidence_to_dict(value.payload_evidence),
         "policy_decision": policy_decision_to_dict(value.policy_decision),
         "envelope_authority": {
-            "message_type": value.envelope_authority.message_type,
-            "source_identity": value.envelope_authority.source_identity,
-            "authorization_binding_reference": value.envelope_authority.authorization_binding_reference,
-            "permission_snapshot_ref": value.envelope_authority.permission_snapshot_ref,
-            "permission_snapshot_version": value.envelope_authority.permission_snapshot_version,
-            "iam_decision_reference": value.envelope_authority.iam_decision_reference,
-            "iam_decision_version": value.envelope_authority.iam_decision_version,
-            "trace": value.envelope_authority.trace.to_wire(),
+            "protocol": value.envelope_authority.protocol.to_dict(),
+            "message": value.envelope_authority.message.to_dict(),
+            "source": value.envelope_authority.source.to_dict(),
+            "auth_context": value.envelope_authority.auth_context.to_dict(),
+            "trace": value.envelope_authority.trace.to_dict(),
         },
+        "envelope_authority_fingerprint": value.envelope_authority_fingerprint,
         "state_version": value.state_version,
         "created_at": value.created_at.isoformat(),
         "updated_at": value.updated_at.isoformat(),
@@ -84,6 +86,9 @@ def delivery_to_dict(value: DeliveryRecord) -> dict[str, object]:
         "last_failure": (
             None if value.last_failure is None else value.last_failure.value
         ),
+        "target_access_decision_reference": value.target_access_decision_reference,
+        "last_fencing": value.last_fencing,
+        "owner_epoch": value.owner_epoch,
     }
 
 
@@ -106,11 +111,14 @@ def delivery_from_dict(raw: object) -> DeliveryRecord:
             target_fingerprint=values["target_fingerprint"],
             target_set_fingerprint=values["target_set_fingerprint"],
             target_index=values["target_index"],
+            authority_bucket_count=values["authority_bucket_count"],
+            authority_bucket_id=values["authority_bucket_id"],
             binding=_binding_from_dict(values["binding"]),
             status=DeliveryRecordStatus(values["status"]),
             payload_evidence=payload_evidence_from_dict(values["payload_evidence"]),
             policy_decision=policy_decision_from_dict(values["policy_decision"]),
             envelope_authority=_envelope_authority_from_dict(values["envelope_authority"]),
+            envelope_authority_fingerprint=values["envelope_authority_fingerprint"],
             state_version=values["state_version"],
             created_at=_time(values["created_at"], "delivery.created_at"),
             updated_at=_time(values["updated_at"], "delivery.updated_at"),
@@ -132,6 +140,9 @@ def delivery_from_dict(raw: object) -> DeliveryRecord:
                 None if values.get("last_failure") is None
                 else DeliveryWriteFailure(values["last_failure"])
             ),
+            target_access_decision_reference=values["target_access_decision_reference"],
+            last_fencing=values.get("last_fencing", 0),
+            owner_epoch=values.get("owner_epoch", 0),
         )
     except (KeyError, TypeError, ValueError):
         _invalid("delivery.fields")
@@ -152,6 +163,8 @@ def summary_to_dict(value: MessageDeliverySummary) -> dict[str, object]:
         "plan_version": value.plan_version,
         "plan_decision_fingerprint": value.plan_decision_fingerprint,
         "target_fingerprint": value.target_fingerprint,
+        "authority_bucket_count": value.authority_bucket_count,
+        "authority_bucket_id": value.authority_bucket_id,
         "status": value.status.value,
         "total_count": value.total_count,
         "accepted_count": value.accepted_count,
@@ -165,6 +178,10 @@ def summary_to_dict(value: MessageDeliverySummary) -> dict[str, object]:
         "sending_count": value.sending_count,
         "ack_waiting_count": value.ack_waiting_count,
         "write_failed_count": value.write_failed_count,
+        "waiting_count": value.waiting_count,
+        "expired_count": value.expired_count,
+        "payload_rejected_count": value.payload_rejected_count,
+        "write_uncertain_count": value.write_uncertain_count,
         "payload_evidence": (
             None if value.payload_evidence is None
             else payload_evidence_to_dict(value.payload_evidence)
@@ -203,6 +220,8 @@ def summary_from_dict(raw: object) -> MessageDeliverySummary:
             plan_version=values["plan_version"],
             plan_decision_fingerprint=values["plan_decision_fingerprint"],
             target_fingerprint=values["target_fingerprint"],
+            authority_bucket_count=values["authority_bucket_count"],
+            authority_bucket_id=values["authority_bucket_id"],
             status=DeliverySummaryStatus(values["status"]),
             total_count=values["total_count"],
             accepted_count=values["accepted_count"],
@@ -216,6 +235,10 @@ def summary_from_dict(raw: object) -> MessageDeliverySummary:
             sending_count=values.get("sending_count", 0),
             ack_waiting_count=values.get("ack_waiting_count", 0),
             write_failed_count=values.get("write_failed_count", 0),
+            waiting_count=values.get("waiting_count", 0),
+            expired_count=values.get("expired_count", 0),
+            payload_rejected_count=values.get("payload_rejected_count", 0),
+            write_uncertain_count=values.get("write_uncertain_count", 0),
             payload_evidence=(
                 None if values["payload_evidence"] is None
                 else payload_evidence_from_dict(values["payload_evidence"])
@@ -249,6 +272,7 @@ def attempt_to_dict(value: DeliveryAttempt) -> dict[str, object]:
         "owner_worker_id": value.owner_worker_id,
         "owner_claim_token": value.owner_claim_token,
         "owner_fencing": value.owner_fencing,
+        "owner_epoch": value.owner_epoch,
         "config_version": value.config_version,
         "policy_version": value.policy_version,
         "target_fingerprint": value.target_fingerprint,
@@ -275,6 +299,7 @@ def attempt_from_dict(raw: object) -> DeliveryAttempt:
             owner_worker_id=values["owner_worker_id"],
             owner_claim_token=values["owner_claim_token"],
             owner_fencing=values["owner_fencing"],
+            owner_epoch=values["owner_epoch"],
             config_version=values["config_version"],
             policy_version=values["policy_version"],
             target_fingerprint=values["target_fingerprint"],
@@ -315,6 +340,7 @@ def policy_decision_to_dict(value: AdmissionPolicyDecision) -> dict[str, object]
         "shard_bucket_size": value.shard_bucket_size,
         "initialization_batch_size": value.initialization_batch_size,
         "activation_batch_size": value.activation_batch_size,
+        "authority_bucket_count": value.authority_bucket_count,
         "rejection_reason": (
             None if value.rejection_reason is None else value.rejection_reason.value
         ),
@@ -344,6 +370,7 @@ def policy_decision_from_dict(raw: object) -> AdmissionPolicyDecision:
             shard_bucket_size=values["shard_bucket_size"],
             initialization_batch_size=values["initialization_batch_size"],
             activation_batch_size=values["activation_batch_size"],
+            authority_bucket_count=values["authority_bucket_count"],
             rejection_reason=(
                 None if values["rejection_reason"] is None
                 else RejectionReason(values["rejection_reason"])
@@ -405,20 +432,15 @@ def _binding_to_dict(value: SelectedRoutingBinding) -> dict[str, object]:
 
 def _envelope_authority_from_dict(raw: object) -> DeliveryEnvelopeAuthority:
     values = _mapping(raw, "envelope_authority")
-    trace_values = _mapping(values.get("trace"), "envelope_authority.trace")
     try:
         return DeliveryEnvelopeAuthority(
-            message_type=values["message_type"],
-            source_identity=values["source_identity"],
-            authorization_binding_reference=values["authorization_binding_reference"],
-            permission_snapshot_ref=values["permission_snapshot_ref"],
-            permission_snapshot_version=values["permission_snapshot_version"],
-            iam_decision_reference=values["iam_decision_reference"],
-            iam_decision_version=values["iam_decision_version"],
-            trace=AdmissionTrace(
-                trace_id=trace_values["trace_id"],
-                correlation_id=trace_values.get("correlation_id"),
-            ),
+            protocol=ProtocolGroup(**_mapping(values["protocol"], "envelope_authority.protocol")),
+            message=MessageGroup(**_mapping(values["message"], "envelope_authority.message")),
+            source=SourceGroup(**_mapping(values["source"], "envelope_authority.source")),
+            auth_context=AuthContextGroup(**_mapping(
+                values["auth_context"], "envelope_authority.auth_context",
+            )),
+            trace=TraceGroup(**_mapping(values["trace"], "envelope_authority.trace")),
         )
     except (KeyError, TypeError, ValueError):
         _invalid("envelope_authority.fields")
@@ -484,6 +506,7 @@ def _owner_to_dict(value: DeliveryOwner) -> dict[str, object]:
         "renew_failures": value.renew_failures,
         "risk": value.risk.value,
         "fencing": value.fencing,
+        "owner_epoch": value.owner_epoch,
         "risk_since": None if value.risk_since is None else value.risk_since.isoformat(),
         "protection_until": (
             None if value.protection_until is None else value.protection_until.isoformat()
@@ -504,6 +527,7 @@ def _owner_from_dict(raw: object) -> DeliveryOwner:
             renew_failures=values["renew_failures"],
             risk=DeliveryOwnerRisk(values["risk"]),
             fencing=values["fencing"],
+            owner_epoch=values["owner_epoch"],
             risk_since=(
                 None if values["risk_since"] is None
                 else _time(values["risk_since"], "owner.risk_since")

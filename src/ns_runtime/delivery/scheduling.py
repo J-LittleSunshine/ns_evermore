@@ -10,7 +10,9 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from ns_common.exceptions import NsValidationError
-from ns_runtime.protocol import Envelope, PayloadGroup, canonical_checksum, canonical_serialize
+from ns_runtime.protocol import (
+    Envelope, PayloadGroup, ProtocolGroup, canonical_checksum, canonical_serialize,
+)
 
 from .models import (
     MAX_ACTIVATION_BATCH_SIZE,
@@ -62,6 +64,8 @@ class DeliverySchedulingPolicy:
     max_renew_failures: int = 2
     owner_risk_window_seconds: float = 4.0
     write_timeout_seconds: float = 10.0
+    authority_bucket_count: int = 8
+    activation_scan_budget: int = 1000
 
     def __post_init__(self) -> None:
         for name in ("config_version", "policy_version"):
@@ -71,6 +75,7 @@ class DeliverySchedulingPolicy:
             "activation_batch_size", "global_queued_high_watermark",
             "tenant_queued_high_watermark",
             "target_queued_high_watermark", "max_renew_failures",
+            "authority_bucket_count", "activation_scan_budget",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -142,11 +147,16 @@ class DeliveryResourceCounts:
     sending: int
     ack_waiting: int
     write_failed: int
+    waiting: int = 0
+    expired: int = 0
+    payload_rejected: int = 0
+    write_uncertain: int = 0
 
     def __post_init__(self) -> None:
         _text(self.tenant_id, "resource_counts.tenant_id")
         for name in (
             "prepared", "queued", "sending", "ack_waiting", "write_failed",
+            "waiting", "expired", "payload_rejected", "write_uncertain",
         ):
             _nonnegative(getattr(self, name), f"resource_counts.{name}")
 
@@ -167,12 +177,22 @@ class DeliveryClaim:
     worker_id: str
     claim_token: str = field(repr=False)
     fencing: int
+    owner_epoch: int
+    authority_bucket_count: int
+    authority_bucket_id: int
 
     def __post_init__(self) -> None:
         for name in ("tenant_id", "delivery_id", "runtime_id", "worker_id", "claim_token"):
             _text(getattr(self, name), f"claim.{name}")
         if isinstance(self.fencing, bool) or not isinstance(self.fencing, int) or self.fencing <= 0:
             _invalid("claim.fencing")
+        for name in ("owner_epoch", "authority_bucket_count"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                _invalid(f"claim.{name}")
+        _nonnegative(self.authority_bucket_id, "claim.authority_bucket_id")
+        if self.authority_bucket_id >= self.authority_bucket_count:
+            _invalid("claim.authority_bucket_id")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -204,11 +224,18 @@ class PayloadValidationResult:
     object_version: str | None
     checksum: str
     tenant_id: str = field(repr=False)
+    request_binding_fingerprint: str
+    target_binding_fingerprint: str
+    target_access_decision_reference: str = field(repr=False)
 
     def __post_init__(self) -> None:
         if type(self.valid) is not bool:
             _invalid("payload_validation.valid")
-        for name in ("evidence_fingerprint", "checksum", "tenant_id"):
+        for name in (
+            "evidence_fingerprint", "checksum", "tenant_id",
+            "request_binding_fingerprint", "target_binding_fingerprint",
+            "target_access_decision_reference",
+        ):
             _text(getattr(self, name), f"payload_validation.{name}")
         if self.object_id is not None:
             _text(self.object_id, "payload_validation.object_id")
@@ -253,13 +280,22 @@ class LocalDeliveryTarget:
     tenant_id: str = field(repr=False)
     identity: str = field(repr=False)
     active: bool
+    protocol: ProtocolGroup
+    protocol_schema_key: str
+    access_decision_reference: str = field(repr=False)
 
     def __post_init__(self) -> None:
-        for name in ("runtime_id", "connection_id", "session_id", "tenant_id", "identity"):
+        for name in (
+            "runtime_id", "connection_id", "session_id", "tenant_id", "identity",
+            "protocol_schema_key",
+            "access_decision_reference",
+        ):
             _text(getattr(self, name), f"target.{name}")
         _nonnegative(self.connection_epoch, "target.connection_epoch")
         if type(self.active) is not bool:
             _invalid("target.active")
+        if type(self.protocol) is not ProtocolGroup:
+            _invalid("target.protocol")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -312,7 +348,9 @@ class LeaseRenewResult:
 
 class DeliveryPayloadValidator(ABC):
     @abstractmethod
-    async def validate(self, delivery: DeliveryRecord) -> PayloadValidationResult:
+    async def validate(
+        self, delivery: DeliveryRecord, *, target: LocalDeliveryTarget,
+    ) -> PayloadValidationResult:
         raise NotImplementedError
 
 
@@ -364,8 +402,12 @@ class OwnerRiskGuard:
 def validate_payload_authority(
     delivery: DeliveryRecord,
     result: PayloadValidationResult,
+    *,
+    target: LocalDeliveryTarget,
 ) -> bool:
-    if not isinstance(delivery, DeliveryRecord) or not isinstance(result, PayloadValidationResult):
+    if (not isinstance(delivery, DeliveryRecord)
+            or not isinstance(result, PayloadValidationResult)
+            or not isinstance(target, LocalDeliveryTarget)):
         _invalid("payload_authority")
     evidence = delivery.payload_evidence
     if (
@@ -373,6 +415,11 @@ def validate_payload_authority(
         or result.evidence_fingerprint != evidence.evidence_fingerprint
         or result.checksum != evidence.checksum
         or result.tenant_id != delivery.tenant_id
+        or result.request_binding_fingerprint
+        != delivery.policy_decision.request_fingerprint
+        or result.target_binding_fingerprint != delivery.target_fingerprint
+        or result.target_access_decision_reference
+        != target.access_decision_reference
     ):
         return False
     if evidence.kind is PayloadKind.REFERENCE:
@@ -391,6 +438,11 @@ def validate_outbound_payload(
         _invalid("outbound_authority")
     return (
         payload.envelope.message.message_id == delivery.message_id
+        and payload.envelope.message == delivery.envelope_authority.message
+        and payload.envelope.source == delivery.envelope_authority.source
+        and payload.envelope.auth_context == delivery.envelope_authority.auth_context
+        and payload.envelope.trace == delivery.envelope_authority.trace
+        and payload.envelope.protocol == delivery.envelope_authority.protocol
         and payload.envelope.delivery is not None
         and payload.envelope.delivery.delivery_id == delivery.delivery_id
         and payload.envelope.delivery.attempt == delivery.attempt_count

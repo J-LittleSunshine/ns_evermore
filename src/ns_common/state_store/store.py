@@ -344,6 +344,7 @@ class StateStore(ABC):
     async def read_ordered_index(
         self, *, scope: StateAccessScope, index: StateOrderedIndexKey,
         limit: int, max_score: float | None = None,
+        start_after: "StateOrderedIndexCursor | None" = None,
     ) -> StateOrderedIndexReadResult:
         if (not isinstance(index, StateOrderedIndexKey)
                 or (index.namespace != scope.namespace
@@ -355,6 +356,9 @@ class StateStore(ABC):
             type(max_score) not in {int, float} or not math.isfinite(max_score)
         ):
             _invalid("ordered_index.max_score")
+        from .model import StateOrderedIndexCursor
+        if start_after is not None and not isinstance(start_after, StateOrderedIndexCursor):
+            _invalid("ordered_index.start_after")
         self._require_caller_capability(scope, StateCallerCapability.ORDERED_INDEX)
         self._require_authority(scope)
         self._require_store_capability(StateStoreCapability.ORDERED_INDEX)
@@ -363,6 +367,7 @@ class StateStore(ABC):
             try:
                 result = await self._read_ordered_index(
                     scope=scope, index=index, limit=limit, max_score=max_score,
+                    start_after=start_after,
                 )
             except asyncio.CancelledError:
                 raise
@@ -624,6 +629,7 @@ class StateStore(ABC):
     async def _read_ordered_index(
         self, *, scope: StateAccessScope, index: StateOrderedIndexKey,
         limit: int, max_score: float | None,
+        start_after: "StateOrderedIndexCursor | None",
     ) -> StateOrderedIndexReadResult:
         raise NotImplementedError
 

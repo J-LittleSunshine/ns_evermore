@@ -12,10 +12,15 @@ from ns_common.async_runtime import TaskSupervisor
 from ns_common.config import NsRuntimeDeliveryConfig
 from ns_common.exceptions import (
     NsRuntimeDeliveryLeaseExpiredError,
+    NsRuntimeDeliveryStateError,
     NsRuntimeOwnerMismatchError,
     NsValidationError,
 )
-from ns_common.state_store import StateStoreCapabilities
+from ns_common.state_store import (
+    StateAccessScope, StateAtomicScope, StateAuthorityKind,
+    StateCallerCapability, StateOrderedIndexKey, StateOrderedIndexMutation,
+    StateOrderedIndexMutationKind, StateStoreCapabilities, StateTransaction,
+)
 from ns_common.time import ControlledClock
 from ns_runtime.delivery import (
     AdmissionOutcome,
@@ -52,11 +57,13 @@ from ns_runtime.delivery import (
     StateStoreDeliveryScheduler,
 )
 from ns_runtime.processor import RoutingPreparationResult
-from ns_runtime.protocol import PayloadGroup
+from ns_runtime.protocol import PayloadGroup, ProtocolGroup
 
 from tests._state_store_contract_model import DeterministicStateStoreContractModel
 from tests.test_runtime_connection_binding import UTC_START
-from tests.test_runtime_delivery_admission import MESSAGE_ID, _PayloadClient, _ids, _plan
+from tests.test_runtime_delivery_admission import (
+    MESSAGE_ID, _PayloadClient, _envelope_authority, _ids, _plan,
+)
 
 
 class _Validator(DeliveryPayloadValidator):
@@ -65,7 +72,7 @@ class _Validator(DeliveryPayloadValidator):
         self.illegal = illegal
         self.calls = 0
 
-    async def validate(self, delivery):
+    async def validate(self, delivery, *, target):
         self.calls += 1
         if self.illegal:
             return {"valid": True}
@@ -77,6 +84,9 @@ class _Validator(DeliveryPayloadValidator):
             object_version=evidence.object_version,
             checksum=evidence.checksum,
             tenant_id=delivery.tenant_id,
+            request_binding_fingerprint=delivery.policy_decision.request_fingerprint,
+            target_binding_fingerprint=delivery.target_fingerprint,
+            target_access_decision_reference=target.access_decision_reference,
         )
 
 
@@ -113,10 +123,15 @@ class _Payloads(DeliveryPayloadResolver):
 
 
 class _Targets(DeliveryTargetResolver):
-    def __init__(self, *, active: bool = True, mismatch: bool = False, illegal: bool = False) -> None:
+    def __init__(
+        self, *, active: bool = True, mismatch: bool = False,
+        illegal: bool = False, protocol=None, access_decision_reference=None,
+    ) -> None:
         self.active = active
         self.mismatch = mismatch
         self.illegal = illegal
+        self.protocol = protocol
+        self.access_decision_reference = access_decision_reference
         self.calls = 0
 
     async def resolve(self, delivery):
@@ -132,6 +147,12 @@ class _Targets(DeliveryTargetResolver):
             tenant_id=binding.tenant_id,
             identity=("wrong-identity" if self.mismatch else binding.identity_reference.value),
             active=self.active,
+            protocol=self.protocol or delivery.envelope_authority.protocol,
+            protocol_schema_key="envelope-v1",
+            access_decision_reference=(
+                self.access_decision_reference
+                or delivery.target_access_decision_reference
+            ),
         )
 
 
@@ -143,18 +164,22 @@ class _Writer(DeliveryTransportWriter):
         block: bool = False,
         authority_model=None,
         delivery_id: str | None = None,
+        indeterminate: str | None = None,
     ) -> None:
         self.error = error
         self.block = block
         self.authority_model = authority_model
         self.delivery_id = delivery_id
+        self.indeterminate = indeterminate
         self.calls = 0
         self.saw_authoritative_sending = False
+        self.payloads = []
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
     async def write(self, *, target, payload):
         self.calls += 1
+        self.payloads.append(payload)
         if self.authority_model is not None:
             values = [
                 json.loads(record.document.payload)
@@ -176,6 +201,10 @@ class _Writer(DeliveryTransportWriter):
             await self.release.wait()
         if self.error is not None:
             raise self.error
+        if self.indeterminate == "before":
+            self.authority_model.indeterminate_before_transaction = True
+        elif self.indeterminate == "after":
+            self.authority_model.indeterminate_after_transaction = True
 
 
 class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
@@ -212,6 +241,7 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             authorization_binding_reference=(
                 self.plan.authorization_evidence.message_binding_reference
             ),
+            envelope_authority=_envelope_authority(self.plan),
             payload=InlinePayload(
                 value={"safe": [1, 2]},
                 media_type="application/json",
@@ -312,7 +342,8 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
         counts = await self.scheduler.resource_counts(tenant_id=self.tenant_id)
         self.assertEqual(0, counts.prepared)
         self.assertEqual(0, counts.queued)
-        self.assertEqual(3, counts.write_failed)
+        self.assertEqual(0, counts.write_failed)
+        self.assertEqual(3, counts.expired)
         second = await self._activate()
         self.assertEqual(0, second.candidate_count)
         deliveries = [
@@ -386,6 +417,14 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(result.delivery.ack_deadline)
         self.assertEqual(1, writer.calls)
         self.assertTrue(writer.saw_authoritative_sending)
+        outbound = writer.payloads[0].envelope
+        authority = result.delivery.envelope_authority
+        self.assertEqual(authority.source, outbound.source)
+        self.assertEqual(authority.auth_context, outbound.auth_context)
+        self.assertEqual(authority.message, outbound.message)
+        self.assertEqual(authority.trace, outbound.trace)
+        self.assertEqual(authority.protocol, outbound.protocol)
+        self.assertNotEqual(result.delivery.binding.runtime_id, outbound.source.runtime_id)
         documents = [json.loads(record.document.payload) for record in self.model.records.values()]
         attempts = [value for value in documents if value.get("attempt_id") == "attempt-1"]
         self.assertEqual(1, len(attempts))
@@ -403,6 +442,231 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             counts.prepared, counts.queued, counts.active,
             counts.inflight, counts.write_failed,
         ))
+
+    async def test_fix02_protocol_and_payload_validation_replay_fail_closed(self) -> None:
+        one = dataclasses.replace(self.policy, activation_batch_size=1)
+        await self._activate(policy=one)
+        mismatch_claim = await self._claim(token="claim-protocol", policy=one)
+        writer = _Writer()
+        protocol_result = await self._send_worker(
+            policy=one,
+            targets=_Targets(protocol=ProtocolGroup(major=1, minor=1, patch=0)),
+            writer=writer,
+        ).run_once(claim=mismatch_claim.claim)
+        self.assertIs(DeliveryWriteFailure.POLICY_VERSION_MISMATCH, protocol_result.failure)
+        self.assertEqual(0, writer.calls)
+
+        await self._activate(policy=one)
+        replay_claim = await self._claim(token="claim-replay", policy=one)
+
+        class ReplayValidator(_Validator):
+            async def validate(self, delivery, *, target):
+                result = await super().validate(delivery, target=target)
+                return dataclasses.replace(
+                    result,
+                    target_access_decision_reference="sha256:" + "9" * 64,
+                )
+
+        replay_writer = _Writer()
+        replay = await self._send_worker(
+            policy=one, validator=ReplayValidator(), writer=replay_writer,
+        ).run_once(claim=replay_claim.claim)
+        self.assertIs(DeliveryWriteFailure.PAYLOAD_INVALID, replay.failure)
+        self.assertEqual(0, replay_writer.calls)
+
+    async def test_fix02_release_reclaim_monotonic_and_old_claim_never_revives(self) -> None:
+        one = dataclasses.replace(self.policy, activation_batch_size=1)
+        await self._activate(policy=one)
+        first = await self._claim(token="same-token", policy=one)
+        released = await self.scheduler.release_claim(claim=first.claim)
+        self.assertEqual(first.claim.fencing, released.last_fencing)
+        second = await self._claim(token="same-token", policy=one)
+        self.assertEqual(first.claim.fencing + 1, second.claim.fencing)
+        self.assertEqual(first.claim.owner_epoch + 1, second.claim.owner_epoch)
+        with self.assertRaises(NsRuntimeOwnerMismatchError):
+            await self.scheduler.load_claimed(claim=first.claim)
+
+    async def test_fix02_waiting_is_nonterminal_and_not_write_failed(self) -> None:
+        one = dataclasses.replace(self.policy, activation_batch_size=1)
+        await self._activate(policy=one)
+        claim = await self._claim(token="claim-waiting", policy=one)
+        result = await self._send_worker(
+            policy=one, targets=_Targets(active=False), writer=_Writer(),
+        ).run_once(claim=claim.claim)
+        self.assertIs(DeliveryRecordStatus.TARGET_WAITING, result.delivery.status)
+        counts = await self.scheduler.resource_counts(
+            tenant_id=self.tenant_id,
+            authority_bucket_count=one.authority_bucket_count,
+        )
+        self.assertEqual(1, counts.waiting)
+        self.assertEqual(0, counts.write_failed)
+
+    async def test_fix02_ack_deadline_does_not_extend_owner_lease(self) -> None:
+        short = dataclasses.replace(
+            self.policy, activation_batch_size=1, lease_ttl_seconds=5,
+            renew_interval_seconds=1, write_timeout_seconds=1,
+        )
+        await self._activate(policy=short)
+        claim = await self._claim(token="claim-short-lease", policy=short)
+        result = await self._send_worker(policy=short).run_once(claim=claim.claim)
+        owner = result.delivery.owner
+        self.assertLess(owner.lease_expires_at, result.delivery.ack_deadline)
+        lease_values = next(
+            values for key, values in self.model.ordered_indexes.items()
+            if key.name == "delivery.lease"
+        )
+        self.assertEqual(
+            owner.lease_expires_at.timestamp(),
+            lease_values[result.delivery.delivery_id],
+        )
+        self.clock.advance(6)
+        recovered = await self._claim(
+            worker_id="worker-recovered", token="claim-recovered", policy=short,
+        )
+        self.assertIs(ClaimOutcome.EMPTY, recovered.outcome)
+        current = next(
+            json.loads(record.document.payload)
+            for record in self.model.records.values()
+            if record.key.object_type == "delivery"
+            and json.loads(record.document.payload)["delivery_id"]
+            == result.delivery.delivery_id
+        )
+        from datetime import datetime
+        self.assertLess(
+            datetime.fromisoformat(current["owner"]["lease_expires_at"]),
+            datetime.fromisoformat(current["ack_deadline"]),
+        )
+
+    async def test_fix02_envelope_authority_replace_cannot_impersonate_target(self) -> None:
+        first = await self._activate()
+        delivery = first.activated[0]
+        hostile = dataclasses.replace(
+            delivery.envelope_authority.source,
+            runtime_id=delivery.binding.runtime_id,
+            connection_id=delivery.binding.connection_id,
+        )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                delivery,
+                envelope_authority=dataclasses.replace(
+                    delivery.envelope_authority, source=hostile,
+                ),
+            )
+        hostile_auth = dataclasses.replace(
+            delivery.envelope_authority.auth_context,
+            permission_digest="sha256:" + "f" * 64,
+        )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                delivery,
+                envelope_authority=dataclasses.replace(
+                    delivery.envelope_authority, auth_context=hostile_auth,
+                ),
+            )
+
+    async def test_fix02_indeterminate_write_completion_reconciles_three_branches(self) -> None:
+        one = dataclasses.replace(self.policy, activation_batch_size=1)
+
+        await self._activate(policy=one)
+        committed_claim = await self._claim(token="claim-committed", policy=one)
+        committed = await self._send_worker(
+            policy=one,
+            writer=_Writer(
+                authority_model=self.model,
+                delivery_id=committed_claim.claim.delivery_id,
+                indeterminate="after",
+            ),
+            attempt_id_factory=lambda: "attempt-indeterminate-after",
+        ).run_once(claim=committed_claim.claim)
+        self.assertIs(SendOutcome.ACK_WAITING, committed.outcome)
+        self.assertIs(DeliveryRecordStatus.ACK_WAITING, committed.delivery.status)
+
+        await self._activate(policy=one)
+        absent_claim = await self._claim(token="claim-absent", policy=one)
+        absent = await self._send_worker(
+            policy=one,
+            writer=_Writer(
+                authority_model=self.model,
+                delivery_id=absent_claim.claim.delivery_id,
+                indeterminate="before",
+            ),
+            attempt_id_factory=lambda: "attempt-indeterminate-before",
+        ).run_once(claim=absent_claim.claim)
+        self.assertIs(SendOutcome.WRITE_FAILED, absent.outcome)
+        self.assertIs(DeliveryRecordStatus.WRITE_UNCERTAIN, absent.delivery.status)
+        self.assertIs(
+            DeliveryWriteFailure.AUTHORITY_CONFLICT_AFTER_WRITE, absent.failure,
+        )
+
+        await self._activate(policy=one)
+        conflict_claim = await self._claim(token="claim-conflict", policy=one)
+        await self.scheduler.start_sending(
+            claim=conflict_claim.claim,
+            attempt_id="attempt-concurrent-state",
+            policy=one,
+        )
+        await self.scheduler.complete_write_failure(
+            claim=conflict_claim.claim,
+            failure=DeliveryWriteFailure.TRANSPORT_WRITE_FAILED,
+        )
+        with self.assertRaises(NsRuntimeDeliveryStateError) as caught:
+            await self.scheduler.reconcile_write_completion(claim=conflict_claim.claim)
+        self.assertEqual(
+            "completion_reconcile_conflict", caught.exception.details["reason"],
+        )
+
+    async def test_fix02_activation_cursor_skips_invalid_first_page(self) -> None:
+        prepared = next(
+            value for key, value in self.model.ordered_indexes.items()
+            if key.name == "delivery.prepared"
+        )
+        first_delivery = next(
+            json.loads(record.document.payload)
+            for record in self.model.records.values()
+            if record.key.object_type == "delivery"
+        )
+        bucket_id = first_delivery["authority_bucket_id"]
+        namespace = next(iter(self.model.records)).namespace
+        scope = StateAccessScope(
+            atomic_scope=StateAtomicScope(
+                namespace=namespace, partition=f"bucket-{bucket_id}",
+            ),
+            authority=StateAuthorityKind.DELIVERY_ADMISSION,
+            caller="delivery.scheduling",
+            capabilities=frozenset({
+                StateCallerCapability.READ, StateCallerCapability.SCAN,
+                StateCallerCapability.COMPARE_AND_SET,
+                StateCallerCapability.TRANSACT,
+                StateCallerCapability.ORDERED_INDEX,
+                StateCallerCapability.APPEND,
+            }),
+        )
+        index = StateOrderedIndexKey(
+            namespace=namespace, name="delivery.prepared", bucket="delivery",
+        )
+        base_score = min(prepared.values()) - 1000
+        await self.model.transact(StateTransaction(
+            scope=scope,
+            mutations=(),
+            ordered_index_mutations=tuple(
+                StateOrderedIndexMutation(
+                    index=index,
+                    kind=StateOrderedIndexMutationKind.ADD,
+                    member=f"missing-delivery-{position:03d}",
+                    score=base_score + position,
+                )
+                for position in range(65)
+            ),
+        ))
+        result = await self._activate(policy=dataclasses.replace(
+            self.policy, activation_batch_size=1, activation_scan_budget=80,
+        ))
+        self.assertEqual(1, len(result.activated))
+        remaining = next(
+            values for key, values in self.model.ordered_indexes.items()
+            if key.name == "delivery.prepared"
+        )
+        self.assertFalse(any(member.startswith("missing-") for member in remaining))
 
     async def test_fix01_durable_inline_body_rebuilds_typed_envelope(self) -> None:
         await self._activate(policy=dataclasses.replace(
@@ -479,6 +743,7 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
                 authorization_binding_reference=(
                     plan.authorization_evidence.message_binding_reference
                 ),
+                envelope_authority=_envelope_authority(plan),
                 payload=PayloadReference(
                     object_id="object-p11",
                     version="v1",

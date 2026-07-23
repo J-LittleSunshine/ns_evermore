@@ -17,7 +17,7 @@ from ns_runtime.protocol import PayloadGroup
 from .models import DeliveryRecord, PayloadKind
 from .scheduling import (
     DeliveryPayloadResolver, DeliveryPayloadValidator,
-    OutboundDeliveryMaterial, PayloadValidationResult,
+    LocalDeliveryTarget, OutboundDeliveryMaterial, PayloadValidationResult,
 )
 
 
@@ -42,8 +42,8 @@ class StateStoreDeliveryPayloadAuthority(
             _invalid("reference_validator")
         self._reference_validator = reference_validator
 
-    async def validate(self, delivery: DeliveryRecord) -> PayloadValidationResult:
-        if not isinstance(delivery, DeliveryRecord):
+    async def validate(self, delivery: DeliveryRecord, *, target) -> PayloadValidationResult:
+        if not isinstance(delivery, DeliveryRecord) or type(target) is not LocalDeliveryTarget:
             _invalid("delivery")
         evidence = delivery.payload_evidence
         valid = True
@@ -56,7 +56,7 @@ class StateStoreDeliveryPayloadAuthority(
         elif self._reference_validator is None:
             valid = False
         else:
-            external = await self._reference_validator.validate(delivery)
+            external = await self._reference_validator.validate(delivery, target=target)
             if type(external) is not PayloadValidationResult:
                 _invalid("reference_validator.result")
             return external
@@ -67,6 +67,9 @@ class StateStoreDeliveryPayloadAuthority(
             object_version=evidence.object_version,
             checksum=evidence.checksum,
             tenant_id=delivery.tenant_id,
+            request_binding_fingerprint=delivery.policy_decision.request_fingerprint,
+            target_binding_fingerprint=delivery.target_fingerprint,
+            target_access_decision_reference=target.access_decision_reference,
         )
 
     async def resolve(self, delivery: DeliveryRecord) -> OutboundDeliveryMaterial:
@@ -118,7 +121,10 @@ class StateStoreDeliveryPayloadAuthority(
             tenant_id=delivery.tenant_id, domain="delivery",
         )
         scope = StateAccessScope(
-            atomic_scope=StateAtomicScope(namespace=namespace, partition="payload"),
+            atomic_scope=StateAtomicScope(
+                namespace=namespace,
+                partition=f"bucket-{delivery.authority_bucket_id}",
+            ),
             authority=StateAuthorityKind.DELIVERY_ADMISSION,
             caller="delivery.payload_authority",
             capabilities=frozenset({StateCallerCapability.READ}),

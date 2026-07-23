@@ -19,6 +19,7 @@ from ns_common.state_store import (
     StateMutation,
     StateMutationKind,
     StateOrderedIndexEntry,
+    StateOrderedIndexCursor,
     StateOrderedIndexKey,
     StateOrderedIndexMutationKind,
     StateOrderedIndexReadResult,
@@ -61,11 +62,18 @@ class DeterministicStateStoreContractModel(StateStore):
         self.health_error: BaseException | None = None
         self.health_status = StateStoreHealthStatus.READY
         self.health_generation = self.capabilities().contract_generation
+        # One-shot fault injection used to prove post-write reconciliation.
+        # The flags model a request lost before commit and a response lost
+        # after commit without changing production StateStore behavior.
+        self.indeterminate_before_transaction = False
+        self.indeterminate_after_transaction = False
         self.read_started: asyncio.Event | None = None
         self.release_read: asyncio.Event | None = None
         self._records: dict[StateKey, StateRecord] = {}
         self._logs: dict[StateKey, list[tuple[StateDocument, StateRevision]]] = {}
-        self._ordered_indexes: dict[StateOrderedIndexKey, dict[str, float]] = {}
+        self._ordered_indexes: dict[
+            tuple[object, StateOrderedIndexKey], dict[str, float]
+        ] = {}
         self._revision_order: dict[StateRevision, int] = {}
         self._revision_sequence = 0
         self._lock = asyncio.Lock()
@@ -83,7 +91,10 @@ class DeterministicStateStoreContractModel(StateStore):
 
     @property
     def ordered_indexes(self) -> dict[StateOrderedIndexKey, dict[str, float]]:
-        return {key: dict(values) for key, values in self._ordered_indexes.items()}
+        result: dict[StateOrderedIndexKey, dict[str, float]] = {}
+        for (_, key), values in self._ordered_indexes.items():
+            result.setdefault(key, {}).update(values)
+        return result
 
     async def _open(self) -> None:
         self.open_count += 1
@@ -178,6 +189,9 @@ class DeterministicStateStoreContractModel(StateStore):
         self.write_count += 1
         if self.write_error is not None:
             raise self.write_error
+        if self.indeterminate_before_transaction:
+            self.indeterminate_before_transaction = False
+            raise asyncio.TimeoutError
         async with self._lock:
             snapshot = dict(self._records)
             for mutation in transaction.mutations:
@@ -187,7 +201,9 @@ class DeterministicStateStoreContractModel(StateStore):
                 for mutation in transaction.mutations
             )
             for mutation in transaction.ordered_index_mutations:
-                values = self._ordered_indexes.setdefault(mutation.index, {})
+                values = self._ordered_indexes.setdefault(
+                    (transaction.scope.atomic_scope, mutation.index), {},
+                )
                 if mutation.kind is StateOrderedIndexMutationKind.ADD:
                     assert mutation.score is not None
                     values[mutation.member] = float(mutation.score)
@@ -199,26 +215,45 @@ class DeterministicStateStoreContractModel(StateStore):
                 revision = self._next_revision()
                 entries.append((append.document, revision))
                 positions.append(len(entries))
-            return StateTransactionResult(records=records, log_positions=tuple(positions))
+            result = StateTransactionResult(
+                records=records, log_positions=tuple(positions),
+            )
+            if self.indeterminate_after_transaction:
+                self.indeterminate_after_transaction = False
+                raise asyncio.TimeoutError
+            return result
 
     async def _read_ordered_index(
         self, *, scope: StateAccessScope, index: StateOrderedIndexKey,
         limit: int, max_score: float | None,
+        start_after: StateOrderedIndexCursor | None,
     ) -> StateOrderedIndexReadResult:
-        del scope
         self.read_count += 1
         async with self._lock:
             values = sorted(
-                self._ordered_indexes.get(index, {}).items(),
+                self._ordered_indexes.get((scope.atomic_scope, index), {}).items(),
                 key=lambda item: (item[1], item[0]),
             )
             if max_score is not None:
                 values = [item for item in values if item[1] <= max_score]
+            offset = 0
+            if start_after is not None:
+                marker = (start_after.member, start_after.score)
+                try:
+                    offset = values.index(marker) + 1
+                except ValueError:
+                    raise NsRuntimeStateStoreConflictError(details={
+                        "component": "state_store_model", "reason": "cursor_stale",
+                    }) from None
+            page = values[offset:offset + limit]
             return StateOrderedIndexReadResult(
                 entries=tuple(StateOrderedIndexEntry(member=member, score=score)
-                              for member, score in values[:limit]),
+                              for member, score in page),
                 observed_at=self.clock.utc_now(),
                 total_count=len(values),
+                next_cursor=(StateOrderedIndexCursor(
+                    member=page[-1][0], score=page[-1][1],
+                ) if page and offset + len(page) < len(values) else None),
             )
 
     async def _append(
