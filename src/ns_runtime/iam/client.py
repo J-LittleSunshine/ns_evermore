@@ -21,6 +21,8 @@ from ns_common.iam import (
     IamIntrospectionResult,
     PayloadRefValidationRequest,
     PayloadRefValidationResult,
+    PayloadRefRevalidationDecision,
+    PayloadRefRevalidationRequest,
 )
 from ns_common.time import Clock
 from ns_runtime.connection.iam import (
@@ -195,6 +197,22 @@ class IamClient(HandshakeIamAdapter):
             return PayloadRefValidationResult.from_wire(data)
         except NsValidationError:
             raise _malformed("payload_ref") from None
+
+    async def revalidate_payload_ref(
+        self,
+        request: PayloadRefRevalidationRequest,
+    ) -> PayloadRefRevalidationDecision:
+        """Obtain one backend-issued object-level payload access decision."""
+        if not isinstance(request, PayloadRefRevalidationRequest):
+            _invalid("payload_ref_revalidation_request")
+        data = await self._post(
+            "internal/payload_ref/revalidate/",
+            request.to_wire(),
+        )
+        try:
+            return PayloadRefRevalidationDecision.from_wire(data)
+        except NsValidationError:
+            raise _malformed("payload_ref_revalidation") from None
 
     async def _post(
         self,

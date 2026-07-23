@@ -42,6 +42,7 @@ from .model import (
     StateOrderedIndexReadResult,
     StateReadResult,
     StateRecord,
+    StateRecordReadAssertion,
     StateRevision,
     StateScanResult,
     StateStoreHealth,
@@ -325,10 +326,48 @@ _PROJECTION_TRANSACTION_SCRIPT = r"""
 local mutations = cjson.decode(ARGV[1])
 local index_ops = cjson.decode(ARGV[2])
 local logs = cjson.decode(ARGV[3])
-local committed_at = ARGV[4]
+local record_assertions = cjson.decode(ARGV[4])
+local ordered_index_assertions = cjson.decode(ARGV[5])
+local committed_at = ARGV[6]
 
 local function domain_error(kind, reason, index)
     return redis.error_reply('NS_STATE|' .. kind .. '|' .. reason .. '|' .. index)
+end
+
+for index, assertion in ipairs(record_assertions) do
+    local key = KEYS[assertion.key_index]
+    local exists = redis.call('EXISTS', key) == 1
+    if assertion.expect_present == '1' then
+        if not exists then
+            return domain_error('conflict', 'read_assertion_missing', index)
+        end
+        if assertion.expected_revision ~= '' and
+           redis.call('HGET', key, 'revision') ~= assertion.expected_revision then
+            return domain_error('conflict', 'read_assertion_revision', index)
+        end
+        if assertion.expected_state_version ~= '' and
+           redis.call('HGET', key, 'state_version') ~= assertion.expected_state_version then
+            return domain_error('conflict', 'read_assertion_state_version', index)
+        end
+    elseif exists then
+        return domain_error('conflict', 'read_assertion_expected_absent', index)
+    end
+end
+
+for index, assertion in ipairs(ordered_index_assertions) do
+    local key = KEYS[assertion.key_index]
+    local score = redis.call('ZSCORE', key, assertion.member)
+    if assertion.expect_present == '1' then
+        if not score then
+            return domain_error('conflict', 'ordered_read_assertion_missing', index)
+        end
+        if assertion.expected_score ~= cjson.null and
+           tonumber(score) ~= tonumber(assertion.expected_score) then
+            return domain_error('conflict', 'ordered_read_assertion_score', index)
+        end
+    elseif score then
+        return domain_error('conflict', 'ordered_read_assertion_expected_absent', index)
+    end
 end
 
 for index, mutation in ipairs(mutations) do
@@ -612,7 +651,12 @@ class RedisValkeyStateStore(StateStore):
         self,
         transaction: StateTransaction,
     ) -> StateTransactionResult:
-        if transaction.ordered_index_mutations or transaction.log_appends:
+        if (
+            transaction.ordered_index_mutations
+            or transaction.log_appends
+            or transaction.record_assertions
+            or transaction.ordered_index_assertions
+        ):
             return await self._execute_projection_transaction(transaction)
         return await self._execute_transaction(scope=transaction.scope, mutations=transaction.mutations)
 
@@ -785,10 +829,21 @@ class RedisValkeyStateStore(StateStore):
             "key_index": position(self._transition_log_key(scope, value.key)),
             "document": _document_payload(value.document),
         } for value in transaction.log_appends]
+        record_assertions = [{
+            "key_index": position(self._record_key(scope, value.key)),
+            **_record_read_assertion_payload(value),
+        } for value in transaction.record_assertions]
+        ordered_index_assertions = [{
+            "key_index": position(self._ordered_index_key(scope, value.index)),
+            "member": value.member,
+            "expect_present": "1" if value.expect_present else "0",
+            "expected_score": value.expected_score,
+        } for value in transaction.ordered_index_assertions]
         raw = await self._execute(client.eval(  # type: ignore[attr-defined]
             _PROJECTION_TRANSACTION_SCRIPT, len(keys), *keys,
             _canonical_json(mutations), _canonical_json(index_ops),
-            _canonical_json(logs), committed_at.isoformat(),
+            _canonical_json(logs), _canonical_json(record_assertions),
+            _canonical_json(ordered_index_assertions), committed_at.isoformat(),
         ))
         values = _decode_json_result(raw)
         if not isinstance(values, dict):
@@ -964,6 +1019,12 @@ class RedisValkeyStateStore(StateStore):
         values.extend(self._ordered_index_key(
             scope, item.index,
         ) for item in transaction.ordered_index_mutations)
+        values.extend(self._record_key(
+            scope, item.key,
+        ) for item in transaction.record_assertions)
+        values.extend(self._ordered_index_key(
+            scope, item.index,
+        ) for item in transaction.ordered_index_assertions)
         values.extend(self._transition_log_key(
             scope, item.key,
         ) for item in transaction.log_appends)
@@ -1115,6 +1176,26 @@ def _mutation_payload(mutation: StateMutation) -> dict[str, object]:
         "document": (
             None if mutation.kind is StateMutationKind.DELETE
             else _document_payload(mutation.document)  # type: ignore[arg-type]
+        ),
+    }
+
+
+def _record_read_assertion_payload(
+    assertion: StateRecordReadAssertion,
+) -> dict[str, str]:
+    expected_revision = ""
+    if assertion.expected_revision is not None:
+        revision_number = _revision_number(assertion.expected_revision)
+        expected_revision = (
+            "invalid" if revision_number is None else str(revision_number)
+        )
+    return {
+        "expect_present": "1" if assertion.expect_present else "0",
+        "expected_revision": expected_revision,
+        "expected_state_version": (
+            ""
+            if assertion.expected_state_version is None
+            else str(assertion.expected_state_version)
         ),
     }
 

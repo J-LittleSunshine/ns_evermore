@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Awaitable, Callable
 
 from ns_common.exceptions import (
     NsRuntimeStateStoreConflictError,
@@ -22,8 +23,10 @@ from ns_common.state_store import (
     StateOrderedIndexCursor,
     StateOrderedIndexKey,
     StateOrderedIndexMutationKind,
+    StateOrderedIndexReadAssertion,
     StateOrderedIndexReadResult,
     StateReadResult,
+    StateRecordReadAssertion,
     StateRecord,
     StateRevision,
     StateScanResult,
@@ -69,6 +72,9 @@ class DeterministicStateStoreContractModel(StateStore):
         self.indeterminate_after_transaction = False
         self.read_started: asyncio.Event | None = None
         self.release_read: asyncio.Event | None = None
+        self.before_transaction: Callable[
+            [StateTransaction], Awaitable[None]
+        ] | None = None
         self._records: dict[StateKey, StateRecord] = {}
         self._logs: dict[StateKey, list[tuple[StateDocument, StateRevision]]] = {}
         self._ordered_indexes: dict[
@@ -192,8 +198,19 @@ class DeterministicStateStoreContractModel(StateStore):
         if self.indeterminate_before_transaction:
             self.indeterminate_before_transaction = False
             raise asyncio.TimeoutError
+        before_transaction = self.before_transaction
+        if before_transaction is not None:
+            self.before_transaction = None
+            await before_transaction(transaction)
         async with self._lock:
             snapshot = dict(self._records)
+            for assertion in transaction.record_assertions:
+                self._validate_record_assertion(assertion, snapshot)
+            for assertion in transaction.ordered_index_assertions:
+                self._validate_ordered_index_assertion(
+                    transaction.scope,
+                    assertion,
+                )
             for mutation in transaction.mutations:
                 self._validate_mutation(mutation, snapshot)
             records = tuple(
@@ -222,6 +239,53 @@ class DeterministicStateStoreContractModel(StateStore):
                 self.indeterminate_after_transaction = False
                 raise asyncio.TimeoutError
             return result
+
+    def _validate_record_assertion(
+        self,
+        assertion: StateRecordReadAssertion,
+        records: dict[StateKey, StateRecord],
+    ) -> None:
+        current = records.get(assertion.key)
+        if not assertion.expect_present:
+            if current is not None:
+                self._conflict("record_assertion_expected_absent")
+            return
+        if current is None:
+            self._conflict("record_assertion_missing")
+        assert current is not None
+        if (
+            assertion.expected_revision is not None
+            and current.revision != assertion.expected_revision
+        ):
+            self._conflict("record_assertion_revision")
+        if (
+            assertion.expected_state_version is not None
+            and current.document.state_version
+            != assertion.expected_state_version
+        ):
+            self._conflict("record_assertion_state_version")
+
+    def _validate_ordered_index_assertion(
+        self,
+        scope: StateAccessScope,
+        assertion: StateOrderedIndexReadAssertion,
+    ) -> None:
+        values = self._ordered_indexes.get(
+            (scope.atomic_scope, assertion.index),
+            {},
+        )
+        current = values.get(assertion.member)
+        if not assertion.expect_present:
+            if current is not None:
+                self._conflict("ordered_index_assertion_expected_absent")
+            return
+        if current is None:
+            self._conflict("ordered_index_assertion_missing")
+        if (
+            assertion.expected_score is not None
+            and current != assertion.expected_score
+        ):
+            self._conflict("ordered_index_assertion_score")
 
     async def _read_ordered_index(
         self, *, scope: StateAccessScope, index: StateOrderedIndexKey,

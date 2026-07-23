@@ -105,22 +105,31 @@ class LocalDeliveryDispatchCoordinator:
             ).run_once(tenant_id=tenant_id)
             if claim.outcome is not ClaimOutcome.CLAIMED:
                 return
-            LeaseRenewWorker(
+            renewal = LeaseRenewWorker(
                 scheduler=self._scheduler, policy=self._policy,
                 risk_guard=self._risk_guard,
             ).schedule(claim=claim.claim, supervisor=self._supervisor)
-            result = await SendWorker(
-                scheduler=self._scheduler,
-                policy=self._policy,
-                target_resolver=self._targets,
-                payload_validator=self._payload_validation,
-                payload_resolver=self._payloads,
-                transport_writer=self._transport,
-                risk_guard=self._risk_guard,
-                attempt_id_factory=lambda: self._identifier("attempt"),
-                clock=self._clock,
-            ).run_once(claim=claim.claim)
-            if result.outcome in {SendOutcome.PRECHECK_FAILED, SendOutcome.OWNER_RISK}:
+            result = None
+            try:
+                result = await SendWorker(
+                    scheduler=self._scheduler,
+                    policy=self._policy,
+                    target_resolver=self._targets,
+                    payload_validator=self._payload_validation,
+                    payload_resolver=self._payloads,
+                    transport_writer=self._transport,
+                    risk_guard=self._risk_guard,
+                    attempt_id_factory=lambda: self._identifier("attempt"),
+                    clock=self._clock,
+                ).run_once(claim=claim.claim)
+            finally:
+                if result is None or result.outcome is not SendOutcome.ACK_WAITING:
+                    await renewal.stop()
+            if result.outcome in {
+                SendOutcome.PRECHECK_FAILED,
+                SendOutcome.OWNER_RISK,
+                SendOutcome.WRITE_OUTCOME_UNKNOWN,
+            }:
                 # The same queued item would be selected again. Stop this turn
                 # instead of amplifying a disconnect, invalid payload, or risk.
                 return

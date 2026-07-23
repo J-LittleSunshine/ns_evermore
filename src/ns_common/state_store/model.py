@@ -202,6 +202,107 @@ class StateOrderedIndexMutation:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class StateRecordReadAssertion:
+    """Read-only transaction precondition over one authority record."""
+
+    key: StateKey
+    expect_present: bool
+    expected_revision: StateRevision | None = field(default=None, repr=False)
+    expected_state_version: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, StateKey):
+            _invalid("record_assertion.key")
+        if type(self.expect_present) is not bool:
+            _invalid("record_assertion.expect_present")
+        if not self.expect_present and (
+            self.expected_revision is not None
+            or self.expected_state_version is not None
+        ):
+            _invalid("record_assertion.absent_combination")
+        if (
+            self.expected_revision is not None
+            and not isinstance(self.expected_revision, StateRevision)
+        ):
+            _invalid("record_assertion.expected_revision")
+        if self.expected_state_version is not None:
+            _positive_int(
+                self.expected_state_version,
+                "record_assertion.expected_state_version",
+            )
+
+    @classmethod
+    def absent(cls, key: StateKey) -> "StateRecordReadAssertion":
+        return cls(key=key, expect_present=False)
+
+    @classmethod
+    def present(
+        cls,
+        key: StateKey,
+        *,
+        revision: StateRevision | None = None,
+        state_version: int | None = None,
+    ) -> "StateRecordReadAssertion":
+        return cls(
+            key=key,
+            expect_present=True,
+            expected_revision=revision,
+            expected_state_version=state_version,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StateOrderedIndexReadAssertion:
+    """Read-only transaction precondition over one ordered-index member."""
+
+    index: StateOrderedIndexKey
+    member: str
+    expect_present: bool
+    expected_score: float | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.index, StateOrderedIndexKey):
+            _invalid("ordered_index_assertion.index")
+        if (
+            not isinstance(self.member, str)
+            or _OBJECT_ID_PATTERN.fullmatch(self.member) is None
+        ):
+            _invalid("ordered_index_assertion.member")
+        if type(self.expect_present) is not bool:
+            _invalid("ordered_index_assertion.expect_present")
+        if not self.expect_present and self.expected_score is not None:
+            _invalid("ordered_index_assertion.absent_combination")
+        if self.expected_score is not None and (
+            type(self.expected_score) not in {int, float}
+            or not math.isfinite(self.expected_score)
+        ):
+            _invalid("ordered_index_assertion.expected_score")
+
+    @classmethod
+    def absent(
+        cls,
+        index: StateOrderedIndexKey,
+        member: str,
+    ) -> "StateOrderedIndexReadAssertion":
+        return cls(index=index, member=member, expect_present=False)
+
+    @classmethod
+    def present(
+        cls,
+        index: StateOrderedIndexKey,
+        member: str,
+        *,
+        score: float | None = None,
+    ) -> "StateOrderedIndexReadAssertion":
+        return cls(
+            index=index,
+            member=member,
+            expect_present=True,
+            expected_score=score,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StateTransitionLogAppend:
     key: StateKey
     document: StateDocument = field(repr=False)
@@ -289,6 +390,8 @@ class StateTransaction:
     mutations: tuple[StateMutation, ...]
     ordered_index_mutations: tuple[StateOrderedIndexMutation, ...] = ()
     log_appends: tuple[StateTransitionLogAppend, ...] = ()
+    record_assertions: tuple[StateRecordReadAssertion, ...] = ()
+    ordered_index_assertions: tuple[StateOrderedIndexReadAssertion, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, StateAccessScope):
@@ -296,6 +399,8 @@ class StateTransaction:
         if (not isinstance(self.mutations, tuple)
                 or not isinstance(self.ordered_index_mutations, tuple)
                 or not isinstance(self.log_appends, tuple)
+                or not isinstance(self.record_assertions, tuple)
+                or not isinstance(self.ordered_index_assertions, tuple)
                 or not (self.mutations or self.ordered_index_mutations or self.log_appends)):
             _invalid("transaction.mutations")
         if any(not isinstance(value, StateMutation) for value in self.mutations):
@@ -308,6 +413,25 @@ class StateTransaction:
             _invalid("transaction.ordered_index_mutations")
         if any(not isinstance(value, StateTransitionLogAppend) for value in self.log_appends):
             _invalid("transaction.log_appends")
+        if any(
+            not isinstance(value, StateRecordReadAssertion)
+            for value in self.record_assertions
+        ):
+            _invalid("transaction.record_assertions")
+        if any(
+            not isinstance(value, StateOrderedIndexReadAssertion)
+            for value in self.ordered_index_assertions
+        ):
+            _invalid("transaction.ordered_index_assertions")
+        asserted_record_keys = tuple(value.key for value in self.record_assertions)
+        if len(set(asserted_record_keys)) != len(asserted_record_keys):
+            _invalid("transaction.duplicate_record_assertion")
+        asserted_index_members = tuple(
+            (value.index, value.member)
+            for value in self.ordered_index_assertions
+        )
+        if len(set(asserted_index_members)) != len(asserted_index_members):
+            _invalid("transaction.duplicate_ordered_index_assertion")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -16,6 +16,7 @@ from ns_common.exceptions import (
     NsRuntimeOwnerMismatchError,
     NsRuntimeStateStoreConflictError,
     NsRuntimeStateStoreUnavailableError,
+    NsRuntimeStateStoreVersionMismatchError,
     NsValidationError,
 )
 from ns_common.state_store import (
@@ -31,10 +32,12 @@ from ns_common.state_store import (
     StateMutationKind,
     StateNamespace,
     StateRecord,
+    StateRecordReadAssertion,
     StateStore,
     StateTransaction,
     StateTransactionResult,
-    StateOrderedIndexCursor, StateOrderedIndexKey, StateOrderedIndexMutation,
+    StateOrderedIndexCursor, StateOrderedIndexEntry, StateOrderedIndexKey,
+    StateOrderedIndexMutation, StateOrderedIndexReadAssertion,
     StateOrderedIndexMutationKind, StateOrderedIndexReadResult,
     StateTransitionLogAppend,
 )
@@ -237,6 +240,18 @@ class StateStoreDeliveryScheduler:
         )
         record = result.record
         if record is None:
+            legacy = await self._store.read(
+                scope=scope,
+                key=_legacy_scheduler_cursor_key(scope, name),
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+            if legacy.record is not None:
+                raise NsRuntimeStateStoreVersionMismatchError(details={
+                    "component": "delivery_scheduler",
+                    "operation": "read_scheduler_cursor",
+                    "reason": "scheduler_cursor_migration_reset_required",
+                    "cursor_name": name,
+                })
             return _SchedulerCursorAuthority(
                 name=name,
                 index_cursor=None,
@@ -250,10 +265,22 @@ class StateStoreDeliveryScheduler:
                 or set(values) != {
                     "schema_version", "name", "member", "score",
                     "next_bucket", "state_version", "updated_at",
+                    "layout_generation", "bucket_id", "operation",
+                    "index_identity",
                 }
-                or values["schema_version"] != "delivery-scheduler-cursor-1"
+                or values["schema_version"] != "delivery-scheduler-cursor-2"
                 or values["name"] != name
                 or values["state_version"] != record.document.state_version
+            ):
+                raise ValueError
+            layout_generation, bucket_id, operation, index_identity = (
+                _scheduler_cursor_identity(scope, name)
+            )
+            if (
+                values["layout_generation"] != layout_generation
+                or values["bucket_id"] != bucket_id
+                or values["operation"] != operation
+                or values["index_identity"] != index_identity
             ):
                 raise ValueError
             member = values["member"]
@@ -308,11 +335,19 @@ class StateStoreDeliveryScheduler:
             )
             document = StateDocument(
                 schema_name="delivery_scheduler_cursor",
-                schema_version=1,
+                schema_version=2,
                 state_version=state_version,
                 payload=_json({
-                    "schema_version": "delivery-scheduler-cursor-1",
+                    "schema_version": "delivery-scheduler-cursor-2",
                     "name": name,
+                    "layout_generation": _scheduler_cursor_identity(
+                        scope, name,
+                    )[0],
+                    "bucket_id": _scheduler_cursor_identity(scope, name)[1],
+                    "operation": _scheduler_cursor_identity(scope, name)[2],
+                    "index_identity": _scheduler_cursor_identity(
+                        scope, name,
+                    )[3],
                     "member": (
                         None if index_cursor is None else index_cursor.member
                     ),
@@ -360,11 +395,42 @@ class StateStoreDeliveryScheduler:
         *,
         scope: StateAccessScope,
         index: StateOrderedIndexKey,
-        entry,
+        entry: StateOrderedIndexEntry,
         reason: str,
+        observed_record: StateRecord | None = None,
+        observe_missing_or_malformed: bool = False,
         replacement_score: float | None = None,
         quarantine: bool = False,
-    ) -> None:
+    ) -> bool:
+        record_key = StateKey(
+            namespace=scope.namespace,
+            object_type="delivery",
+            object_id=_key_digest(entry.member),
+        )
+        if observe_missing_or_malformed:
+            observed = await self._store.read(
+                scope=scope,
+                key=record_key,
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+            observed_record = observed.record
+            if observed_record is not None:
+                try:
+                    current = _decode_delivery(observed_record)
+                except NsRuntimeStateStoreUnavailableError:
+                    pass
+                else:
+                    if current.delivery_id == entry.member:
+                        return False
+        record_assertion = (
+            StateRecordReadAssertion.absent(record_key)
+            if observed_record is None
+            else StateRecordReadAssertion.present(
+                record_key,
+                revision=observed_record.revision,
+                state_version=observed_record.document.state_version,
+            )
+        )
         if replacement_score is None:
             index_mutations = [
                 _index_remove(index, entry.member),
@@ -391,24 +457,41 @@ class StateStoreDeliveryScheduler:
             "quarantined": quarantine,
             "occurred_at": self._clock.utc_now().isoformat(),
         }
-        await self._store.transact(StateTransaction(
-            scope=scope,
-            mutations=(),
-            ordered_index_mutations=tuple(index_mutations),
-            log_appends=(StateTransitionLogAppend(
-                key=StateKey(
-                    namespace=scope.namespace,
-                    object_type="delivery_scheduler_repair_log",
-                    object_id=_key_digest(index.name),
+        try:
+            await self._store.transact(StateTransaction(
+                scope=scope,
+                mutations=(),
+                record_assertions=(record_assertion,),
+                ordered_index_assertions=(
+                    StateOrderedIndexReadAssertion.present(
+                        index,
+                        entry.member,
+                        score=entry.score,
+                    ),
                 ),
-                document=StateDocument(
-                    schema_name="delivery_index_repair_event",
-                    schema_version=1,
-                    state_version=1,
-                    payload=_json(event),
-                ),
-            ),),
-        ))
+                ordered_index_mutations=tuple(index_mutations),
+                log_appends=(StateTransitionLogAppend(
+                    key=StateKey(
+                        namespace=scope.namespace,
+                        object_type="delivery_scheduler_repair_log",
+                        object_id=_key_digest(index.name),
+                    ),
+                    document=StateDocument(
+                        schema_name="delivery_index_repair_event",
+                        schema_version=1,
+                        state_version=1,
+                        payload=_json(event),
+                    ),
+                ),),
+            ))
+        except NsRuntimeStateStoreConflictError:
+            await self._store.read(
+                scope=scope,
+                key=record_key,
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+            return False
+        return True
 
     async def activate_prepared(
         self,
@@ -482,14 +565,16 @@ class StateStoreDeliveryScheduler:
             except NsRuntimeStateStoreUnavailableError as error:
                 if not _repairable_authority_error(error):
                     raise
-                await self._repair_ordered_projection(
+                repaired = await self._repair_ordered_projection(
                     scope=scope,
                     index=prepared_index,
                     entry=entry,
                     reason="record_missing_or_malformed",
+                    observe_missing_or_malformed=True,
                     quarantine=True,
                 )
-                repaired_members.add(entry.member)
+                if repaired:
+                    repaired_members.add(entry.member)
                 continue
             value = item.value
             bucket_id = _bucket_id(scope)
@@ -505,13 +590,15 @@ class StateStoreDeliveryScheduler:
                     "reason": "authority_bucket_mismatch",
                 })
             if value.status is not DeliveryRecordStatus.PREPARED:
-                await self._repair_ordered_projection(
+                repaired = await self._repair_ordered_projection(
                     scope=scope,
                     index=prepared_index,
                     entry=entry,
                     reason="status_not_prepared",
+                    observed_record=item.record,
                 )
-                repaired_members.add(entry.member)
+                if repaired:
+                    repaired_members.add(entry.member)
                 continue
             if value.policy_decision.expires_at <= now:
                 _reason(reasons, ActivationSkipReason.EXPIRED)
@@ -719,24 +806,28 @@ class StateStoreDeliveryScheduler:
             except NsRuntimeStateStoreUnavailableError as error:
                 if not _repairable_authority_error(error):
                     raise
-                await self._repair_ordered_projection(
+                repaired = await self._repair_ordered_projection(
                     scope=scope,
                     index=_index(scope, "delivery.prepared"),
                     entry=entry,
                     reason="record_missing_or_malformed",
+                    observe_missing_or_malformed=True,
                     quarantine=True,
                 )
-                removed_members.add(entry.member)
+                if repaired:
+                    removed_members.add(entry.member)
                 continue
             value = authority.value
             if value.status is not DeliveryRecordStatus.PREPARED:
-                await self._repair_ordered_projection(
+                repaired = await self._repair_ordered_projection(
                     scope=scope,
                     index=_index(scope, "delivery.prepared"),
                     entry=entry,
                     reason="status_not_prepared",
+                    observed_record=authority.record,
                 )
-                removed_members.add(entry.member)
+                if repaired:
+                    removed_members.add(entry.member)
                 continue
             if (
                 value.authority_bucket_count != policy.authority_bucket_count
@@ -1013,6 +1104,7 @@ class StateStoreDeliveryScheduler:
                     index=_index(scope, "delivery.ready"),
                     entry=entry,
                     reason="record_missing_or_malformed",
+                    observe_missing_or_malformed=True,
                     quarantine=True,
                 )
                 continue
@@ -1029,6 +1121,7 @@ class StateStoreDeliveryScheduler:
                     index=_index(scope, "delivery.ready"),
                     entry=entry,
                     reason="authority_layout_mismatch",
+                    observed_record=authority.record,
                     quarantine=True,
                 )
                 continue
@@ -1042,6 +1135,7 @@ class StateStoreDeliveryScheduler:
                         if authority.value.status is not DeliveryRecordStatus.QUEUED
                         else "queued_owner_present"
                     ),
+                    observed_record=authority.record,
                 )
                 continue
             fencing = authority.value.last_fencing + 1
@@ -1296,6 +1390,7 @@ class StateStoreDeliveryScheduler:
                 index=lease_index,
                 entry=entry,
                 reason="record_missing_or_malformed",
+                observe_missing_or_malformed=True,
                 quarantine=True,
             )
             return None
@@ -1310,6 +1405,7 @@ class StateStoreDeliveryScheduler:
                 index=lease_index,
                 entry=entry,
                 reason="authority_layout_mismatch",
+                observed_record=authority.record,
                 quarantine=True,
             )
             return None
@@ -1320,6 +1416,7 @@ class StateStoreDeliveryScheduler:
                 index=lease_index,
                 entry=entry,
                 reason="owner_missing",
+                observed_record=authority.record,
             )
             return None
         if old.lease_expires_at > now:
@@ -1328,6 +1425,7 @@ class StateStoreDeliveryScheduler:
                 index=lease_index,
                 entry=entry,
                 reason="lease_score_stale",
+                observed_record=authority.record,
                 replacement_score=old.lease_expires_at.timestamp(),
             )
             return None
@@ -1337,6 +1435,7 @@ class StateStoreDeliveryScheduler:
                 index=lease_index,
                 entry=entry,
                 reason="foreign_runtime_owner",
+                observed_record=authority.record,
                 quarantine=True,
             )
             return None
@@ -1350,6 +1449,7 @@ class StateStoreDeliveryScheduler:
                 index=lease_index,
                 entry=entry,
                 reason="status_not_lease_managed",
+                observed_record=authority.record,
             )
             return None
         if authority.value.status is DeliveryRecordStatus.QUEUED:
@@ -1406,6 +1506,7 @@ class StateStoreDeliveryScheduler:
                     index=lease_index,
                     entry=entry,
                     reason="sending_attempt_missing_or_malformed",
+                    observed_record=authority.record,
                     quarantine=True,
                 )
                 return None
@@ -2191,11 +2292,54 @@ def _scheduler_cursor_key(
     scope: StateAccessScope,
     name: str,
 ) -> StateKey:
+    layout_generation, bucket_id, operation, index_identity = (
+        _scheduler_cursor_identity(scope, name)
+    )
+    return StateKey(
+        namespace=scope.namespace,
+        object_type="delivery_scheduler_cursor",
+        object_id=_key_digest(
+            "scheduler-cursor-v2",
+            str(layout_generation),
+            str(bucket_id),
+            operation,
+            index_identity,
+        ),
+    )
+
+
+def _legacy_scheduler_cursor_key(
+    scope: StateAccessScope,
+    name: str,
+) -> StateKey:
     return StateKey(
         namespace=scope.namespace,
         object_type="delivery_scheduler_cursor",
         object_id=_key_digest("scheduler-cursor:" + name),
     )
+
+
+def _scheduler_cursor_identity(
+    scope: StateAccessScope,
+    name: str,
+) -> tuple[int, int, str, str]:
+    if type(name) is not str or "." not in name:
+        _invalid("scheduler_cursor.name")
+    operation, index_identity = name.split(".", 1)
+    if not operation or not index_identity:
+        _invalid("scheduler_cursor.name")
+    partition = scope.atomic_scope.partition
+    marker = "-bucket-"
+    if not partition.startswith("layout-") or marker not in partition:
+        _invalid("scheduler_cursor.scope")
+    generation_text = partition[len("layout-"):partition.index(marker)]
+    try:
+        generation = int(generation_text)
+    except ValueError:
+        _invalid("scheduler_cursor.scope")
+    if generation < 1:
+        _invalid("scheduler_cursor.scope")
+    return generation, _bucket_id(scope), operation, index_identity
 
 
 def _target_index(

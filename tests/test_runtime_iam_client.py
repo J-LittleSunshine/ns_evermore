@@ -16,6 +16,7 @@ from ns_common.http_client import NsAsyncHttpClient, NsHttpResponse
 from ns_common.iam import (
     IamCredentialStatus, IamIntrospectionResult, IamPrincipalType,
     IamTargetContext, PayloadRefValidationRequest, PayloadRefValidationResult,
+    PayloadRefRevalidationDecision, PayloadRefRevalidationRequest,
 )
 from ns_common.time import ControlledClock
 from ns_common.config import NsConfig
@@ -145,6 +146,49 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(expected, await client.validate_payload_ref(request))
         self.assertEqual("internal/payload_ref/validate/", http.calls[0]["url"])
         self.assertEqual(request.to_wire(), http.calls[0]["json_data"])
+
+    async def test_payload_ref_revalidation_preserves_backend_decision_reference(
+        self,
+    ) -> None:
+        request = PayloadRefRevalidationRequest(
+            object_id="object:1",
+            version="version:1",
+            checksum="sha256:abcd",
+            size_bytes=123,
+            tenant_id="tenant:1",
+            target_principal="user:1",
+            target_tenant_id="tenant:1",
+            target_fingerprint="sha256:target",
+            permission_snapshot_ref="permission:1",
+            permission_version="version:1",
+            admission_authority_reference="admission:opaque",
+        )
+        expected = PayloadRefRevalidationDecision(
+            valid=True,
+            allowed=True,
+            reason="acl_allow",
+            object_id=request.object_id,
+            version=request.version,
+            checksum=request.checksum,
+            size_bytes=request.size_bytes,
+            tenant_id=request.tenant_id,
+            target_principal=request.target_principal,
+            target_fingerprint=request.target_fingerprint,
+            permission_snapshot_ref=request.permission_snapshot_ref,
+            permission_version=request.permission_version,
+            decision_reference="iam-payload:backend-issued",
+            decided_at=NOW,
+            expires_at=NOW + timedelta(minutes=2),
+        )
+        client, http = self._client([expected.to_wire()])
+        self.assertEqual(
+            expected,
+            await client.revalidate_payload_ref(request),
+        )
+        self.assertEqual(
+            "internal/payload_ref/revalidate/",
+            http.calls[0]["url"],
+        )
 
     async def test_invalid_expired_and_revoked_credentials_are_denied(self) -> None:
         cases = (

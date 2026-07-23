@@ -313,7 +313,10 @@ class StateStore(ABC):
         self._require_caller_capability(scope, StateCallerCapability.TRANSACT)
         self._require_authority(scope)
         self._require_store_capability(StateStoreCapability.TRANSACTION)
-        if transaction.ordered_index_mutations:
+        if (
+            transaction.ordered_index_mutations
+            or transaction.ordered_index_assertions
+        ):
             self._require_caller_capability(
                 scope, StateCallerCapability.ORDERED_INDEX,
             )
@@ -323,11 +326,23 @@ class StateStore(ABC):
             self._require_store_capability(StateStoreCapability.APPEND)
         for mutation in transaction.mutations:
             self._validate_key_scope(scope, mutation.key)
+        for assertion in transaction.record_assertions:
+            self._validate_key_scope(scope, assertion.key)
         for mutation in transaction.ordered_index_mutations:
             if (mutation.index.namespace != scope.namespace
                     and mutation.index.namespace.kind is not StateNamespaceKind.SYSTEM):
                 raise NsRuntimeStateStoreNamespaceViolationError(details={
                     "component": "state_store", "reason": "namespace_scope_mismatch",
+                })
+        for assertion in transaction.ordered_index_assertions:
+            if (
+                assertion.index.namespace != scope.namespace
+                and assertion.index.namespace.kind
+                is not StateNamespaceKind.SYSTEM
+            ):
+                raise NsRuntimeStateStoreNamespaceViolationError(details={
+                    "component": "state_store",
+                    "reason": "namespace_scope_mismatch",
                 })
         for append in transaction.log_appends:
             self._validate_key_scope(scope, append.key)

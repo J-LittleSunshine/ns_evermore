@@ -25,8 +25,11 @@ from ns_common.iam import (
     IamIntrospectionRequest,
     IamIntrospectionResult,
     IamPrincipalType,
+    IamTargetContext,
     PayloadRefValidationRequest,
     PayloadRefValidationResult,
+    PayloadRefRevalidationDecision,
+    PayloadRefRevalidationRequest,
     PermissionInvalidation,
     RuntimeBootstrapRequest,
     RuntimeBootstrapResult,
@@ -104,6 +107,7 @@ class BackendRuntimeIamService:
         permission_policy: PermissionPolicy,
         payload_ref_policy: PayloadRefPolicy,
         clock: Clock,
+        payload_decision_reference_factory: Callable[[], str] | None = None,
     ) -> None:
         for value, method, name in (
             (principal_resolver, "resolve", "principal_resolver"),
@@ -118,6 +122,10 @@ class BackendRuntimeIamService:
         self._permissions = permission_policy
         self._payload_refs = payload_ref_policy
         self._clock = clock
+        self._payload_decision_references = (
+            payload_decision_reference_factory
+            or (lambda: f"iam-payload:{uuid4()}")
+        )
 
     async def introspect(
         self,
@@ -170,6 +178,94 @@ class BackendRuntimeIamService:
         if not isinstance(request, PayloadRefValidationRequest):
             _invalid("request")
         return await self._payload_refs.validate(request)
+
+    async def revalidate_payload_ref(
+        self,
+        request: PayloadRefRevalidationRequest,
+    ) -> PayloadRefRevalidationDecision:
+        if not isinstance(request, PayloadRefRevalidationRequest):
+            _invalid("request")
+        now = self._clock.utc_now()
+        revalidate = getattr(self._payload_refs, "revalidate", None)
+        metadata = (
+            await revalidate(request)
+            if callable(revalidate)
+            else None
+        )
+        metadata_valid = bool(
+            type(metadata) is PayloadRefValidationResult
+            and metadata.valid
+            and not metadata.revoked
+            and metadata.object_id == request.object_id
+            and metadata.version == request.version
+            and metadata.checksum == request.checksum
+            and metadata.size_bytes == request.size_bytes
+            and metadata.tenant_id == request.tenant_id
+            and metadata.expires_at > now
+        )
+        decision = None
+        if metadata_valid:
+            decision = await self.access_check(IamAccessCheckRequest(
+                identity=request.target_principal,
+                tenant_id=request.target_tenant_id,
+                permission_snapshot_ref=request.permission_snapshot_ref,
+                permission_version=request.permission_version,
+                message_type="payload_ref.read",
+                target=IamTargetContext(
+                    kind="payload_ref",
+                    tenant_id=request.tenant_id,
+                    reference=request.object_id,
+                ),
+                cross_tenant=(
+                    request.target_tenant_id != request.tenant_id
+                ),
+                management=False,
+                task_creation=False,
+            ))
+        reference = self._payload_decision_references()
+        if type(reference) is not str or not reference:
+            _invalid("payload_decision_reference")
+        expires_at = (
+            metadata.expires_at
+            if metadata_valid
+            else now
+        )
+        return PayloadRefRevalidationDecision(
+            valid=metadata_valid,
+            allowed=bool(
+                metadata_valid
+                and decision is not None
+                and decision.allowed
+                and not decision.refresh_required
+                and decision.permission_version == request.permission_version
+            ),
+            reason=(
+                decision.reason
+                if decision is not None
+                else "payload_provider_unavailable_or_invalid"
+            ),
+            object_id=request.object_id,
+            version=request.version,
+            checksum=request.checksum,
+            size_bytes=request.size_bytes,
+            tenant_id=request.tenant_id,
+            target_principal=request.target_principal,
+            target_fingerprint=request.target_fingerprint,
+            permission_snapshot_ref=request.permission_snapshot_ref,
+            permission_version=(
+                decision.permission_version
+                if decision is not None
+                else request.permission_version
+            ),
+            decision_reference=reference,
+            decided_at=(
+                decision.decided_at if decision is not None else now
+            ),
+            expires_at=expires_at,
+            refresh_required=bool(
+                decision is not None and decision.refresh_required
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

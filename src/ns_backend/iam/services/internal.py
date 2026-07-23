@@ -22,6 +22,8 @@ from ns_common.iam import (
     IamTargetContext,
     PayloadRefValidationRequest,
     PayloadRefValidationResult,
+    PayloadRefRevalidationDecision,
+    PayloadRefRevalidationRequest,
     RuntimeBootstrapRequest,
     RuntimeRoleScope,
 )
@@ -351,6 +353,190 @@ class InternalIamService:
             revoked=False,
         )
         return result.to_wire()
+
+    @classmethod
+    async def revalidate_payload_ref(
+        cls,
+        data: dict[str, Any],
+        *,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Bind live payload metadata to one object-level ACL/policy decision."""
+
+        try:
+            request = PayloadRefRevalidationRequest.from_wire(
+                cls.ensure_dict(data),
+            )
+        except Exception as error:
+            raise IamRuntimeRequestInvalidError(
+                "Payload reference revalidation request is invalid.",
+            ) from error
+        now = timezone.now()
+        provider = getattr(settings, "IAM_PAYLOAD_REF_PROVIDER", None)
+        if provider is None or not callable(getattr(provider, "validate", None)):
+            return cls._payload_revalidation_decision(
+                request=request,
+                valid=False,
+                allowed=False,
+                reason="payload_storage_not_implemented",
+                permission_version=request.permission_version,
+                decided_at=now,
+                expires_at=now,
+            ).to_wire()
+        try:
+            metadata = await provider.validate(request)
+        except Exception:
+            return cls._payload_revalidation_decision(
+                request=request,
+                valid=False,
+                allowed=False,
+                reason="payload_provider_unavailable",
+                permission_version=request.permission_version,
+                decided_at=now,
+                expires_at=now,
+            ).to_wire()
+        if type(metadata) is not PayloadRefValidationResult:
+            raise IamRuntimeRequestInvalidError(
+                "Payload provider returned an invalid result.",
+            )
+        metadata_valid = bool(
+            metadata.valid
+            and not metadata.revoked
+            and metadata.object_id == request.object_id
+            and metadata.version == request.version
+            and metadata.checksum == request.checksum
+            and metadata.size_bytes == request.size_bytes
+            and metadata.tenant_id == request.tenant_id
+            and metadata.expires_at > now
+        )
+        if not metadata_valid:
+            return cls._payload_revalidation_decision(
+                request=request,
+                valid=False,
+                allowed=False,
+                reason="payload_metadata_invalid",
+                permission_version=request.permission_version,
+                decided_at=now,
+                expires_at=now,
+            ).to_wire()
+        try:
+            user_id = cls._user_id_from_identity(request.target_principal)
+        except IamRuntimeRequestInvalidError:
+            user_id = 0
+        user = (
+            None
+            if user_id == 0
+            else await AuthUserRepository.get_user_by_id(user_id)
+        )
+        if user is None or not bool(getattr(user, "is_active", False)):
+            return cls._payload_revalidation_decision(
+                request=request,
+                valid=True,
+                allowed=False,
+                reason="principal_inactive",
+                permission_version=request.permission_version,
+                decided_at=now,
+                expires_at=metadata.expires_at,
+            ).to_wire()
+        permission_codes = await PermissionService.list_permission_codes(user)
+        current_version, _ = cls._permission_metadata(
+            user_id=user_id,
+            tenant_id=cls._tenant_id(user),
+            permission_codes=permission_codes,
+        )
+        snapshot_valid = (
+            request.permission_snapshot_ref == f"permission:user:{user_id}"
+            and request.permission_version == current_version
+            and request.target_tenant_id == cls._tenant_id(user)
+            and request.target_tenant_id == request.tenant_id
+        )
+        if not snapshot_valid:
+            return cls._payload_revalidation_decision(
+                request=request,
+                valid=True,
+                allowed=False,
+                reason="permission_snapshot_or_tenant_mismatch",
+                permission_version=current_version,
+                decided_at=now,
+                expires_at=metadata.expires_at,
+                refresh_required=(request.permission_version != current_version),
+            ).to_wire()
+        access = await AccessDecisionService.check_with_audit(
+            user=user,
+            data={
+                "resource_type": "payload_ref",
+                "resource_id": request.object_id,
+                "action_code": "read",
+                "permission_code": "payload_ref.read",
+            },
+            trace_id=trace_id,
+        )
+        allowed = type(access) is dict and access.get("allowed") is True
+        return cls._payload_revalidation_decision(
+            request=request,
+            valid=True,
+            allowed=allowed,
+            reason=(
+                str(access.get("reason", "object_access_denied"))
+                if type(access) is dict
+                else "object_access_denied"
+            ),
+            permission_version=current_version,
+            decided_at=now,
+            expires_at=metadata.expires_at,
+        ).to_wire()
+
+    @classmethod
+    def _payload_revalidation_decision(
+        cls,
+        *,
+        request: PayloadRefRevalidationRequest,
+        valid: bool,
+        allowed: bool,
+        reason: str,
+        permission_version: str,
+        decided_at,
+        expires_at,
+        refresh_required: bool = False,
+    ) -> PayloadRefRevalidationDecision:
+        material = "\0".join((
+            request.object_id,
+            request.version,
+            request.checksum,
+            request.tenant_id,
+            request.target_principal,
+            request.target_fingerprint,
+            request.permission_snapshot_ref,
+            permission_version,
+            request.admission_authority_reference,
+            "1" if valid else "0",
+            "1" if allowed else "0",
+            decided_at.isoformat(),
+        )).encode("utf-8")
+        raw_key = str(getattr(settings, "JWT_SECRET_KEY", "") or settings.SECRET_KEY)
+        decision_reference = "iam-payload:" + hmac.new(
+            raw_key.encode("utf-8"),
+            material,
+            hashlib.sha256,
+        ).hexdigest()
+        return PayloadRefRevalidationDecision(
+            valid=valid,
+            allowed=allowed,
+            reason=reason,
+            object_id=request.object_id,
+            version=request.version,
+            checksum=request.checksum,
+            size_bytes=request.size_bytes,
+            tenant_id=request.tenant_id,
+            target_principal=request.target_principal,
+            target_fingerprint=request.target_fingerprint,
+            permission_snapshot_ref=request.permission_snapshot_ref,
+            permission_version=permission_version,
+            decision_reference=decision_reference,
+            decided_at=decided_at,
+            expires_at=expires_at,
+            refresh_required=refresh_required,
+        )
 
     @staticmethod
     def _runtime_node_authority() -> RuntimeNodeCredentialAuthority:

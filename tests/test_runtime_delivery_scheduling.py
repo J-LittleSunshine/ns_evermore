@@ -15,19 +15,19 @@ from ns_common.exceptions import (
     NsRuntimeDeliveryLeaseExpiredError,
     NsRuntimeDeliveryStateError,
     NsRuntimeOwnerMismatchError,
+    NsRuntimeStateStoreUnavailableError,
     NsRuntimeStateStoreVersionMismatchError,
     NsValidationError,
 )
 from ns_common.iam import (
-    IamAccessCheckRequest,
-    IamAccessDecision,
-    PayloadRefValidationRequest,
-    PayloadRefValidationResult,
+    PayloadRefRevalidationDecision,
+    PayloadRefRevalidationRequest,
 )
 from ns_common.state_store import (
     StateAccessScope, StateAssertion, StateAtomicScope, StateAuthorityKind,
     StateCallerCapability, StateOrderedIndexKey, StateOrderedIndexMutation,
-    StateOrderedIndexMutationKind, StateStoreCapabilities, StateTransaction,
+    StateOrderedIndexEntry, StateOrderedIndexMutationKind,
+    StateStoreCapabilities, StateTransaction,
     StateDocument, StateKey, StateMutation, StateMutationKind,
 )
 from ns_common.time import ControlledClock
@@ -59,9 +59,6 @@ from ns_runtime.delivery import (
     OwnerRiskGuard,
     PayloadAccessDecisionEvidence,
     PayloadValidationResult,
-    payload_access_decision_reference,
-    payload_access_decision_request_fingerprint,
-    payload_access_evidence_fingerprint,
     PayloadReference,
     PreparedActivationWorker,
     LocalDeliveryDispatchCoordinator,
@@ -99,46 +96,11 @@ class _Validator(DeliveryPayloadValidator):
         if self.illegal:
             return {"valid": True}
         evidence = delivery.payload_evidence
-        access_request = payload_access_decision_request_fingerprint(
-            delivery, target=target,
-        )
-        access = None
-        if evidence.kind.value == "payload_ref":
-            decision_reference = payload_access_decision_reference(
-                allowed=self.valid,
-                request_fingerprint=access_request,
-                permission_snapshot_reference=target.permission_snapshot_reference,
-                iam_decision_version=target.permission_version,
-                validated_at=delivery.updated_at,
-            )
-            access = PayloadAccessDecisionEvidence(
-                allowed=self.valid,
-                evidence_fingerprint=payload_access_evidence_fingerprint(
-                    allowed=self.valid,
-                    request_fingerprint=access_request,
-                    object_id=evidence.object_id,
-                    object_version=evidence.object_version,
-                    checksum=evidence.checksum,
-                    target_fingerprint=delivery.target_fingerprint,
-                    permission_snapshot_reference=target.permission_snapshot_reference,
-                    iam_decision_reference=decision_reference,
-                    iam_decision_version=target.permission_version,
-                    validated_at=delivery.updated_at,
-                    expires_at=delivery.policy_decision.expires_at,
-                ),
-                request_fingerprint=access_request,
-                object_id=evidence.object_id,
-                object_version=evidence.object_version,
-                checksum=evidence.checksum,
-                target_fingerprint=delivery.target_fingerprint,
-                permission_snapshot_reference=target.permission_snapshot_reference,
-                iam_decision_reference=decision_reference,
-                iam_decision_version=target.permission_version,
-                validated_at=delivery.updated_at,
-                expires_at=delivery.policy_decision.expires_at,
-            )
         return PayloadValidationResult(
-            valid=self.valid,
+            valid=(
+                self.valid
+                and evidence.kind.value != "payload_ref"
+            ),
             evidence_fingerprint=evidence.evidence_fingerprint,
             object_id=evidence.object_id,
             object_version=evidence.object_version,
@@ -146,7 +108,7 @@ class _Validator(DeliveryPayloadValidator):
             tenant_id=delivery.tenant_id,
             request_binding_fingerprint=delivery.policy_decision.request_fingerprint,
             target_binding_fingerprint=delivery.target_fingerprint,
-            access_decision_evidence=access,
+            access_decision_evidence=None,
         )
 
 
@@ -158,46 +120,51 @@ class _PayloadIam(IamClient):
         allowed: bool = True,
         permission_version: str = "permission-version:current",
         expires_in_seconds: int = 120,
-        illegal_reference: bool = False,
         illegal_decision: bool = False,
+        object_id: str | None = None,
+        target_principal: str | None = None,
+        unavailable: bool = False,
     ) -> None:
         self.clock = clock
         self.allowed = allowed
         self.permission_version = permission_version
         self.expires_in_seconds = expires_in_seconds
-        self.illegal_reference = illegal_reference
         self.illegal_decision = illegal_decision
-        self.reference_requests: list[PayloadRefValidationRequest] = []
-        self.access_requests: list[IamAccessCheckRequest] = []
+        self.object_id = object_id
+        self.target_principal = target_principal
+        self.unavailable = unavailable
+        self.revalidation_requests: list[PayloadRefRevalidationRequest] = []
 
-    async def validate_payload_ref(self, request):
-        self.reference_requests.append(request)
-        if self.illegal_reference:
-            return {"valid": True}
-        return PayloadRefValidationResult(
-            valid=True,
-            reason="valid",
-            revoked=False,
-            expires_at=(
-                self.clock.utc_now()
-                + timedelta(seconds=self.expires_in_seconds)
-            ),
-            object_id=request.object_id,
-            version=request.version,
-            checksum=request.checksum,
-            tenant_id=request.tenant_id,
-            size_bytes=128,
-        )
-
-    async def access_check(self, request):
-        self.access_requests.append(request)
+    async def revalidate_payload_ref(self, request):
+        self.revalidation_requests.append(request)
+        if self.unavailable:
+            raise ConnectionError("backend unavailable")
         if self.illegal_decision:
             return {"allowed": True}
-        return IamAccessDecision(
-            allowed=self.allowed,
-            reason="allowed" if self.allowed else "denied",
+        current = self.clock.utc_now()
+        live = self.expires_in_seconds > 0
+        return PayloadRefRevalidationDecision(
+            valid=live,
+            allowed=self.allowed and live,
+            reason="acl_allow" if self.allowed and live else "denied",
+            object_id=self.object_id or request.object_id,
+            version=request.version,
+            checksum=request.checksum,
+            size_bytes=request.size_bytes,
+            tenant_id=request.tenant_id,
+            target_principal=self.target_principal or request.target_principal,
+            target_fingerprint=request.target_fingerprint,
+            permission_snapshot_ref=request.permission_snapshot_ref,
             permission_version=self.permission_version,
-            decided_at=self.clock.utc_now(),
+            decision_reference="iam-payload:test-decision",
+            decided_at=current,
+            expires_at=(
+                current + timedelta(seconds=self.expires_in_seconds)
+                if live else current
+            ),
+            refresh_required=(
+                self.permission_version != request.permission_version
+            ),
         )
 
 
@@ -873,6 +840,217 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             self.model.ordered_indexes[lease],
         ))
 
+    async def test_fix05_repairs_bind_release_renew_and_missing_create_observations(
+        self,
+    ) -> None:
+        one = dataclasses.replace(self.policy, activation_batch_size=1)
+        activated = await self._activate(policy=one)
+        claimed = await self._claim(policy=one, token="repair-race-claim")
+        scope = delivery_scope(
+            self.tenant_id,
+            claimed.delivery.authority_bucket_id,
+        )
+        ready = StateOrderedIndexKey(
+            namespace=scope.namespace,
+            name="delivery.ready",
+            bucket="delivery",
+        )
+        lease = StateOrderedIndexKey(
+            namespace=scope.namespace,
+            name="delivery.lease",
+            bucket="delivery",
+        )
+        stale_ready_score = self.clock.utc_now().timestamp() - 10
+        await self.model.transact(StateTransaction(
+            scope=scope,
+            mutations=(),
+            ordered_index_mutations=(StateOrderedIndexMutation(
+                index=ready,
+                kind=StateOrderedIndexMutationKind.ADD,
+                member=claimed.claim.delivery_id,
+                score=stale_ready_score,
+            ),),
+        ))
+        observed_claimed = await self.scheduler._read_delivery(
+            scope,
+            claimed.claim.delivery_id,
+        )
+        before_logs = sum(len(items) for items in self.model.logs.values())
+
+        async def release_during_repair(_transaction):
+            await self.scheduler.fail_precheck(
+                claim=claimed.claim,
+                failure=DeliveryWriteFailure.TARGET_DISCONNECTED,
+            )
+
+        self.model.before_transaction = release_during_repair
+        repaired = await self.scheduler._repair_ordered_projection(
+            scope=scope,
+            index=ready,
+            entry=StateOrderedIndexEntry(
+                member=claimed.claim.delivery_id,
+                score=stale_ready_score,
+            ),
+            reason="queued_owner_present",
+            observed_record=observed_claimed.record,
+        )
+        self.assertFalse(repaired)
+        self.assertIn(claimed.claim.delivery_id, self.model.ordered_indexes[ready])
+        released = await self.scheduler._read_delivery(
+            scope,
+            claimed.claim.delivery_id,
+        )
+        self.assertIsNone(released.value.owner)
+        self.assertEqual(
+            before_logs + 1,
+            sum(len(items) for items in self.model.logs.values()),
+        )
+
+        await self._activate(policy=one)
+        reclaimed = None
+        for attempt in range(3):
+            candidate = await self._claim(
+                policy=one,
+                worker_id="renew-race-worker",
+                token=f"renew-race-claim-{attempt}",
+            )
+            if candidate.outcome is ClaimOutcome.CLAIMED:
+                reclaimed = candidate
+                break
+        self.assertIsNotNone(reclaimed)
+        assert reclaimed is not None and reclaimed.claim is not None
+        lease_score = self.model.ordered_indexes[lease][
+            reclaimed.claim.delivery_id
+        ]
+        observed_owner = await self.scheduler._read_delivery(
+            scope,
+            reclaimed.claim.delivery_id,
+        )
+        self.clock.advance(one.renew_interval_seconds)
+
+        async def renew_during_repair(_transaction):
+            await self.scheduler.renew_owner(
+                claim=reclaimed.claim,
+                policy=one,
+            )
+
+        self.model.before_transaction = renew_during_repair
+        repaired = await self.scheduler._repair_ordered_projection(
+            scope=scope,
+            index=lease,
+            entry=StateOrderedIndexEntry(
+                member=reclaimed.claim.delivery_id,
+                score=lease_score,
+            ),
+            reason="lease_score_stale",
+            observed_record=observed_owner.record,
+            replacement_score=lease_score - 1,
+        )
+        self.assertFalse(repaired)
+        self.assertGreater(
+            self.model.ordered_indexes[lease][reclaimed.claim.delivery_id],
+            lease_score,
+        )
+
+        missing_member = "missing-create-race"
+        missing_score = self.clock.utc_now().timestamp()
+        await self.model.transact(StateTransaction(
+            scope=scope,
+            mutations=(),
+            ordered_index_mutations=(StateOrderedIndexMutation(
+                index=ready,
+                kind=StateOrderedIndexMutationKind.ADD,
+                member=missing_member,
+                score=missing_score,
+            ),),
+        ))
+        clone = dataclasses.replace(
+            activated.activated[0],
+            delivery_id=missing_member,
+            state_version=1,
+        )
+
+        async def create_during_repair(_transaction):
+            await self.model.transact(StateTransaction(
+                scope=scope,
+                mutations=(StateMutation(
+                    key=StateKey(
+                        namespace=scope.namespace,
+                        object_type="delivery",
+                        object_id="sha256:" + hashlib.sha256(
+                            missing_member.encode(),
+                        ).hexdigest(),
+                    ),
+                    assertion=StateAssertion.absent(),
+                    kind=StateMutationKind.CREATE,
+                    document=StateDocument(
+                        schema_name="delivery_delivery",
+                        schema_version=1,
+                        state_version=1,
+                        payload=json.dumps(
+                            delivery_to_dict(clone),
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode(),
+                    ),
+                ),),
+            ))
+
+        self.model.before_transaction = create_during_repair
+        repaired = await self.scheduler._repair_ordered_projection(
+            scope=scope,
+            index=ready,
+            entry=StateOrderedIndexEntry(
+                member=missing_member,
+                score=missing_score,
+            ),
+            reason="record_missing_or_malformed",
+            observe_missing_or_malformed=True,
+            quarantine=True,
+        )
+        self.assertFalse(repaired)
+        self.assertIn(missing_member, self.model.ordered_indexes[ready])
+
+    async def test_fix05_cursor_identity_and_legacy_reset_gate(self) -> None:
+        from ns_runtime.delivery.scheduling_store import (
+            _legacy_scheduler_cursor_key,
+            _scheduler_cursor_key,
+        )
+
+        scope_2_0 = delivery_scope(self.tenant_id, 0, layout_generation=2)
+        scope_2_1 = delivery_scope(self.tenant_id, 1, layout_generation=2)
+        scope_3_0 = delivery_scope(self.tenant_id, 0, layout_generation=3)
+        keys = {
+            _scheduler_cursor_key(scope_2_0, "activation.prepared").object_id,
+            _scheduler_cursor_key(scope_2_1, "activation.prepared").object_id,
+            _scheduler_cursor_key(scope_3_0, "activation.prepared").object_id,
+            _scheduler_cursor_key(scope_2_0, "claim.ready").object_id,
+        }
+        self.assertEqual(4, len(keys))
+        legacy = _legacy_scheduler_cursor_key(
+            scope_2_0,
+            "activation.prepared",
+        )
+        await self.model.transact(StateTransaction(
+            scope=scope_2_0,
+            mutations=(StateMutation(
+                key=legacy,
+                assertion=StateAssertion.absent(),
+                kind=StateMutationKind.CREATE,
+                document=StateDocument(
+                    schema_name="delivery_scheduler_cursor",
+                    schema_version=1,
+                    state_version=1,
+                    payload=b"legacy",
+                ),
+            ),),
+        ))
+        with self.assertRaises(NsRuntimeStateStoreVersionMismatchError):
+            await self.scheduler._read_scheduler_cursor(
+                scope_2_0,
+                "activation.prepared",
+            )
+
     async def test_w04_to_w07_success_creates_attempt_and_only_ack_waiting(self) -> None:
         await self._activate(policy=dataclasses.replace(self.policy, activation_batch_size=1))
         claimed = await self._claim()
@@ -1409,11 +1587,15 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             ))
             self.assertEqual(
                 target.permission_snapshot_reference,
-                iam.access_requests[0].permission_snapshot_ref,
+                iam.revalidation_requests[0].permission_snapshot_ref,
             )
             self.assertEqual(
                 target.identity,
-                iam.access_requests[0].identity,
+                iam.revalidation_requests[0].target_principal,
+            )
+            self.assertEqual(
+                reference_delivery.policy_decision.request_fingerprint,
+                iam.revalidation_requests[0].admission_authority_reference,
             )
             stale = await IamDeliveryPayloadReferenceValidator(
                 iam_client=_PayloadIam(
@@ -1447,6 +1629,32 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
                     valid.access_decision_evidence,
                     iam_decision_version="permission-version:forged",
                 )
+            with self.assertRaises(NsValidationError):
+                PayloadAccessDecisionEvidence(**{
+                    field.name: getattr(valid.access_decision_evidence, field.name)
+                    for field in dataclasses.fields(PayloadAccessDecisionEvidence)
+                })
+            cross_object = await production_validator.__class__(
+                iam_client=_PayloadIam(
+                    self.clock,
+                    object_id="object-other",
+                ),
+                clock=self.clock,
+            ).validate(reference_delivery, target=target)
+            self.assertFalse(cross_object.valid)
+            cross_target = await production_validator.__class__(
+                iam_client=_PayloadIam(
+                    self.clock,
+                    target_principal="identity-other",
+                ),
+                clock=self.clock,
+            ).validate(reference_delivery, target=target)
+            self.assertFalse(cross_target.valid)
+            with self.assertRaises(ConnectionError):
+                await production_validator.__class__(
+                    iam_client=_PayloadIam(self.clock, unavailable=True),
+                    clock=self.clock,
+                ).validate(reference_delivery, target=target)
             scheduler = StateStoreDeliveryScheduler(store=model, clock=self.clock)
             policy = dataclasses.replace(self.policy, activation_batch_size=1)
             await PreparedActivationWorker(
@@ -1526,7 +1734,8 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
             scheduler=self.scheduler, policy=self.policy,
             risk_guard=self.risk_guard,
         )
-        renew.schedule(claim=claimed.claim, supervisor=supervisor)
+        handle = renew.schedule(claim=claimed.claim, supervisor=supervisor)
+        self.assertEqual(claimed.claim.delivery_id, handle.delivery_id)
         await asyncio.sleep(0)
         original_expiry = claimed.delivery.owner.lease_expires_at
         self.clock.advance(self.policy.renew_interval_seconds)
@@ -1534,6 +1743,69 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         renewed = await self.scheduler.load_claimed(claim=claimed.claim)
         self.assertGreater(renewed.owner.lease_expires_at, original_expiry)
+        await handle.stop()
+        self.assertTrue(handle.done)
+        report = await supervisor.shutdown()
+        self.assertTrue(report.clean)
+        self.assertEqual((), supervisor.failures)
+
+    async def test_fix05_unknown_write_stops_renewal_and_expires_to_recovery(
+        self,
+    ) -> None:
+        supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
+        sequence = itertools.count()
+
+        class UnknownWriter(DeliveryTransportWriter):
+            async def write(inner_self, *, target, payload):
+                self.model.indeterminate_before_transaction = True
+                self.model.read_error = NsRuntimeStateStoreUnavailableError()
+
+        writer = UnknownWriter()
+        coordinator = LocalDeliveryDispatchCoordinator(
+            task_supervisor=supervisor,
+            scheduler=self.scheduler,
+            policy=dataclasses.replace(
+                self.policy,
+                activation_batch_size=1,
+            ),
+            runtime_id=self.plan.selected_bindings[0].runtime_id,
+            target_resolver=_Targets(),
+            payload_validator=_Validator(),
+            payload_resolver=_Payloads(),
+            transport_writer=writer,
+            risk_guard=self.risk_guard,
+            identifier_factory=lambda kind: f"{kind}-{next(sequence)}",
+            clock=self.clock,
+        )
+        self.assertTrue(coordinator.schedule(tenant_id=self.tenant_id))
+        dispatch_name = next(
+            name for name in supervisor.task_names
+            if name.startswith("p11-local-dispatch:")
+        )
+        await supervisor.get_task(dispatch_name)
+        self.assertFalse(any(
+            name.startswith("p11-lease-renew:")
+            for name in supervisor.pending_task_names
+        ))
+        self.assertEqual((), supervisor.failures)
+
+        self.model.read_error = None
+        self.model.indeterminate_before_transaction = False
+        self.clock.advance(self.policy.lease_ttl_seconds + 1)
+        await self._claim(
+            policy=dataclasses.replace(self.policy, activation_batch_size=1),
+            worker_id="unknown-recovery",
+            token="unknown-recovery-token",
+        )
+        delivery_values = [
+            delivery_from_dict(json.loads(record.document.payload))
+            for record in self.model.records.values()
+            if record.key.object_type == "delivery"
+        ]
+        self.assertIn(
+            DeliveryRecordStatus.WRITE_UNCERTAIN,
+            {value.status for value in delivery_values},
+        )
         report = await supervisor.shutdown()
         self.assertTrue(report.clean)
 
@@ -1694,6 +1966,51 @@ class DeliverySchedulingTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((1, 0, 0, 2), (
             counts.prepared, counts.queued, counts.active, counts.inflight,
         ))
+
+    async def test_fix05_coordinator_precheck_and_write_failure_leave_no_renew_task(
+        self,
+    ) -> None:
+        sequence = itertools.count()
+
+        async def run(*, targets, writer):
+            supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
+            coordinator = LocalDeliveryDispatchCoordinator(
+                task_supervisor=supervisor,
+                scheduler=self.scheduler,
+                policy=dataclasses.replace(
+                    self.policy,
+                    activation_batch_size=1,
+                ),
+                runtime_id=self.plan.selected_bindings[0].runtime_id,
+                target_resolver=targets,
+                payload_validator=_Validator(),
+                payload_resolver=_Payloads(),
+                transport_writer=writer,
+                risk_guard=self.risk_guard,
+                identifier_factory=lambda kind: (
+                    f"{kind}-failure-{next(sequence)}"
+                ),
+                clock=self.clock,
+            )
+            self.assertTrue(coordinator.schedule(tenant_id=self.tenant_id))
+            dispatch_name = next(
+                name for name in supervisor.task_names
+                if name.startswith("p11-local-dispatch:")
+            )
+            await supervisor.get_task(dispatch_name)
+            self.assertFalse(any(
+                name.startswith("p11-lease-renew:")
+                for name in supervisor.pending_task_names
+            ))
+            self.assertEqual((), supervisor.failures)
+            report = await supervisor.shutdown()
+            self.assertTrue(report.clean)
+
+        await run(targets=_Targets(active=False), writer=_Writer())
+        await run(
+            targets=_Targets(),
+            writer=_Writer(error=ConnectionError("write failed")),
+        )
 
 
 if __name__ == "__main__":

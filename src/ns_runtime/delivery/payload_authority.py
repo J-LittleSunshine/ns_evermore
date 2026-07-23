@@ -9,11 +9,8 @@ import json
 
 from ns_common.exceptions import NsRuntimeStateStoreUnavailableError, NsValidationError
 from ns_common.iam import (
-    IamAccessCheckRequest,
-    IamAccessDecision,
-    IamTargetContext,
-    PayloadRefValidationRequest,
-    PayloadRefValidationResult,
+    PayloadRefRevalidationDecision,
+    PayloadRefRevalidationRequest,
 )
 from ns_common.state_store import (
     StateAccessScope, StateAtomicScope, StateAuthorityKind,
@@ -28,8 +25,8 @@ from .authority_layout import delivery_scope
 from .scheduling import (
     DeliveryPayloadResolver, DeliveryPayloadValidator,
     LocalDeliveryTarget, OutboundDeliveryMaterial,
-    PayloadAccessDecisionEvidence, PayloadValidationResult,
-    payload_access_decision_reference,
+    PayloadValidationResult,
+    _issue_payload_access_decision_evidence,
     payload_access_decision_request_fingerprint,
     payload_access_evidence_fingerprint,
 )
@@ -59,58 +56,36 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
             _invalid("reference_validator.payload_kind")
         if evidence.object_id is None or evidence.object_version is None:
             _invalid("reference_validator.object")
-        target_context = IamTargetContext(
-            kind="payload_ref",
-            tenant_id=target.tenant_id,
-            reference=evidence.object_id,
-        )
-        reference = await self._iam.validate_payload_ref(
-            PayloadRefValidationRequest(
+        decision = await self._iam.revalidate_payload_ref(
+            PayloadRefRevalidationRequest(
                 object_id=evidence.object_id,
                 version=evidence.object_version,
                 checksum=evidence.checksum,
+                size_bytes=evidence.size_bytes,
                 tenant_id=delivery.tenant_id,
-                owner_identity=delivery.envelope_authority.source.identity_digest,
-                source_identity=delivery.envelope_authority.source.identity_digest,
-                target=target_context,
-                callback_message_type=None,
-            ),
-        )
-        if type(reference) is not PayloadRefValidationResult:
-            _invalid("reference_validator.payload_result")
-        decision = await self._iam.access_check(
-            IamAccessCheckRequest(
-                identity=target.identity,
-                tenant_id=target.tenant_id,
+                target_principal=target.identity,
+                target_tenant_id=target.tenant_id,
+                target_fingerprint=delivery.target_fingerprint,
                 permission_snapshot_ref=target.permission_snapshot_reference,
                 permission_version=target.permission_version,
-                message_type="payload_ref.read",
-                target=target_context,
-                cross_tenant=(target.tenant_id != delivery.tenant_id),
-                management=False,
-                task_creation=False,
+                admission_authority_reference=(
+                    delivery.policy_decision.request_fingerprint
+                ),
             ),
         )
-        if type(decision) is not IamAccessDecision:
-            _invalid("reference_validator.access_result")
+        if type(decision) is not PayloadRefRevalidationDecision:
+            _invalid("reference_validator.revalidation_result")
         request_fingerprint = payload_access_decision_request_fingerprint(
             delivery,
             target=target,
         )
         expires_at = min(
-            reference.expires_at,
+            decision.expires_at,
             delivery.policy_decision.expires_at,
-        )
-        decision_reference = payload_access_decision_reference(
-            allowed=decision.allowed,
-            request_fingerprint=request_fingerprint,
-            permission_snapshot_reference=target.permission_snapshot_reference,
-            iam_decision_version=decision.permission_version,
-            validated_at=decision.decided_at,
         )
         access_evidence = None
         if expires_at > decision.decided_at:
-            access_evidence = PayloadAccessDecisionEvidence(
+            access_evidence = _issue_payload_access_decision_evidence(
                 allowed=decision.allowed,
                 evidence_fingerprint=payload_access_evidence_fingerprint(
                     allowed=decision.allowed,
@@ -120,7 +95,7 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
                     checksum=evidence.checksum,
                     target_fingerprint=delivery.target_fingerprint,
                     permission_snapshot_reference=target.permission_snapshot_reference,
-                    iam_decision_reference=decision_reference,
+                    iam_decision_reference=decision.decision_reference,
                     iam_decision_version=decision.permission_version,
                     validated_at=decision.decided_at,
                     expires_at=expires_at,
@@ -131,21 +106,24 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
                 checksum=evidence.checksum,
                 target_fingerprint=delivery.target_fingerprint,
                 permission_snapshot_reference=target.permission_snapshot_reference,
-                iam_decision_reference=decision_reference,
+                iam_decision_reference=decision.decision_reference,
                 iam_decision_version=decision.permission_version,
                 validated_at=decision.decided_at,
                 expires_at=expires_at,
             )
         now = self._clock.utc_now()
         valid = bool(
-            reference.valid
-            and not reference.revoked
-            and reference.object_id == evidence.object_id
-            and reference.version == evidence.object_version
-            and reference.checksum == evidence.checksum
-            and reference.tenant_id == delivery.tenant_id
-            and reference.size_bytes == evidence.size_bytes
-            and reference.expires_at > now
+            decision.valid
+            and decision.object_id == evidence.object_id
+            and decision.version == evidence.object_version
+            and decision.checksum == evidence.checksum
+            and decision.tenant_id == delivery.tenant_id
+            and decision.size_bytes == evidence.size_bytes
+            and decision.target_principal == target.identity
+            and decision.target_fingerprint == delivery.target_fingerprint
+            and decision.permission_snapshot_ref
+            == target.permission_snapshot_reference
+            and decision.expires_at > now
             and decision.allowed
             and not decision.refresh_required
             and decision.permission_version == target.permission_version
@@ -179,8 +157,10 @@ class StateStoreDeliveryPayloadAuthority(
         if not isinstance(store, StateStore):
             _invalid("store")
         self._store = store
-        if reference_validator is not None and not isinstance(
-            reference_validator, DeliveryPayloadValidator
+        if (
+            reference_validator is not None
+            and type(reference_validator)
+            is not IamDeliveryPayloadReferenceValidator
         ):
             _invalid("reference_validator")
         self._reference_validator = reference_validator

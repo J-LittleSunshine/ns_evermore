@@ -104,6 +104,7 @@ urlpatterns = [
     path("internal/runtime_node_credential/revoke/", InternalIamViewSet.as_view({"post": "revoke_runtime_node_credential"})),
     path("internal/runtime_bootstrap/", InternalIamViewSet.as_view({"post": "runtime_bootstrap"})),
     path("internal/payload_ref/validate/", InternalIamViewSet.as_view({"post": "validate_payload_ref"})),
+    path("internal/payload_ref/revalidate/", InternalIamViewSet.as_view({"post": "revalidate_payload_ref"})),
     path("internal/access_check/", InternalIamViewSet.as_view({"post": "access_check"})),
     path("internal/batch_access_check/", InternalIamViewSet.as_view({"post": "batch_access_check"})),
     path("internal/resolve_resource_filter/", InternalIamViewSet.as_view({"post": "resolve_resource_filter"})),

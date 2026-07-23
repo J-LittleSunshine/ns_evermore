@@ -111,12 +111,12 @@
 |---|---|
 | 当前阶段 | `P12 ACK/NACK/Defer/Timeout/Retry` |
 | 当前工作包 | `P12-W01` |
-| 当前工作包状态 | `BLOCKED`（等待独立授权） |
+| 当前工作包状态 | `BLOCKED`（等待独立实施授权） |
 | 当前阶段状态 | `NOT_STARTED / F0` |
-| 最近已验证阶段 | `P11 本地可靠投递调度与发送`（`VERIFIED/F3 local only`） |
-| 最近已验证工作包 | `P11-FIX-04` |
-| 下一阶段 | `P12-W01`保持`BLOCKED`，等待独立授权 |
-| 当前阻塞项 | P12未获授权；production task.dispatch继续关闭，transport write只允许到ack_waiting，不等于delivery成功 |
+| 最近已验证阶段 | `P11 本地可靠投递调度与发送`（`F3 / local only`） |
+| 最近已验证工作包 | `P11-FIX-05` |
+| 下一阶段 | `P12-W01`（等待独立实施授权） |
+| 当前阻塞项 | P12尚未授权；production task.dispatch继续关闭，transport write只允许到ack_waiting，不等于delivery成功 |
 | 设计基线版本 | `0.0.2` |
 | wire codec | `json.v1` |
 | 当前正式 transport | `websocket_tcp` adapter 为 `VERIFIED/F2`；P05 logical connection composition 保持冻结；P06 已把 production `IamClient` 与同一 P01 HTTP owner 显式接入握手、reauth 和 resume，IAM 异常继续 fail-closed |
@@ -1048,6 +1048,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `P11-FIX-02` | `VERIFIED` | cluster-slot bucket布局、独立持久fencing/owner epoch、lease与ACK deadline分离、indeterminate reconcile、ordered-index分页、waiting handoff和实时payload access binding | key-slot、legacy migration、三分支reconcile、分页饥饿、lease恢复、跨target replay、真实Redis与三套全量回归通过；不实现P12 ACK/retry、P14或P17 |
 | `P11-FIX-03` | `VERIFIED` | 可恢复runtime tenant/layout registry、真正runtime-global watermark、跨bucket有界轮转activation/claim/recovery和post-write统一reconcile | 重启恢复、跨tenant水位、跨bucket进展、lease版本冲突与WRITE_UNCERTAIN对账通过；无跨slot事务/system global ZSet或第二lifecycle owner |
 | `P11-FIX-04` | `VERIFIED` | authority-backed ordered-index cursor与stale投影修复、完整post-write reconcile、production payload_ref IAM decision evidence | prepared/ready/lease跨调用与provider A-B继续推进；错状态/缺record/旧lease投影修复带摘要日志；expired lease、已提交ACK及高fencing写后对账和实时IAM证据攻击面通过 |
+| `P11-FIX-05` | `VERIFIED` | ordered-index repair前置断言、统一cursor身份、renew handle生命周期、不可伪造IAM evidence及backend对象级判定 | record/index read assertion在写前原子校验且冲突零落地；cursor v2迁移门禁、renew显式stop/join、backend对象级ACL与三套全量通过；见ADR-044和最终验收记录 |
 
 ### 测试矩阵
 

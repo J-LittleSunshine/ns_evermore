@@ -411,6 +411,168 @@ class PayloadRefValidationResult:
         )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PayloadRefRevalidationRequest:
+    """P11 object-bound IAM request; it carries no runtime identity digest."""
+
+    object_id: str
+    version: str
+    checksum: str
+    size_bytes: int
+    tenant_id: str = field(repr=False)
+    target_principal: str = field(repr=False)
+    target_tenant_id: str = field(repr=False)
+    target_fingerprint: str
+    permission_snapshot_ref: str = field(repr=False)
+    permission_version: str = field(repr=False)
+    admission_authority_reference: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        for value, name in (
+            (self.object_id, "payload_revalidation.object_id"),
+            (self.version, "payload_revalidation.version"),
+            (self.checksum, "payload_revalidation.checksum"),
+            (self.tenant_id, "payload_revalidation.tenant_id"),
+            (self.target_principal, "payload_revalidation.target_principal"),
+            (self.target_tenant_id, "payload_revalidation.target_tenant_id"),
+            (self.target_fingerprint, "payload_revalidation.target_fingerprint"),
+            (
+                self.permission_snapshot_ref,
+                "payload_revalidation.permission_snapshot_ref",
+            ),
+            (self.permission_version, "payload_revalidation.permission_version"),
+            (
+                self.admission_authority_reference,
+                "payload_revalidation.admission_authority_reference",
+            ),
+        ):
+            _name(value, name)
+        if (
+            isinstance(self.size_bytes, bool)
+            or not isinstance(self.size_bytes, int)
+            or self.size_bytes < 0
+        ):
+            _invalid("payload_revalidation.size_bytes")
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "object_id": self.object_id,
+            "version": self.version,
+            "checksum": self.checksum,
+            "size_bytes": self.size_bytes,
+            "tenant_id": self.tenant_id,
+            "target_principal": self.target_principal,
+            "target_tenant_id": self.target_tenant_id,
+            "target_fingerprint": self.target_fingerprint,
+            "permission_snapshot_ref": self.permission_snapshot_ref,
+            "permission_version": self.permission_version,
+            "admission_authority_reference": self.admission_authority_reference,
+        }
+
+    @classmethod
+    def from_wire(cls, value: object) -> "PayloadRefRevalidationRequest":
+        data = _exact_mapping(value, {
+            "object_id", "version", "checksum", "size_bytes", "tenant_id",
+            "target_principal", "target_tenant_id", "target_fingerprint",
+            "permission_snapshot_ref", "permission_version",
+            "admission_authority_reference",
+        }, "payload_ref_revalidation_request")
+        return cls(**data)  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PayloadRefRevalidationDecision:
+    """Backend-issued object metadata and resource-authorization decision."""
+
+    valid: bool
+    allowed: bool
+    reason: str
+    object_id: str
+    version: str
+    checksum: str
+    size_bytes: int
+    tenant_id: str = field(repr=False)
+    target_principal: str = field(repr=False)
+    target_fingerprint: str
+    permission_snapshot_ref: str = field(repr=False)
+    permission_version: str = field(repr=False)
+    decision_reference: str = field(repr=False)
+    decided_at: datetime
+    expires_at: datetime
+    refresh_required: bool = False
+
+    def __post_init__(self) -> None:
+        if any(type(value) is not bool for value in (
+            self.valid, self.allowed, self.refresh_required,
+        )):
+            _invalid("payload_revalidation.decision_flags")
+        for value, name in (
+            (self.reason, "payload_revalidation.reason"),
+            (self.object_id, "payload_revalidation.object_id"),
+            (self.version, "payload_revalidation.version"),
+            (self.checksum, "payload_revalidation.checksum"),
+            (self.tenant_id, "payload_revalidation.tenant_id"),
+            (self.target_principal, "payload_revalidation.target_principal"),
+            (self.target_fingerprint, "payload_revalidation.target_fingerprint"),
+            (
+                self.permission_snapshot_ref,
+                "payload_revalidation.permission_snapshot_ref",
+            ),
+            (self.permission_version, "payload_revalidation.permission_version"),
+            (self.decision_reference, "payload_revalidation.decision_reference"),
+        ):
+            _name(value, name)
+        if (
+            isinstance(self.size_bytes, bool)
+            or not isinstance(self.size_bytes, int)
+            or self.size_bytes < 0
+        ):
+            _invalid("payload_revalidation.size_bytes")
+        decided_at = _utc(self.decided_at, "payload_revalidation.decided_at")
+        expires_at = _utc(self.expires_at, "payload_revalidation.expires_at")
+        if expires_at < decided_at or (self.allowed and not self.valid):
+            _invalid("payload_revalidation.decision")
+        object.__setattr__(self, "decided_at", decided_at)
+        object.__setattr__(self, "expires_at", expires_at)
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "valid": self.valid,
+            "allowed": self.allowed,
+            "reason": self.reason,
+            "object_id": self.object_id,
+            "version": self.version,
+            "checksum": self.checksum,
+            "size_bytes": self.size_bytes,
+            "tenant_id": self.tenant_id,
+            "target_principal": self.target_principal,
+            "target_fingerprint": self.target_fingerprint,
+            "permission_snapshot_ref": self.permission_snapshot_ref,
+            "permission_version": self.permission_version,
+            "decision_reference": self.decision_reference,
+            "decided_at": _iso(self.decided_at),
+            "expires_at": _iso(self.expires_at),
+            "refresh_required": self.refresh_required,
+        }
+
+    @classmethod
+    def from_wire(cls, value: object) -> "PayloadRefRevalidationDecision":
+        data = _exact_mapping(value, {
+            "valid", "allowed", "reason", "object_id", "version", "checksum",
+            "size_bytes", "tenant_id", "target_principal",
+            "target_fingerprint", "permission_snapshot_ref",
+            "permission_version", "decision_reference", "decided_at",
+            "expires_at", "refresh_required",
+        }, "payload_ref_revalidation_decision")
+        return cls(
+            **{
+                **data,
+                "decided_at": _parse_time(data["decided_at"], "decided_at"),
+                "expires_at": _parse_time(data["expires_at"], "expires_at"),
+            },
+        )  # type: ignore[arg-type]
+
+
 def freeze_metadata(value: Mapping[str, str]) -> Mapping[str, str]:
     if not isinstance(value, Mapping):
         _invalid("metadata")
@@ -491,7 +653,8 @@ def _invalid(field_name: str) -> None:
 __all__ = (
     "IamAccessCheckRequest", "IamAccessDecision", "IamCredentialStatus",
     "IamIntrospectionRequest", "IamIntrospectionResult", "IamPrincipalType",
-    "IamTargetContext", "PayloadRefValidationRequest",
+    "IamTargetContext", "PayloadRefRevalidationDecision",
+    "PayloadRefRevalidationRequest", "PayloadRefValidationRequest",
     "PayloadRefValidationResult", "PermissionInvalidation",
     "RuntimeBootstrapRequest", "RuntimeBootstrapResult", "RuntimeRoleScope",
     "freeze_metadata",

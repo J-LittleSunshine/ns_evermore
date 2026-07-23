@@ -37,12 +37,15 @@ from ns_common.state_store import (
     StateOrderedIndexKey,
     StateOrderedIndexMutation,
     StateOrderedIndexMutationKind,
+    StateOrderedIndexReadAssertion,
     StateScanResult,
     StateStoreCapabilities,
     StateStoreCapability,
     StateStoreHealthStatus,
     StateStoreLifecycleState,
     StateTransaction,
+    StateTransitionLogAppend,
+    StateRecordReadAssertion,
 )
 from ns_common.time import ControlledClock
 
@@ -141,6 +144,20 @@ class StateAuthorityContractTestCase(unittest.TestCase):
                     StateOrderedIndexEntry(member="delivery:1", score=score)
         with self.assertRaises(NsValidationError):
             dataclasses.replace(mutation, kind="add")
+        present = StateOrderedIndexReadAssertion.present(
+            index,
+            "delivery:1",
+            score=1.0,
+        )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(present, expected_score=float("nan"))
+        with self.assertRaises(NsValidationError):
+            StateOrderedIndexReadAssertion(
+                index=index,
+                member="delivery:1",
+                expect_present=False,
+                expected_score=1.0,
+            )
 
     def test_authority_boundaries_preserve_p05_p06_and_p07_owners(self) -> None:
         self.assertEqual(
@@ -459,6 +476,109 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(1, self.store.records[first_key].document.state_version)
         self.assertEqual(advanced.revision, self.store.records[second_key].revision)
+
+    async def test_read_preconditions_are_atomic_before_record_index_and_log_writes(
+        self,
+    ) -> None:
+        await self.store.open()
+        guarded_key = _key(self.scope, "read-guard")
+        write_key = _key(self.scope, "read-write")
+        guarded = await self.store.compare_and_set(
+            scope=self.scope,
+            mutation=_create(guarded_key),
+        )
+        assert guarded is not None
+        index = StateOrderedIndexKey(
+            namespace=self.scope.namespace,
+            name="delivery.ready",
+            bucket="contract",
+        )
+        await self.store.transact(StateTransaction(
+            scope=self.scope,
+            mutations=(_create(write_key),),
+            ordered_index_mutations=(StateOrderedIndexMutation(
+                index=index,
+                kind=StateOrderedIndexMutationKind.ADD,
+                member="delivery:guarded",
+                score=7.0,
+            ),),
+        ))
+        write_record = self.store.records[write_key]
+        log_key = _key(self.scope, "read-assertion-log")
+        transaction = StateTransaction(
+            scope=self.scope,
+            mutations=(_replace(
+                write_key,
+                write_record.revision,
+                _document(2),
+            ),),
+            record_assertions=(StateRecordReadAssertion.present(
+                guarded_key,
+                revision=guarded.revision,
+                state_version=guarded.document.state_version,
+            ),),
+            ordered_index_assertions=(
+                StateOrderedIndexReadAssertion.present(
+                    index,
+                    "delivery:guarded",
+                    score=7.0,
+                ),
+            ),
+            ordered_index_mutations=(StateOrderedIndexMutation(
+                index=index,
+                kind=StateOrderedIndexMutationKind.ADD,
+                member="delivery:new",
+                score=8.0,
+            ),),
+            log_appends=(StateTransitionLogAppend(
+                key=log_key,
+                document=_document(1),
+            ),),
+        )
+        await self.store.transact(transaction)
+        advanced = self.store.records[write_key]
+        self.assertEqual(2, advanced.document.state_version)
+
+        stale = dataclasses.replace(
+            transaction,
+            mutations=(_replace(
+                write_key,
+                advanced.revision,
+                _document(3),
+            ),),
+            ordered_index_assertions=(
+                StateOrderedIndexReadAssertion.present(
+                    index,
+                    "delivery:guarded",
+                    score=9.0,
+                ),
+            ),
+        )
+        committed_records = self.store.records
+        committed_indexes = self.store.ordered_indexes
+        committed_logs = self.store.logs
+        with self.assertRaises(NsRuntimeStateStoreConflictError):
+            await self.store.transact(stale)
+        self.assertEqual(committed_records, self.store.records)
+        self.assertEqual(committed_indexes, self.store.ordered_indexes)
+        self.assertEqual(committed_logs, self.store.logs)
+
+        missing_create = dataclasses.replace(
+            stale,
+            record_assertions=(StateRecordReadAssertion.absent(guarded_key),),
+            ordered_index_assertions=(
+                StateOrderedIndexReadAssertion.present(
+                    index,
+                    "delivery:guarded",
+                    score=7.0,
+                ),
+            ),
+        )
+        with self.assertRaises(NsRuntimeStateStoreConflictError):
+            await self.store.transact(missing_create)
+        self.assertEqual(committed_records, self.store.records)
+        self.assertEqual(committed_indexes, self.store.ordered_indexes)
+        self.assertEqual(committed_logs, self.store.logs)
 
     async def test_minimum_revision_and_explicit_stale_read(self) -> None:
         await self.store.open()

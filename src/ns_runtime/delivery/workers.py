@@ -11,7 +11,9 @@ from typing import Callable
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import (
+    NsRuntimeDeliveryLeaseExpiredError,
     NsRuntimeDeliveryStateError,
+    NsRuntimeOwnerMismatchError,
     NsRuntimeStateStoreError,
     NsValidationError,
 )
@@ -181,18 +183,31 @@ class LeaseRenewWorker:
         self._risk_guard.clear(claim)
         return LeaseRenewResult(outcome=LeaseRenewOutcome.RENEWED, delivery=delivery)
 
-    def schedule(self, *, claim: DeliveryClaim, supervisor: TaskSupervisor) -> None:
+    def schedule(
+        self,
+        *,
+        claim: DeliveryClaim,
+        supervisor: TaskSupervisor,
+    ) -> "LeaseRenewalHandle":
         if not isinstance(claim, DeliveryClaim) or not isinstance(supervisor, TaskSupervisor):
             _invalid("renew.schedule")
-        supervisor.create_task(
+        task = supervisor.create_task(
             self._renew_loop(claim),
             name=f"p11-lease-renew:{claim.delivery_id}", cancel_order=23,
         )
+        return LeaseRenewalHandle(claim=claim, task=task)
 
     async def _renew_loop(self, claim: DeliveryClaim) -> None:
         while True:
             await self._scheduler.wait_for_renewal(policy=self._policy)
-            result = await self.run_once(claim=claim)
+            try:
+                result = await self.run_once(claim=claim)
+            except (
+                NsRuntimeDeliveryLeaseExpiredError,
+                NsRuntimeOwnerMismatchError,
+                NsRuntimeDeliveryStateError,
+            ):
+                return
             if result.outcome is LeaseRenewOutcome.AT_RISK:
                 return
             delivery = result.delivery
@@ -202,6 +217,39 @@ class LeaseRenewWorker:
                 DeliveryRecordStatus.ACK_WAITING,
             }:
                 return
+
+
+class LeaseRenewalHandle:
+    """Explicit stop authority for one supervisor-owned P11 renewal loop."""
+
+    __slots__ = ("_claim", "_task")
+
+    def __init__(
+        self,
+        *,
+        claim: DeliveryClaim,
+        task: asyncio.Task[None],
+    ) -> None:
+        if not isinstance(claim, DeliveryClaim) or not isinstance(task, asyncio.Task):
+            _invalid("renewal_handle")
+        self._claim = claim
+        self._task = task
+
+    @property
+    def delivery_id(self) -> str:
+        return self._claim.delivery_id
+
+    @property
+    def done(self) -> bool:
+        return self._task.done()
+
+    async def stop(self) -> None:
+        if not self._task.done():
+            self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
 
 
 class SendWorker:
@@ -554,6 +602,7 @@ def _invalid(field: str):
 
 
 __all__ = (
-    "ClaimWorker", "LeaseRenewWorker", "PreparedActivationCoordinator",
+    "ClaimWorker", "LeaseRenewalHandle", "LeaseRenewWorker",
+    "PreparedActivationCoordinator",
     "PreparedActivationWorker", "SendWorker",
 )

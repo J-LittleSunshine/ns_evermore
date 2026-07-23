@@ -15,6 +15,7 @@ from ns_common.iam import (
     IamTargetContext,
     PayloadRefValidationRequest,
     PayloadRefValidationResult,
+    PayloadRefRevalidationRequest,
     PermissionInvalidation,
     RuntimeBootstrapRequest,
     RuntimeRoleScope,
@@ -45,14 +46,23 @@ class _PermissionPolicy:
     def __init__(self, clock: ControlledClock) -> None:
         self.clock = clock
         self.requests: list[IamAccessCheckRequest] = []
+        self.allow = True
+        self.permission_version = "version:1"
 
     async def decide(self, request: IamAccessCheckRequest) -> IamAccessDecision:
         self.requests.append(request)
         return IamAccessDecision(
-            allowed=not request.management,
-            reason="allowed" if not request.management else "management_denied",
-            permission_version=request.permission_version,
+            allowed=self.allow and not request.management,
+            reason=(
+                "acl_allow"
+                if self.allow and not request.management
+                else "acl_denied"
+            ),
+            permission_version=self.permission_version,
             decided_at=self.clock.utc_now(),
+            refresh_required=(
+                self.permission_version != request.permission_version
+            ),
         )
 
 
@@ -60,6 +70,7 @@ class _PayloadPolicy:
     def __init__(self, clock: ControlledClock) -> None:
         self.clock = clock
         self.requests: list[PayloadRefValidationRequest] = []
+        self.revalidation_requests: list[PayloadRefRevalidationRequest] = []
 
     async def validate(
         self,
@@ -76,6 +87,24 @@ class _PayloadPolicy:
             checksum=request.checksum if request.object_id == "object:1" else None,
             tenant_id=request.tenant_id if request.object_id == "object:1" else None,
             size_bytes=123 if request.object_id == "object:1" else None,
+        )
+
+    async def revalidate(
+        self,
+        request: PayloadRefRevalidationRequest,
+    ) -> PayloadRefValidationResult:
+        self.revalidation_requests.append(request)
+        valid = request.object_id == "object:1"
+        return PayloadRefValidationResult(
+            valid=valid,
+            reason="valid" if valid else "object_unknown",
+            expires_at=self.clock.utc_now() + timedelta(minutes=5),
+            revoked=False,
+            object_id=request.object_id if valid else None,
+            version=request.version if valid else None,
+            checksum=request.checksum if valid else None,
+            tenant_id=request.tenant_id if valid else None,
+            size_bytes=request.size_bytes if valid else None,
         )
 
 
@@ -113,6 +142,9 @@ class BackendRuntimeIamContractTestCase(unittest.IsolatedAsyncioTestCase):
             permission_policy=self.permissions,
             payload_ref_policy=self.payloads,
             clock=self.clock,
+            payload_decision_reference_factory=iter((
+                f"iam-payload:decision:{index}" for index in range(20)
+            )).__next__,
         )
 
     async def test_all_principal_types_have_the_same_complete_contract(self) -> None:
@@ -221,6 +253,73 @@ class BackendRuntimeIamContractTestCase(unittest.IsolatedAsyncioTestCase):
         result = await self.service.validate_payload_ref(payload)
         self.assertTrue(result.valid)
         self.assertIs(payload, self.payloads.requests[0])
+
+    async def test_payload_object_revalidation_is_acl_and_snapshot_bound(self) -> None:
+        request = PayloadRefRevalidationRequest(
+            object_id="object:1",
+            version="version:7",
+            checksum="sha256:abcd",
+            size_bytes=123,
+            tenant_id="tenant:1",
+            target_principal="identity:client",
+            target_tenant_id="tenant:1",
+            target_fingerprint="sha256:target",
+            permission_snapshot_ref="permission:client",
+            permission_version="version:1",
+            admission_authority_reference="admission:opaque",
+        )
+        allowed = await self.service.revalidate_payload_ref(request)
+        self.assertTrue(allowed.valid)
+        self.assertTrue(allowed.allowed)
+        self.assertEqual("iam-payload:decision:0", allowed.decision_reference)
+        self.assertEqual("payload_ref.read", self.permissions.requests[-1].message_type)
+        self.assertEqual("object:1", self.permissions.requests[-1].target.reference)
+
+        self.permissions.allow = False
+        denied = await self.service.revalidate_payload_ref(request)
+        self.assertTrue(denied.valid)
+        self.assertFalse(denied.allowed)
+
+        self.permissions.allow = True
+        self.permissions.permission_version = "version:2"
+        stale = await self.service.revalidate_payload_ref(request)
+        self.assertFalse(stale.allowed)
+        self.assertTrue(stale.refresh_required)
+
+        cross_object = await self.service.revalidate_payload_ref(replace(
+            request,
+            object_id="object:other",
+        ))
+        self.assertFalse(cross_object.valid)
+        self.assertFalse(cross_object.allowed)
+
+        cross_target = await self.service.revalidate_payload_ref(replace(
+            request,
+            target_tenant_id="tenant:2",
+        ))
+        self.assertFalse(cross_target.allowed)
+
+        class NoObjectProvider:
+            async def validate(inner_self, legacy_request):
+                return PayloadRefValidationResult(
+                    valid=False,
+                    reason="payload_storage_not_implemented",
+                    expires_at=self.clock.utc_now(),
+                    revoked=False,
+                )
+
+        no_provider = BackendRuntimeIamService(
+            principal_resolver=_Resolver(self.principals),
+            permission_policy=self.permissions,
+            payload_ref_policy=NoObjectProvider(),
+            clock=self.clock,
+            payload_decision_reference_factory=lambda: (
+                "iam-payload:no-provider"
+            ),
+        )
+        unavailable = await no_provider.revalidate_payload_ref(request)
+        self.assertFalse(unavailable.valid)
+        self.assertFalse(unavailable.allowed)
 
     async def test_node_credential_issue_refresh_revoke_and_bootstrap_role_scope(self) -> None:
         store = InMemoryRuntimeCredentialStatusStore()

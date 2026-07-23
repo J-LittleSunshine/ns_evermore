@@ -262,7 +262,10 @@ class ClaimResult:
             _invalid("claim_result.empty")
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+_PAYLOAD_ACCESS_EVIDENCE_ISSUER = object()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, init=False)
 class PayloadAccessDecisionEvidence:
     allowed: bool
     evidence_fingerprint: str
@@ -276,6 +279,42 @@ class PayloadAccessDecisionEvidence:
     iam_decision_version: str = field(repr=False)
     validated_at: datetime
     expires_at: datetime
+
+    def __init__(
+        self,
+        *,
+        allowed: bool,
+        evidence_fingerprint: str,
+        request_fingerprint: str,
+        object_id: str,
+        object_version: str,
+        checksum: str,
+        target_fingerprint: str,
+        permission_snapshot_reference: str,
+        iam_decision_reference: str,
+        iam_decision_version: str,
+        validated_at: datetime,
+        expires_at: datetime,
+        _issuer: object | None = None,
+    ) -> None:
+        if _issuer is not _PAYLOAD_ACCESS_EVIDENCE_ISSUER:
+            _invalid("payload_access.issuer")
+        for name, value in (
+            ("allowed", allowed),
+            ("evidence_fingerprint", evidence_fingerprint),
+            ("request_fingerprint", request_fingerprint),
+            ("object_id", object_id),
+            ("object_version", object_version),
+            ("checksum", checksum),
+            ("target_fingerprint", target_fingerprint),
+            ("permission_snapshot_reference", permission_snapshot_reference),
+            ("iam_decision_reference", iam_decision_reference),
+            ("iam_decision_version", iam_decision_version),
+            ("validated_at", validated_at),
+            ("expires_at", expires_at),
+        ):
+            object.__setattr__(self, name, value)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         if type(self.allowed) is not bool:
@@ -293,14 +332,6 @@ class PayloadAccessDecisionEvidence:
             _invalid("payload_access.expires_at")
         object.__setattr__(self, "validated_at", validated_at)
         object.__setattr__(self, "expires_at", expires_at)
-        if self.iam_decision_reference != payload_access_decision_reference(
-            allowed=self.allowed,
-            request_fingerprint=self.request_fingerprint,
-            permission_snapshot_reference=self.permission_snapshot_reference,
-            iam_decision_version=self.iam_decision_version,
-            validated_at=self.validated_at,
-        ):
-            _invalid("payload_access.iam_decision_reference")
         if self.evidence_fingerprint != payload_access_evidence_fingerprint(
             allowed=self.allowed,
             request_fingerprint=self.request_fingerprint,
@@ -315,6 +346,17 @@ class PayloadAccessDecisionEvidence:
             expires_at=self.expires_at,
         ):
             _invalid("payload_access.evidence_fingerprint")
+
+
+def _issue_payload_access_decision_evidence(
+    **values: object,
+) -> PayloadAccessDecisionEvidence:
+    """Module-private issuer used only after the production IAM client boundary."""
+
+    return PayloadAccessDecisionEvidence(
+        **values,  # type: ignore[arg-type]
+        _issuer=_PAYLOAD_ACCESS_EVIDENCE_ISSUER,
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -588,24 +630,6 @@ def payload_access_decision_request_fingerprint(
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
-def payload_access_decision_reference(
-    *,
-    allowed: bool,
-    request_fingerprint: str,
-    permission_snapshot_reference: str,
-    iam_decision_version: str,
-    validated_at: datetime,
-) -> str:
-    raw = json.dumps({
-        "allowed": allowed,
-        "request_fingerprint": request_fingerprint,
-        "permission_snapshot_reference": permission_snapshot_reference,
-        "iam_decision_version": iam_decision_version,
-        "validated_at": utc(validated_at, "payload_access.validated_at").isoformat(),
-    }, sort_keys=True, separators=(",", ":")).encode()
-    return "sha256:" + hashlib.sha256(raw).hexdigest()
-
-
 def payload_access_evidence_fingerprint(
     *,
     allowed: bool,
@@ -714,7 +738,6 @@ __all__ = (
     "OutboundDeliveryMaterial", "OutboundDeliveryPayload", "OwnerRiskGuard",
     "PayloadAccessDecisionEvidence", "PayloadValidationResult",
     "SendOutcome", "SendResult", "SendingTransition",
-    "payload_access_decision_reference",
     "payload_access_decision_request_fingerprint",
     "payload_access_evidence_fingerprint", "policy_message_group",
     "validate_outbound_payload", "validate_payload_authority",

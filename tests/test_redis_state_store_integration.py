@@ -51,6 +51,8 @@ from ns_common.state_store import (
     StateOrderedIndexKey,
     StateOrderedIndexMutation,
     StateOrderedIndexMutationKind,
+    StateOrderedIndexReadAssertion,
+    StateRecordReadAssertion,
     StateStoreCapabilities,
     StateStoreHealthStatus,
     StateStorePasswordSource,
@@ -675,6 +677,84 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         raw = self._raw_client()
         transition_keys = await self._scan(
             raw, self.namespace + ":transition:*",
+        )
+        await raw.aclose()
+        self.assertEqual([], transition_keys)
+        await store.close()
+
+    async def test_read_precondition_conflict_is_zero_write_in_redis_lua(self) -> None:
+        store = self._provider()
+        await store.open()
+        scope = _scope()
+        guarded_key = _key(scope, "assertion-guard")
+        seed_key = _key(scope, "assertion-seed")
+        orphan_key = _key(scope, "assertion-orphan")
+        guarded = await store.compare_and_set(
+            scope=scope,
+            mutation=_create(guarded_key),
+        )
+        assert guarded is not None
+        index = StateOrderedIndexKey(
+            namespace=scope.namespace,
+            name="delivery.lease",
+            bucket="contract",
+        )
+        await store.transact(StateTransaction(
+            scope=scope,
+            mutations=(_create(seed_key),),
+            ordered_index_mutations=(StateOrderedIndexMutation(
+                index=index,
+                kind=StateOrderedIndexMutationKind.ADD,
+                member="delivery:guarded",
+                score=11.0,
+            ),),
+        ))
+        with self.assertRaises(NsRuntimeStateStoreConflictError):
+            await store.transact(StateTransaction(
+                scope=scope,
+                mutations=(_create(orphan_key),),
+                record_assertions=(StateRecordReadAssertion.present(
+                    guarded_key,
+                    revision=guarded.revision,
+                    state_version=guarded.document.state_version,
+                ),),
+                ordered_index_assertions=(
+                    StateOrderedIndexReadAssertion.present(
+                        index,
+                        "delivery:guarded",
+                        score=12.0,
+                    ),
+                ),
+                ordered_index_mutations=(StateOrderedIndexMutation(
+                    index=index,
+                    kind=StateOrderedIndexMutationKind.ADD,
+                    member="delivery:orphan",
+                    score=13.0,
+                ),),
+                log_appends=(StateTransitionLogAppend(
+                    key=orphan_key,
+                    document=_document(1, b'{"operation":"must-not-commit"}'),
+                ),),
+            ))
+        observed = await store.read(
+            scope=scope,
+            key=orphan_key,
+            consistency=StateConsistency.LINEARIZABLE,
+        )
+        self.assertIsNone(observed.record)
+        entries = await store.read_ordered_index(
+            scope=scope,
+            index=index,
+            limit=10,
+        )
+        self.assertEqual(
+            (("delivery:guarded", 11.0),),
+            tuple((entry.member, entry.score) for entry in entries.entries),
+        )
+        raw = self._raw_client()
+        transition_keys = await self._scan(
+            raw,
+            self.namespace + ":transition:*",
         )
         await raw.aclose()
         self.assertEqual([], transition_keys)

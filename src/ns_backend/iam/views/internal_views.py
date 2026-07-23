@@ -27,6 +27,7 @@ class InternalIamViewSet(NsViewSet):
         "revoke_runtime_node_credential",
         "runtime_bootstrap",
         "validate_payload_ref",
+        "revalidate_payload_ref",
         "batch_access_check",
         "resolve_resource_filter",
     }
@@ -54,6 +55,17 @@ class InternalIamViewSet(NsViewSet):
 
     async def runtime_access_check(self, request: "Request", *args: Any, **kwargs: Any) -> dict[str, Any]:
         return await self.service_class.runtime_access_check(
+            self.get_request_data(request),
+            trace_id=self.get_trace_id(request),
+        )
+
+    async def revalidate_payload_ref(
+        self,
+        request: "Request",
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self.service_class.revalidate_payload_ref(
             self.get_request_data(request),
             trace_id=self.get_trace_id(request),
         )
