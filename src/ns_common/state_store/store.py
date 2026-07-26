@@ -154,7 +154,9 @@ class _ProductionStateScopeValidator:
             and self._closed is True
             and type(self._repository_specs) is dict
             and type(self._scopes) is dict
-            and self._realm in {"production", "contract_test"}
+            and self._realm in {
+                "production-broker", "contract_test",
+            }
         )
 
     def __call__(self, scope: StateAccessScope) -> bool:
@@ -481,7 +483,7 @@ class StateStore(ABC):
                 )) is not dict
                 or type(getattr(_production_scope_validator, "_scopes", None)) is not dict
                 or getattr(_production_scope_validator, "_realm", None)
-                not in {"production", "contract_test"}
+                not in {"production-broker", "contract_test"}
             ):
                 _invalid("production_scope_validator")
             else:

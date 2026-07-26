@@ -77,12 +77,13 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
                 delivery.policy_decision.request_fingerprint
             ),
         )
-        decision = await self._iam.revalidate_payload_ref(request)
+        verified = await self._iam.revalidate_payload_ref_signed(request)
+        decision = verified.result
         if type(decision) is not PayloadRefRevalidationDecision:
             _invalid("reference_validator.revalidation_result")
         access_evidence = self._evidence_issuer.issue(
             request=request,
-            decision=decision,
+            verified_result=verified,
             delivery=delivery,
             target=target,
         )

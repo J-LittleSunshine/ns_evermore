@@ -3,9 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import os
-import tempfile
 from typing import TYPE_CHECKING
 
 from ns_common.exceptions import NsRuntimeStateStoreCapabilityUnavailableError
@@ -107,161 +104,48 @@ def create_state_store_provider(
     )
 
 
-def _assemble_contract_test_state_store_composition(
+def create_contract_test_state_store_composition(
     *,
     config: "NsRuntimeStateStoreConfig",
     clock: Clock,
     capabilities: StateStoreCapabilities | None = None,
     runtime_id: str | None = None,
     audit_namespaces: tuple[StateNamespace, ...] = (),
-) -> StateStoreComposition | None:
-    """Build one provider and permanently close its fixed repository set."""
+) -> object:
+    """Return a deterministic test realm that cannot select a network provider."""
 
-    if runtime_id is not None and (type(runtime_id) is not str or not runtime_id):
+    from ns_common.config import NsRuntimeStateStoreConfig
+    from .contract_test_provider import ContractTestStateStoreComposition
+
+    if type(config) is not NsRuntimeStateStoreConfig:
+        _unavailable("typed_config_required")
+    if (
+        config.backend != "sqlite"
+        or config.resolved_endpoint
+        or config.username
+        or config.password_source != "none"
+    ):
+        _unavailable("contract_test_network_provider_forbidden")
+    if runtime_id is not None and (
+        type(runtime_id) is not str or not runtime_id
+    ):
         _unavailable("runtime_id_invalid")
     if (
-        not isinstance(audit_namespaces, tuple)
+        type(audit_namespaces) is not tuple
         or any(
-            not isinstance(value, StateNamespace)
+            type(value) is not StateNamespace
             or value.kind is not StateNamespaceKind.AUDIT
             for value in audit_namespaces
         )
         or len(set(audit_namespaces)) != len(audit_namespaces)
     ):
         _unavailable("audit_namespaces_invalid")
-
-    lease = None
-    scope_validator = object.__new__(_ProductionStateScopeValidator)
-    scope_validator._repository_specs = {}
-    scope_validator._scopes = {}
-    scope_validator._closed = False
-    scope_validator._realm = "contract_test"
-    store = _create_redis_valkey_provider(
-        config=config,
+    return ContractTestStateStoreComposition(
         clock=clock,
         capabilities=capabilities,
-        production_scope_validator=scope_validator,
+        runtime_id=runtime_id,
+        audit_namespaces=audit_namespaces,
     )
-    if store is None:
-        return None
-
-    specs = []
-    if runtime_id is not None:
-        specs.extend((
-            (
-                StateStoreRepositoryRole.DELIVERY_ADMISSION, runtime_id, None,
-                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.admission",
-                frozenset({
-                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX, StateCallerCapability.APPEND,
-                }), "delivery-admission.v1",
-            ),
-            (
-                StateStoreRepositoryRole.DELIVERY_SCHEDULER, runtime_id, None,
-                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.scheduling",
-                frozenset({
-                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX, StateCallerCapability.APPEND,
-                }), "delivery-scheduler.v1",
-            ),
-            (
-                StateStoreRepositoryRole.DELIVERY_PAYLOAD, runtime_id, None,
-                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.payload_authority",
-                frozenset({StateCallerCapability.READ}), "delivery-payload.v1",
-            ),
-            (
-                StateStoreRepositoryRole.DELIVERY_REGISTRY, runtime_id, None,
-                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.authority_registry",
-                frozenset({
-                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX,
-                }), "delivery-registry.v1",
-            ),
-        ))
-    specs.extend(
-        (
-            StateStoreRepositoryRole.STRONG_AUDIT, None, namespace,
-            StateAuthorityKind.STRONG_AUDIT, "strong-audit-authority",
-            frozenset({StateCallerCapability.APPEND}), "strong-audit.v1",
-        )
-        for namespace in audit_namespaces
-    )
-    repositories = store._install_repositories(tuple(specs))
-    offset = 0
-    delivery = None
-    if runtime_id is not None:
-        delivery = StateStoreDeliveryRepositories(
-            admission=repositories[0], scheduler=repositories[1],
-            payload=repositories[2], registry=repositories[3],
-        )
-        offset = 4
-    audit = {
-        namespace: repositories[offset + index]
-        for index, namespace in enumerate(audit_namespaces)
-    }
-    value = object.__new__(StateStoreComposition)
-    value.store = store
-    value._delivery = delivery
-    value._runtime_id = runtime_id
-    value._audit = audit
-    value._lease = lease
-    return value
-
-
-def create_contract_test_state_store_composition(
-    **kwargs: object,
-) -> StateStoreComposition | None:
-    """Explicit non-production entry used by resource-policy contract tests."""
-    return _assemble_contract_test_state_store_composition(  # type: ignore[arg-type]
-        **kwargs,
-    )
-
-
-class _ProductionCompositionLease:
-    __slots__ = ("_file",)
-
-    def __init__(self, file: object) -> None:
-        self._file = file
-
-    def __del__(self) -> None:
-        file = getattr(self, "_file", None)
-        if file is not None:
-            try:
-                import portalocker
-
-                portalocker.unlock(file)
-                file.close()
-            except (OSError, ValueError):
-                pass
-            self._file = None
-
-
-def _acquire_production_lease(
-    *,
-    config: "NsRuntimeStateStoreConfig",
-    runtime_id: str,
-) -> _ProductionCompositionLease:
-    import portalocker
-
-    identity = hashlib.sha256(
-        "\0".join((
-            config.backend, config.resolved_endpoint, config.namespace, runtime_id,
-        )).encode(),
-    ).hexdigest()
-    path = os.path.join(
-        tempfile.gettempdir(), f"ns-runtime-state-authority-{identity}.lock",
-    )
-    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
-    file = os.fdopen(fd, "a+b", buffering=0)
-    try:
-        portalocker.lock(
-            file,
-            portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
-        )
-    except portalocker.AlreadyLocked:
-        file.close()
-        _unavailable("parallel_production_composition")
-    return _ProductionCompositionLease(file)
 
 
 def _create_redis_valkey_provider(

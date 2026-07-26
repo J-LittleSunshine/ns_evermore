@@ -204,10 +204,9 @@ def main(
         WebSocketTcpAdapterOptions,
     )
     from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
-    from ns_common.http_client import (
-        NsHttpClientOwner,
-        _NsHttpClientAuthorityBinding,
-        _NsHttpClientAuthorityHandle,
+    from ns_runtime.authority_broker import (
+        AuthorityBrokerConfig,
+        start_production_authority_broker,
     )
     from ns_runtime.context import RuntimeDependencySlots
     from ns_runtime.connection import (
@@ -223,7 +222,6 @@ def main(
         AuthorizationMode,
         MessageAuthorizationService,
     )
-    from ns_runtime.iam.client import IamClient
     from ns_runtime.processor import (
         DefaultProcessorErrorMapper,
         EventBus,
@@ -274,93 +272,31 @@ def main(
     transport_manager = TransportManager(adapters)
     identifier_factory = IdentifierFactory()
     runtime_id = identifier_factory.generate(NsIdentifierKind.RUNTIME_ID)
-    http_client_owner = NsHttpClientOwner()
-    iam_http_client = http_client_owner.create(
-        name="runtime-iam",
-        base_url=config.runtime.iam.base_url,
-        timeout_seconds=config.runtime.iam.request_timeout_seconds,
-    )
-    from ns_common.state_store import (
-        StateAuthorityKind,
-        StateCallerCapability,
-        StateStoreDeliveryRepositories,
-        StateStoreRepositoryRole,
-    )
-    from ns_common.state_store.composition import (
-        StateStoreComposition,
-        _acquire_production_lease,
-        _create_redis_valkey_provider,
-    )
-    from ns_common.state_store.store import _ProductionStateScopeValidator
-
     state_store_config = config.runtime.state_store
-    state_store_composition = None
-    if state_store_config.backend != "sqlite":
-        state_lease = _acquire_production_lease(
-            config=state_store_config, runtime_id=runtime_id,
-        )
-        state_validator = object.__new__(_ProductionStateScopeValidator)
-        state_validator._repository_specs = {}
-        state_validator._scopes = {}
-        state_validator._closed = False
-        state_validator._realm = "production"
-        composed_store = _create_redis_valkey_provider(
-            config=state_store_config, clock=context.clock,
-            capabilities=None, production_scope_validator=state_validator,
-        )
-        assert composed_store is not None
-        state_repositories = composed_store._install_repositories((
-            (
-                StateStoreRepositoryRole.DELIVERY_ADMISSION, runtime_id, None,
-                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.admission",
-                frozenset({
-                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX,
-                    StateCallerCapability.APPEND,
-                }), "delivery-admission.v1",
+    authority_broker = start_production_authority_broker(
+        config=AuthorityBrokerConfig(
+            iam_base_url=config.runtime.iam.base_url,
+            iam_timeout_seconds=config.runtime.iam.request_timeout_seconds,
+            iam_service_credential=(
+                config.runtime.iam.internal_service_credential
             ),
-            (
-                StateStoreRepositoryRole.DELIVERY_SCHEDULER, runtime_id, None,
-                StateAuthorityKind.DELIVERY_ADMISSION, "delivery.scheduling",
-                frozenset({
-                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX,
-                    StateCallerCapability.APPEND,
-                }), "delivery-scheduler.v1",
+            iam_mode=config.runtime.iam.authorization_mode,
+            permission_snapshot_ttl_seconds=(
+                config.runtime.iam.permission_snapshot_ttl_seconds
             ),
-            (
-                StateStoreRepositoryRole.DELIVERY_PAYLOAD, runtime_id, None,
-                StateAuthorityKind.DELIVERY_ADMISSION,
-                "delivery.payload_authority",
-                frozenset({StateCallerCapability.READ}),
-                "delivery-payload.v1",
+            state_backend=state_store_config.backend,
+            state_endpoint=state_store_config.resolved_endpoint,
+            state_username=state_store_config.username,
+            state_password_source=state_store_config.password_source,
+            state_namespace=state_store_config.namespace,
+            state_operation_timeout_seconds=(
+                state_store_config.operation_timeout_seconds
             ),
-            (
-                StateStoreRepositoryRole.DELIVERY_REGISTRY, runtime_id, None,
-                StateAuthorityKind.DELIVERY_ADMISSION,
-                "delivery.authority_registry",
-                frozenset({
-                    StateCallerCapability.READ, StateCallerCapability.TRANSACT,
-                    StateCallerCapability.ORDERED_INDEX,
-                }), "delivery-registry.v1",
-            ),
-        ))
-        state_store_composition = object.__new__(StateStoreComposition)
-        state_store_composition.store = composed_store
-        state_store_composition._delivery = StateStoreDeliveryRepositories(
-            admission=state_repositories[0],
-            scheduler=state_repositories[1],
-            payload=state_repositories[2],
-            registry=state_repositories[3],
-        )
-        state_store_composition._runtime_id = runtime_id
-        state_store_composition._audit = {}
-        state_store_composition._lease = state_lease
-    state_store = (
-        None
-        if state_store_composition is None
-        else state_store_composition.store
+            runtime_id=runtime_id,
+        ),
     )
+    state_store = authority_broker.state_store
+    iam_client = authority_broker.iam
     context = RuntimeContext(
         config=config,
         clock=context.clock,
@@ -369,47 +305,9 @@ def main(
         traces=context.traces,
         task_supervisor=context.task_supervisor,
         dependencies=RuntimeDependencySlots(
-            http_client_owner=http_client_owner,
             state_store=state_store,
         ),
     )
-    # Assemble the complete graph here. No owner/factory method can issue an
-    # IAM authority handle, and the one-shot construction tokens are consumed
-    # before any business object receives a dependency.
-    binding_token = object()
-    http_client_owner._pending_authority_binding_token = binding_token
-    try:
-        iam_http_binding = _NsHttpClientAuthorityBinding(
-            owner=http_client_owner,
-            client=iam_http_client,
-            _token=binding_token,
-        )
-    finally:
-        http_client_owner._pending_authority_binding_token = None
-    http_client_owner._authority_bindings[iam_http_client] = iam_http_binding
-    handle_token = object()
-    http_client_owner._pending_authority_handle_token = handle_token
-    try:
-        iam_http_authority = _NsHttpClientAuthorityHandle(
-            binding=iam_http_binding,
-            _token=handle_token,
-            owner=http_client_owner,
-        )
-    finally:
-        http_client_owner._pending_authority_handle_token = None
-    iam_client = object.__new__(IamClient)
-    iam_client._http_authority = iam_http_authority
-    iam_http_binding._iam_client = iam_client
-    iam_client._service_credential = (
-        config.runtime.iam.internal_service_credential
-    )
-    iam_client._trace_id_factory = lambda: identifier_factory.generate(
-        NsIdentifierKind.OPERATION_ID,
-    )
-    iam_client._clock = context.clock
-    iam_client._iam_mode = config.runtime.iam.authorization_mode
-    iam_client._payload_revalidation_results = {}
-    iam_client._authorization_service = None
     message_authorization = MessageAuthorizationService(
         iam_client=iam_client,
         clock=context.clock,
@@ -498,11 +396,14 @@ def main(
         event_loop_monitor=event_loop_monitor,
         logical_connection_owner=logical_connection_manager,
     )
-    asyncio.run(_run_service(
-        service,
-        state_store=state_store,
-        self_check=self_check,
-    ))
+    try:
+        asyncio.run(_run_service(
+            service,
+            state_store=state_store,
+            self_check=self_check,
+        ))
+    finally:
+        authority_broker.close()
 
     return 0
 

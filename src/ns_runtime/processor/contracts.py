@@ -127,7 +127,7 @@ _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_KEY = secrets.token_bytes(32)
 class _ProductionAuthorizationEvidenceIssuer:
     """Instance capability bound to one real authorization service."""
 
-    __slots__ = ("_service", "_key", "_pending_token")
+    __slots__ = ("_service",)
 
     def __init__(self, service: object) -> None:
         from ns_runtime.iam import MessageAuthorizationService
@@ -138,8 +138,6 @@ class _ProductionAuthorizationEvidenceIssuer:
         ):
             _invalid("authorization_evidence_issuer.service")
         self._service = service
-        self._key = secrets.token_bytes(32)
-        self._pending_token: object | None = None
 
     def issue(
         self,
@@ -190,10 +188,9 @@ class _ProductionAuthorizationEvidenceIssuer:
         semantic_request["permission_version"] = (
             result.effective_snapshot.permission_version
         )
-        token = object()
-        self._pending_token = token
-        try:
-            return AuthorizationDecisionEvidence(
+        if result._broker_authority is None:
+            _invalid("authorization_evidence_issuer.broker_authority")
+        return AuthorizationDecisionEvidence(
                 message_binding_reference="sha256:" + "0" * 64,
                 semantic_decision_reference="sha256:" + "0" * 64,
                 semantic_access_check_reference=(
@@ -221,22 +218,36 @@ class _ProductionAuthorizationEvidenceIssuer:
                     result.effective_snapshot.permission_version
                 ),
                 _issuer=self,
-                _construction_token=token,
+                _broker_authority=result._broker_authority,
                 _derive_references=True,
             )
-        finally:
-            self._pending_token = None
-
-    def _consume_construction_token(self, token: object) -> bool:
-        return token is not None and self._pending_token is token
 
     def _verify(self, evidence: "AuthorizationDecisionEvidence") -> bool:
+        authority = evidence._broker_authority
+        iam = self._service._iam
         return bool(
             self._service.production_authority
-            and hmac.compare_digest(
-                evidence._authority_signature,
-                _authorization_authority_signature(evidence, issuer=self),
+            and authority.verify(
+                public_key=iam._channel.public_key,
+                broker_instance_id=iam._channel.instance_id,
+                operation="runtime_access_check",
+                request_fingerprint=authority.request_fingerprint,
+                now=self._service._clock.utc_now(),
             )
+            and authority.backend_decision == "allow"
+            and authority.request_mapping().get("tenant_id")
+            == evidence.principal_tenant_id
+            and authority.request_mapping().get("message_type")
+            == evidence.message_type
+            and authority.request_mapping().get("permission_snapshot_ref")
+            == evidence.effective_permission_snapshot_ref
+            and authority.request_mapping().get("permission_version")
+            == evidence.effective_permission_snapshot_version
+            and authority.result_mapping().get("allowed") is True
+            and authority.result_mapping().get("reason")
+            == evidence.decision_reason
+            and authority.result_mapping().get("permission_version")
+            == evidence.effective_permission_snapshot_version
         )
 
     def __copy__(self) -> "_ProductionAuthorizationEvidenceIssuer":
@@ -278,6 +289,7 @@ class AuthorizationDecisionEvidence:
     effective_permission_snapshot_version: str = field(repr=False)
     _issuer: object = field(init=False, repr=False, compare=False)
     _authority_signature: bytes = field(init=False, repr=False, compare=False)
+    _broker_authority: object = field(init=False, repr=False, compare=False)
 
     def __init__(
         self,
@@ -302,14 +314,17 @@ class AuthorizationDecisionEvidence:
         effective_permission_snapshot_version: str,
         _issuer: object | None = None,
         _construction_token: object | None = None,
+        _broker_authority: object | None = None,
         _derive_references: bool = False,
     ) -> None:
+        from ns_runtime.authority_broker import BrokerSignedIamResult
+
         production_issuer = type(_issuer) is _ProductionAuthorizationEvidenceIssuer
         if (
             type(self) is not AuthorizationDecisionEvidence
             or (
                 production_issuer
-                and not _issuer._consume_construction_token(_construction_token)
+                and type(_broker_authority) is not BrokerSignedIamResult
             )
             or (
                 not production_issuer
@@ -376,15 +391,24 @@ class AuthorizationDecisionEvidence:
             ("effective_permission_snapshot_ref", effective_permission_snapshot_ref),
             ("effective_permission_snapshot_version", effective_permission_snapshot_version),
             ("_issuer", _issuer),
-            ("_authority_signature", b""),
+            (
+                "_authority_signature",
+                (
+                    _broker_authority.signature
+                    if production_issuer
+                    else b""
+                ),
+            ),
+            ("_broker_authority", _broker_authority),
         ):
             object.__setattr__(self, name, value)
         self.__post_init__()
-        object.__setattr__(
-            self,
-            "_authority_signature",
-            _authorization_authority_signature(self, issuer=_issuer),
-        )
+        if not production_issuer:
+            object.__setattr__(
+                self,
+                "_authority_signature",
+                _authorization_authority_signature(self, issuer=_issuer),
+            )
 
     def __post_init__(self) -> None:
         for name in (
@@ -639,9 +663,7 @@ def _authorization_authority_signature(
     *,
     issuer: object,
 ) -> bytes:
-    if type(issuer) is _ProductionAuthorizationEvidenceIssuer:
-        key = issuer._key
-    elif issuer is _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER:
+    if issuer is _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER:
         key = _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_KEY
     else:
         _invalid("authorization_evidence.issuer")

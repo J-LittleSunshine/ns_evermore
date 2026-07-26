@@ -121,64 +121,58 @@ class NsRuntimeMainTestCase(unittest.TestCase):
 
             async def start(self) -> None:
                 iam = self._owner._iam
-                handle = iam._http_authority
-                binding = handle._NsHttpClientAuthorityHandle__binding
-                client = binding._client
-                httpx_client = binding._httpx_client
-                checks.append(handle.is_current(iam_client=iam))
+                from dataclasses import replace
+                from ns_common.http_client import (
+                    NsAsyncHttpClient,
+                    NsHttpClientOwner,
+                )
+                from ns_runtime.authority_broker import (
+                    BrokerRepositoryRole,
+                    ProductionIamAuthorityProxy,
+                )
+
+                self.assert_no_http = all(
+                    not hasattr(iam, name)
+                    for name in (
+                        "_http_authority", "_client", "_httpx_client",
+                        "_transport", "_mounts", "_service_credential",
+                    )
+                )
+                checks.append(self.assert_no_http)
+                checks.append(type(iam) is ProductionIamAuthorityProxy)
+                handle = iam._handle
+                checks.append(handle.role is BrokerRepositoryRole.IAM)
+                checks.append(handle.verify(
+                    iam._channel.public_key,
+                    instance_id=iam._channel.instance_id,
+                ))
                 with test_case.assertRaises(NsValidationError):
                     copy.copy(handle)
-                uninitialized = object.__new__(type(handle))
-                checks.append(not uninitialized.is_current(iam_client=iam))
-                for denied_path in (
-                    "https://evil.invalid/internal/runtime_access_check/",
-                    "../runtime_access_check/",
-                    "internal/not-allowlisted/",
-                ):
-                    with test_case.assertRaises(NsValidationError):
-                        await handle.post(
-                            denied_path, json_data={},
-                            bearer_token="r" * 32,
-                            trace_id="operation:path-attack",
-                            expected_statuses={200},
-                        )
-                mutations = (
-                    (client, "base_url", "https://evil.invalid/"),
-                    (client, "_request_base_url", type(client._request_base_url)(
-                        "https://evil.invalid/",
-                    )),
-                    (httpx_client, "_base_url", type(httpx_client.base_url)(
-                        "https://evil.invalid/",
-                    )),
-                    (httpx_client, "_mounts", dict(httpx_client._mounts)),
-                    (httpx_client, "_transport", object()),
+                checks.append(not replace(
+                    handle,
+                    role=BrokerRepositoryRole.SCHEDULER,
+                ).verify(
+                    iam._channel.public_key,
+                    instance_id=iam._channel.instance_id,
+                ))
+                with test_case.assertRaises(NsValidationError):
+                    ProductionIamAuthorityProxy()
+                forged = object.__new__(ProductionIamAuthorityProxy)
+                checks.append(not forged._is_production_adapter())
+                owner = NsHttpClientOwner()
+                client = owner.create(
+                    name="ordinary",
+                    base_url="https://evil.invalid/",
                 )
-                for target, name, replacement in mutations:
-                    original = getattr(target, name)
-                    setattr(target, name, replacement)
-                    checks.append(not handle.is_current(iam_client=iam))
-                    setattr(target, name, original)
-                    checks.append(handle.is_current(iam_client=iam))
-                original_timeout = httpx_client._timeout
-                httpx_client._timeout = type(original_timeout)(1.0)
-                checks.append(not handle.is_current(iam_client=iam))
-                httpx_client._timeout = original_timeout
-                original_headers = httpx_client._headers
-                httpx_client._headers = original_headers.copy()
-                httpx_client._headers["x-route-attack"] = "1"
-                checks.append(not handle.is_current(iam_client=iam))
-                httpx_client._headers = original_headers
-                pool = binding._transport._pool
-                original_proxy = pool._proxy
-                pool._proxy = object()
-                checks.append(not handle.is_current(iam_client=iam))
-                pool._proxy = original_proxy
-                ssl_context = pool._ssl_context
-                original_check_hostname = ssl_context.check_hostname
-                ssl_context.check_hostname = not original_check_hostname
-                checks.append(not handle.is_current(iam_client=iam))
-                ssl_context.check_hostname = original_check_hostname
-                checks.append(handle.is_current(iam_client=iam))
+                try:
+                    checks.append(not hasattr(owner, "_create_authority_handle"))
+                    checks.append(not hasattr(client, "_authority_handle"))
+                    original = NsAsyncHttpClient.post
+                    NsAsyncHttpClient.post = mock.AsyncMock()  # type: ignore[method-assign]
+                    checks.append(iam._is_production_adapter())
+                    NsAsyncHttpClient.post = original
+                finally:
+                    await owner.aclose()
 
             async def stop(self) -> None:
                 return None
@@ -208,7 +202,25 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             def do_POST(self) -> None:  # noqa: N802
                 request_started.set()
                 allow_response.wait(5)
-                body = b'{"success":true,"data":{"bound":true}}'
+                from datetime import datetime, timezone
+
+                data = {
+                    "allowed": True,
+                    "reason": "broker_transport_bound",
+                    "permission_version": "version-1",
+                    "decided_at": datetime.now(timezone.utc).isoformat().replace(
+                        "+00:00", "Z",
+                    ),
+                    "refresh_required": False,
+                }
+                body = json.dumps({
+                    "success": True,
+                    "code": "OK",
+                    "error": None,
+                    "message": "ok",
+                    "data": data,
+                    "request_id": "request-broker",
+                }).encode()
                 self.send_response(200)
                 self.send_header("content-type", "application/json")
                 self.send_header("content-length", str(len(body)))
@@ -238,43 +250,47 @@ class NsRuntimeMainTestCase(unittest.TestCase):
 
             async def start(self) -> None:
                 iam = self._owner._iam
-                handle = iam._http_authority
-                binding = handle._NsHttpClientAuthorityHandle__binding
+                from ns_common.http_client import NsAsyncHttpClient
+                from ns_common.iam import IamAccessCheckRequest, IamTargetContext
 
                 def attack() -> None:
                     if not request_started.wait(5):
                         return
-                    client = binding._client
-                    httpx_client = binding._httpx_client
                     originals = (
-                        client.base_url, client._request_base_url,
-                        httpx_client._base_url, httpx_client._transport,
-                        httpx_client._mounts,
+                        NsAsyncHttpClient.request,
+                        NsAsyncHttpClient.post,
                     )
-                    client.base_url = "https://evil.invalid"
-                    client._request_base_url = type(client._request_base_url)(
-                        "https://evil.invalid/",
-                    )
-                    httpx_client._base_url = type(httpx_client.base_url)(
-                        "https://evil.invalid/",
-                    )
-                    httpx_client._transport = object()
-                    httpx_client._mounts = {}
-                    client.base_url, client._request_base_url = originals[:2]
-                    httpx_client._base_url, httpx_client._transport, (
-                        httpx_client._mounts
-                    ) = originals[2:]
+                    NsAsyncHttpClient.request = mock.AsyncMock()  # type: ignore[method-assign]
+                    NsAsyncHttpClient.post = mock.AsyncMock()  # type: ignore[method-assign]
+                    NsAsyncHttpClient.request, NsAsyncHttpClient.post = originals
                     allow_response.set()
 
                 attacker = threading.Thread(target=attack, daemon=True)
                 attacker.start()
-                response = await handle.post(
-                    "internal/runtime_access_check/",
-                    json_data={}, bearer_token="r" * 32,
-                    trace_id="operation:toctou", expected_statuses={200},
+                response = await iam.access_check_signed(
+                    IamAccessCheckRequest(
+                        identity="identity-1",
+                        tenant_id="tenant-1",
+                        permission_snapshot_ref="snapshot-1",
+                        permission_version="version-1",
+                        message_type="message.test",
+                        target=IamTargetContext(
+                            kind="session",
+                            tenant_id="tenant-1",
+                        ),
+                    ),
                 )
                 attacker.join(5)
-                outcomes.append(response.json()["data"])
+                outcomes.append((
+                    response.result.reason,
+                    response.authority.verify(
+                        public_key=iam._channel.public_key,
+                        broker_instance_id=iam._channel.instance_id,
+                        operation="runtime_access_check",
+                        request_fingerprint=response.authority.request_fingerprint,
+                        now=iam._clock.utc_now(),
+                    ),
+                ))
 
             async def stop(self) -> None:
                 return None
@@ -306,7 +322,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             server.shutdown()
             server.server_close()
             server_thread.join(5)
-        self.assertEqual([{"bound": True}], outcomes)
+        self.assertEqual([("broker_transport_bound", True)], outcomes)
 
     def test_main_wires_each_initial_role_to_explicit_safe_logger(self) -> None:
         captured_contexts: list[object] = []
@@ -403,7 +419,8 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                             captured_logical_owners[-1]._iam,  # type: ignore[attr-defined]
                             IamClient,
                         )
-                        self.assertIsNotNone(context.http_client_owner)  # type: ignore[attr-defined]
+                        self.assertIsNone(context.http_client_owner)  # type: ignore[attr-defined]
+                        self.assertIsNotNone(context.state_store)  # type: ignore[attr-defined]
         finally:
             close_ns_loggers()
 

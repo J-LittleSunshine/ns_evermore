@@ -2330,6 +2330,42 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 静态与环境：runtime/backend `pip check`均为`No broken requirements found.`；`compileall -q src tests`与`git diff --check`通过。真实Redis已验证；Valkey、Redis Sentinel/Cluster、failover、uvloop全树与远程CI未验证。
 - 冻结边界：状态机仍仅`prepared -> queued -> sending -> ack_waiting`；WRITE_UNCERTAIN不恢复、不重发；production `task.dispatch`继续disabled。未新增ACK/NACK/Defer、retry、DLQ、cluster ownership或其他P12+能力。
 
+## P08/P09/P11 spawn authority broker provenance 复核修复
+
+- 工作包：`P08-FIX-05`、`P09-FIX-09`、`P11-FIX-10`。
+- 状态：`VERIFIED / F3 (local only)`；P12继续`BLOCKED / F0`，production `task.dispatch`继续disabled。
+- 完成时间：`2026-07-24`（Asia/Shanghai）。本轮启动分支为`codex/ns-runtime-implementation`，HEAD为`485f15808be39ca8d27bbea88895a53c29ac98f7`，启动worktree干净；仅保留未提交本地修改。
+- OS隔离边界：production IAM HTTP transport、backend安全配置、Ed25519 decision私钥、Redis/Valkey provider、repository resource policy、scope authority及physical-domain lease迁入`multiprocessing spawn` broker。主runtime只持有fixed-operation IAM proxy、fixed-role repository proxies、公钥、broker instance ID和broker-signed typed result，不持有production private key、HTTP client/transport、raw Store、scope issuer或mutable authority validator。
+- IAM签名与重放防护：broker签名绑定instance ID、operation、canonical request fingerprint与request body、backend decision、permission snapshot/version、tenant、target、message type、签发/过期时间、sequence和nonce；authorization及payload evidence直接消费同一broker result。跨broker、跨request、跨operation、过期、copy或字段修改均拒绝。
+- StateStore与lease：broker handle签名绑定instance/opaque handle/固定role/runtime/lifecycle generation；broker内部按handle选择exact operation与resource policy，不向主进程返回`StateAccessScope`。物理域lease绑定backend、normalized endpoint、database、namespace及principal/credential reference，不含runtime ID；相同物理域的第二broker在同/跨进程均拒绝，崩溃后由OS文件锁释放。
+- contract-test隔离：`create_contract_test_state_store_composition()`只接受deterministic in-memory配置，拒绝Redis/Valkey endpoint/credential且不导入或连接Redis；真实Redis integration改经production broker fixture验证。
+- failure closure：IPC断开、broker crash、timeout、签名错误或instance变化均fail closed；IAM返回unavailable，StateStore write返回indeterminate，不降级到本地authority，不新增delivery retry，`WRITE_UNCERTAIN`仍不恢复、不重发。
+
+### 本轮新增攻击覆盖
+
+- 复制旧pending-token组装、直接构造binding/handle/IamClient/proxy、`object.__new__`、copy/subclass及在主进程直接构造broker-private backend均拒绝。
+- 主进程替换HTTP class、base URL、transport、mount、handler，以及请求阻塞期间monkey patch，不能改变spawn broker实际transport。
+- proxy handle ID/role/signature修改、跨broker/request/operation replay、admission调用scheduler、scheduler读取payload、payload读取delivery、registry使用delivery资源均拒绝。
+- contract-test Redis endpoint/credential拒绝；provider-only raw provider无production validator/repository authority，不能绕过lease安装production repositories。
+- 相同物理域不同runtime ID第二broker拒绝；broker crash/IPC close后operation fail closed，重启后的旧handle/result失效。
+- 枚举主进程bootstrap result、proxy、repository、slots、closure和module graph，未发现production Ed25519 private key、`NsAsyncHttpClient`、`httpx.AsyncClient`、raw `RedisValkeyStateStore`、scope issuer或mutable production validator。
+
+### 本轮实际测试命令与结果
+
+- processor/routing/IAM authority与broker：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -q tests.test_backend_runtime_iam tests.test_runtime_connection_processors tests.test_runtime_iam_authorization tests.test_runtime_iam_client tests.test_runtime_iam_credential_recovery tests.test_runtime_authority_broker tests.test_runtime_processor_boundaries tests.test_runtime_processor_pipeline tests.test_runtime_protocol_processors tests.test_runtime_routing tests.test_runtime_routing_contracts`，`Ran 101 tests in 23.513s`，`OK`。
+- payload authority、delivery与StateStore contract：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -q tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling tests.test_state_store tests.test_runtime_state_store`，`Ran 93 tests in 46.980s`，`OK`。
+- Redis provider与真实Redis broker integration：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest tests.test_redis_state_store_provider tests.test_redis_state_store_integration -v`，`Ran 31 tests in 49.623s`，`OK`；本机实际使用`/usr/bin/redis-server`，覆盖production broker resource policy、不同runtime ID的duplicate physical-domain lease与异常退出后的OS lease释放。
+- main、shutdown、critical failure与transport：去除误设的`PYTHONASYNCIODEBUG=0`环境变量后执行`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -q tests.test_runtime_event_loop_observability tests.test_runtime_shutdown tests.test_runtime_service tests.test_runtime_main tests.test_runtime_transport_metrics tests.test_runtime_transport_lifecycle tests.test_runtime_transport_identity tests.test_runtime_transport_errors tests.test_runtime_transport_contracts tests.test_runtime_transport_conformance tests.test_runtime_transport_backpressure tests.test_runtime_transport_websocket_tcp tests.test_runtime_transport_registry`，`Ran 112 tests in 16.655s`，`OK`。首次命令因Python把环境变量的字符串`0`也视为开启asyncio debug，令子进程stderr断言失败，不记为通过。
+- import/dependency boundary：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m unittest -q tests.test_requirements tests.test_runtime_bootstrap tests.test_runtime_processor_boundaries`为`Ran 19 tests in 2.823s, OK`；冷导入及公共assertion导出输出`COLD_IMPORT_AND_PUBLIC_EXPORTS_OK`；runtime/backend两个虚拟环境`pip check`均输出`No broken requirements found.`。
+- 全仓可执行测试集：runtime虚拟环境按`tests/test_*.py`模块执行并排除需要Django的`tests.test_cache`，`Ran 871 tests in 158.960s`，`OK (skipped=1)`；backend虚拟环境单独执行`tests.test_cache`，`Ran 11 tests in 4.099s`，`OK`。唯一skip为既有非Windows平台上的真实Windows event-loop policy条件。
+- 静态检查：`PYTHONPATH=src /home/ns/.virtualenvs/ns_runtime/bin/python -m compileall -q src tests`通过；最终`git diff --check`通过。
+
+### 冻结边界与未验证范围
+
+- 真实Redis standalone broker integration已验证；Valkey server、Redis Sentinel/Cluster、replica/failover、真实Windows、uvloop全树和远程CI未验证，不能从本地结果推断为通过。runtime虚拟环境未安装Django，因此Django cache测试使用backend虚拟环境单独验证，未运行backend/Django全树。
+- 状态机仍严格为`prepared -> queued -> sending -> ack_waiting`；`WRITE_UNCERTAIN`不恢复、不重发。未新增global registry、service locator、第二event loop、TaskSupervisor、RuntimeService或shutdown owner。
+- P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership和P22 production验收均未实现；production `task.dispatch`继续disabled。
+
 ## 新记录模板
 
 - 工作包：

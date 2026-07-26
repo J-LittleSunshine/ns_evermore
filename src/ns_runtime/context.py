@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     )
     from ns_common.state_store import StateStore
     from ns_common.time import Clock
+    from ns_runtime.authority_broker import AuthorityBrokerStateStoreProxy
 
 
 def _require_dependency(
@@ -88,7 +89,7 @@ class RuntimeDependencySlots:
 
     diagnostic_snapshot_sink: DiagnosticSnapshotSink | None = None
     http_client_owner: NsHttpClientOwner | None = None
-    state_store: StateStore | None = None
+    state_store: StateStore | AuthorityBrokerStateStoreProxy | None = None
 
     def __post_init__(self) -> None:
         if self.diagnostic_snapshot_sink is not None:
@@ -106,12 +107,36 @@ class RuntimeDependencySlots:
                 expected_type_name="NsHttpClientOwner",
             )
         if self.state_store is not None:
-            _require_loaded_dependency(
-                self.state_store,
-                dependency="dependencies.state_store",
-                module_name="ns_common.state_store",
-                expected_type_name="StateStore",
+            state_module = sys.modules.get("ns_common.state_store")
+            broker_module = sys.modules.get("ns_runtime.authority_broker")
+            state_type = (
+                vars(state_module).get("StateStore")
+                if state_module is not None
+                else None
             )
+            proxy_type = (
+                vars(broker_module).get("AuthorityBrokerStateStoreProxy")
+                if broker_module is not None
+                else None
+            )
+            if not (
+                isinstance(state_type, type)
+                and isinstance(self.state_store, state_type)
+            ) and not (
+                isinstance(proxy_type, type)
+                and type(self.state_store) is proxy_type
+            ):
+                raise NsValidationError(
+                    "RuntimeContext dependency is invalid.",
+                    details={
+                        "component": "runtime_context",
+                        "dependency": "dependencies.state_store",
+                        "expected_type": (
+                            "StateStore|AuthorityBrokerStateStoreProxy"
+                        ),
+                        "actual_type": type(self.state_store).__name__,
+                    },
+                )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -198,7 +223,9 @@ class RuntimeContext:
         return self.dependencies.http_client_owner
 
     @property
-    def state_store(self) -> StateStore | None:
+    def state_store(
+        self,
+    ) -> StateStore | AuthorityBrokerStateStoreProxy | None:
         return self.dependencies.state_store
 
 

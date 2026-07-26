@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 import logging
@@ -86,6 +87,10 @@ from ns_runtime.delivery import (
 )
 from ns_runtime.processor import RoutingPreparationResult
 from ns_runtime.context import RuntimeContext, RuntimeDependencySlots
+from ns_runtime.authority_broker import (
+    AuthorityBrokerConfig,
+    start_production_authority_broker,
+)
 from ns_runtime.main import _run_service_once
 from ns_runtime.service import RuntimeService
 
@@ -448,112 +453,90 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         variable = "NS_RUNTIME_REPOSITORY_TEST_PASSWORD"
         previous = os.environ.get(variable)
         os.environ[variable] = self._password
-        composition = None
+        broker = None
         try:
-            composition = create_contract_test_state_store_composition(
-                config=NsRuntimeStateStoreConfig(
-                    backend="redis",
-                    endpoint=f"redis://127.0.0.1:{self._port}/0",
-                    password_source=f"env:{variable}",
-                    namespace=self.namespace,
-                    operation_timeout_seconds=1,
-                ),
-                clock=self.clock,
-                runtime_id="runtime-production",
+            config = AuthorityBrokerConfig(
+                iam_base_url="http://127.0.0.1:1/",
+                iam_timeout_seconds=0.2,
+                iam_service_credential="i" * 32,
+                iam_mode="strict",
+                permission_snapshot_ttl_seconds=60.0,
+                state_backend="redis",
+                state_endpoint=f"redis://127.0.0.1:{self._port}/0",
+                state_username="",
+                state_password_source=f"env:{variable}",
+                state_namespace=self.namespace,
+                state_operation_timeout_seconds=1.0,
+                runtime_id="runtime-production-a",
             )
-            assert composition is not None
-            store = composition.store
-            repositories = composition.delivery_repositories(
-                runtime_id="runtime-production",
+            broker = start_production_authority_broker(config=config)
+            await broker.state_store.open()
+            self.assertEqual(
+                "ready",
+                (await broker.state_store.health()).status.value,
             )
-            await store.open()
-            admission_scope = repositories.admission.delivery_scope(
-                tenant_id="tenant-a",
-                bucket_id=0,
-                layout_generation=2,
-            )
-            key = StateKey(
-                namespace=admission_scope.namespace,
-                object_type="delivery",
-                object_id="delivery-resource-policy",
-            )
-            transaction = StateTransaction(
-                scope=admission_scope,
-                mutations=(StateMutation(
-                    key=key,
-                    assertion=StateAssertion.absent(),
-                    kind=StateMutationKind.CREATE,
-                    document=StateDocument(
-                        schema_name="delivery_delivery",
-                        schema_version=1,
-                        state_version=1,
-                        payload=b"{}",
-                    ),
-                ),),
-                ordered_index_mutations=(StateOrderedIndexMutation(
-                    index=StateOrderedIndexKey(
-                        namespace=admission_scope.namespace,
-                        name="delivery.prepared",
-                        bucket="delivery",
-                    ),
-                    kind=StateOrderedIndexMutationKind.ADD,
-                    member="delivery-resource-policy",
-                    score=1.0,
-                ),),
-                log_appends=(StateTransitionLogAppend(
-                    key=StateKey(
-                        namespace=admission_scope.namespace,
-                        object_type="delivery_transition_log",
-                        object_id="delivery-resource-policy-log",
-                    ),
-                    document=StateDocument(
-                        schema_name="delivery_transition_event",
-                        schema_version=1,
-                        state_version=1,
-                        payload=b"{}",
-                    ),
-                ),),
-            )
-            result = await store.transact(transaction)
-            self.assertTrue(result.is_for_transaction(transaction))
-
-            scheduler_scope = repositories.scheduler.delivery_scope(
-                tenant_id="tenant-a",
-                bucket_id=0,
-                layout_generation=2,
-            )
-            read = await store.read(
-                scope=scheduler_scope,
-                key=key,
-                consistency=StateConsistency.LINEARIZABLE,
-            )
-            self.assertIsNotNone(read.record)
-
-            payload_scope = repositories.payload.delivery_scope(
-                tenant_id="tenant-a",
-                bucket_id=0,
-                layout_generation=2,
-            )
-            for scope, forbidden_type in (
-                (scheduler_scope, "payload_body"),
-                (payload_scope, "delivery"),
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
             ):
-                with self.assertRaises(
-                    NsRuntimeStateStoreCapabilityUnavailableError,
-                ):
-                    await store.read(
-                        scope=scope,
-                        key=StateKey(
-                            namespace=scope.namespace,
-                            object_type=forbidden_type,
-                            object_id="forbidden",
-                        ),
-                        consistency=StateConsistency.LINEARIZABLE,
-                    )
-            await store.close()
+                start_production_authority_broker(
+                    config=dataclasses.replace(
+                        config,
+                        runtime_id="runtime-production-b",
+                    ),
+                )
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await broker.repositories.scheduler._request(
+                    "read_payload_body", object(),
+                )
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await broker.repositories.payload._request(
+                    "read_delivery", object(),
+                )
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await broker.repositories.registry._request(
+                    "read_scheduler_index", object(),
+                )
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await broker.repositories.audit.append_audit(
+                    namespace=StateNamespace.tenant(
+                        tenant_id="tenant-a",
+                        domain="delivery",
+                    ),
+                    object_id="forbidden",
+                    document=StateDocument(
+                        schema_name="runtime.processor_audit",
+                        schema_version=1,
+                        state_version=1,
+                        payload=b"{}",
+                    ),
+                )
+            broker._channel._process.terminate()
+            broker._channel._process.join(timeout=5.0)
+            replacement = start_production_authority_broker(
+                config=dataclasses.replace(
+                    config,
+                    runtime_id="runtime-production-after-crash",
+                ),
+            )
+            try:
+                await replacement.state_store.open()
+                self.assertEqual(
+                    "ready",
+                    (await replacement.state_store.health()).status.value,
+                )
+            finally:
+                replacement.close()
         finally:
-            if composition is not None and composition.store.state.value == "open":
-                await composition.store.close()
+            if broker is not None:
+                broker.close()
             if previous is None:
                 os.environ.pop(variable, None)
             else:

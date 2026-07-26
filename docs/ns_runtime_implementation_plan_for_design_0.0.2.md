@@ -21,6 +21,14 @@
 - P11-FIX-08：delivery admission、scheduler、payload、registry与audit repository保持最小资源权限；跨role和未知资源fail closed。状态机与WRITE_UNCERTAIN规则未改变。
 - 冻结：P12仍`BLOCKED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
 
+### P08-FIX-05 / P09-FIX-09 / P11-FIX-10 authority broker isolation
+
+- 状态：`VERIFIED / F3 (local only)`；长期边界见ADR-048。
+- P09-FIX-09：production IAM HTTP graph与Ed25519 decision私钥迁入spawn broker；主进程只持有fixed-operation proxy、公钥、instance ID和broker-signed result，authorization evidence直接消费同一签名。
+- P08-FIX-05：production Redis/Valkey provider、repository authority/resource policy和physical-domain OS lease迁入broker；主进程只持有fixed-role repository proxy，不取得raw Store或StateAccessScope。contract-test composition改为deterministic in-memory且拒绝network配置。
+- P11-FIX-10：payload revalidation result由broker签名并绑定request/decision/snapshot/target/expiry；broker/IPC failure fail closed，StateStore write保持indeterminate，WRITE_UNCERTAIN仍不恢复、不重发。
+- 冻结：P12仍`BLOCKED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
+
 ---
 
 ## 0. 文档执行规则
@@ -122,7 +130,7 @@
 | 当前工作包状态 | `BLOCKED`（等待独立实施授权） |
 | 当前阶段状态 | `NOT_STARTED / F0` |
 | 最近已验证阶段 | `P11 本地可靠投递调度与发送`（`F3 / local only`） |
-| 最近已验证工作包 | `P11-FIX-07` |
+| 最近已验证工作包 | `P11-FIX-10` |
 | 下一阶段 | `P12-W01`（等待独立实施授权） |
 | 当前阻塞项 | P12尚未授权；production task.dispatch继续关闭，transport write只允许到ack_waiting，不等于delivery成功 |
 | 设计基线版本 | `0.0.2` |
@@ -876,6 +884,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `P08-W08` | `VERIFIED` | Contract Verification：确定性 model/harness 覆盖 CAS、transaction、lifecycle、namespace、failure、ownership 和 audit | 不启动真实 Redis/Valkey/SQLite/Sentinel/Cluster |
 | `P08-FIX-01` | `VERIFIED` | issuer-sealed scope/capability、transaction result cardinality与Redis ordered-index原子cursor分页 | public/replace/subclass/cross-store不能扩权；records/log positions精确计数；并发分页无静默跳项/重复 |
 | `P08-FIX-02` | `VERIFIED` | composition-owned固定role repository与transaction-bound provider result | raw store不能签发任意capability；admission/scheduler/payload/registry/audit最小权限隔离；result拒绝direct/replace/copy/错序/cross-transaction replay；见ADR-046 |
+| `P08-FIX-05` | `VERIFIED` | spawn broker独占production provider、repository authority/resource policy与physical-domain OS lease | 主进程无raw production Store/scope issuer；相同物理域不同runtime ID的第二broker拒绝；contract-test composition不连接Redis；见ADR-048 |
 
 ### Contract 测试矩阵
 
@@ -967,6 +976,12 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 - 状态：`VERIFIED`。删除自由production signer；实例issuer绑定精确production MessageAuthorizationService并只消费该service本次sealed typed result与当前ProcessorContext，evidence绑定config/policy版本。
 - production IamClient由process bootstrap在单一局部组装区间绑定精确NsHttpClientOwner、HTTP client、固定backend与底层transport；普通owner/factory不能创建production handle。HTTP关键方法/config/transport替换、copy/subclass、未初始化对象、重复binding和fake service均fail closed。
 - 范围仍是P09 local-only authority closure；P12、P14、P17和production task.dispatch保持未实现/关闭；见ADR-046。
+
+### P09-FIX-09 broker-signed authorization authority
+
+- 状态：`VERIFIED / F3 (local only)`。同解释器内factory/proof/HTTP binding不再承担production authority；production `IamClient`为spawn broker的fixed-operation proxy。
+- broker独占HTTP transport和Ed25519私钥；signed result绑定broker instance、operation、request projection/fingerprint、backend decision、snapshot/version、tenant/target/message type、issued/expiry与nonce/sequence。MessageAuthorizationService与payload issuer直接保留并验证同一个broker result。
+- 范围仍是P09/P11 authority provenance closure；P12、P14、P17和production task.dispatch保持未实现/关闭；见ADR-048。
 
 ### 测试矩阵
 
@@ -1074,6 +1089,7 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `P11-FIX-05` | `VERIFIED` | ordered-index repair前置断言、统一cursor身份、renew handle生命周期、不可伪造IAM evidence及backend对象级判定 | record/index read assertion在写前原子校验且冲突零落地；cursor v2迁移门禁、renew显式stop/join、backend对象级ACL与三套全量通过；见ADR-044和最终验收记录 |
 | `P11-FIX-06` | `VERIFIED` | production IAM/payload authority seal与typed transport write uncertainty闭合 | fake/replace/subclass/未初始化adapter不能签发；started write只到WRITE_UNCERTAIN，before-start failure才到WRITE_FAILED；见ADR-045 |
 | `P11-FIX-07` | `VERIFIED` | validator-owned payload issuer与composition-owned最小delivery repositories | payload decision一次性绑定真实request/client/clock/delivery/target；admission/scheduler/payload/registry不可跨role调用或共享全能力scope；见ADR-046 |
+| `P11-FIX-10` | `VERIFIED` | payload/IAM broker签名、fixed-role repository IPC与broker failure closure | 跨broker/request/operation replay、handle/role修改和broker crash fail closed；WRITE_UNCERTAIN不恢复、不重发；见ADR-048 |
 
 ### 测试矩阵
 

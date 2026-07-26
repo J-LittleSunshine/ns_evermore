@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import math
-import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -289,7 +287,7 @@ class ClaimResult:
 class _PayloadAccessEvidenceIssuer:
     """One validator-owned capability bound to its exact production IAM client."""
 
-    __slots__ = ("_iam", "_clock", "_key", "_pending_token")
+    __slots__ = ("_iam", "_clock")
 
     def __init__(self, *, iam_client: object, clock: object) -> None:
         from ns_common.time import Clock
@@ -303,14 +301,12 @@ class _PayloadAccessEvidenceIssuer:
             _invalid("payload_access_issuer.composition")
         self._iam = iam_client
         self._clock = clock
-        self._key = secrets.token_bytes(32)
-        self._pending_token: object | None = None
 
     def issue(
         self,
         *,
         request: object,
-        decision: object,
+        verified_result: object,
         delivery: DeliveryRecord,
         target: object,
     ) -> "PayloadAccessDecisionEvidence | None":
@@ -318,15 +314,31 @@ class _PayloadAccessEvidenceIssuer:
             PayloadRefRevalidationDecision,
             PayloadRefRevalidationRequest,
         )
+        from ns_runtime.authority_broker import (
+            BrokerSignedIamResult,
+            VerifiedBrokerIamResult,
+            broker_request_fingerprint,
+        )
 
+        decision = getattr(verified_result, "result", None)
+        broker_authority = getattr(verified_result, "authority", None)
         if (
             not self._iam._is_production_adapter()
             or type(request) is not PayloadRefRevalidationRequest
             or type(decision) is not PayloadRefRevalidationDecision
-            or not self._iam._consume_payload_revalidation(
-                request=request,
-                decision=decision,
+            or type(verified_result) is not VerifiedBrokerIamResult
+            or type(broker_authority) is not BrokerSignedIamResult
+            or not broker_authority.verify(
+                public_key=self._iam._channel.public_key,
+                broker_instance_id=self._iam._channel.instance_id,
+                operation="payload_revalidate",
+                request_fingerprint=broker_request_fingerprint(
+                    "payload_revalidate", request,
+                ),
+                now=self._clock.utc_now(),
             )
+            or broker_authority.result_mapping() != decision.to_wire()
+            or broker_authority.request_mapping() != request.to_wire()
             or not isinstance(delivery, DeliveryRecord)
             or type(target) is not LocalDeliveryTarget
         ):
@@ -397,28 +409,51 @@ class _PayloadAccessEvidenceIssuer:
         evidence_fingerprint = payload_access_evidence_fingerprint(
             **values,
         )
-        token = object()
-        self._pending_token = token
-        try:
-            return PayloadAccessDecisionEvidence(
-                evidence_fingerprint=evidence_fingerprint,
-                **values,
-                _issuer=self,
-                _construction_token=token,
-            )
-        finally:
-            self._pending_token = None
-
-    def _consume_construction_token(self, token: object) -> bool:
-        return token is not None and self._pending_token is token
+        return PayloadAccessDecisionEvidence(
+            evidence_fingerprint=evidence_fingerprint,
+            **values,
+            _issuer=self,
+            _broker_authority=broker_authority,
+        )
 
     def _verify(self, evidence: "PayloadAccessDecisionEvidence") -> bool:
+        authority = evidence._broker_authority
+        request_values = authority.request_mapping()
+        result_values = authority.result_mapping()
         return bool(
             self._iam._is_production_adapter()
-            and hmac.compare_digest(
-                evidence._authority_signature,
-                _payload_access_authority_signature(evidence, issuer=self),
+            and authority.verify(
+                public_key=self._iam._channel.public_key,
+                broker_instance_id=self._iam._channel.instance_id,
+                operation="payload_revalidate",
+                request_fingerprint=authority.request_fingerprint,
+                now=self._clock.utc_now(),
             )
+            and authority.backend_decision == "allow"
+            and request_values.get("object_id") == evidence.object_id
+            and request_values.get("version") == evidence.object_version
+            and request_values.get("checksum") == evidence.checksum
+            and request_values.get("size_bytes") == evidence.size_bytes
+            and request_values.get("tenant_id") == evidence.tenant_id
+            and request_values.get("target_fingerprint")
+            == evidence.target_fingerprint
+            and request_values.get("admission_authority_reference")
+            == evidence.admission_authority_reference
+            and request_values.get("permission_snapshot_ref")
+            == evidence.permission_snapshot_reference
+            and request_values.get("permission_version")
+            == evidence.iam_decision_version
+            and result_values.get("object_id") == evidence.object_id
+            and result_values.get("version") == evidence.object_version
+            and result_values.get("checksum") == evidence.checksum
+            and result_values.get("size_bytes") == evidence.size_bytes
+            and result_values.get("tenant_id") == evidence.tenant_id
+            and result_values.get("target_fingerprint")
+            == evidence.target_fingerprint
+            and result_values.get("decision_reference")
+            == evidence.iam_decision_reference
+            and result_values.get("permission_version")
+            == evidence.iam_decision_version
         )
 
     def __copy__(self) -> "_PayloadAccessEvidenceIssuer":
@@ -452,6 +487,7 @@ class PayloadAccessDecisionEvidence:
     expires_at: datetime
     _authority_seal: object = field(init=False, repr=False, compare=False)
     _authority_signature: bytes = field(init=False, repr=False, compare=False)
+    _broker_authority: object = field(init=False, repr=False, compare=False)
 
     def __init__(
         self,
@@ -473,12 +509,14 @@ class PayloadAccessDecisionEvidence:
         validated_at: datetime,
         expires_at: datetime,
         _issuer: object | None = None,
-        _construction_token: object | None = None,
+        _broker_authority: object | None = None,
     ) -> None:
+        from ns_runtime.authority_broker import BrokerSignedIamResult
+
         if (
             type(self) is not PayloadAccessDecisionEvidence
             or type(_issuer) is not _PayloadAccessEvidenceIssuer
-            or not _issuer._consume_construction_token(_construction_token)
+            or type(_broker_authority) is not BrokerSignedIamResult
         ):
             _invalid("payload_access.issuer")
         for name, value in (
@@ -499,15 +537,11 @@ class PayloadAccessDecisionEvidence:
             ("validated_at", validated_at),
             ("expires_at", expires_at),
             ("_authority_seal", _issuer),
-            ("_authority_signature", b""),
+            ("_authority_signature", _broker_authority.signature),
+            ("_broker_authority", _broker_authority),
         ):
             object.__setattr__(self, name, value)
         self.__post_init__()
-        object.__setattr__(
-            self,
-            "_authority_signature",
-            _payload_access_authority_signature(self, issuer=_issuer),
-        )
 
     def __post_init__(self) -> None:
         if type(self.allowed) is not bool:
@@ -563,42 +597,6 @@ class PayloadAccessDecisionEvidence:
     ) -> "PayloadAccessDecisionEvidence":
         del self, memo
         _invalid("payload_access.copy")
-
-def _payload_access_authority_signature(
-    evidence: PayloadAccessDecisionEvidence,
-    *,
-    issuer: _PayloadAccessEvidenceIssuer,
-) -> bytes:
-    payload = json.dumps({
-        "allowed": evidence.allowed,
-        "evidence_fingerprint": evidence.evidence_fingerprint,
-        "request_fingerprint": evidence.request_fingerprint,
-        "object_id": evidence.object_id,
-        "object_version": evidence.object_version,
-        "checksum": evidence.checksum,
-        "size_bytes": evidence.size_bytes,
-        "tenant_id": evidence.tenant_id,
-        "target_fingerprint": evidence.target_fingerprint,
-        "admission_authority_reference": (
-            evidence.admission_authority_reference
-        ),
-        "permission_snapshot_reference": (
-            evidence.permission_snapshot_reference
-        ),
-        "permission_snapshot_fingerprint": (
-            evidence.permission_snapshot_fingerprint
-        ),
-        "iam_decision_reference": evidence.iam_decision_reference,
-        "iam_decision_version": evidence.iam_decision_version,
-        "validated_at": evidence.validated_at.isoformat(),
-        "expires_at": evidence.expires_at.isoformat(),
-    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hmac.new(
-        issuer._key,
-        payload,
-        hashlib.sha256,
-    ).digest()
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PayloadValidationResult:

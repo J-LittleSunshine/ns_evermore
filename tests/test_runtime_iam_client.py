@@ -5,6 +5,7 @@ import asyncio
 import copy
 from datetime import datetime, timedelta, timezone
 import json
+import tempfile
 import unittest
 from unittest import mock
 from typing import Mapping
@@ -40,16 +41,21 @@ from ns_runtime.iam import (
     PermissionSnapshot,
 )
 import ns_runtime.iam.client as iam_client_module
+from ns_runtime.authority_broker import (
+    AuthorityBrokerConfig,
+    ProductionAuthorityBroker,
+    start_production_authority_broker,
+)
 from ns_runtime.protocol import ProtocolVersion
 
 
-NOW = datetime(2026, 7, 21, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc)
 TOKEN = "user-access-token-must-never-leak"
 SERVICE = "internal-service-credential-at-least-32-chars"
 
 
-class _ContractTestIamClient(IamClient):
-    """Explicit test-realm adapter; it can never satisfy production checks."""
+class _ContractTestIamClient:
+    """Explicit test-only HTTP adapter; never accepted as production IAM."""
 
     def __init__(
         self,
@@ -59,11 +65,7 @@ class _ContractTestIamClient(IamClient):
     ) -> None:
         self._test_http = http_client
         self._service_credential = SERVICE
-        self._trace_id_factory = lambda: "operation:trace1"
         self._clock = clock
-        self._iam_mode = "strict"
-        self._payload_revalidation_results = {}
-        self._authorization_service = None
 
     def _is_production_adapter(self) -> bool:
         return False
@@ -78,36 +80,51 @@ class _ContractTestIamClient(IamClient):
                 path,
                 json_data=dict(payload),
                 bearer_token=self._service_credential,
-                trace_id=self._trace_id_factory(),
+                trace_id="contract-test-operation",
                 expected_statuses={200},
             )
             body = response.json()
         except NsDependencyError as error:
             if "timeout_seconds" in error.details:
                 raise NsRuntimeIamTimeoutError(details={
-                    "component": "runtime_iam_client",
-                    "operation": "http_request",
+                    "component": "contract_test_iam",
                     "reason": "timeout",
                 }) from None
             raise NsRuntimeIamUnavailableError(details={
-                "component": "runtime_iam_client",
-                "operation": "http_request",
+                "component": "contract_test_iam",
                 "reason": "backend_unavailable",
             }) from None
         if (
             not isinstance(body, Mapping)
-            or body.get("success") is not True
             or set(body) != {
                 "success", "code", "error", "message", "data", "request_id",
             }
+            or body.get("success") is not True
             or not isinstance(body.get("data"), Mapping)
         ):
             raise NsRuntimeIamUnavailableError(details={
-                "component": "runtime_iam_client",
-                "operation": "response",
+                "component": "contract_test_iam",
                 "reason": "malformed_response",
             })
-        return dict(body["data"])
+        return dict(body["data"])  # type: ignore[arg-type]
+
+    async def validate_payload_ref(
+        self,
+        request: PayloadRefValidationRequest,
+    ) -> PayloadRefValidationResult:
+        return PayloadRefValidationResult.from_wire(await self._post(
+            "internal/payload_ref/validate/",
+            request.to_wire(),
+        ))
+
+    async def revalidate_payload_ref(
+        self,
+        request: PayloadRefRevalidationRequest,
+    ) -> PayloadRefRevalidationDecision:
+        return PayloadRefRevalidationDecision.from_wire(await self._post(
+            "internal/payload_ref/revalidate/",
+            request.to_wire(),
+        ))
 
 
 class _HttpServer:
@@ -230,22 +247,28 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
     async def _client(
         self,
         outcomes: list[object],
-    ) -> tuple[_ContractTestIamClient, _HttpServer]:
+    ) -> tuple[IamClient, _HttpServer, ProductionAuthorityBroker]:
         captured = _HttpServer(outcomes)
         base_url = await captured.start()
-        owner = NsHttpClientOwner()
-        http = owner.create(
-            name="runtime-iam-test",
-            base_url=base_url,
-            timeout_seconds=0.05,
+        broker = start_production_authority_broker(
+            config=AuthorityBrokerConfig(
+                iam_base_url=base_url,
+                iam_timeout_seconds=0.05,
+                iam_service_credential=SERVICE,
+                iam_mode="strict",
+                permission_snapshot_ttl_seconds=60.0,
+                state_backend="sqlite",
+                state_endpoint="",
+                state_username="",
+                state_password_source="none",
+                state_namespace="runtime-test",
+                state_operation_timeout_seconds=1.0,
+                runtime_id="runtime:test",
+            ),
         )
         self.addAsyncCleanup(captured.close)
-        self.addAsyncCleanup(owner.aclose)
-        client = _ContractTestIamClient(
-            http_client=http,
-            clock=ControlledClock(utc_start=NOW),
-        )
-        return client, captured
+        self.addCleanup(broker.close)
+        return broker.iam, captured, broker
 
     def test_production_iam_adapter_cannot_be_directly_built_or_impersonated(
         self,
@@ -345,7 +368,7 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(object.__new__(IamClient)._is_production_adapter())
 
     async def test_valid_token_uses_internal_credential_and_trace_without_leak(self) -> None:
-        client, http = await self._client([{
+        client, http, _ = await self._client([{
             "active": True,
             "reason": "TOKEN_ACTIVE",
             "authority": _result().to_wire(),
@@ -355,20 +378,21 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("user:1", authority.identity)
         self.assertFalse(request.credential.available)
         self.assertEqual(SERVICE, http.calls[0]["bearer_token"])
-        self.assertEqual("operation:trace1", http.calls[0]["trace_id"])
+        self.assertTrue(str(http.calls[0]["trace_id"]).startswith("op_"))
         self.assertEqual(TOKEN, http.calls[0]["json_data"]["token"])  # type: ignore[index]
         combined = repr(client) + repr(request) + repr(authority)
         self.assertNotIn(TOKEN, combined)
         self.assertNotIn(SERVICE, combined)
 
     async def test_payload_ref_validation_is_live_typed_and_integrity_bound(self) -> None:
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         expected = PayloadRefValidationResult(
             valid=True, reason="valid", revoked=False,
-            expires_at=NOW + timedelta(minutes=2), object_id="object:1",
+            expires_at=expires_at, object_id="object:1",
             version="version:1", checksum="sha256:abcd",
             tenant_id="tenant:1", size_bytes=123,
         )
-        client, http = await self._client([expected.to_wire()])
+        client, http, _ = await self._client([expected.to_wire()])
         request = PayloadRefValidationRequest(
             object_id="object:1", version="version:1", checksum="sha256:abcd",
             tenant_id="tenant:1", owner_identity="user:1",
@@ -397,6 +421,7 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
             permission_version="version:1",
             admission_authority_reference="admission:opaque",
         )
+        decided_at = datetime.now(timezone.utc)
         expected = PayloadRefRevalidationDecision(
             valid=True,
             allowed=True,
@@ -411,10 +436,10 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
             permission_snapshot_ref=request.permission_snapshot_ref,
             permission_version=request.permission_version,
             decision_reference="iam-payload:backend-issued",
-            decided_at=NOW,
-            expires_at=NOW + timedelta(minutes=2),
+            decided_at=decided_at,
+            expires_at=decided_at + timedelta(minutes=5),
         )
-        client, http = await self._client([expected.to_wire()])
+        client, http, _ = await self._client([expected.to_wire()])
         self.assertEqual(
             expected,
             await client.revalidate_payload_ref(request),
@@ -446,7 +471,7 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
         )
         for outcome in cases:
             with self.subTest(reason=outcome["reason"]):
-                client, _ = await self._client([outcome])
+                client, _, _ = await self._client([outcome])
                 with self.assertRaises(NsRuntimeIamDeniedError):
                     await client.authenticate(_request())
 
@@ -456,7 +481,7 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
             _result(capabilities=frozenset({"runtime.connection", "runtime.management"})),
         )
         for result in hostile:
-            client, _ = await self._client([{
+            client, _, _ = await self._client([{
                 "active": True,
                 "reason": "TOKEN_ACTIVE",
                 "authority": result.to_wire(),
@@ -474,7 +499,7 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
         )
         for outcome, expected in cases:
             with self.subTest(expected=expected.__name__):
-                client, _ = await self._client([outcome])
+                client, _, _ = await self._client([outcome])
                 request = _request()
                 with self.assertRaises(expected):
                     await client.authenticate(request)
