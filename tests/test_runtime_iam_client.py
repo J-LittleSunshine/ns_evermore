@@ -44,7 +44,7 @@ import ns_runtime.iam.client as iam_client_module
 from ns_runtime.authority_broker import (
     AuthorityBrokerConfig,
     ProductionAuthorityBroker,
-    start_production_authority_broker,
+    start_contract_test_authority_broker,
 )
 from ns_runtime.protocol import ProtocolVersion
 
@@ -250,21 +250,20 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
     ) -> tuple[IamClient, _HttpServer, ProductionAuthorityBroker]:
         captured = _HttpServer(outcomes)
         base_url = await captured.start()
-        broker = start_production_authority_broker(
+        broker = start_contract_test_authority_broker(
             config=AuthorityBrokerConfig(
                 iam_base_url=base_url,
                 iam_timeout_seconds=0.05,
-                iam_service_credential=SERVICE,
                 iam_mode="strict",
                 permission_snapshot_ttl_seconds=60.0,
                 state_backend="sqlite",
                 state_endpoint="",
                 state_username="",
-                state_password_source="none",
                 state_namespace="runtime-test",
                 state_operation_timeout_seconds=1.0,
                 runtime_id="runtime:test",
             ),
+            iam_service_credential=SERVICE,
         )
         self.addAsyncCleanup(captured.close)
         self.addCleanup(broker.close)

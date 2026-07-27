@@ -10,8 +10,10 @@ identity, and signed least-privilege handles.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
+import math
 import multiprocessing
 import os
 import tempfile
@@ -21,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from multiprocessing.connection import Connection
+from multiprocessing.reduction import DupFd
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import unquote, urlsplit
@@ -37,8 +40,12 @@ from ns_common.exceptions import (
     NsRuntimeIamTimeoutError,
     NsRuntimeIamUnavailableError,
     NsRuntimeStateStoreCapabilityUnavailableError,
+    NsRuntimeStateStoreConflictError,
     NsRuntimeStateStoreIndeterminateWriteError,
+    NsRuntimeStateStoreNamespaceViolationError,
+    NsRuntimeStateStoreTimeoutError,
     NsRuntimeStateStoreUnavailableError,
+    NsRuntimeStateStoreVersionMismatchError,
     NsValidationError,
 )
 from ns_common.iam import (
@@ -47,6 +54,7 @@ from ns_common.iam import (
     IamCredentialStatus,
     IamIntrospectionRequest,
     IamIntrospectionResult,
+    IamTargetContext,
     PayloadRefRevalidationDecision,
     PayloadRefRevalidationRequest,
     PayloadRefValidationRequest,
@@ -57,6 +65,7 @@ from ns_common.state_store import (
     StateDocument,
     StateKey,
     StateNamespace,
+    StateNamespaceKind,
     StateOrderedIndexKey,
     StateReadResult,
     StateRecord,
@@ -70,6 +79,38 @@ from ns_runtime.connection.iam import (
     HandshakeIamAuthority,
     HandshakeIamRequest,
 )
+from ns_runtime.delivery_persistence import (
+    DeliveryPersistencePartition,
+    DeliveryPersistenceTransaction,
+    DeliveryPersistenceTransactionResult,
+)
+from ns_runtime.authority_wire import (
+    MAX_FRAME_BYTES,
+    WIRE_VERSION,
+    decode_append_result,
+    decode_bytes,
+    decode_cursor,
+    decode_document,
+    decode_frame,
+    decode_health,
+    decode_index_result,
+    decode_read_result,
+    decode_time,
+    decode_transaction_request,
+    decode_transaction_result,
+    encode_append_result,
+    encode_bytes,
+    encode_cursor,
+    encode_document,
+    encode_frame,
+    encode_health,
+    encode_index_result,
+    encode_read_result,
+    encode_time,
+    encode_transaction_request,
+    encode_transaction_result,
+    require_object,
+)
 
 
 _IAM_OPERATIONS = frozenset({
@@ -80,13 +121,20 @@ _IAM_OPERATIONS = frozenset({
     "payload_revalidate",
 })
 _ROLE_OPERATIONS: Mapping[str, frozenset[str]] = {
-    "admission": frozenset({"read_delivery", "transact_admission"}),
+    "admission": frozenset({
+        "read_delivery", "read_admission_dedup", "read_admission_summary",
+        "transact_admission",
+    }),
     "scheduler": frozenset({
         "read_delivery", "read_attempt", "read_summary",
+        "read_delivery_owner", "read_scheduler_cursor",
         "read_scheduler_index", "transact_scheduler",
     }),
     "payload": frozenset({"read_payload_body"}),
-    "registry": frozenset({"read_registry_layout"}),
+    "registry": frozenset({
+        "read_registry_layout", "read_registry_tenant",
+        "transact_registry", "read_registry_index",
+    }),
     "audit": frozenset({"append_audit"}),
     "lifecycle": frozenset({"state_health"}),
 }
@@ -98,8 +146,20 @@ _IAM_PATHS: Mapping[str, str] = {
     "payload_revalidate": "internal/payload_ref/revalidate/",
 }
 _WRITE_OPERATIONS = frozenset({
-    "transact_admission", "transact_scheduler", "append_audit",
+    "transact_admission", "transact_scheduler", "transact_registry",
+    "append_audit",
 })
+_ROOT_CERTIFICATE_TTL_SECONDS = 300
+_BROKER_REALMS = frozenset({
+    "production", "contract-test", "integration-test",
+})
+# Deployment trust root compiled into the broker executable/package.  The
+# corresponding private key is intentionally absent from Python source and is
+# supplied only through NS_RUNTIME_AUTHORITY_KEY_FD by the process launcher.
+_PRODUCTION_ROOT_PUBLIC_KEY = bytes.fromhex(
+    "bb664a4f556a411abe3f91fbde867461"
+    "0338069f874a2281413c52332cdacfdf"
+)
 
 
 class BrokerRepositoryRole(str, Enum):
@@ -116,13 +176,11 @@ class BrokerRepositoryRole(str, Enum):
 class AuthorityBrokerConfig:
     iam_base_url: str
     iam_timeout_seconds: float
-    iam_service_credential: str
     iam_mode: str
     permission_snapshot_ttl_seconds: float
     state_backend: str
     state_endpoint: str
     state_username: str
-    state_password_source: str
     state_namespace: str
     state_operation_timeout_seconds: float
     runtime_id: str
@@ -130,12 +188,10 @@ class AuthorityBrokerConfig:
     def __post_init__(self) -> None:
         for name in (
             "iam_base_url",
-            "iam_service_credential",
             "iam_mode",
             "state_backend",
             "state_endpoint",
             "state_username",
-            "state_password_source",
             "state_namespace",
             "runtime_id",
         ):
@@ -145,9 +201,12 @@ class AuthorityBrokerConfig:
         if self.state_backend not in {"sqlite", "redis", "valkey"}:
             _invalid("config.state_backend")
         if self.state_backend in {"redis", "valkey"}:
-            _physical_state_domain(self)
+            _physical_state_domain(
+                self,
+                credential_reference="validation-only",
+            )
         for name in (
-            "iam_service_credential", "iam_mode", "state_namespace",
+            "iam_mode", "state_namespace",
             "runtime_id",
         ):
             if not getattr(self, name):
@@ -159,6 +218,62 @@ class AuthorityBrokerConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
                 _invalid(f"config.{name}")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BrokerInstanceCertificate:
+    trust_realm: str
+    broker_instance_id: str
+    session_public_key: bytes
+    runtime_id: str
+    lifecycle_generation: int
+    issued_at: datetime
+    expires_at: datetime
+    nonce: str
+    signature: bytes
+
+    def signed_values(self) -> Mapping[str, object]:
+        return {
+            "trust_realm": self.trust_realm,
+            "broker_instance_id": self.broker_instance_id,
+            "session_public_key": encode_bytes(self.session_public_key),
+            "runtime_id": self.runtime_id,
+            "lifecycle_generation": self.lifecycle_generation,
+            "issued_at": encode_time(self.issued_at),
+            "expires_at": encode_time(self.expires_at),
+            "nonce": self.nonce,
+        }
+
+    def verify(
+        self,
+        root_public_key: bytes,
+        *,
+        expected_realm: str,
+        expected_runtime_id: str,
+        now: datetime,
+    ) -> bool:
+        if (
+            type(self) is not BrokerInstanceCertificate
+            or expected_realm not in _BROKER_REALMS
+            or self.trust_realm != expected_realm
+            or self.runtime_id != expected_runtime_id
+            or self.lifecycle_generation != 1
+            or self.issued_at > now
+            or self.expires_at <= now
+            or self.expires_at - self.issued_at
+            > timedelta(seconds=_ROOT_CERTIFICATE_TTL_SECONDS)
+            or len(self.session_public_key) != 32
+            or len(root_public_key) != 32
+        ):
+            return False
+        try:
+            Ed25519PublicKey.from_public_bytes(root_public_key).verify(
+                self.signature,
+                _canonical(self.signed_values()),
+            )
+        except (InvalidSignature, ValueError, TypeError):
+            return False
+        return True
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -312,7 +427,7 @@ class _BrokerChannel:
 
     __slots__ = (
         "_connection", "_process", "_public_key", "_instance_id", "_lock",
-        "_closed", "_timeout_seconds",
+        "_closed", "_timeout_seconds", "_realm", "_response_sequence",
     )
 
     def __init__(
@@ -323,6 +438,7 @@ class _BrokerChannel:
         public_key: bytes,
         instance_id: str,
         timeout_seconds: float,
+        realm: str,
     ) -> None:
         self._connection = connection
         self._process = process
@@ -331,6 +447,8 @@ class _BrokerChannel:
         self._lock = threading.Lock()
         self._closed = False
         self._timeout_seconds = float(timeout_seconds)
+        self._realm = realm
+        self._response_sequence = 0
 
     @property
     def public_key(self) -> bytes:
@@ -349,7 +467,7 @@ class _BrokerChannel:
         *,
         handle: BrokerAuthorityHandle,
         operation: str,
-        payload: object,
+        payload: dict[str, object] | list[object] | str | int | float | bool | None,
     ) -> object:
         if not handle.verify(
                 self._public_key,
@@ -364,44 +482,70 @@ class _BrokerChannel:
                     "reason": "broker_unavailable_outcome_unknown",
                 })
             raise _broker_unavailable("broker_unavailable")
+        request_id = "ipc_" + uuid.uuid4().hex
         message = {
+            "version": WIRE_VERSION,
             "kind": "request",
-            "handle": handle,
+            "request_id": request_id,
+            "handle": _encode_handle(handle),
             "operation": operation,
             "payload": payload,
         }
+        raw_request = encode_frame(message)  # pre-send schema/size rejection
+        sent = False
         try:
             with self._lock:
-                self._connection.send(message)
+                self._connection.send_bytes(raw_request)
+                sent = True
                 if not self._connection.poll(self._timeout_seconds):
                     self._closed = True
-                    self._process.terminate()
-                    self._connection.close()
-                    self._process.join(timeout=5.0)
+                    self._stop_process()
                     if operation in _WRITE_OPERATIONS:
-                        raise NsRuntimeStateStoreIndeterminateWriteError(details={
-                            "component": "authority_broker",
-                            "operation": operation,
-                            "reason": "ipc_timeout_outcome_unknown",
-                        })
+                        raise _indeterminate(operation, "ipc_timeout")
                     raise _broker_unavailable("ipc_timeout")
-                response = self._connection.recv()
-        except (BrokenPipeError, EOFError, OSError):
+                response = decode_frame(
+                    self._connection.recv_bytes(MAX_FRAME_BYTES),
+                )
+        except NsRuntimeStateStoreIndeterminateWriteError:
+            raise
+        except (BrokenPipeError, EOFError, OSError, NsValidationError):
             self._closed = True
-            if operation in _WRITE_OPERATIONS:
-                raise NsRuntimeStateStoreIndeterminateWriteError(details={
-                    "component": "authority_broker",
-                    "operation": operation,
-                    "reason": "ipc_outcome_unknown",
-                }) from None
+            if operation in _WRITE_OPERATIONS and sent:
+                raise _indeterminate(operation, "ipc_invalid_response") from None
             raise _broker_unavailable("ipc_closed") from None
-        if type(response) is not dict:
-            raise _broker_unavailable("malformed_response")
-        if response.get("ok") is True and set(response) == {"ok", "result"}:
-            return response["result"]
-        if response.get("ok") is False:
-            _raise_remote_error(response)
-        raise _broker_unavailable("malformed_response")
+        try:
+            values = require_object(
+                response,
+                fields={
+                    "version", "kind", "request_id", "sequence",
+                    "ok", "result", "error",
+                },
+                field="response",
+            )
+            sequence = values["sequence"]
+            if (
+                values["version"] != WIRE_VERSION
+                or values["kind"] != "response"
+                or values["request_id"] != request_id
+                or type(sequence) is not int
+                or sequence != self._response_sequence + 1
+                or type(values["ok"]) is not bool
+            ):
+                _invalid("response.binding")
+            self._response_sequence = sequence
+            if values["ok"] is True:
+                if values["error"] is not None:
+                    _invalid("response.error")
+                return values["result"]
+            if values["result"] is not None:
+                _invalid("response.result")
+            _raise_remote_error(values["error"])
+        except (NsValidationError, KeyError, TypeError, ValueError):
+            if operation in _WRITE_OPERATIONS and sent:
+                raise _indeterminate(
+                    operation, "ipc_malformed_response",
+                ) from None
+            raise _broker_unavailable("malformed_response") from None
 
     def close(self, *, terminate: bool = False) -> None:
         if self._closed:
@@ -409,9 +553,14 @@ class _BrokerChannel:
         try:
             with self._lock:
                 if self._process.is_alive() and not terminate:
-                    self._connection.send({"kind": "shutdown"})
+                    self._connection.send_bytes(encode_frame({
+                        "version": WIRE_VERSION,
+                        "kind": "shutdown",
+                    }))
                     if self._connection.poll(5.0):
-                        self._connection.recv()
+                        decode_frame(
+                            self._connection.recv_bytes(MAX_FRAME_BYTES),
+                        )
         except (BrokenPipeError, EOFError, OSError):
             pass
         finally:
@@ -421,9 +570,27 @@ class _BrokerChannel:
             except OSError:
                 pass
             self._process.join(timeout=5.0)
-            if terminate and self._process.is_alive():
+            if self._process.is_alive():
                 self._process.terminate()
                 self._process.join(timeout=5.0)
+            if self._process.is_alive():
+                self._process.kill()
+                self._process.join(timeout=5.0)
+            if self._process.is_alive():
+                raise _broker_unavailable("broker_process_did_not_exit")
+
+    def _stop_process(self) -> None:
+        try:
+            self._connection.close()
+        except OSError:
+            pass
+        self._process.join(timeout=0.1)
+        if self._process.is_alive():
+            self._process.terminate()
+            self._process.join(timeout=5.0)
+        if self._process.is_alive():
+            self._process.kill()
+            self._process.join(timeout=5.0)
 
 
 class ProductionIamAuthorityProxy(HandshakeIamAdapter):
@@ -439,13 +606,23 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
         _invalid("iam_proxy.broker_authority")
 
     def _is_production_adapter(self) -> bool:
+        return bool(
+            type(self) is ProductionIamAuthorityProxy
+            and self._is_broker_adapter()
+            and self._channel._realm == "production"
+        )
+
+    def _is_broker_adapter(self) -> bool:
         substituted = {
             "authenticate", "access_check", "access_check_signed",
             "refresh_permission_snapshot", "validate_payload_ref",
             "revalidate_payload_ref",
         }.intersection(getattr(self, "__dict__", {}))
         return bool(
-            type(self) is ProductionIamAuthorityProxy
+            type(self) in {
+                ProductionIamAuthorityProxy,
+                ContractTestIamAuthorityProxy,
+            }
             and type(getattr(self, "_channel", None)) is _BrokerChannel
             and type(getattr(self, "_handle", None)) is BrokerAuthorityHandle
             and self._handle.role is BrokerRepositoryRole.IAM
@@ -454,6 +631,16 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                 instance_id=self._channel.instance_id,
             )
             and self._channel.alive
+            and (
+                (
+                    type(self) is ProductionIamAuthorityProxy
+                    and self._channel._realm == "production"
+                )
+                or (
+                    type(self) is ContractTestIamAuthorityProxy
+                    and self._channel._realm == "contract-test"
+                )
+            )
             and not substituted
         )
 
@@ -550,11 +737,14 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
     ) -> VerifiedBrokerIamResult:
         if operation not in _IAM_OPERATIONS:
             _invalid("iam_proxy.provenance")
-        if not self._is_production_adapter():
+        if not self._is_broker_adapter():
             channel = getattr(self, "_channel", None)
             handle = getattr(self, "_handle", None)
             if (
-                type(self) is ProductionIamAuthorityProxy
+                type(self) in {
+                    ProductionIamAuthorityProxy,
+                    ContractTestIamAuthorityProxy,
+                }
                 and type(channel) is _BrokerChannel
                 and type(handle) is BrokerAuthorityHandle
                 and handle.role is BrokerRepositoryRole.IAM
@@ -567,12 +757,13 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                 raise _broker_unavailable("broker_unavailable")
             _invalid("iam_proxy.provenance")
         request_fingerprint = _request_fingerprint(operation, payload)
-        result = await asyncio.to_thread(
+        raw_result = await asyncio.to_thread(
             self._channel.request,
             handle=self._handle,
             operation=operation,
-            payload=payload,
+            payload=_encode_iam_request(operation, payload),
         )
+        result = _decode_signed_iam_result(raw_result)
         if type(result) is not BrokerSignedIamResult or not result.verify(
             public_key=self._channel.public_key,
             broker_instance_id=self._channel.instance_id,
@@ -605,6 +796,10 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
     def __deepcopy__(self, memo: dict[int, object]) -> "ProductionIamAuthorityProxy":
         del memo
         _invalid("iam_proxy.copy")
+
+
+class ContractTestIamAuthorityProxy(ProductionIamAuthorityProxy):
+    """Explicit non-production broker adapter bound to a test trust root."""
 
 
 class _RepositoryProxy:
@@ -644,87 +839,326 @@ class _RepositoryProxy:
 class AdmissionRepositoryProxy(_RepositoryProxy):
     _ROLE = BrokerRepositoryRole.ADMISSION
 
+    def delivery_scope(
+        self, *, tenant_id: str, bucket_id: int, layout_generation: int,
+    ) -> DeliveryPersistencePartition:
+        return _delivery_partition(
+            tenant_id=tenant_id,
+            bucket_id=bucket_id,
+            layout_generation=layout_generation,
+        )
+
+    async def read(
+        self, *, scope: DeliveryPersistencePartition, key: StateKey,
+        consistency: StateConsistency,
+    ) -> StateReadResult:
+        del consistency
+        operation = {
+            "delivery": "read_delivery",
+            "dedup": "read_admission_dedup",
+            "summary": "read_admission_summary",
+        }.get(key.object_type)
+        if operation is None:
+            raise _state_denied("admission_read_resource_denied")
+        return decode_read_result(await self._request(operation, {
+            "tenant_id": scope.tenant_id,
+            "bucket_id": scope.bucket_id,
+            "layout_generation": scope.layout_generation,
+            "object_id": key.object_id,
+        }))
+
+    async def transact(
+        self,
+        transaction: DeliveryPersistenceTransaction,
+    ) -> DeliveryPersistenceTransactionResult:
+        partition = transaction.partition
+        raw = await self._request(
+            "transact_admission",
+            encode_transaction_request(
+                transaction,
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+            ),
+        )
+        return _bind_write_transaction_result(
+            transaction, raw, operation="transact_admission",
+        )
+
     async def read_delivery(
         self, *, tenant_id: str, bucket_id: int, layout_generation: int,
         delivery_id: str,
     ) -> StateReadResult:
-        return await self._request("read_delivery", (
-            tenant_id, bucket_id, layout_generation, delivery_id,
-        ))  # type: ignore[return-value]
+        return decode_read_result(await self._request("read_delivery", {
+            "tenant_id": tenant_id,
+            "bucket_id": bucket_id,
+            "layout_generation": layout_generation,
+            "object_id": delivery_id,
+        }))
 
     async def transact_admission(
         self, *, tenant_id: str, bucket_id: int, layout_generation: int,
-        transaction: StateTransaction,
-    ) -> StateTransactionResult:
-        return await self._request("transact_admission", (
-            tenant_id, bucket_id, layout_generation, transaction,
-        ))  # type: ignore[return-value]
+        transaction: DeliveryPersistenceTransaction,
+    ) -> DeliveryPersistenceTransactionResult:
+        if transaction.partition != self.delivery_scope(
+            tenant_id=tenant_id,
+            bucket_id=bucket_id,
+            layout_generation=layout_generation,
+        ):
+            _invalid("admission.transaction_partition")
+        return await self.transact(transaction)
 
 
 class SchedulerRepositoryProxy(_RepositoryProxy):
     _ROLE = BrokerRepositoryRole.SCHEDULER
 
+    def delivery_scope(
+        self, *, tenant_id: str, bucket_id: int, layout_generation: int,
+    ) -> DeliveryPersistencePartition:
+        return _delivery_partition(
+            tenant_id=tenant_id,
+            bucket_id=bucket_id,
+            layout_generation=layout_generation,
+        )
+
+    async def read(
+        self, *, scope: DeliveryPersistencePartition, key: StateKey,
+        consistency: StateConsistency,
+    ) -> StateReadResult:
+        del consistency
+        operation = {
+            "delivery": "read_delivery",
+            "attempt": "read_attempt",
+            "summary": "read_summary",
+            "delivery_owner": "read_delivery_owner",
+            "delivery_scheduler_cursor": "read_scheduler_cursor",
+        }.get(key.object_type)
+        if operation is None:
+            raise _state_denied("scheduler_read_resource_denied")
+        return decode_read_result(await self._request(operation, {
+            "tenant_id": scope.tenant_id,
+            "bucket_id": scope.bucket_id,
+            "layout_generation": scope.layout_generation,
+            "object_id": key.object_id,
+        }))
+
+    async def transact(
+        self,
+        transaction: DeliveryPersistenceTransaction,
+    ) -> DeliveryPersistenceTransactionResult:
+        partition = transaction.partition
+        raw = await self._request(
+            "transact_scheduler",
+            encode_transaction_request(
+                transaction,
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+            ),
+        )
+        return _bind_write_transaction_result(
+            transaction, raw, operation="transact_scheduler",
+        )
+
+    async def read_ordered_index(
+        self, *, scope: DeliveryPersistencePartition,
+        index: StateOrderedIndexKey, limit: int,
+        max_score: float | None = None,
+        start_after: "StateOrderedIndexCursor | None" = None,
+    ) -> object:
+        return await self.read_scheduler_index(
+            tenant_id=scope.tenant_id,
+            bucket_id=scope.bucket_id,
+            layout_generation=scope.layout_generation,
+            index_name=index.name,
+            cursor=start_after,
+            limit=limit,
+            max_score=max_score,
+        )
+
     async def read_delivery(
         self, *, tenant_id: str, bucket_id: int, layout_generation: int,
         delivery_id: str,
     ) -> StateReadResult:
-        return await self._request("read_delivery", (
-            tenant_id, bucket_id, layout_generation, delivery_id,
-        ))  # type: ignore[return-value]
+        return decode_read_result(await self._request("read_delivery", {
+            "tenant_id": tenant_id,
+            "bucket_id": bucket_id,
+            "layout_generation": layout_generation,
+            "object_id": delivery_id,
+        }))
 
     async def read_attempt(
         self, *, tenant_id: str, bucket_id: int, layout_generation: int,
         attempt_id: str,
     ) -> StateReadResult:
-        return await self._request("read_attempt", (
-            tenant_id, bucket_id, layout_generation, attempt_id,
-        ))  # type: ignore[return-value]
+        return decode_read_result(await self._request("read_attempt", {
+            "tenant_id": tenant_id,
+            "bucket_id": bucket_id,
+            "layout_generation": layout_generation,
+            "object_id": attempt_id,
+        }))
 
     async def read_summary(
         self, *, tenant_id: str, bucket_id: int, layout_generation: int,
         summary_id: str,
     ) -> StateReadResult:
-        return await self._request("read_summary", (
-            tenant_id, bucket_id, layout_generation, summary_id,
-        ))  # type: ignore[return-value]
+        return decode_read_result(await self._request("read_summary", {
+            "tenant_id": tenant_id,
+            "bucket_id": bucket_id,
+            "layout_generation": layout_generation,
+            "object_id": summary_id,
+        }))
 
     async def read_scheduler_index(
         self, *, tenant_id: str, bucket_id: int, layout_generation: int,
-        index_name: str, cursor: object = None, limit: int = 100,
+        index_name: str,
+        cursor: "StateOrderedIndexCursor | None" = None,
+        limit: int = 100,
+        max_score: float | None = None,
     ) -> object:
-        return await self._request("read_scheduler_index", (
-            tenant_id, bucket_id, layout_generation,
-            index_name, cursor, limit,
-        ))
+        raw = await self._request("read_scheduler_index", {
+            "tenant_id": tenant_id,
+            "bucket_id": bucket_id,
+            "layout_generation": layout_generation,
+            "index_name": index_name,
+            "cursor": encode_cursor(
+                cursor,
+                index_name=index_name,
+                index_bucket="delivery",
+            ),
+            "limit": limit,
+            "max_score": max_score,
+        })
+        return decode_index_result(
+            raw,
+            index_name=index_name,
+            index_bucket="delivery",
+        )
 
     async def transact_scheduler(
         self, *, tenant_id: str, bucket_id: int, layout_generation: int,
-        transaction: StateTransaction,
-    ) -> StateTransactionResult:
-        return await self._request("transact_scheduler", (
-            tenant_id, bucket_id, layout_generation, transaction,
-        ))  # type: ignore[return-value]
+        transaction: DeliveryPersistenceTransaction,
+    ) -> DeliveryPersistenceTransactionResult:
+        if transaction.partition != self.delivery_scope(
+            tenant_id=tenant_id,
+            bucket_id=bucket_id,
+            layout_generation=layout_generation,
+        ):
+            _invalid("scheduler.transaction_partition")
+        return await self.transact(transaction)
 
 
 class PayloadRepositoryProxy(_RepositoryProxy):
     _ROLE = BrokerRepositoryRole.PAYLOAD
 
+    def delivery_scope(
+        self, *, tenant_id: str, bucket_id: int, layout_generation: int,
+    ) -> DeliveryPersistencePartition:
+        return _delivery_partition(
+            tenant_id=tenant_id,
+            bucket_id=bucket_id,
+            layout_generation=layout_generation,
+        )
+
+    async def read(
+        self, *, scope: DeliveryPersistencePartition, key: StateKey,
+        consistency: StateConsistency,
+    ) -> StateReadResult:
+        del consistency
+        if key.object_type != "payload_body":
+            raise _state_denied("payload_read_resource_denied")
+        return await self.read_payload_body(
+            tenant_id=scope.tenant_id,
+            bucket_id=scope.bucket_id,
+            layout_generation=scope.layout_generation,
+            object_id=key.object_id,
+        )
     async def read_payload_body(
         self, *, tenant_id: str, bucket_id: int, layout_generation: int,
         object_id: str,
     ) -> StateReadResult:
-        return await self._request("read_payload_body", (
-            tenant_id, bucket_id, layout_generation, object_id,
-        ))  # type: ignore[return-value]
+        return decode_read_result(await self._request("read_payload_body", {
+            "tenant_id": tenant_id,
+            "bucket_id": bucket_id,
+            "layout_generation": layout_generation,
+            "object_id": object_id,
+        }))
 
 
 class RegistryRepositoryProxy(_RepositoryProxy):
     _ROLE = BrokerRepositoryRole.REGISTRY
 
+    @property
+    def runtime_id(self) -> str:
+        return self._handle.runtime_id
+
+    @property
+    def namespace(self) -> StateNamespace:
+        return _registry_partition(self.runtime_id).namespace
+
+    async def read(
+        self, *, key: StateKey, consistency: StateConsistency,
+    ) -> StateReadResult:
+        del consistency
+        operation = {
+            "delivery_authority_layout": "read_registry_layout",
+            "delivery_tenant_registration": "read_registry_tenant",
+        }.get(key.object_type)
+        if operation is None or key.namespace != self.namespace:
+            raise _state_denied("registry_read_resource_denied")
+        return decode_read_result(await self._request(
+            operation, {"object_id": key.object_id},
+        ))
+
+    async def transact(
+        self,
+        transaction: DeliveryPersistenceTransaction,
+    ) -> DeliveryPersistenceTransactionResult:
+        expected = _registry_partition(self.runtime_id)
+        if transaction.partition != expected:
+            raise _state_denied("registry_partition_denied")
+        raw = await self._request(
+            "transact_registry",
+            encode_transaction_request(
+                transaction,
+                tenant_id=expected.tenant_id,
+                bucket_id=expected.bucket_id,
+                layout_generation=expected.layout_generation,
+            ),
+        )
+        return _bind_write_transaction_result(
+            transaction, raw, operation="transact_registry",
+        )
+
+    async def read_ordered_index(
+        self, *, index: StateOrderedIndexKey, limit: int,
+        start_after: "StateOrderedIndexCursor | None" = None,
+    ) -> object:
+        if (
+            index.namespace != self.namespace
+            or index.name != "delivery.tenant_registry"
+            or index.bucket != "runtime"
+        ):
+            raise _state_denied("registry_index_denied")
+        return decode_index_result(
+            await self._request("read_registry_index", {
+                "index_name": index.name,
+                "index_bucket": index.bucket,
+                "cursor": encode_cursor(
+                    start_after,
+                    index_name=index.name,
+                    index_bucket=index.bucket,
+                ),
+                "limit": limit,
+            }),
+            index_name=index.name,
+            index_bucket=index.bucket,
+        )
+
     async def read_registry_layout(self, *, object_id: str) -> StateReadResult:
-        return await self._request(
-            "read_registry_layout", object_id,
-        )  # type: ignore[return-value]
+        return decode_read_result(await self._request(
+            "read_registry_layout", {"object_id": object_id},
+        ))
 
 
 class AuditRepositoryProxy(_RepositoryProxy):
@@ -734,9 +1168,23 @@ class AuditRepositoryProxy(_RepositoryProxy):
         self, *, namespace: StateNamespace, object_id: str,
         document: StateDocument,
     ) -> object:
-        return await self._request(
-            "append_audit", (namespace, object_id, document),
-        )
+        raw = await self._request("append_audit", {
+            "namespace": {
+                "kind": namespace.kind.value,
+                "domain": namespace.domain,
+                "tenant_id": namespace.tenant_id,
+                "runtime_id": namespace.runtime_id,
+                "plugin_name": namespace.plugin_name,
+            },
+            "object_id": object_id,
+            "document": encode_document(document),
+        })
+        try:
+            return decode_append_result(raw)
+        except (NsValidationError, TypeError, ValueError):
+            raise _indeterminate(
+                "append_audit", "ipc_malformed_write_result",
+            ) from None
 
 
 class AuthorityBrokerStateStoreProxy:
@@ -761,23 +1209,23 @@ class AuthorityBrokerStateStoreProxy:
     async def open(self) -> None:
         if self._state == "closed":
             raise _state_unavailable("broker_closed")
-        result = await asyncio.to_thread(
+        result = decode_health(await asyncio.to_thread(
             self._channel.request,
             handle=self._handle,
             operation="state_health",
-            payload=None,
-        )
+            payload={},
+        ))
         if type(result) is not StateStoreHealth:
             raise _state_unavailable("invalid_health")
         self._state = "open"
 
     async def health(self) -> StateStoreHealth:
-        result = await asyncio.to_thread(
+        result = decode_health(await asyncio.to_thread(
             self._channel.request,
             handle=self._handle,
             operation="state_health",
-            payload=None,
-        )
+            payload={},
+        ))
         if type(result) is not StateStoreHealth:
             raise _state_unavailable("invalid_health")
         return result
@@ -824,32 +1272,233 @@ class ProductionAuthorityBroker:
 
 
 def start_production_authority_broker(
+    *args: object,
+    **kwargs: object,
+) -> ProductionAuthorityBroker:
+    """Reject the former caller-configured production trust root."""
+
+    del args, kwargs
+    _invalid("broker.production_starter_requires_inherited_fds")
+
+
+def start_contract_test_authority_broker(
     *,
     config: AuthorityBrokerConfig,
+    iam_service_credential: str,
+    state_password_source: str = "none",
     startup_timeout_seconds: float = 15.0,
 ) -> ProductionAuthorityBroker:
-    """Spawn one isolated broker and return only narrow verified proxies."""
+    """Start an explicitly non-production broker under an ephemeral test root."""
 
-    if type(config) is not AuthorityBrokerConfig:
-        _invalid("broker.config")
+    if (
+        type(config) is not AuthorityBrokerConfig
+        or type(iam_service_credential) is not str
+        or not iam_service_credential
+        or type(state_password_source) is not str
+        or not state_password_source
+        or config.state_backend in {"redis", "valkey"}
+    ):
+        _invalid("broker.contract_test_config")
+    return _start_test_authority_broker(
+        config=config,
+        iam_service_credential=iam_service_credential,
+        state_password_source=state_password_source,
+        startup_timeout_seconds=startup_timeout_seconds,
+        realm="contract-test",
+    )
+
+
+def start_integration_test_authority_broker(
+    *,
+    config: AuthorityBrokerConfig,
+    iam_service_credential: str,
+    state_password_source: str,
+    startup_timeout_seconds: float = 15.0,
+) -> ProductionAuthorityBroker:
+    """Run real provider integration under a non-production test trust root."""
+
+    if (
+        type(config) is not AuthorityBrokerConfig
+        or config.state_backend not in {"redis", "valkey"}
+        or type(iam_service_credential) is not str
+        or not iam_service_credential
+        or type(state_password_source) is not str
+        or not state_password_source
+    ):
+        _invalid("broker.integration_test_config")
+    return _start_test_authority_broker(
+        config=config,
+        iam_service_credential=iam_service_credential,
+        state_password_source=state_password_source,
+        startup_timeout_seconds=startup_timeout_seconds,
+        realm="integration-test",
+    )
+
+
+def _start_test_authority_broker(
+    *,
+    config: AuthorityBrokerConfig,
+    iam_service_credential: str,
+    state_password_source: str,
+    startup_timeout_seconds: float,
+    realm: str,
+) -> ProductionAuthorityBroker:
+    root_private_key = Ed25519PrivateKey.generate()
+    root_private_bytes = root_private_key.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    root_public_key = root_private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    key_read, key_write = os.pipe()
+    secrets_read, secrets_write = os.pipe()
+    try:
+        os.write(key_write, root_private_bytes)
+        os.write(secrets_write, encode_frame({
+            "iam_service_credential": iam_service_credential,
+            "state_password_source": state_password_source,
+        }))
+    finally:
+        os.close(key_write)
+        os.close(secrets_write)
+        root_private_bytes = b"\0" * len(root_private_bytes)
+        del root_private_key
+    return _spawn_authority_broker(
+        config=config,
+        expected_root_public_key=root_public_key,
+        root_key_fd=key_read,
+        secrets_fd=secrets_read,
+        realm=realm,
+        startup_timeout_seconds=startup_timeout_seconds,
+    )
+
+
+def _start_production_authority_broker_from_inherited_fds(
+    *,
+    config: AuthorityBrokerConfig,
+    root_key_fd: int,
+    secrets_fd: int,
+    startup_timeout_seconds: float = 15.0,
+) -> ProductionAuthorityBroker:
+    """Deployment entry: consume one-shot inherited descriptors."""
+
+    if (
+        type(config) is not AuthorityBrokerConfig
+        or type(root_key_fd) is not int
+        or root_key_fd < 0
+        or type(secrets_fd) is not int
+        or secrets_fd < 0
+    ):
+        _invalid("broker.deployment_bootstrap")
+    return _spawn_authority_broker(
+        config=config,
+        expected_root_public_key=_PRODUCTION_ROOT_PUBLIC_KEY,
+        root_key_fd=root_key_fd,
+        secrets_fd=secrets_fd,
+        realm="production",
+        startup_timeout_seconds=startup_timeout_seconds,
+    )
+
+
+def _spawn_authority_broker(
+    *,
+    config: AuthorityBrokerConfig,
+    expected_root_public_key: bytes,
+    root_key_fd: int,
+    secrets_fd: int,
+    realm: str,
+    startup_timeout_seconds: float,
+) -> ProductionAuthorityBroker:
+    if realm not in _BROKER_REALMS:
+        _invalid("broker.realm")
     context = multiprocessing.get_context("spawn")
     parent, child = context.Pipe(duplex=True)
+    root_key_handle = DupFd(root_key_fd)
+    secrets_handle = DupFd(secrets_fd)
     process = context.Process(
         target=_authority_broker_process,
-        args=(child, config),
+        args=(
+            child,
+            encode_frame(_encode_broker_config(config)),
+            root_key_handle,
+            secrets_handle,
+            realm,
+            expected_root_public_key,
+        ),
         name="ns-runtime-authority-broker",
         daemon=False,
     )
-    process.start()
-    child.close()
+    try:
+        process.start()
+    finally:
+        child.close()
+        for fd in (root_key_fd, secrets_fd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    return _accept_started_authority_broker(
+        parent=parent,
+        process=process,
+        config=config,
+        expected_root_public_key=expected_root_public_key,
+        realm=realm,
+        startup_timeout_seconds=startup_timeout_seconds,
+    )
+
+
+def _complete_inherited_authority_broker_start(
+    *,
+    parent: Connection,
+    process: multiprocessing.Process,
+    config: AuthorityBrokerConfig,
+    startup_timeout_seconds: float = 15.0,
+) -> ProductionAuthorityBroker:
+    """Send only non-secret config to the already isolated broker child."""
+
+    if (
+        type(config) is not AuthorityBrokerConfig
+        or not process.is_alive()
+    ):
+        _invalid("broker.pending_bootstrap")
+    try:
+        parent.send_bytes(encode_frame({
+            "version": WIRE_VERSION,
+            "kind": "bootstrap_config",
+            "config": _encode_broker_config(config),
+        }))
+    except (BrokenPipeError, EOFError, OSError):
+        raise _broker_unavailable("bootstrap_channel_closed") from None
+    return _accept_started_authority_broker(
+        parent=parent,
+        process=process,
+        config=config,
+        expected_root_public_key=_PRODUCTION_ROOT_PUBLIC_KEY,
+        realm="production",
+        startup_timeout_seconds=startup_timeout_seconds,
+    )
+
+
+def _accept_started_authority_broker(
+    *,
+    parent: Connection,
+    process: multiprocessing.Process,
+    config: AuthorityBrokerConfig,
+    expected_root_public_key: bytes,
+    realm: str,
+    startup_timeout_seconds: float,
+) -> ProductionAuthorityBroker:
     if not parent.poll(startup_timeout_seconds):
         process.terminate()
         process.join(timeout=5.0)
         parent.close()
         raise _broker_unavailable("startup_timeout")
     try:
-        ready = parent.recv()
-    except (EOFError, OSError):
+        ready = decode_frame(parent.recv_bytes(MAX_FRAME_BYTES))
+    except (EOFError, OSError, NsValidationError):
         process.join(timeout=5.0)
         parent.close()
         raise _broker_unavailable("startup_failed") from None
@@ -864,14 +1513,32 @@ def start_production_authority_broker(
         if reason == "parallel_production_composition":
             raise _state_denied(reason)
         raise _broker_unavailable(str(reason))
-    public_key = ready.get("public_key")
-    instance_id = ready.get("instance_id")
-    handles = ready.get("handles")
-    if (
-        type(public_key) is not bytes
-        or type(instance_id) is not str
-        or type(handles) is not dict
-    ):
+    try:
+        values = require_object(
+            ready,
+            fields={"version", "kind", "ok", "certificate", "handles"},
+            field="ready",
+        )
+        if values["version"] != WIRE_VERSION or values["kind"] != "ready":
+            _invalid("ready.version")
+        certificate = _decode_certificate(values["certificate"])
+        if not certificate.verify(
+            expected_root_public_key,
+            expected_realm=realm,
+            expected_runtime_id=config.runtime_id,
+            now=datetime.now(timezone.utc),
+        ):
+            _invalid("ready.root_certificate")
+        public_key = certificate.session_public_key
+        instance_id = certificate.broker_instance_id
+        raw_handles = values["handles"]
+        if type(raw_handles) is not dict:
+            _invalid("ready.handles")
+        handles = {
+            key: _decode_handle(value)
+            for key, value in raw_handles.items()
+        }
+    except (NsValidationError, TypeError, ValueError):
         process.terminate()
         process.join(timeout=5.0)
         parent.close()
@@ -885,6 +1552,7 @@ def start_production_authority_broker(
             config.iam_timeout_seconds,
             config.state_operation_timeout_seconds,
         ) + 2.0,
+        realm=realm,
     )
     expected_roles = tuple(BrokerRepositoryRole)
     for role in expected_roles:
@@ -897,7 +1565,12 @@ def start_production_authority_broker(
             channel.close(terminate=True)
             raise _broker_unavailable("startup_handle_invalid")
 
-    iam = object.__new__(ProductionIamAuthorityProxy)
+    iam_type = (
+        ProductionIamAuthorityProxy
+        if realm == "production"
+        else ContractTestIamAuthorityProxy
+    )
+    iam = object.__new__(iam_type)
     iam._channel = channel
     iam._handle = handles[BrokerRepositoryRole.IAM.value]
     iam._clock = SystemClock()
@@ -967,7 +1640,11 @@ class _BrokerIamBackend:
         "_ttl", "_backend_origin", "_path_prefix",
     )
 
-    def __init__(self, config: AuthorityBrokerConfig) -> None:
+    def __init__(
+        self,
+        config: AuthorityBrokerConfig,
+        secrets: Mapping[str, str],
+    ) -> None:
         _require_isolated_broker_process()
         from ns_common.http_client import NsAsyncHttpClient
 
@@ -984,7 +1661,7 @@ class _BrokerIamBackend:
             },
             verify=True,
         )
-        self._credential = config.iam_service_credential
+        self._credential = secrets["iam_service_credential"]
         self._clock = SystemClock()
         self._iam_mode = config.iam_mode
         self._ttl = float(config.permission_snapshot_ttl_seconds)
@@ -1023,16 +1700,27 @@ class _BrokerIamBackend:
     async def _introspect(self, payload: object) -> HandshakeIamAuthority:
         if (
             type(payload) is not dict
-            or set(payload) != {"token", "claims"}
+            or set(payload) != {
+                "token", "component_type", "requested_capabilities",
+                "protocol_version",
+            }
             or type(payload["token"]) is not str
+            or type(payload["component_type"]) is not str
+            or type(payload["requested_capabilities"]) is not list
+            or any(
+                type(value) is not str
+                for value in payload["requested_capabilities"]
+            )
+            or type(payload["protocol_version"]) is not str
         ):
             _invalid("broker.introspection_request")
-        claims = payload["claims"]
         contract = IamIntrospectionRequest(
             token=payload["token"],
-            component_type=claims.component_type,
-            requested_capabilities=claims.requested_capabilities,
-            protocol_version=str(claims.requested_version),
+            component_type=payload["component_type"],
+            requested_capabilities=frozenset(
+                payload["requested_capabilities"],
+            ),
+            protocol_version=payload["protocol_version"],
         )
         data = await self._post("introspect", contract.to_wire())
         if data.get("active") is not True:
@@ -1050,8 +1738,10 @@ class _BrokerIamBackend:
             result.credential_status is not IamCredentialStatus.ACTIVE
             or result.issued_at > now
             or result.expires_at <= now
-            or result.component_type != claims.component_type
-            or not result.capabilities.issubset(claims.requested_capabilities)
+            or result.component_type != payload["component_type"]
+            or not result.capabilities.issubset(
+                frozenset(payload["requested_capabilities"]),
+            )
         ):
             raise NsRuntimeIamDeniedError(details={
                 "component": "authority_broker",
@@ -1077,16 +1767,23 @@ class _BrokerIamBackend:
     async def _permission_snapshot(self, payload: object) -> PermissionSnapshot:
         from ns_runtime.iam.models import PermissionSnapshot
 
-        if type(payload) is not PermissionSnapshot:
+        if (
+            type(payload) is not dict
+            or set(payload) != {
+                "identity", "tenant_id", "permission_snapshot_ref",
+                "permission_version", "component_type", "capabilities",
+                "expires_at",
+            }
+        ):
             _invalid("broker.snapshot")
         data = await self._post("permission_snapshot", {
-            "identity": payload.identity,
-            "tenant_id": payload.tenant_id,
-            "permission_snapshot_ref": payload.permission_snapshot_ref,
-            "known_version": payload.permission_version,
-            "component_type": payload.component_type,
-            "capabilities": sorted(payload.capabilities),
-            "expires_at": _iso(payload.expires_at),
+            "identity": payload["identity"],
+            "tenant_id": payload["tenant_id"],
+            "permission_snapshot_ref": payload["permission_snapshot_ref"],
+            "known_version": payload["permission_version"],
+            "component_type": payload["component_type"],
+            "capabilities": payload["capabilities"],
+            "expires_at": payload["expires_at"],
         })
         result = _parse_backend_result(IamIntrospectionResult.from_wire, data)
         return PermissionSnapshot.from_introspection(
@@ -1140,7 +1837,11 @@ class _BrokerStateBackend:
         "store", "repositories", "lease", "runtime_id", "available",
     )
 
-    def __init__(self, config: AuthorityBrokerConfig) -> None:
+    def __init__(
+        self,
+        config: AuthorityBrokerConfig,
+        secrets: Mapping[str, str],
+    ) -> None:
         _require_isolated_broker_process()
         self.store = None
         self.repositories = {}
@@ -1149,15 +1850,22 @@ class _BrokerStateBackend:
         self.available = config.state_backend in {"redis", "valkey"}
         if not self.available:
             return
-        self.lease = _acquire_physical_domain_lease(config)
+        self.lease = _acquire_physical_domain_lease(
+            config,
+            credential_reference=secrets["state_password_source"],
+        )
         try:
-            self._create_provider(config)
+            self._create_provider(config, secrets)
         except BaseException:
             self.lease.close()
             self.lease = None
             raise
 
-    def _create_provider(self, config: AuthorityBrokerConfig) -> None:
+    def _create_provider(
+        self,
+        config: AuthorityBrokerConfig,
+        secrets: Mapping[str, str],
+    ) -> None:
         from ns_common.config import NsRuntimeStateStoreConfig
         from ns_common.state_store import (
             StateAuthorityKind,
@@ -1178,7 +1886,7 @@ class _BrokerStateBackend:
             backend=config.state_backend,  # type: ignore[arg-type]
             endpoint=config.state_endpoint,
             username=config.state_username,
-            password_source=config.state_password_source,
+            password_source=secrets["state_password_source"],
             namespace=config.state_namespace,
             operation_timeout_seconds=int(
                 config.state_operation_timeout_seconds,
@@ -1270,6 +1978,8 @@ class _BrokerStateBackend:
         payload: object,
     ) -> object:
         if operation == "state_health":
+            if payload != {}:
+                _invalid("broker.health_request")
             if self.store is None:
                 from ns_common.state_store import (
                     StateStoreCapabilities,
@@ -1290,14 +2000,22 @@ class _BrokerStateBackend:
             raise _state_denied("repository_role_denied")
         if operation in {
             "read_delivery", "read_attempt", "read_summary",
-            "read_payload_body",
+            "read_payload_body", "read_admission_dedup",
+            "read_admission_summary", "read_delivery_owner",
+            "read_scheduler_cursor",
         }:
-            tenant, bucket, generation, object_id = _delivery_args(payload)
+            tenant, bucket, generation, object_id = (
+                _decode_delivery_request(payload)
+            )
             object_type = {
                 "read_delivery": "delivery",
                 "read_attempt": "attempt",
                 "read_summary": "summary",
                 "read_payload_body": "payload_body",
+                "read_admission_dedup": "dedup",
+                "read_admission_summary": "summary",
+                "read_delivery_owner": "delivery_owner",
+                "read_scheduler_cursor": "delivery_scheduler_cursor",
             }[operation]
             scope = repository.delivery_scope(
                 tenant_id=tenant,
@@ -1313,30 +2031,68 @@ class _BrokerStateBackend:
                 ),
                 consistency=StateConsistency.LINEARIZABLE,
             )
-        if operation in {"transact_admission", "transact_scheduler"}:
-            tenant, bucket, generation, transaction = _transaction_args(payload)
-            scope = repository.delivery_scope(
-                tenant_id=tenant,
-                bucket_id=bucket,
-                layout_generation=generation,
+        if operation in {
+            "transact_admission", "transact_scheduler",
+            "transact_registry",
+        }:
+            tenant, bucket, generation = _decode_transaction_dimensions(
+                payload,
             )
-            if transaction.scope.namespace != scope.namespace:
-                raise _state_denied("transaction_namespace_denied")
-            rebound = StateTransaction(
+            if operation == "transact_registry":
+                expected = _registry_partition(self.runtime_id)
+                if (
+                    tenant != expected.tenant_id
+                    or bucket != expected.bucket_id
+                    or generation != expected.layout_generation
+                ):
+                    raise _state_denied("registry_partition_denied")
+                scope = repository.registry_scope()
+            else:
+                scope = repository.delivery_scope(
+                    tenant_id=tenant,
+                    bucket_id=bucket,
+                    layout_generation=generation,
+                )
+            rebound = decode_transaction_request(
+                payload,
                 scope=scope,
-                read_assertions=transaction.read_assertions,
-                ordered_index_read_assertions=(
-                    transaction.ordered_index_read_assertions
-                ),
-                mutations=transaction.mutations,
-                ordered_index_mutations=transaction.ordered_index_mutations,
-                log_appends=transaction.log_appends,
+                expected_tenant_id=tenant,
+                expected_bucket_id=bucket,
+                expected_layout_generation=generation,
             )
             return await self.store.transact(rebound)
         if operation == "read_scheduler_index":
-            if type(payload) is not tuple or len(payload) != 6:
-                _invalid("broker.index_request")
-            tenant, bucket, generation, name, cursor, limit = payload
+            values = require_object(
+                payload,
+                fields={
+                    "tenant_id", "bucket_id", "layout_generation",
+                    "index_name", "cursor", "limit", "max_score",
+                },
+                field="broker.index_request",
+            )
+            tenant = _exact_string(
+                values["tenant_id"], "broker.index_tenant",
+            )
+            bucket = _exact_int(
+                values["bucket_id"], "broker.index_bucket", minimum=0,
+            )
+            generation = _exact_int(
+                values["layout_generation"],
+                "broker.index_generation",
+                minimum=1,
+            )
+            name = _exact_string(
+                values["index_name"], "broker.index_name",
+            )
+            limit = _exact_int(
+                values["limit"], "broker.index_limit", minimum=1,
+            )
+            max_score = values["max_score"]
+            if max_score is not None and (
+                type(max_score) not in {int, float}
+                or not math.isfinite(max_score)
+            ):
+                _invalid("broker.index_max_score")
             if name not in {
                 "delivery.prepared", "delivery.ready", "delivery.claimed",
                 "delivery.lease", "delivery.sending", "delivery.ack",
@@ -1351,6 +2107,11 @@ class _BrokerStateBackend:
                 bucket_id=bucket,
                 layout_generation=generation,
             )
+            decoded_cursor = decode_cursor(
+                values["cursor"],
+                index_name=name,
+                index_bucket="delivery",
+            )
             return await self.store.read_ordered_index(
                 scope=scope,
                 index=StateOrderedIndexKey(
@@ -1358,32 +2119,97 @@ class _BrokerStateBackend:
                     name=name,
                     bucket="delivery",
                 ),
-                cursor=cursor,
+                start_after=decoded_cursor,
                 limit=limit,
+                max_score=max_score,
             )
-        if operation == "read_registry_layout":
-            if type(payload) is not str or not payload:
-                _invalid("broker.registry_request")
+        if operation in {
+            "read_registry_layout", "read_registry_tenant",
+        }:
+            values = require_object(
+                payload,
+                fields={"object_id"},
+                field="broker.registry_request",
+            )
+            object_id = _exact_string(
+                values["object_id"], "broker.registry_object_id",
+            )
             scope = repository.registry_scope()
             return await self.store.read(
                 scope=scope,
                 key=StateKey(
                     namespace=scope.namespace,
-                    object_type="delivery_authority_layout",
-                    object_id=payload,
+                    object_type=(
+                        "delivery_authority_layout"
+                        if operation == "read_registry_layout"
+                        else "delivery_tenant_registration"
+                    ),
+                    object_id=object_id,
                 ),
                 consistency=StateConsistency.LINEARIZABLE,
             )
+        if operation == "read_registry_index":
+            values = require_object(
+                payload,
+                fields={
+                    "index_name", "index_bucket", "cursor", "limit",
+                },
+                field="broker.registry_index_request",
+            )
+            name = _exact_string(
+                values["index_name"], "broker.registry_index_name",
+            )
+            bucket = _exact_string(
+                values["index_bucket"], "broker.registry_index_bucket",
+            )
+            if name != "delivery.tenant_registry" or bucket != "runtime":
+                raise _state_denied("registry_index_denied")
+            limit = _exact_int(
+                values["limit"], "broker.registry_index_limit", minimum=1,
+            )
+            scope = repository.registry_scope()
+            return await self.store.read_ordered_index(
+                scope=scope,
+                index=StateOrderedIndexKey(
+                    namespace=scope.namespace,
+                    name=name,
+                    bucket=bucket,
+                ),
+                start_after=decode_cursor(
+                    values["cursor"],
+                    index_name=name,
+                    index_bucket=bucket,
+                ),
+                limit=limit,
+            )
         if operation == "append_audit":
+            values = require_object(
+                payload,
+                fields={"namespace", "object_id", "document"},
+                field="broker.audit_request",
+            )
+            namespace_values = values["namespace"]
+            if type(namespace_values) is not dict:
+                raise _state_denied("audit_resource_denied")
+            try:
+                namespace = StateNamespace(
+                    kind=StateNamespaceKind(
+                        namespace_values["kind"],
+                    ),
+                    domain=namespace_values["domain"],
+                    tenant_id=namespace_values["tenant_id"],
+                    runtime_id=namespace_values["runtime_id"],
+                    plugin_name=namespace_values["plugin_name"],
+                )
+                document = decode_document(values["document"])
+                object_id = _exact_string(
+                    values["object_id"], "broker.audit_object_id",
+                )
+            except (KeyError, ValueError, NsValidationError, TypeError):
+                raise _state_denied("audit_resource_denied") from None
             if (
-                type(payload) is not tuple
-                or len(payload) != 3
-                or type(payload[0]) is not StateNamespace
-                or payload[0] != StateNamespace.audit(domain="processor")
-                or type(payload[1]) is not str
-                or not payload[1]
-                or type(payload[2]) is not StateDocument
-                or payload[2].schema_name != "runtime.processor_audit"
+                namespace != StateNamespace.audit(domain="processor")
+                or document.schema_name != "runtime.processor_audit"
             ):
                 raise _state_denied("audit_resource_denied")
             scope = repository.audit_scope()
@@ -1392,9 +2218,9 @@ class _BrokerStateBackend:
                 key=StateKey(
                     namespace=scope.namespace,
                     object_type="processor_audit_log",
-                    object_id=payload[1],
+                    object_id=object_id,
                 ),
-                document=payload[2],
+                document=document,
             )
         raise _state_denied("repository_operation_denied")
 
@@ -1402,20 +2228,24 @@ class _BrokerStateBackend:
 async def _broker_async_main(
     connection: Connection,
     config: AuthorityBrokerConfig,
+    root_private_key: Ed25519PrivateKey,
+    secrets: Mapping[str, str],
+    realm: str,
 ) -> None:
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key().public_bytes(
+    session_private_key = Ed25519PrivateKey.generate()
+    session_public_key = session_private_key.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     )
     instance_id = "broker_" + uuid.uuid4().hex
-    iam = _BrokerIamBackend(config)
-    state = _BrokerStateBackend(config)
-    sequence = 0
+    iam = _BrokerIamBackend(config, secrets)
+    state = _BrokerStateBackend(config, secrets)
+    iam_sequence = 0
+    response_sequence = 0
     generation = 1
     handles = {
         role.value: _new_handle(
-            private_key=private_key,
+            private_key=session_private_key,
             instance_id=instance_id,
             role=role,
             runtime_id=config.runtime_id,
@@ -1423,66 +2253,149 @@ async def _broker_async_main(
         )
         for role in BrokerRepositoryRole
     }
+    now = datetime.now(timezone.utc)
+    certificate_values = {
+        "trust_realm": realm,
+        "broker_instance_id": instance_id,
+        "session_public_key": encode_bytes(session_public_key),
+        "runtime_id": config.runtime_id,
+        "lifecycle_generation": generation,
+        "issued_at": encode_time(now),
+        "expires_at": encode_time(
+            now + timedelta(seconds=_ROOT_CERTIFICATE_TTL_SECONDS),
+        ),
+        "nonce": uuid.uuid4().hex,
+    }
+    certificate = BrokerInstanceCertificate(
+        trust_realm=realm,
+        broker_instance_id=instance_id,
+        session_public_key=session_public_key,
+        runtime_id=config.runtime_id,
+        lifecycle_generation=generation,
+        issued_at=now,
+        expires_at=(
+            now + timedelta(seconds=_ROOT_CERTIFICATE_TTL_SECONDS)
+        ),
+        nonce=certificate_values["nonce"],
+        signature=root_private_key.sign(_canonical(certificate_values)),
+    )
+    del root_private_key
     try:
         await state.open()
-        connection.send({
+        connection.send_bytes(encode_frame({
+            "version": WIRE_VERSION,
+            "kind": "ready",
             "ok": True,
-            "instance_id": instance_id,
-            "public_key": public_key,
-            "handles": handles,
-        })
+            "certificate": _encode_certificate(certificate),
+            "handles": {
+                role: _encode_handle(handle)
+                for role, handle in handles.items()
+            },
+        }))
         while True:
             try:
-                message = await asyncio.to_thread(connection.recv)
-            except (EOFError, OSError):
+                raw_message = await asyncio.to_thread(
+                    connection.recv_bytes,
+                    MAX_FRAME_BYTES,
+                )
+                message = decode_frame(raw_message)
+            except (EOFError, OSError, NsValidationError):
                 break
-            if type(message) is not dict:
-                connection.send(_error_response("validation", "malformed_request"))
-                continue
-            if message.get("kind") == "shutdown":
-                connection.send({"ok": True, "result": None})
+            if message == {
+                "version": WIRE_VERSION,
+                "kind": "shutdown",
+            }:
+                connection.send_bytes(encode_frame({
+                    "version": WIRE_VERSION,
+                    "kind": "shutdown_complete",
+                }))
                 break
-            if set(message) != {"kind", "handle", "operation", "payload"}:
-                connection.send(_error_response("validation", "malformed_request"))
-                continue
-            handle = message["handle"]
+            if type(message) is not dict or set(message) != {
+                "version", "kind", "request_id", "handle",
+                "operation", "payload",
+            }:
+                # No request id can be trusted, so close instead of reflecting
+                # attacker-controlled structure into a response.
+                break
+            request_id = message["request_id"]
             operation = message["operation"]
+            if (
+                message["version"] != WIRE_VERSION
+                or message["kind"] != "request"
+                or type(request_id) is not str
+                or not request_id
+                or type(operation) is not str
+            ):
+                break
+            try:
+                handle = _decode_handle(message["handle"])
+            except NsValidationError:
+                response_sequence += 1
+                connection.send_bytes(encode_frame(_wire_response(
+                    request_id=request_id,
+                    sequence=response_sequence,
+                    error=_error_values("state_denied", "handle_denied"),
+                )))
+                continue
             payload = message["payload"]
             if (
-                type(handle) is not BrokerAuthorityHandle
-                or not handle.verify(public_key, instance_id=instance_id)
+                not handle.verify(
+                    session_public_key,
+                    instance_id=instance_id,
+                )
                 or handle.lifecycle_generation != generation
                 or handles.get(handle.role.value) != handle
-                or type(operation) is not str
                 or not _role_allows(handle.role, operation)
             ):
-                connection.send(_error_response("state_denied", "handle_denied"))
+                response_sequence += 1
+                connection.send_bytes(encode_frame(_wire_response(
+                    request_id=request_id,
+                    sequence=response_sequence,
+                    error=_error_values("state_denied", "handle_denied"),
+                )))
                 continue
             try:
                 if handle.role is BrokerRepositoryRole.IAM:
-                    typed_result = await iam.execute(operation, payload)
-                    sequence += 1
+                    typed_request = _decode_iam_request(operation, payload)
+                    typed_result = await iam.execute(
+                        operation, typed_request,
+                    )
+                    iam_sequence += 1
                     result = _sign_iam_result(
-                        private_key=private_key,
+                        private_key=session_private_key,
                         instance_id=instance_id,
                         operation=operation,
-                        request=payload,
+                        request=typed_request,
                         result=typed_result,
-                        sequence=sequence,
+                        sequence=iam_sequence,
                         ttl_seconds=config.permission_snapshot_ttl_seconds,
                     )
+                    wire_result = _encode_signed_iam_result(result)
                 else:
                     result = await state.execute(
                         role=handle.role,
                         operation=operation,
                         payload=payload,
                     )
+                    wire_result = _encode_state_response(
+                        operation, result, payload,
+                    )
             except BaseException as error:
                 if not isinstance(error, Exception):
                     raise
-                connection.send(_exception_response(error))
+                response_sequence += 1
+                connection.send_bytes(encode_frame(_wire_response(
+                    request_id=request_id,
+                    sequence=response_sequence,
+                    error=_exception_values(error),
+                )))
             else:
-                connection.send({"ok": True, "result": result})
+                response_sequence += 1
+                connection.send_bytes(encode_frame(_wire_response(
+                    request_id=request_id,
+                    sequence=response_sequence,
+                    result=wire_result,
+                )))
     finally:
         try:
             await state.close()
@@ -1493,13 +2406,82 @@ async def _broker_async_main(
 
 def _authority_broker_process(
     connection: Connection,
-    config: AuthorityBrokerConfig,
+    config_raw: bytes | None,
+    root_key_handle: object,
+    secrets_handle: object,
+    realm: str,
+    expected_root_public_key: bytes,
 ) -> None:
-    """Top-level spawn target.  All private authority is created below here."""
+    """Top-level spawn target; descriptors are consumed before backends load."""
 
     try:
         _require_isolated_broker_process()
-        asyncio.run(_broker_async_main(connection, config))
+        if realm not in _BROKER_REALMS:
+            _invalid("broker.realm")
+        root_fd = root_key_handle.detach()
+        secret_fd = secrets_handle.detach()
+        try:
+            root_private_bytes = _read_fd_once(root_fd, maximum=64)
+            secrets_raw = _read_fd_once(
+                secret_fd,
+                maximum=MAX_FRAME_BYTES,
+            )
+        finally:
+            os.close(root_fd)
+            os.close(secret_fd)
+        if len(root_private_bytes) != 32:
+            _invalid("broker.root_private_key")
+        root_private_key = Ed25519PrivateKey.from_private_bytes(
+            root_private_bytes,
+        )
+        root_private_bytes = b"\0" * len(root_private_bytes)
+        if config_raw is None:
+            connection.send_bytes(encode_frame({
+                "version": WIRE_VERSION,
+                "kind": "fd_custody",
+            }))
+            bootstrap_message = require_object(
+                decode_frame(connection.recv_bytes(MAX_FRAME_BYTES)),
+                fields={"version", "kind", "config"},
+                field="broker.bootstrap_config",
+            )
+            if (
+                bootstrap_message["version"] != WIRE_VERSION
+                or bootstrap_message["kind"] != "bootstrap_config"
+            ):
+                _invalid("broker.bootstrap_config")
+            config_value = bootstrap_message["config"]
+        else:
+            config_value = decode_frame(config_raw)
+        actual_root_public_key = root_private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        # For production the spawn child reloads this module and uses its own
+        # build-time trust root.  The parent-supplied value is intentionally
+        # ignored so monkey-patching the ordinary runtime interpreter cannot
+        # authorize an attacker root.  Test realms use their explicit root.
+        authoritative_root = (
+            _PRODUCTION_ROOT_PUBLIC_KEY
+            if realm == "production"
+            else expected_root_public_key
+        )
+        if (
+            type(authoritative_root) is not bytes
+            or len(authoritative_root) != 32
+            or actual_root_public_key != authoritative_root
+        ):
+            _invalid("broker.root_trust")
+        config = _decode_broker_config(config_value)
+        secrets = _decode_broker_secrets(decode_frame(secrets_raw))
+        secrets_raw = b"\0" * len(secrets_raw)
+        asyncio.run(_broker_async_main(
+            connection,
+            config,
+            root_private_key,
+            secrets,
+            realm,
+        ))
     except BaseException as error:
         try:
             reason = (
@@ -1510,7 +2492,12 @@ def _authority_broker_process(
                 )
                 else type(error).__name__
             )
-            connection.send({"ok": False, "reason": reason})
+            connection.send_bytes(encode_frame({
+                "version": WIRE_VERSION,
+                "kind": "ready_error",
+                "ok": False,
+                "reason": str(reason),
+            }))
         except (BrokenPipeError, EOFError, OSError):
             pass
         finally:
@@ -1741,31 +2728,46 @@ def _request_claims(operation: str, request: object) -> Mapping[str, object]:
     from ns_runtime.iam.models import PermissionSnapshot
 
     if operation == "introspect":
-        if type(request) is not dict or set(request) != {"token", "claims"}:
+        if type(request) is not dict:
             _invalid("broker.introspection_request")
-        claims = request["claims"]
+        if set(request) == {"token", "claims"}:
+            claims = request["claims"]
+            component_type = claims.component_type
+            requested_capabilities = sorted(
+                claims.requested_capabilities,
+            )
+            protocol_version = str(claims.requested_version)
+        elif set(request) == {
+            "token", "component_type", "requested_capabilities",
+            "protocol_version",
+        }:
+            component_type = request["component_type"]
+            requested_capabilities = request["requested_capabilities"]
+            protocol_version = request["protocol_version"]
+        else:
+            _invalid("broker.introspection_request")
         return {
             "token_fingerprint": "sha256:" + hashlib.sha256(
                 request["token"].encode(),
             ).hexdigest(),
-            "component_type": claims.component_type,
-            "requested_capabilities": sorted(
-                claims.requested_capabilities,
-            ),
-            "protocol_version": str(claims.requested_version),
+            "component_type": component_type,
+            "requested_capabilities": requested_capabilities,
+            "protocol_version": protocol_version,
         }
     if operation == "permission_snapshot":
-        if type(request) is not PermissionSnapshot:
+        if type(request) is PermissionSnapshot:
+            return {
+                "identity": request.identity,
+                "tenant_id": request.tenant_id,
+                "permission_snapshot_ref": request.permission_snapshot_ref,
+                "permission_version": request.permission_version,
+                "component_type": request.component_type,
+                "capabilities": sorted(request.capabilities),
+                "expires_at": _iso(request.expires_at),
+            }
+        if type(request) is not dict:
             _invalid("broker.snapshot")
-        return {
-            "identity": request.identity,
-            "tenant_id": request.tenant_id,
-            "permission_snapshot_ref": request.permission_snapshot_ref,
-            "permission_version": request.permission_version,
-            "component_type": request.component_type,
-            "capabilities": sorted(request.capabilities),
-            "expires_at": _iso(request.expires_at),
-        }
+        return request
     if operation in {
         "runtime_access_check", "payload_validate", "payload_revalidate",
     }:
@@ -1814,7 +2816,523 @@ def _role_allows(role: BrokerRepositoryRole, operation: str) -> bool:
     return operation in _ROLE_OPERATIONS.get(role.value, frozenset())
 
 
-def _physical_state_domain(config: AuthorityBrokerConfig) -> str:
+def _encode_broker_config(
+    config: AuthorityBrokerConfig,
+) -> dict[str, object]:
+    return {
+        "iam_base_url": config.iam_base_url,
+        "iam_timeout_seconds": float(config.iam_timeout_seconds),
+        "iam_mode": config.iam_mode,
+        "permission_snapshot_ttl_seconds": float(
+            config.permission_snapshot_ttl_seconds,
+        ),
+        "state_backend": config.state_backend,
+        "state_endpoint": config.state_endpoint,
+        "state_username": config.state_username,
+        "state_namespace": config.state_namespace,
+        "state_operation_timeout_seconds": float(
+            config.state_operation_timeout_seconds,
+        ),
+        "runtime_id": config.runtime_id,
+    }
+
+
+def _decode_broker_config(value: object) -> AuthorityBrokerConfig:
+    fields = require_object(
+        value,
+        fields={
+            "iam_base_url", "iam_timeout_seconds", "iam_mode",
+            "permission_snapshot_ttl_seconds", "state_backend",
+            "state_endpoint", "state_username", "state_namespace",
+            "state_operation_timeout_seconds", "runtime_id",
+        },
+        field="broker.config",
+    )
+    return AuthorityBrokerConfig(
+        iam_base_url=_exact_string(
+            fields["iam_base_url"], "config.iam_base_url",
+        ),
+        iam_timeout_seconds=_exact_number(
+            fields["iam_timeout_seconds"], "config.iam_timeout_seconds",
+        ),
+        iam_mode=_exact_string(fields["iam_mode"], "config.iam_mode"),
+        permission_snapshot_ttl_seconds=_exact_number(
+            fields["permission_snapshot_ttl_seconds"],
+            "config.permission_snapshot_ttl_seconds",
+        ),
+        state_backend=_exact_string(
+            fields["state_backend"], "config.state_backend",
+        ),
+        state_endpoint=_exact_optional_string(
+            fields["state_endpoint"], "config.state_endpoint",
+        ),
+        state_username=_exact_optional_string(
+            fields["state_username"], "config.state_username",
+        ),
+        state_namespace=_exact_string(
+            fields["state_namespace"], "config.state_namespace",
+        ),
+        state_operation_timeout_seconds=_exact_number(
+            fields["state_operation_timeout_seconds"],
+            "config.state_operation_timeout_seconds",
+        ),
+        runtime_id=_exact_string(
+            fields["runtime_id"], "config.runtime_id",
+        ),
+    )
+
+
+def _decode_broker_secrets(value: object) -> dict[str, str]:
+    fields = require_object(
+        value,
+        fields={"iam_service_credential", "state_password_source"},
+        field="broker.secrets",
+    )
+    credential = _exact_string(
+        fields["iam_service_credential"],
+        "secrets.iam_service_credential",
+    )
+    password_source = _exact_string(
+        fields["state_password_source"],
+        "secrets.state_password_source",
+    )
+    return {
+        "iam_service_credential": credential,
+        "state_password_source": password_source,
+    }
+
+
+def _encode_certificate(
+    value: BrokerInstanceCertificate,
+) -> dict[str, object]:
+    return {
+        **value.signed_values(),
+        "signature": encode_bytes(value.signature),
+    }
+
+
+def _decode_certificate(value: object) -> BrokerInstanceCertificate:
+    fields = require_object(
+        value,
+        fields={
+            "trust_realm", "broker_instance_id", "session_public_key",
+            "runtime_id", "lifecycle_generation", "issued_at",
+            "expires_at", "nonce", "signature",
+        },
+        field="certificate",
+    )
+    return BrokerInstanceCertificate(
+        trust_realm=_exact_string(
+            fields["trust_realm"], "certificate.trust_realm",
+        ),
+        broker_instance_id=_exact_string(
+            fields["broker_instance_id"],
+            "certificate.broker_instance_id",
+        ),
+        session_public_key=decode_bytes(
+            fields["session_public_key"],
+            field="certificate.session_public_key",
+        ),
+        runtime_id=_exact_string(
+            fields["runtime_id"], "certificate.runtime_id",
+        ),
+        lifecycle_generation=_exact_int(
+            fields["lifecycle_generation"],
+            "certificate.lifecycle_generation",
+            minimum=1,
+        ),
+        issued_at=decode_time(
+            fields["issued_at"], field="certificate.issued_at",
+        ),
+        expires_at=decode_time(
+            fields["expires_at"], field="certificate.expires_at",
+        ),
+        nonce=_exact_string(fields["nonce"], "certificate.nonce"),
+        signature=decode_bytes(
+            fields["signature"], field="certificate.signature",
+        ),
+    )
+
+
+def _encode_handle(value: BrokerAuthorityHandle) -> dict[str, object]:
+    return {
+        **value.signed_values(),
+        "signature": encode_bytes(value.signature),
+    }
+
+
+def _decode_handle(value: object) -> BrokerAuthorityHandle:
+    fields = require_object(
+        value,
+        fields={
+            "broker_instance_id", "handle_id", "role", "runtime_id",
+            "lifecycle_generation", "signature",
+        },
+        field="handle",
+    )
+    try:
+        role = BrokerRepositoryRole(
+            _exact_string(fields["role"], "handle.role"),
+        )
+    except ValueError:
+        _invalid("handle.role")
+    return BrokerAuthorityHandle(
+        broker_instance_id=_exact_string(
+            fields["broker_instance_id"], "handle.broker_instance_id",
+        ),
+        handle_id=_exact_string(fields["handle_id"], "handle.handle_id"),
+        role=role,
+        runtime_id=_exact_string(
+            fields["runtime_id"], "handle.runtime_id",
+        ),
+        lifecycle_generation=_exact_int(
+            fields["lifecycle_generation"],
+            "handle.lifecycle_generation",
+            minimum=1,
+        ),
+        signature=decode_bytes(
+            fields["signature"], field="handle.signature",
+        ),
+    )
+
+
+def _encode_signed_iam_result(
+    value: BrokerSignedIamResult,
+) -> dict[str, object]:
+    return {
+        **value.signed_values(),
+        "signature": encode_bytes(value.signature),
+    }
+
+
+def _decode_signed_iam_result(value: object) -> BrokerSignedIamResult:
+    fields = require_object(
+        value,
+        fields={
+            "broker_instance_id", "operation", "request_fingerprint",
+            "request_json", "result_json", "backend_decision",
+            "permission_snapshot_ref", "permission_version", "tenant_id",
+            "target", "message_type", "issued_at", "expires_at",
+            "sequence", "nonce", "signature",
+        },
+        field="signed_result",
+    )
+    return BrokerSignedIamResult(
+        broker_instance_id=_exact_string(
+            fields["broker_instance_id"],
+            "signed_result.broker_instance_id",
+        ),
+        operation=_exact_string(
+            fields["operation"], "signed_result.operation",
+        ),
+        request_fingerprint=_exact_string(
+            fields["request_fingerprint"],
+            "signed_result.request_fingerprint",
+        ),
+        request_json=_exact_string(
+            fields["request_json"], "signed_result.request_json",
+        ),
+        result_json=_exact_string(
+            fields["result_json"], "signed_result.result_json",
+        ),
+        backend_decision=_exact_string(
+            fields["backend_decision"],
+            "signed_result.backend_decision",
+        ),
+        permission_snapshot_ref=_exact_optional_string(
+            fields["permission_snapshot_ref"],
+            "signed_result.permission_snapshot_ref",
+        ),
+        permission_version=_exact_optional_string(
+            fields["permission_version"],
+            "signed_result.permission_version",
+        ),
+        tenant_id=_exact_optional_string(
+            fields["tenant_id"], "signed_result.tenant_id",
+        ),
+        target=_exact_optional_string(
+            fields["target"], "signed_result.target",
+        ),
+        message_type=_exact_string(
+            fields["message_type"], "signed_result.message_type",
+        ),
+        issued_at=decode_time(
+            fields["issued_at"], field="signed_result.issued_at",
+        ),
+        expires_at=decode_time(
+            fields["expires_at"], field="signed_result.expires_at",
+        ),
+        sequence=_exact_int(
+            fields["sequence"], "signed_result.sequence", minimum=1,
+        ),
+        nonce=_exact_string(fields["nonce"], "signed_result.nonce"),
+        signature=decode_bytes(
+            fields["signature"], field="signed_result.signature",
+        ),
+    )
+
+
+def _encode_iam_request(operation: str, request: object) -> object:
+    from ns_runtime.iam.models import PermissionSnapshot
+
+    if operation == "introspect":
+        if type(request) is not dict or set(request) != {"token", "claims"}:
+            _invalid("iam_request.introspect")
+        claims = request["claims"]
+        return {
+            "token": request["token"],
+            "component_type": claims.component_type,
+            "requested_capabilities": sorted(
+                claims.requested_capabilities,
+            ),
+            "protocol_version": str(claims.requested_version),
+        }
+    if operation == "permission_snapshot":
+        if type(request) is not PermissionSnapshot:
+            _invalid("iam_request.snapshot")
+        return {
+            "identity": request.identity,
+            "tenant_id": request.tenant_id,
+            "permission_snapshot_ref": request.permission_snapshot_ref,
+            "permission_version": request.permission_version,
+            "component_type": request.component_type,
+            "capabilities": sorted(request.capabilities),
+            "expires_at": encode_time(request.expires_at),
+        }
+    if operation in {
+        "runtime_access_check", "payload_validate", "payload_revalidate",
+    }:
+        values = request.to_wire()
+        encode_frame(values)
+        return values
+    _invalid("iam_request.operation")
+
+
+def _decode_iam_request(operation: str, value: object) -> object:
+    if operation == "introspect":
+        fields = require_object(
+            value,
+            fields={
+                "token", "component_type", "requested_capabilities",
+                "protocol_version",
+            },
+            field="iam_request.introspect",
+        )
+        capabilities = fields["requested_capabilities"]
+        if (
+            type(capabilities) is not list
+            or any(type(item) is not str for item in capabilities)
+        ):
+            _invalid("iam_request.capabilities")
+        return {
+            "token": _exact_string(
+                fields["token"], "iam_request.token",
+            ),
+            "component_type": _exact_string(
+                fields["component_type"],
+                "iam_request.component_type",
+            ),
+            "requested_capabilities": list(capabilities),
+            "protocol_version": _exact_string(
+                fields["protocol_version"],
+                "iam_request.protocol_version",
+            ),
+        }
+    if operation == "permission_snapshot":
+        fields = require_object(
+            value,
+            fields={
+                "identity", "tenant_id", "permission_snapshot_ref",
+                "permission_version", "component_type", "capabilities",
+                "expires_at",
+            },
+            field="iam_request.snapshot",
+        )
+        capabilities = fields["capabilities"]
+        if (
+            type(capabilities) is not list
+            or any(type(item) is not str for item in capabilities)
+        ):
+            _invalid("iam_request.capabilities")
+        decode_time(fields["expires_at"], field="iam_request.expires_at")
+        return dict(fields)
+    try:
+        if operation == "runtime_access_check":
+            fields = require_object(
+                value,
+                fields={
+                    "identity", "tenant_id", "permission_snapshot_ref",
+                    "permission_version", "message_type", "target",
+                    "cross_tenant", "management", "task_creation",
+                },
+                field="iam_request.access",
+            )
+            return IamAccessCheckRequest(
+                identity=fields["identity"],  # type: ignore[arg-type]
+                tenant_id=fields["tenant_id"],  # type: ignore[arg-type]
+                permission_snapshot_ref=fields[
+                    "permission_snapshot_ref"
+                ],  # type: ignore[arg-type]
+                permission_version=fields[
+                    "permission_version"
+                ],  # type: ignore[arg-type]
+                message_type=fields["message_type"],  # type: ignore[arg-type]
+                target=_decode_iam_target(fields["target"]),
+                cross_tenant=fields["cross_tenant"],  # type: ignore[arg-type]
+                management=fields["management"],  # type: ignore[arg-type]
+                task_creation=fields["task_creation"],  # type: ignore[arg-type]
+            )
+        if operation == "payload_validate":
+            fields = require_object(
+                value,
+                fields=(
+                    {
+                        "object_id", "version", "checksum", "tenant_id",
+                        "owner_identity", "source_identity", "target",
+                    }
+                    | (
+                        {"callback_message_type"}
+                        if type(value) is dict
+                        and "callback_message_type" in value
+                        else set()
+                    )
+                ),
+                field="iam_request.payload_validate",
+            )
+            return PayloadRefValidationRequest(
+                object_id=fields["object_id"],  # type: ignore[arg-type]
+                version=fields["version"],  # type: ignore[arg-type]
+                checksum=fields["checksum"],  # type: ignore[arg-type]
+                tenant_id=fields["tenant_id"],  # type: ignore[arg-type]
+                owner_identity=fields[
+                    "owner_identity"
+                ],  # type: ignore[arg-type]
+                source_identity=fields[
+                    "source_identity"
+                ],  # type: ignore[arg-type]
+                target=_decode_iam_target(fields["target"]),
+                callback_message_type=fields.get(
+                    "callback_message_type",
+                ),  # type: ignore[arg-type]
+            )
+        if operation == "payload_revalidate":
+            return PayloadRefRevalidationRequest.from_wire(value)
+    except (NsValidationError, TypeError, ValueError):
+        _invalid("iam_request.typed")
+    _invalid("iam_request.operation")
+
+
+def _decode_iam_target(value: object) -> IamTargetContext:
+    if type(value) is not dict or not (
+        {"kind"} <= set(value) <= {"kind", "tenant_id", "reference"}
+    ):
+        _invalid("iam_request.target")
+    return IamTargetContext(
+        kind=value["kind"],  # type: ignore[arg-type]
+        tenant_id=value.get("tenant_id"),  # type: ignore[arg-type]
+        reference=value.get("reference"),  # type: ignore[arg-type]
+    )
+
+
+def _encode_state_response(
+    operation: str,
+    result: object,
+    request: object,
+) -> object:
+    if operation == "state_health":
+        return encode_health(result)
+    if operation in {
+        "read_delivery", "read_attempt", "read_summary",
+        "read_payload_body", "read_registry_layout",
+        "read_registry_tenant",
+        "read_admission_dedup", "read_admission_summary",
+        "read_delivery_owner", "read_scheduler_cursor",
+    }:
+        return encode_read_result(result)
+    if operation in {
+        "transact_admission", "transact_scheduler", "transact_registry",
+    }:
+        if type(result) is not StateTransactionResult:
+            _invalid("state_response.transaction")
+        return encode_transaction_result(
+            result.records, result.log_positions,
+        )
+    if operation == "read_scheduler_index":
+        request_values = require_object(
+            request,
+            fields={
+                "tenant_id", "bucket_id", "layout_generation",
+                "index_name", "cursor", "limit", "max_score",
+            },
+            field="state_response.index_request",
+        )
+        return encode_index_result(
+            result,
+            index_name=_exact_string(
+                request_values["index_name"],
+                "state_response.index_name",
+            ),
+            index_bucket="delivery",
+        )
+    if operation == "read_registry_index":
+        request_values = require_object(
+            request,
+            fields={"index_name", "index_bucket", "cursor", "limit"},
+            field="state_response.registry_index_request",
+        )
+        return encode_index_result(
+            result,
+            index_name=_exact_string(
+                request_values["index_name"],
+                "state_response.registry_index_name",
+            ),
+            index_bucket=_exact_string(
+                request_values["index_bucket"],
+                "state_response.registry_index_bucket",
+            ),
+        )
+    if operation == "append_audit":
+        return encode_append_result(result)
+    _invalid("state_response.operation")
+
+
+def _wire_response(
+    *,
+    request_id: str,
+    sequence: int,
+    result: object = None,
+    error: object = None,
+) -> dict[str, object]:
+    return {
+        "version": WIRE_VERSION,
+        "kind": "response",
+        "request_id": request_id,
+        "sequence": sequence,
+        "ok": error is None,
+        "result": result if error is None else None,
+        "error": error,
+    }
+
+
+def _read_fd_once(fd: int, *, maximum: int) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    while True:
+        chunk = os.read(fd, min(65_536, maximum + 1 - size))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+        if size > maximum:
+            _invalid("broker.inherited_fd_too_large")
+    return b"".join(chunks)
+
+
+def _physical_state_domain(
+    config: AuthorityBrokerConfig,
+    *,
+    credential_reference: str,
+) -> str:
     parsed = urlsplit(config.state_endpoint)
     if (
         parsed.scheme not in {"redis", "rediss", "valkey", "valkeys"}
@@ -1831,7 +3349,6 @@ def _physical_state_domain(config: AuthorityBrokerConfig) -> str:
     if not path.isdigit():
         _invalid("config.state_database")
     principal = config.state_username or parsed.username or "default"
-    credential_reference = config.state_password_source or "none"
     return "\0".join((
         config.state_backend,
         parsed.scheme,
@@ -1846,11 +3363,16 @@ def _physical_state_domain(config: AuthorityBrokerConfig) -> str:
 
 def _acquire_physical_domain_lease(
     config: AuthorityBrokerConfig,
+    *,
+    credential_reference: str,
 ) -> _PhysicalDomainLease:
     import portalocker
 
     identity = hashlib.sha256(
-        _physical_state_domain(config).encode(),
+        _physical_state_domain(
+            config,
+            credential_reference=credential_reference,
+        ).encode(),
     ).hexdigest()
     # A caller-selected directory would let two brokers lock different files
     # for the same physical Redis/Valkey domain.  Keep the lock location
@@ -1895,21 +3417,58 @@ def _normalize_backend_url(value: str) -> tuple[str, str]:
     return origin, prefix
 
 
-def _delivery_args(payload: object) -> tuple[str, int, int, str]:
-    if (
-        type(payload) is not tuple
-        or len(payload) != 4
-        or type(payload[0]) is not str
-        or not payload[0]
-        or type(payload[1]) is not int
-        or payload[1] < 0
-        or type(payload[2]) is not int
-        or payload[2] <= 0
-        or type(payload[3]) is not str
-        or not payload[3]
-    ):
-        _invalid("broker.delivery_request")
-    return payload
+def _decode_delivery_request(
+    payload: object,
+) -> tuple[str, int, int, str]:
+    fields = require_object(
+        payload,
+        fields={
+            "tenant_id", "bucket_id", "layout_generation", "object_id",
+        },
+        field="broker.delivery_request",
+    )
+    return (
+        _exact_string(fields["tenant_id"], "broker.tenant_id"),
+        _exact_int(fields["bucket_id"], "broker.bucket_id", minimum=0),
+        _exact_int(
+            fields["layout_generation"],
+            "broker.layout_generation",
+            minimum=1,
+        ),
+        _exact_string(fields["object_id"], "broker.object_id"),
+    )
+
+
+def _delivery_partition(
+    *,
+    tenant_id: str,
+    bucket_id: int,
+    layout_generation: int,
+) -> DeliveryPersistencePartition:
+    return DeliveryPersistencePartition(
+        tenant_id=tenant_id,
+        bucket_id=bucket_id,
+        layout_generation=layout_generation,
+        namespace=StateNamespace.tenant(
+            tenant_id=tenant_id,
+            domain="delivery",
+        ),
+    )
+
+
+def _registry_partition(runtime_id: str) -> DeliveryPersistencePartition:
+    synthetic_tenant = "runtime-registry:" + hashlib.sha256(
+        runtime_id.encode(),
+    ).hexdigest()
+    return DeliveryPersistencePartition(
+        tenant_id=synthetic_tenant,
+        bucket_id=0,
+        layout_generation=1,
+        namespace=StateNamespace.tenant(
+            tenant_id=synthetic_tenant,
+            domain="delivery",
+        ),
+    )
 
 
 def _require_isolated_broker_process() -> None:
@@ -1920,22 +3479,22 @@ def _require_isolated_broker_process() -> None:
         _invalid("broker.os_isolation")
 
 
-def _transaction_args(
+def _decode_transaction_dimensions(
     payload: object,
-) -> tuple[str, int, int, StateTransaction]:
-    if (
-        type(payload) is not tuple
-        or len(payload) != 4
-        or type(payload[0]) is not str
-        or not payload[0]
-        or type(payload[1]) is not int
-        or payload[1] < 0
-        or type(payload[2]) is not int
-        or payload[2] <= 0
-        or type(payload[3]) is not StateTransaction
-    ):
+) -> tuple[str, int, int]:
+    if type(payload) is not dict:
         _invalid("broker.transaction_request")
-    return payload
+    return (
+        _exact_string(payload.get("tenant_id"), "broker.tenant_id"),
+        _exact_int(
+            payload.get("bucket_id"), "broker.bucket_id", minimum=0,
+        ),
+        _exact_int(
+            payload.get("layout_generation"),
+            "broker.layout_generation",
+            minimum=1,
+        ),
+    )
 
 
 def _parse_backend_result(parser: object, value: object) -> object:
@@ -1947,7 +3506,7 @@ def _parse_backend_result(parser: object, value: object) -> object:
         raise _broker_unavailable("malformed_backend_result") from None
 
 
-def _exception_response(error: Exception) -> dict[str, object]:
+def _exception_values(error: Exception) -> dict[str, object]:
     details = getattr(error, "details", {})
     if isinstance(error, NsRuntimeIamDeniedError):
         kind = "iam_denied"
@@ -1959,24 +3518,36 @@ def _exception_response(error: Exception) -> dict[str, object]:
         kind = "state_indeterminate"
     elif isinstance(error, NsRuntimeStateStoreCapabilityUnavailableError):
         kind = "state_denied"
+    elif isinstance(error, NsRuntimeStateStoreConflictError):
+        kind = "state_conflict"
+    elif isinstance(error, NsRuntimeStateStoreVersionMismatchError):
+        kind = "state_version_mismatch"
+    elif isinstance(error, NsRuntimeStateStoreNamespaceViolationError):
+        kind = "state_namespace"
+    elif isinstance(error, NsRuntimeStateStoreTimeoutError):
+        kind = "state_timeout"
     elif isinstance(error, NsValidationError):
         kind = "validation"
     else:
         kind = "state_unavailable"
     return {
-        "ok": False,
-        "error_kind": kind,
+        "kind": kind,
         "reason": str(details.get("reason", type(error).__name__)),
     }
 
 
-def _error_response(kind: str, reason: str) -> dict[str, object]:
-    return {"ok": False, "error_kind": kind, "reason": reason}
+def _error_values(kind: str, reason: str) -> dict[str, object]:
+    return {"kind": kind, "reason": reason}
 
 
-def _raise_remote_error(response: Mapping[str, object]) -> None:
-    kind = response.get("error_kind")
-    reason = str(response.get("reason", "remote_failure"))
+def _raise_remote_error(response: object) -> None:
+    values = require_object(
+        response,
+        fields={"kind", "reason"},
+        field="remote_error",
+    )
+    kind = values["kind"]
+    reason = _exact_string(values["reason"], "remote_error.reason")
     details = {
         "component": "authority_broker",
         "reason": reason,
@@ -1991,12 +3562,78 @@ def _raise_remote_error(response: Mapping[str, object]) -> None:
         raise NsRuntimeStateStoreIndeterminateWriteError(details=details)
     if kind == "state_denied":
         raise NsRuntimeStateStoreCapabilityUnavailableError(details=details)
+    if kind == "state_conflict":
+        raise NsRuntimeStateStoreConflictError(details=details)
+    if kind == "state_version_mismatch":
+        raise NsRuntimeStateStoreVersionMismatchError(details=details)
+    if kind == "state_namespace":
+        raise NsRuntimeStateStoreNamespaceViolationError(details=details)
+    if kind == "state_timeout":
+        raise NsRuntimeStateStoreTimeoutError(details=details)
     if kind == "validation":
         raise NsValidationError(
             "Authority broker request is invalid.",
             details=details,
         )
     raise NsRuntimeStateStoreUnavailableError(details=details)
+
+
+def _indeterminate(
+    operation: str,
+    reason: str,
+) -> NsRuntimeStateStoreIndeterminateWriteError:
+    return NsRuntimeStateStoreIndeterminateWriteError(details={
+        "component": "authority_broker",
+        "operation": operation,
+        "reason": reason,
+    })
+
+
+def _bind_write_transaction_result(
+    transaction: DeliveryPersistenceTransaction,
+    raw: object,
+    *,
+    operation: str,
+) -> DeliveryPersistenceTransactionResult:
+    try:
+        records, positions = decode_transaction_result(raw)
+        return DeliveryPersistenceTransactionResult.for_transaction(
+            transaction,
+            records=records,
+            log_positions=positions,
+        )
+    except (NsValidationError, TypeError, ValueError):
+        raise _indeterminate(
+            operation, "ipc_malformed_write_result",
+        ) from None
+
+
+def _exact_string(value: object, field: str) -> str:
+    if type(value) is not str or not value:
+        _invalid(field)
+    return value
+
+
+def _exact_optional_string(value: object, field: str) -> str:
+    if type(value) is not str:
+        _invalid(field)
+    return value
+
+
+def _exact_int(value: object, field: str, *, minimum: int) -> int:
+    if type(value) is not int or value < minimum:
+        _invalid(field)
+    return value
+
+
+def _exact_number(value: object, field: str) -> float:
+    if (
+        type(value) not in {int, float}
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        _invalid(field)
+    return float(value)
 
 
 def _canonical(values: Mapping[str, object]) -> bytes:
@@ -2082,4 +3719,6 @@ __all__ = (
     "SchedulerRepositoryProxy",
     "VerifiedBrokerIamResult",
     "start_production_authority_broker",
+    "start_contract_test_authority_broker",
+    "start_integration_test_authority_broker",
 )

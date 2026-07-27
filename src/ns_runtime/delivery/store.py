@@ -17,10 +17,10 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.state_store import (
-    StateAccessScope, StateAssertion, StateAtomicScope, StateAuthorityKind,
+    StateAssertion, StateAtomicScope, StateAuthorityKind,
     StateCallerCapability, StateConsistency, StateDocument, StateKey,
     StateMutation, StateMutationKind, StateNamespace, StateStore,
-    StateRecord, StateTransaction, StateTransactionResult,
+    StateRecord,
     StateOrderedIndexKey, StateOrderedIndexMutation,
     StateOrderedIndexMutationKind, StateTransitionLogAppend,
     StateStoreRepository, StateStoreRepositoryRole,
@@ -38,6 +38,14 @@ from .serde import delivery_to_dict, summary_to_dict
 from .authority_layout import (
     DeliveryAuthorityLayout,
     StateStoreDeliveryAuthorityRegistry,
+)
+from ns_runtime.delivery_persistence import (
+    DeliveryAdmissionPersistence,
+    DeliveryPersistencePartition,
+    DeliveryPersistenceTransaction,
+    DeliveryPersistenceTransactionResult,
+    DeliveryRegistryPersistence,
+    contract_test_persistence,
 )
 
 
@@ -149,23 +157,27 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
     def __init__(
         self,
         *,
-        repository: StateStoreRepository,
-        registry_repository: StateStoreRepository,
+        repository: DeliveryAdmissionPersistence | StateStoreRepository,
+        registry_repository: DeliveryRegistryPersistence | StateStoreRepository,
     ) -> None:
-        if not isinstance(repository, StateStoreRepository):
+        if type(repository) is StateStoreRepository:
+            repository = contract_test_persistence(
+                repository,
+                StateStoreRepositoryRole.DELIVERY_ADMISSION,
+            )
+        if type(registry_repository) is StateStoreRepository:
+            registry_repository = contract_test_persistence(
+                registry_repository,
+                StateStoreRepositoryRole.DELIVERY_REGISTRY,
+            )
+        if not isinstance(repository, DeliveryAdmissionPersistence):
             _invalid("repository")
-        repository._require_role(StateStoreRepositoryRole.DELIVERY_ADMISSION)
-        if not isinstance(registry_repository, StateStoreRepository):
+        if not isinstance(registry_repository, DeliveryRegistryPersistence):
             _invalid("registry_repository")
-        registry_repository._require_role(
-            StateStoreRepositoryRole.DELIVERY_REGISTRY,
-        )
-        if repository._store is not registry_repository._store:
-            _invalid("repository_store")
-        self._store = repository._store
+        self._store = repository
         self._repository = repository
         self._registry = StateStoreDeliveryAuthorityRegistry(
-            repository=registry_repository,
+            persistence=registry_repository,
         )
 
     async def initialize(self, value: AdmissionInitialization) -> AtomicAdmissionResult:
@@ -427,7 +439,8 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
         )
 
     async def _cancel_after_failure(
-        self, *, scope: StateAccessScope, namespace: StateNamespace,
+        self, *, scope: DeliveryPersistencePartition,
+        namespace: StateNamespace,
         value: AdmissionInitialization, current_root: MessageDeliverySummary,
         current_shards: tuple[MessageDeliverySummary, ...],
         created: tuple[DeliveryRecord, ...],
@@ -487,8 +500,9 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
         )
 
     async def _transact(
-        self, scope: StateAccessScope, mutations: tuple[StateMutation, ...],
-    ) -> StateTransactionResult:
+        self, scope: DeliveryPersistencePartition,
+        mutations: tuple[StateMutation, ...],
+    ) -> DeliveryPersistenceTransactionResult:
         index = StateOrderedIndexKey(
             namespace=scope.namespace, name="delivery.prepared", bucket="delivery",
         )
@@ -543,20 +557,23 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
                     }, sort_keys=True, separators=(",", ":")).encode(),
                 ),
             ),)
-        return await self._store.transact(StateTransaction(
-            scope=scope, mutations=mutations,
+        return await self._store.transact(DeliveryPersistenceTransaction(
+            partition=scope, mutations=mutations,
             ordered_index_mutations=tuple(index_mutations), log_appends=logs,
         ))
 
     @staticmethod
-    def _record_map(result: StateTransactionResult) -> dict[StateKey, StateRecord]:
+    def _record_map(
+        result: DeliveryPersistenceTransactionResult,
+    ) -> dict[StateKey, StateRecord]:
         return {
             record.key: record for record in result.records
             if isinstance(record, StateRecord)
         }
 
     async def _read_dedup(
-        self, scope: StateAccessScope, namespace: StateNamespace,
+        self, scope: DeliveryPersistencePartition,
+        namespace: StateNamespace,
         expected: DedupEvidence,
     ) -> DedupEvidence:
         result = await self._store.read(
@@ -603,7 +620,10 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
     def _validate_commit(
         result: object, mutations: tuple[StateMutation, ...],
     ) -> None:
-        if not isinstance(result, StateTransactionResult) or len(result.records) != len(mutations):
+        if (
+            not isinstance(result, DeliveryPersistenceTransactionResult)
+            or len(result.records) != len(mutations)
+        ):
             raise NsRuntimeStateStoreUnavailableError(details={
                 "component": "delivery_admission", "operation": "initialize",
                 "reason": "malformed_commit_result",

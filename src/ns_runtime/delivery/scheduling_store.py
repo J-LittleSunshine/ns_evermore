@@ -34,8 +34,6 @@ from ns_common.state_store import (
     StateRecord,
     StateRecordReadAssertion,
     StateStore,
-    StateTransaction,
-    StateTransactionResult,
     StateOrderedIndexCursor, StateOrderedIndexEntry, StateOrderedIndexKey,
     StateOrderedIndexMutation, StateOrderedIndexReadAssertion,
     StateOrderedIndexMutationKind, StateOrderedIndexReadResult,
@@ -81,6 +79,14 @@ from .authority_layout import (
     DeliveryAuthorityLayout,
     StateStoreDeliveryAuthorityRegistry,
 )
+from ns_runtime.delivery_persistence import (
+    DeliveryPersistencePartition,
+    DeliveryPersistenceTransaction,
+    DeliveryPersistenceTransactionResult,
+    DeliveryRegistryPersistence,
+    DeliverySchedulerPersistence,
+    contract_test_persistence,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,27 +113,32 @@ class StateStoreDeliveryScheduler:
     """Single-runtime scheduler; Redis records remain the only state authority."""
 
     def __init__(
-        self, *, repository: StateStoreRepository,
-        registry_repository: StateStoreRepository,
+        self, *,
+        repository: DeliverySchedulerPersistence | StateStoreRepository,
+        registry_repository: DeliveryRegistryPersistence | StateStoreRepository,
         clock: Clock,
     ) -> None:
-        if not isinstance(repository, StateStoreRepository):
+        if type(repository) is StateStoreRepository:
+            repository = contract_test_persistence(
+                repository,
+                StateStoreRepositoryRole.DELIVERY_SCHEDULER,
+            )
+        if type(registry_repository) is StateStoreRepository:
+            registry_repository = contract_test_persistence(
+                registry_repository,
+                StateStoreRepositoryRole.DELIVERY_REGISTRY,
+            )
+        if not isinstance(repository, DeliverySchedulerPersistence):
             _invalid("repository")
-        repository._require_role(StateStoreRepositoryRole.DELIVERY_SCHEDULER)
-        if not isinstance(registry_repository, StateStoreRepository):
+        if not isinstance(registry_repository, DeliveryRegistryPersistence):
             _invalid("registry_repository")
-        registry_repository._require_role(
-            StateStoreRepositoryRole.DELIVERY_REGISTRY,
-        )
-        if repository._store is not registry_repository._store:
-            _invalid("repository_store")
         if not isinstance(clock, Clock):
             _invalid("clock")
-        self._store = repository._store
+        self._store = repository
         self._repository = repository
         self._clock = clock
         self._registry = StateStoreDeliveryAuthorityRegistry(
-            repository=registry_repository,
+            persistence=registry_repository,
         )
         self._activation_lock = asyncio.Lock()
         self._claim_lock = asyncio.Lock()
@@ -175,7 +186,7 @@ class StateStoreDeliveryScheduler:
     async def _read_progress_page(
         self,
         *,
-        scope: StateAccessScope,
+        scope: DeliveryPersistencePartition,
         index: StateOrderedIndexKey,
         cursor_name: str,
         limit: int,
@@ -217,7 +228,7 @@ class StateStoreDeliveryScheduler:
     async def _reanchor_progress_cursor(
         self,
         *,
-        scope: StateAccessScope,
+        scope: DeliveryPersistencePartition,
         cursor_name: str,
         page: StateOrderedIndexReadResult,
         removed_members: frozenset[str],
@@ -240,7 +251,7 @@ class StateStoreDeliveryScheduler:
 
     async def _read_scheduler_cursor(
         self,
-        scope: StateAccessScope,
+        scope: DeliveryPersistencePartition,
         name: str,
     ) -> _SchedulerCursorAuthority:
         key = _scheduler_cursor_key(scope, name)
@@ -332,7 +343,7 @@ class StateStoreDeliveryScheduler:
     async def _write_scheduler_cursor(
         self,
         *,
-        scope: StateAccessScope,
+        scope: DeliveryPersistencePartition,
         name: str,
         index_cursor: StateOrderedIndexCursor | None,
         next_bucket: int | None,
@@ -388,8 +399,8 @@ class StateStoreDeliveryScheduler:
                 document=document,
             )
             try:
-                await self._store.transact(StateTransaction(
-                    scope=scope,
+                await self._store.transact(DeliveryPersistenceTransaction(
+                    partition=_persistence_partition(scope),
                     mutations=(mutation,),
                 ))
                 return
@@ -404,7 +415,7 @@ class StateStoreDeliveryScheduler:
     async def _repair_ordered_projection(
         self,
         *,
-        scope: StateAccessScope,
+        scope: DeliveryPersistencePartition,
         index: StateOrderedIndexKey,
         entry: StateOrderedIndexEntry,
         reason: str,
@@ -469,8 +480,8 @@ class StateStoreDeliveryScheduler:
             "occurred_at": self._clock.utc_now().isoformat(),
         }
         try:
-            await self._store.transact(StateTransaction(
-                scope=scope,
+            await self._store.transact(DeliveryPersistenceTransaction(
+                partition=_persistence_partition(scope),
                 mutations=(),
                 record_assertions=(record_assertion,),
                 ordered_index_assertions=(
@@ -804,7 +815,8 @@ class StateStoreDeliveryScheduler:
         )
 
     async def _inspect_activation_page(
-        self, *, scope: StateAccessScope, page: StateOrderedIndexReadResult,
+        self, *, scope: DeliveryPersistencePartition,
+        page: StateOrderedIndexReadResult,
         policy: DeliverySchedulingPolicy, now,
     ) -> tuple[bool, StateOrderedIndexReadResult]:
         """Repair stale prepared projection and identify a live candidate."""
@@ -907,12 +919,15 @@ class StateStoreDeliveryScheduler:
     async def _select_activation_page(
         self, *, tenant_id: str, bucket_order: tuple[int, ...],
         policy: DeliverySchedulingPolicy, now,
-    ) -> tuple[StateAccessScope, StateOrderedIndexReadResult]:
+    ) -> tuple[DeliveryPersistencePartition, StateOrderedIndexReadResult]:
         """Use durable per-bucket cursors inside one global candidate budget."""
 
         remaining = policy.activation_scan_budget
         active_buckets = list(bucket_order)
-        fallback: tuple[StateAccessScope, StateOrderedIndexReadResult] | None = None
+        fallback: tuple[
+            DeliveryPersistencePartition,
+            StateOrderedIndexReadResult,
+        ] | None = None
         while remaining > 0 and active_buckets:
             progressed = False
             for bucket_id in tuple(active_buckets):
@@ -1105,7 +1120,8 @@ class StateStoreDeliveryScheduler:
         )
 
     async def _claim_ready_in_scope(
-        self, *, scope: StateAccessScope, ready: StateOrderedIndexReadResult,
+        self, *, scope: DeliveryPersistencePartition,
+        ready: StateOrderedIndexReadResult,
         tenant_id: str, runtime_id: str, worker_id: str, claim_token: str,
         policy: DeliverySchedulingPolicy, now,
     ) -> tuple[ClaimResult | None, bool]:
@@ -1361,7 +1377,8 @@ class StateStoreDeliveryScheduler:
         return updated
 
     async def _recover_expired_for_claim(
-        self, *, scope: StateAccessScope, runtime_id: str, worker_id: str,
+        self, *, scope: DeliveryPersistencePartition,
+        runtime_id: str, worker_id: str,
         claim_token: str, policy: DeliverySchedulingPolicy, now, budget: int,
     ) -> tuple[ClaimResult | None, int]:
         consumed = 0
@@ -1393,7 +1410,8 @@ class StateStoreDeliveryScheduler:
         return None, consumed
 
     async def _recover_due_entry(
-        self, *, scope: StateAccessScope, entry, runtime_id: str,
+        self, *, scope: DeliveryPersistencePartition,
+        entry, runtime_id: str,
         worker_id: str, claim_token: str, policy: DeliverySchedulingPolicy, now,
     ) -> ClaimResult | None:
         lease_index = _index(scope, "delivery.lease")
@@ -1808,7 +1826,7 @@ class StateStoreDeliveryScheduler:
     async def _reconcile_sending_as_uncertain(
         self,
         *,
-        scope: StateAccessScope,
+        scope: DeliveryPersistencePartition,
         authority: _DeliveryAuthority,
         attempt: DeliveryAttempt,
         attempt_record: StateRecord,
@@ -1992,7 +2010,7 @@ class StateStoreDeliveryScheduler:
 
     async def _read_delivery(
         self,
-        scope: StateAccessScope,
+        scope: DeliveryPersistencePartition,
         delivery_id: str,
     ) -> _DeliveryAuthority:
         record = await _read_record(self._store, scope, "delivery", delivery_id)
@@ -2003,7 +2021,7 @@ class StateStoreDeliveryScheduler:
 
     async def _read_attempt(
         self,
-        scope: StateAccessScope,
+        scope: DeliveryPersistencePartition,
         attempt_id: str,
     ) -> tuple[DeliveryAttempt, StateRecord]:
         record = await _read_record(self._store, scope, "attempt", attempt_id)
@@ -2016,7 +2034,7 @@ class StateStoreDeliveryScheduler:
         return value, record
 
     async def _read_summary(
-        self, scope: StateAccessScope, summary_id: str,
+        self, scope: DeliveryPersistencePartition, summary_id: str,
     ) -> _SummaryAuthority:
         record = await _read_record(self._store, scope, "summary", summary_id)
         value = _decode_summary(record)
@@ -2025,7 +2043,7 @@ class StateStoreDeliveryScheduler:
         return _SummaryAuthority(value=value, record=record)
 
     async def _summary_mutations(
-        self, scope: StateAccessScope, delivery: DeliveryRecord, *,
+        self, scope: DeliveryPersistencePartition, delivery: DeliveryRecord, *,
         prepared: int = 0, queued: int = 0, sending: int = 0,
         ack_waiting: int = 0, write_failed: int = 0, waiting: int = 0,
         expired: int = 0, payload_rejected: int = 0,
@@ -2049,7 +2067,7 @@ class StateStoreDeliveryScheduler:
 
     async def _read_bound_summaries(
         self,
-        scope: StateAccessScope,
+        scope: DeliveryPersistencePartition,
         delivery: DeliveryRecord,
     ) -> tuple[_SummaryAuthority, _SummaryAuthority]:
         root_record = await _read_record(
@@ -2071,8 +2089,8 @@ class StateStoreDeliveryScheduler:
 
 
 async def _read_record(
-    store: StateStore,
-    scope: StateAccessScope,
+    store: DeliverySchedulerPersistence,
+    scope: DeliveryPersistencePartition,
     object_type: str,
     identifier: str,
 ) -> StateRecord:
@@ -2091,10 +2109,9 @@ async def _read_record(
 
 
 def _scope(
-    repository: StateStoreRepository,
+    repository: DeliverySchedulerPersistence,
     tenant_id: str, bucket_id: int, *, layout_generation: int = 2,
-) -> StateAccessScope:
-    repository._require_role(StateStoreRepositoryRole.DELIVERY_SCHEDULER)
+) -> DeliveryPersistencePartition:
     return repository.delivery_scope(
         tenant_id=tenant_id,
         bucket_id=bucket_id,
@@ -2103,9 +2120,9 @@ def _scope(
 
 
 def _claim_scope(
-    repository: StateStoreRepository,
+    repository: DeliverySchedulerPersistence,
     claim: DeliveryClaim,
-) -> StateAccessScope:
+) -> DeliveryPersistencePartition:
     return _scope(
         repository,
         claim.tenant_id,
@@ -2122,23 +2139,10 @@ def _layout(policy: DeliverySchedulingPolicy) -> DeliveryAuthorityLayout:
     )
 
 
-def _bucket_id(scope: StateAccessScope) -> int:
-    partition = scope.atomic_scope.partition
-    marker = "-bucket-"
-    if not partition.startswith("layout-") or marker not in partition:
-        raise NsRuntimeDeliveryStateError(details={
-            "component": "delivery_scheduler",
-            "operation": "bucket_id",
-            "reason": "authority_layout_partition_invalid",
-        })
-    try:
-        return int(partition.rsplit(marker, 1)[1])
-    except ValueError:
-        raise NsRuntimeDeliveryStateError(details={
-            "component": "delivery_scheduler",
-            "operation": "bucket_id",
-            "reason": "authority_layout_partition_invalid",
-        }) from None
+def _bucket_id(scope: DeliveryPersistencePartition) -> int:
+    if type(scope) is StateAccessScope:
+        return _legacy_partition_dimensions(scope.atomic_scope.partition)[1]
+    return scope.bucket_id
 
 
 def _replace_delivery(record: StateRecord, value: DeliveryRecord) -> StateMutation:
@@ -2304,7 +2308,10 @@ def _validate_transaction(
     mutations: tuple[StateMutation, ...],
     operation: str,
 ) -> None:
-    if not isinstance(result, StateTransactionResult) or len(result.records) != len(mutations):
+    if (
+        not isinstance(result, DeliveryPersistenceTransactionResult)
+        or len(result.records) != len(mutations)
+    ):
         _unavailable(operation, "malformed_commit_result")
     if any(
         record is None
@@ -2324,14 +2331,17 @@ def _priority(value: DeliveryRecord) -> int:
     }[value.policy_decision.priority.value]
 
 
-def _index(scope: StateAccessScope, name: str) -> StateOrderedIndexKey:
+def _index(
+    scope: DeliveryPersistencePartition,
+    name: str,
+) -> StateOrderedIndexKey:
     return StateOrderedIndexKey(
         namespace=scope.namespace, name=name, bucket="delivery",
     )
 
 
 def _scheduler_cursor_key(
-    scope: StateAccessScope,
+    scope: DeliveryPersistencePartition,
     name: str,
 ) -> StateKey:
     layout_generation, bucket_id, operation, index_identity = (
@@ -2351,7 +2361,7 @@ def _scheduler_cursor_key(
 
 
 def _legacy_scheduler_cursor_key(
-    scope: StateAccessScope,
+    scope: DeliveryPersistencePartition,
     name: str,
 ) -> StateKey:
     return StateKey(
@@ -2362,7 +2372,7 @@ def _legacy_scheduler_cursor_key(
 
 
 def _scheduler_cursor_identity(
-    scope: StateAccessScope,
+    scope: DeliveryPersistencePartition,
     name: str,
 ) -> tuple[int, int, str, str]:
     if type(name) is not str or "." not in name:
@@ -2370,27 +2380,67 @@ def _scheduler_cursor_identity(
     operation, index_identity = name.split(".", 1)
     if not operation or not index_identity:
         _invalid("scheduler_cursor.name")
-    partition = scope.atomic_scope.partition
-    marker = "-bucket-"
-    if not partition.startswith("layout-") or marker not in partition:
-        _invalid("scheduler_cursor.scope")
-    generation_text = partition[len("layout-"):partition.index(marker)]
-    try:
-        generation = int(generation_text)
-    except ValueError:
-        _invalid("scheduler_cursor.scope")
-    if generation < 1:
-        _invalid("scheduler_cursor.scope")
-    return generation, _bucket_id(scope), operation, index_identity
+    generation = (
+        _legacy_partition_dimensions(scope.atomic_scope.partition)[0]
+        if type(scope) is StateAccessScope
+        else scope.layout_generation
+    )
+    return (
+        generation,
+        _bucket_id(scope),
+        operation,
+        index_identity,
+    )
+
+
+def _legacy_partition_dimensions(value: str) -> tuple[int, int]:
+    prefix = "layout-"
+    separator = "-bucket-"
+    if type(value) is not str or not value.startswith(prefix):
+        _invalid("scope.partition")
+    generation_text, found, bucket_text = value[len(prefix):].partition(
+        separator,
+    )
+    if (
+        not found
+        or not generation_text.isdecimal()
+        or not bucket_text.isdecimal()
+    ):
+        _invalid("scope.partition")
+    generation = int(generation_text)
+    bucket = int(bucket_text)
+    if generation <= 0 or bucket < 0:
+        _invalid("scope.partition")
+    return generation, bucket
+
+
+def _persistence_partition(
+    scope: DeliveryPersistencePartition | StateAccessScope,
+) -> DeliveryPersistencePartition:
+    if type(scope) is DeliveryPersistencePartition:
+        return scope
+    if type(scope) is not StateAccessScope or scope._issuer_realm != "contract_test":
+        _invalid("scope")
+    generation, bucket = _legacy_partition_dimensions(
+        scope.atomic_scope.partition,
+    )
+    return DeliveryPersistencePartition(
+        tenant_id=scope.namespace.tenant_id,
+        bucket_id=bucket,
+        layout_generation=generation,
+        namespace=scope.namespace,
+    )
 
 
 def _target_index(
-    scope: StateAccessScope, target_fingerprint: str,
+    scope: DeliveryPersistencePartition, target_fingerprint: str,
 ) -> StateOrderedIndexKey:
     return _index(scope, "delivery.target." + target_fingerprint.removeprefix("sha256:"))
 
 
-def _runtime_ready_index(scope: StateAccessScope) -> StateOrderedIndexKey:
+def _runtime_ready_index(
+    scope: DeliveryPersistencePartition,
+) -> StateOrderedIndexKey:
     return _index(scope, "delivery.runtime.ready")
 
 
@@ -2412,10 +2462,11 @@ def _index_remove(
 
 
 def _transition(
-    *, scope: StateAccessScope, mutations: tuple[StateMutation, ...],
+    *, scope: DeliveryPersistencePartition,
+    mutations: tuple[StateMutation, ...],
     index_mutations: tuple[StateOrderedIndexMutation, ...], operation: str,
     delivery: DeliveryRecord, now,
-) -> StateTransaction:
+) -> DeliveryPersistenceTransaction:
     event = {
         "schema_version": "delivery-transition-event-1",
         "operation": operation,
@@ -2425,8 +2476,8 @@ def _transition(
         "fencing": (None if delivery.owner is None else delivery.owner.fencing),
         "occurred_at": now.isoformat(),
     }
-    return StateTransaction(
-        scope=scope, mutations=mutations,
+    return DeliveryPersistenceTransaction(
+        partition=_persistence_partition(scope), mutations=mutations,
         ordered_index_mutations=index_mutations,
         log_appends=(StateTransitionLogAppend(
             key=StateKey(

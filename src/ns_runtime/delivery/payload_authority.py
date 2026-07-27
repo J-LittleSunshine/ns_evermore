@@ -27,6 +27,10 @@ from .scheduling import (
     PayloadValidationResult,
     _PayloadAccessEvidenceIssuer,
 )
+from ns_runtime.delivery_persistence import (
+    DeliveryPayloadPersistence,
+    contract_test_persistence,
+)
 
 
 class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
@@ -109,14 +113,18 @@ class StateStoreDeliveryPayloadAuthority(
     def __init__(
         self,
         *,
-        repository: StateStoreRepository,
+        repository: DeliveryPayloadPersistence | StateStoreRepository,
         reference_validator: DeliveryPayloadValidator | None = None,
     ) -> None:
-        if not isinstance(repository, StateStoreRepository):
+        if type(repository) is StateStoreRepository:
+            repository = contract_test_persistence(
+                repository,
+                StateStoreRepositoryRole.DELIVERY_PAYLOAD,
+            )
+        if not isinstance(repository, DeliveryPayloadPersistence):
             _invalid("repository")
-        repository._require_role(StateStoreRepositoryRole.DELIVERY_PAYLOAD)
         self._repository = repository
-        self._store = repository._store
+        self._store = repository
         if (
             reference_validator is not None
             and type(reference_validator)

@@ -29,6 +29,14 @@
 - P11-FIX-10：payload revalidation result由broker签名并绑定request/decision/snapshot/target/expiry；broker/IPC failure fail closed，StateStore write保持indeterminate，WRITE_UNCERTAIN仍不恢复、不重发。
 - 冻结：P12仍`BLOCKED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
 
+### P08-FIX-06 / P09-FIX-10 / P11-FIX-11 broker trust root and wire closure
+
+- 状态：`IMPLEMENTED / F3 (local only)`；本地测试证据见acceptance log的“authority broker fixed trust root 与 pickle-free IPC复核修复”。部署production root私钥不进入仓库，因此production `main`正向启动仍需部署环境集成验证，不标记为新的production VERIFIED证据。
+- P09-FIX-10：production root公钥为预置构建常量，继承`NS_RUNTIME_AUTHORITY_KEY_FD`中的私钥必须在broker child匹配该root；ready certificate由root签名后runtime才接受instance/session key/handles。公开starter永久fail closed，test与Redis integration使用不同test realm。
+- P08-FIX-06：应用IPC仅使用`send_bytes/recv_bytes`和strict canonical JSON；事务、record/index assertions、ordered-index cursor、result与health都有显式codec。broker以内部fixed-role repository scope重建事务，physical-domain lease及raw provider仍只存在child。
+- P11-FIX-11：delivery admission/scheduler/payload/registry/audit改依赖窄Persistence Protocol，production graph注入对应broker proxy；已发送write遇到IPC timeout/EOF/malformed/signature/sequence/broker exit统一indeterminate，关闭路径执行shutdown/join/terminate/kill。
+- 冻结：状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12保持`BLOCKED / F0`，production `task.dispatch`保持disabled。
+
 ---
 
 ## 0. 文档执行规则

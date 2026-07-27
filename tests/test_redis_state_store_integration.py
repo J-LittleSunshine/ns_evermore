@@ -29,6 +29,7 @@ from ns_common.exceptions import (
     NsRuntimeStateStoreClosedError,
     NsRuntimeStateStoreConflictError,
     NsRuntimeStateStoreIndeterminateWriteError,
+    NsRuntimeStateStoreNamespaceViolationError,
     NsRuntimeStateStoreTimeoutError,
     NsRuntimeStateStoreUnavailableError,
     NsRuntimeStateStoreVersionMismatchError,
@@ -89,9 +90,11 @@ from ns_runtime.processor import RoutingPreparationResult
 from ns_runtime.context import RuntimeContext, RuntimeDependencySlots
 from ns_runtime.authority_broker import (
     AuthorityBrokerConfig,
-    start_production_authority_broker,
+    start_integration_test_authority_broker,
 )
 from ns_runtime.main import _run_service_once
+from ns_runtime.delivery_persistence import DeliveryPersistenceTransaction
+from ns_runtime.authority_wire import encode_transaction_request
 from ns_runtime.service import RuntimeService
 
 from tests.test_runtime_delivery_admission import (
@@ -458,31 +461,244 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             config = AuthorityBrokerConfig(
                 iam_base_url="http://127.0.0.1:1/",
                 iam_timeout_seconds=0.2,
-                iam_service_credential="i" * 32,
                 iam_mode="strict",
                 permission_snapshot_ttl_seconds=60.0,
                 state_backend="redis",
                 state_endpoint=f"redis://127.0.0.1:{self._port}/0",
                 state_username="",
-                state_password_source=f"env:{variable}",
                 state_namespace=self.namespace,
                 state_operation_timeout_seconds=1.0,
                 runtime_id="runtime-production-a",
             )
-            broker = start_production_authority_broker(config=config)
+            broker = start_integration_test_authority_broker(
+                config=config,
+                iam_service_credential="i" * 32,
+                state_password_source=f"env:{variable}",
+            )
             await broker.state_store.open()
             self.assertEqual(
                 "ready",
                 (await broker.state_store.health()).status.value,
             )
+            admission = broker.repositories.admission
+            scheduler = broker.repositories.scheduler
+            partition = admission.delivery_scope(
+                tenant_id="tenant-broker-success",
+                bucket_id=0,
+                layout_generation=1,
+            )
+            delivery_ids = (
+                "delivery-" + uuid.uuid4().hex,
+                "delivery-" + uuid.uuid4().hex,
+            )
+            prepared_index = StateOrderedIndexKey(
+                namespace=partition.namespace,
+                name="delivery.prepared",
+                bucket="delivery",
+            )
+
+            def create_transaction(
+                delivery_id: str,
+                *,
+                score: float,
+                with_log: bool,
+            ) -> DeliveryPersistenceTransaction:
+                key = StateKey(
+                    namespace=partition.namespace,
+                    object_type="delivery",
+                    object_id=delivery_id,
+                )
+                return DeliveryPersistenceTransaction(
+                    partition=partition,
+                    mutations=(StateMutation(
+                        key=key,
+                        assertion=StateAssertion.absent(),
+                        kind=StateMutationKind.CREATE,
+                        document=StateDocument(
+                            schema_name="delivery_delivery",
+                            schema_version=1,
+                            state_version=1,
+                            payload=json.dumps({
+                                "delivery_id": delivery_id,
+                                "status": "prepared",
+                            }).encode(),
+                        ),
+                    ),),
+                    record_assertions=(StateRecordReadAssertion.absent(
+                        StateKey(
+                            namespace=partition.namespace,
+                            object_type="payload_body",
+                            object_id="payload-" + delivery_id,
+                        ),
+                    ),),
+                    ordered_index_mutations=(StateOrderedIndexMutation(
+                        index=prepared_index,
+                        kind=StateOrderedIndexMutationKind.ADD,
+                        member=delivery_id,
+                        score=score,
+                    ),),
+                    ordered_index_assertions=(
+                        StateOrderedIndexReadAssertion.absent(
+                            prepared_index,
+                            delivery_id,
+                        ),
+                    ),
+                    log_appends=((StateTransitionLogAppend(
+                        key=StateKey(
+                            namespace=partition.namespace,
+                            object_type="delivery_transition_log",
+                            object_id="log-" + delivery_id,
+                        ),
+                        document=StateDocument(
+                            schema_name="delivery_transition_event",
+                            schema_version=1,
+                            state_version=1,
+                            payload=b'{"operation":"admit"}',
+                        ),
+                    ),) if with_log else ()),
+                )
+
+            first_transaction = create_transaction(
+                delivery_ids[0],
+                score=1.0,
+                with_log=True,
+            )
+            first_result = await admission.transact_admission(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                transaction=first_transaction,
+            )
+            self.assertEqual(
+                len(first_transaction.mutations),
+                len(first_result.records),
+            )
+            self.assertEqual(
+                len(first_transaction.log_appends),
+                len(first_result.log_positions),
+            )
+            injected_scope = encode_transaction_request(
+                first_transaction,
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+            )
+            injected_scope["tenant_id"] = "tenant-attacker"
+            with self.assertRaises(
+                NsRuntimeStateStoreNamespaceViolationError,
+            ):
+                await admission._request(
+                    "transact_admission",
+                    injected_scope,
+                )
+            await admission.transact_admission(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                transaction=create_transaction(
+                    delivery_ids[1],
+                    score=2.0,
+                    with_log=False,
+                ),
+            )
+            observed = await scheduler.read_delivery(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                delivery_id=delivery_ids[0],
+            )
+            self.assertIsNotNone(observed.record)
+            first_page = await scheduler.read_scheduler_index(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                index_name="delivery.prepared",
+                limit=1,
+            )
+            self.assertEqual((delivery_ids[0],), tuple(
+                value.member for value in first_page.entries
+            ))
+            self.assertIsNotNone(first_page.next_cursor)
+            second_page = await scheduler.read_scheduler_index(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                index_name="delivery.prepared",
+                cursor=first_page.next_cursor,
+                limit=1,
+            )
+            self.assertEqual((delivery_ids[1],), tuple(
+                value.member for value in second_page.entries
+            ))
+            assert observed.record is not None
+            scheduler_transaction = DeliveryPersistenceTransaction(
+                partition=partition,
+                mutations=(StateMutation(
+                    key=observed.record.key,
+                    assertion=StateAssertion.matches(
+                        observed.record.revision,
+                        state_version=1,
+                    ),
+                    kind=StateMutationKind.REPLACE,
+                    document=StateDocument(
+                        schema_name="delivery_delivery",
+                        schema_version=1,
+                        state_version=2,
+                        payload=json.dumps({
+                            "delivery_id": delivery_ids[0],
+                            "status": "queued",
+                        }).encode(),
+                    ),
+                ),),
+                record_assertions=(StateRecordReadAssertion.present(
+                    observed.record.key,
+                    revision=observed.record.revision,
+                    state_version=1,
+                ),),
+                ordered_index_assertions=(
+                    StateOrderedIndexReadAssertion.present(
+                        prepared_index,
+                        delivery_ids[0],
+                        score=1.0,
+                    ),
+                ),
+                ordered_index_mutations=(StateOrderedIndexMutation(
+                    index=prepared_index,
+                    kind=StateOrderedIndexMutationKind.REMOVE,
+                    member=delivery_ids[0],
+                ),),
+                log_appends=(StateTransitionLogAppend(
+                    key=StateKey(
+                        namespace=partition.namespace,
+                        object_type="delivery_transition_log",
+                        object_id="scheduler-log-" + delivery_ids[0],
+                    ),
+                    document=StateDocument(
+                        schema_name="delivery_transition_event",
+                        schema_version=1,
+                        state_version=1,
+                        payload=b'{"operation":"queue"}',
+                    ),
+                ),),
+            )
+            scheduler_result = await scheduler.transact_scheduler(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                transaction=scheduler_transaction,
+            )
+            self.assertEqual(1, len(scheduler_result.records))
+            self.assertEqual(1, len(scheduler_result.log_positions))
             with self.assertRaises(
                 NsRuntimeStateStoreCapabilityUnavailableError,
             ):
-                start_production_authority_broker(
+                start_integration_test_authority_broker(
                     config=dataclasses.replace(
                         config,
                         runtime_id="runtime-production-b",
                     ),
+                    iam_service_credential="i" * 32,
+                    state_password_source=f"env:{variable}",
                 )
             with self.assertRaises(
                 NsRuntimeStateStoreCapabilityUnavailableError,
@@ -520,11 +736,13 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 )
             broker._channel._process.terminate()
             broker._channel._process.join(timeout=5.0)
-            replacement = start_production_authority_broker(
+            replacement = start_integration_test_authority_broker(
                 config=dataclasses.replace(
                     config,
                     runtime_id="runtime-production-after-crash",
                 ),
+                iam_service_credential="i" * 32,
+                state_password_source=f"env:{variable}",
             )
             try:
                 await replacement.state_store.open()

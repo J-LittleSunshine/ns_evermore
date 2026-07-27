@@ -30,10 +30,15 @@ from ns_common.state_store import (
     StateOrderedIndexMutationKind,
     StateStoreRepository,
     StateStoreRepositoryRole,
-    StateTransaction,
 )
 
 from .models import AUTHORITY_LAYOUT_GENERATION, AUTHORITY_LAYOUT_VERSION
+from ns_runtime.delivery_persistence import (
+    DeliveryPersistencePartition,
+    DeliveryPersistenceTransaction,
+    DeliveryRegistryPersistence,
+    contract_test_persistence,
+)
 
 
 REGISTRY_SCHEMA_VERSION = 1
@@ -58,13 +63,31 @@ class DeliveryAuthorityLayout:
 class StateStoreDeliveryAuthorityRegistry:
     """Durable runtime-wide list of tenants and one immutable layout."""
 
-    def __init__(self, *, repository: StateStoreRepository) -> None:
-        if not isinstance(repository, StateStoreRepository):
+    def __init__(
+        self,
+        *,
+        persistence: DeliveryRegistryPersistence | StateStoreRepository | None = None,
+        repository: StateStoreRepository | None = None,
+    ) -> None:
+        if persistence is None:
+            persistence = repository
+        elif repository is not None:
             _invalid("registry.repository")
-        repository._require_role(StateStoreRepositoryRole.DELIVERY_REGISTRY)
-        self._store = repository._store
-        self._runtime_id = repository._runtime_id
-        self._scope = repository.registry_scope()
+        if type(persistence) is StateStoreRepository:
+            persistence = contract_test_persistence(
+                persistence,
+                StateStoreRepositoryRole.DELIVERY_REGISTRY,
+            )
+        if not isinstance(persistence, DeliveryRegistryPersistence):
+            _invalid("registry.repository")
+        self._store = persistence
+        self._runtime_id = persistence.runtime_id
+        self._scope = DeliveryPersistencePartition(
+            tenant_id=persistence.namespace.tenant_id or "runtime-registry",
+            bucket_id=0,
+            layout_generation=1,
+            namespace=persistence.namespace,
+        )
 
     async def ensure_registered(
         self, *, tenant_id: str, layout: DeliveryAuthorityLayout,
@@ -92,8 +115,8 @@ class StateStoreDeliveryAuthorityRegistry:
             ),
         )
         try:
-            await self._store.transact(StateTransaction(
-                scope=self._scope,
+            await self._store.transact(DeliveryPersistenceTransaction(
+                partition=self._scope,
                 mutations=(mutation,),
                 ordered_index_mutations=(StateOrderedIndexMutation(
                     index=self._tenant_index(),
@@ -115,7 +138,6 @@ class StateStoreDeliveryAuthorityRegistry:
             _invalid("registry.layout")
         await self._require_layout(layout)
         page = await self._store.read_ordered_index(
-            scope=self._scope,
             index=self._tenant_index(),
             limit=MAX_REGISTERED_TENANTS,
         )
@@ -164,7 +186,10 @@ class StateStoreDeliveryAuthorityRegistry:
             ),
         )
         try:
-            await self._store.transact(StateTransaction(scope=self._scope, mutations=(mutation,)))
+            await self._store.transact(DeliveryPersistenceTransaction(
+                partition=self._scope,
+                mutations=(mutation,),
+            ))
         except NsRuntimeStateStoreConflictError:
             existing = await self._read(key)
             if existing is None:
@@ -183,7 +208,6 @@ class StateStoreDeliveryAuthorityRegistry:
 
     async def _read(self, key: StateKey):
         result = await self._store.read(
-            scope=self._scope,
             key=key,
             consistency=StateConsistency.LINEARIZABLE,
         )

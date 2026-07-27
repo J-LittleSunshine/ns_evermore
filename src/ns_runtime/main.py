@@ -87,6 +87,12 @@ def main(
 
     import logging
 
+    from ns_runtime.authority_bootstrap import (
+        load_inherited_authority_bootstrap,
+    )
+
+    authority_bootstrap = load_inherited_authority_bootstrap()
+
     from ns_runtime._bootstrap import get_default_config_path
     from ns_runtime.startup import (
         RuntimeStartupDirectories,
@@ -103,6 +109,27 @@ def main(
     config = startup_preflight.load_config_snapshot(
         explicit_config_path,
         environment=resolved_environment,
+    )
+    # IAM and StateStore credentials are broker-owned deployment inputs.  The
+    # ordinary runtime object graph receives only non-resolvable status
+    # markers, before RuntimeContext or any business service is constructed.
+    from dataclasses import replace
+
+    config = replace(
+        config,
+        runtime=replace(
+            config.runtime,
+            iam=replace(
+                config.runtime.iam,
+                internal_service_credential=(
+                    "configured:redacted-authority-broker-credential"
+                ),
+            ),
+            state_store=replace(
+                config.runtime.state_store,
+                password_source="configured:redacted",
+            ),
+        ),
     )
     if startup_root is not None:
         if startup_directories is not None:
@@ -206,7 +233,6 @@ def main(
     from ns_common.identifiers import IdentifierFactory, NsIdentifierKind
     from ns_runtime.authority_broker import (
         AuthorityBrokerConfig,
-        start_production_authority_broker,
     )
     from ns_runtime.context import RuntimeDependencySlots
     from ns_runtime.connection import (
@@ -273,13 +299,10 @@ def main(
     identifier_factory = IdentifierFactory()
     runtime_id = identifier_factory.generate(NsIdentifierKind.RUNTIME_ID)
     state_store_config = config.runtime.state_store
-    authority_broker = start_production_authority_broker(
+    authority_broker = authority_bootstrap.launch(
         config=AuthorityBrokerConfig(
             iam_base_url=config.runtime.iam.base_url,
             iam_timeout_seconds=config.runtime.iam.request_timeout_seconds,
-            iam_service_credential=(
-                config.runtime.iam.internal_service_credential
-            ),
             iam_mode=config.runtime.iam.authorization_mode,
             permission_snapshot_ttl_seconds=(
                 config.runtime.iam.permission_snapshot_ttl_seconds
@@ -287,7 +310,6 @@ def main(
             state_backend=state_store_config.backend,
             state_endpoint=state_store_config.resolved_endpoint,
             state_username=state_store_config.username,
-            state_password_source=state_store_config.password_source,
             state_namespace=state_store_config.namespace,
             state_operation_timeout_seconds=(
                 state_store_config.operation_timeout_seconds
@@ -306,6 +328,21 @@ def main(
         task_supervisor=context.task_supervisor,
         dependencies=RuntimeDependencySlots(
             state_store=state_store,
+            delivery_admission_persistence=(
+                authority_broker.repositories.admission
+            ),
+            delivery_scheduler_persistence=(
+                authority_broker.repositories.scheduler
+            ),
+            delivery_payload_persistence=(
+                authority_broker.repositories.payload
+            ),
+            delivery_registry_persistence=(
+                authority_broker.repositories.registry
+            ),
+            strong_audit_persistence=(
+                authority_broker.repositories.audit
+            ),
         ),
     )
     message_authorization = MessageAuthorizationService(

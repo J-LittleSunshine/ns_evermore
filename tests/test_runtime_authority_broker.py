@@ -4,11 +4,14 @@ from __future__ import annotations
 import copy
 import dataclasses
 from datetime import datetime, timedelta, timezone
+import os
+import signal
 import tempfile
 import unittest
 from unittest import mock
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
 
 from ns_common.exceptions import (
     NsRuntimeIamUnavailableError,
@@ -39,11 +42,20 @@ import ns_runtime.authority_broker as broker_module
 from ns_runtime.authority_broker import (
     AuthorityBrokerConfig,
     BrokerAuthorityHandle,
+    BrokerInstanceCertificate,
     BrokerRepositoryRole,
     BrokerSignedIamResult,
     ProductionIamAuthorityProxy,
+    start_contract_test_authority_broker,
     start_production_authority_broker,
 )
+from ns_runtime.authority_wire import (
+    MAX_FRAME_BYTES,
+    decode_frame,
+    encode_frame,
+    require_object,
+)
+from ns_runtime.authority_bootstrap import load_inherited_authority_bootstrap
 from ns_runtime.iam import (
     AuthorizationMode,
     IamClient,
@@ -59,13 +71,11 @@ def _config(base_url: str, *, runtime_id: str = "runtime:broker-test"):
     return AuthorityBrokerConfig(
         iam_base_url=base_url,
         iam_timeout_seconds=1.0,
-        iam_service_credential="s" * 32,
         iam_mode="strict",
         permission_snapshot_ttl_seconds=60.0,
         state_backend="sqlite",
         state_endpoint="",
         state_username="",
-        state_password_source="none",
         state_namespace="broker-unit-test",
         state_operation_timeout_seconds=1.0,
         runtime_id=runtime_id,
@@ -97,7 +107,10 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
     async def _broker(self, outcomes: list[object]):
         server = _HttpServer(outcomes)
         base_url = await server.start()
-        broker = start_production_authority_broker(config=_config(base_url))
+        broker = start_contract_test_authority_broker(
+            config=_config(base_url),
+            iam_service_credential="s" * 32,
+        )
         self.addAsyncCleanup(server.close)
         self.addCleanup(broker.close)
         return broker, server
@@ -141,10 +154,18 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(NsValidationError):
             broker_module._BrokerIamBackend(
                 _config("https://iam.invalid/"),
+                {
+                    "iam_service_credential": "s" * 32,
+                    "state_password_source": "none",
+                },
             )
         with self.assertRaises(NsValidationError):
             broker_module._BrokerStateBackend(
                 _config("https://iam.invalid/"),
+                {
+                    "iam_service_credential": "s" * 32,
+                    "state_password_source": "none",
+                },
             )
 
         raw_provider = create_state_store_provider(
@@ -161,6 +182,238 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         ))
         with self.assertRaises(NsValidationError):
             raw_provider._install_repositories(())
+
+    def test_public_starter_and_wrong_deployment_root_fail_closed(self) -> None:
+        with self.assertRaises(NsValidationError):
+            start_production_authority_broker(config=_config(
+                "https://attacker.invalid/",
+            ))
+        root = Ed25519PrivateKey.generate()
+        root_bytes = root.private_bytes(
+            serialization.Encoding.Raw,
+            serialization.PrivateFormat.Raw,
+            serialization.NoEncryption(),
+        )
+        key_read, key_write = os.pipe()
+        secrets_read, secrets_write = os.pipe()
+        try:
+            os.write(key_write, root_bytes)
+            os.write(secrets_write, encode_frame({
+                "iam_service_credential": "s" * 32,
+                "state_password_source": "none",
+            }))
+        finally:
+            os.close(key_write)
+            os.close(secrets_write)
+        attacker_public = root.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+        with mock.patch.object(
+            broker_module,
+            "_PRODUCTION_ROOT_PUBLIC_KEY",
+            attacker_public,
+        ):
+            with self.assertRaises(NsRuntimeIamUnavailableError):
+                broker_module._start_production_authority_broker_from_inherited_fds(
+                    config=_config("https://attacker.invalid/"),
+                    root_key_fd=key_read,
+                    secrets_fd=secrets_read,
+                )
+
+    def test_outer_bootstrap_moves_secret_fds_out_of_parent_immediately(
+        self,
+    ) -> None:
+        key_read, key_write = os.pipe()
+        secrets_read, secrets_write = os.pipe()
+        secret_marker = "broker-secret-must-not-remain-in-parent"
+        previous_key = os.environ.get("NS_RUNTIME_AUTHORITY_KEY_FD")
+        previous_secrets = os.environ.get("NS_RUNTIME_AUTHORITY_SECRETS_FD")
+        try:
+            os.write(key_write, os.urandom(32))
+            os.write(secrets_write, encode_frame({
+                "iam_service_credential": secret_marker,
+                "state_password_source": "none",
+            }))
+        finally:
+            os.close(key_write)
+            os.close(secrets_write)
+        os.environ["NS_RUNTIME_AUTHORITY_KEY_FD"] = str(key_read)
+        os.environ["NS_RUNTIME_AUTHORITY_SECRETS_FD"] = str(secrets_read)
+        bootstrap = None
+        try:
+            bootstrap = load_inherited_authority_bootstrap()
+            self.assertNotIn("NS_RUNTIME_AUTHORITY_KEY_FD", os.environ)
+            self.assertNotIn("NS_RUNTIME_AUTHORITY_SECRETS_FD", os.environ)
+            self.assertEqual(
+                {"_connection", "_process", "_consumed"},
+                set(type(bootstrap).__slots__),
+            )
+            for slot in type(bootstrap).__slots__:
+                value = getattr(bootstrap, slot)
+                self.assertNotEqual(secret_marker, value)
+                self.assertNotIsInstance(value, Ed25519PrivateKey)
+            with self.assertRaises(OSError):
+                os.fstat(key_read)
+            with self.assertRaises(OSError):
+                os.fstat(secrets_read)
+        finally:
+            if bootstrap is not None:
+                bootstrap.close()
+            for name, previous in (
+                ("NS_RUNTIME_AUTHORITY_KEY_FD", previous_key),
+                ("NS_RUNTIME_AUTHORITY_SECRETS_FD", previous_secrets),
+            ):
+                if previous is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = previous
+
+    def test_root_certificate_rejects_self_reported_public_key(self) -> None:
+        signer = Ed25519PrivateKey.generate()
+        wrong_root = Ed25519PrivateKey.generate().public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+        session_public = Ed25519PrivateKey.generate().public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+        now = datetime.now(timezone.utc)
+        values = {
+            "trust_realm": "contract-test",
+            "broker_instance_id": "broker_test",
+            "session_public_key": broker_module.encode_bytes(session_public),
+            "runtime_id": "runtime:test",
+            "lifecycle_generation": 1,
+            "issued_at": broker_module.encode_time(now),
+            "expires_at": broker_module.encode_time(now + timedelta(minutes=1)),
+            "nonce": "nonce",
+        }
+        certificate = BrokerInstanceCertificate(
+            trust_realm="contract-test",
+            broker_instance_id="broker_test",
+            session_public_key=session_public,
+            runtime_id="runtime:test",
+            lifecycle_generation=1,
+            issued_at=now,
+            expires_at=now + timedelta(minutes=1),
+            nonce="nonce",
+            signature=signer.sign(broker_module._canonical(values)),
+        )
+        self.assertFalse(certificate.verify(
+            wrong_root,
+            expected_realm="contract-test",
+            expected_runtime_id="runtime:test",
+            now=now,
+        ))
+
+    def test_wire_never_invokes_reduce_and_rejects_malformed_frames(self) -> None:
+        invoked: list[bool] = []
+
+        class Hostile:
+            def __reduce__(self):
+                invoked.append(True)
+                return (eval, ("1 + 1",))
+
+        with self.assertRaises(NsValidationError):
+            encode_frame({"payload": Hostile()})  # type: ignore[dict-item]
+        self.assertEqual([], invoked)
+        with self.assertRaises(NsValidationError):
+            decode_frame(b'{"a":1,"a":2}')
+        with self.assertRaises(NsValidationError):
+            decode_frame(b'{"value":NaN}')
+        with self.assertRaises(NsValidationError):
+            decode_frame(b"x" * (MAX_FRAME_BYTES + 1))
+        with self.assertRaises(NsValidationError):
+            require_object(
+                {"known": True, "unknown": False},
+                fields={"known"},
+                field="attack.unknown",
+            )
+        with self.assertRaises(NsValidationError):
+            start_contract_test_authority_broker(
+                config=dataclasses.replace(
+                    _config("https://iam.invalid/"),
+                    state_backend="redis",
+                    state_endpoint="redis://127.0.0.1:6379/0",
+                ),
+                iam_service_credential="s" * 32,
+            )
+
+    def test_malformed_response_after_write_is_indeterminate(self) -> None:
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+        handle = broker_module._new_handle(
+            private_key=private_key,
+            instance_id="broker_test",
+            role=BrokerRepositoryRole.ADMISSION,
+            runtime_id="runtime:test",
+            generation=1,
+        )
+
+        class Process:
+            def is_alive(self):
+                return True
+
+            def join(self, timeout=None):
+                del timeout
+
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+        class Connection:
+            def send_bytes(self, value):
+                self.sent = value
+
+            def poll(self, timeout):
+                del timeout
+                return True
+
+            def recv_bytes(self, maximum):
+                del maximum
+                return b'{"malformed":true}'
+
+            def close(self):
+                pass
+
+        channel = broker_module._BrokerChannel(
+            connection=Connection(),
+            process=Process(),
+            public_key=public_key,
+            instance_id="broker_test",
+            timeout_seconds=0.1,
+            realm="contract-test",
+        )
+        with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
+            channel.request(
+                handle=handle,
+                operation="transact_admission",
+                payload={
+                    "tenant_id": "tenant:1",
+                    "bucket_id": 0,
+                    "layout_generation": 1,
+                    "mutations": [],
+                    "record_assertions": [],
+                    "ordered_index_mutations": [],
+                    "ordered_index_assertions": [],
+                    "log_appends": [],
+                },
+            )
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX process signals")
+    async def test_close_kills_broker_stuck_in_operation(self) -> None:
+        broker, _ = await self._broker([])
+        process = broker._channel._process
+        os.kill(process.pid, signal.SIGSTOP)
+        broker.close()
+        self.assertFalse(process.is_alive())
 
     async def test_signed_result_rejects_cross_request_operation_and_broker(
         self,
@@ -213,7 +466,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             now=now,
         ))
 
-    async def test_production_authorization_consumes_broker_signature_directly(
+    async def test_contract_broker_cannot_impersonate_production_authorization(
         self,
     ) -> None:
         request = _access_request()
@@ -237,28 +490,19 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             iam_mode="strict",
         )
-        service = MessageAuthorizationService(
-            iam_client=broker.iam,
-            clock=clock,
-            mode=AuthorizationMode.STRICT,
-            cache_ttl_seconds=30,
-        )
-        result = await service.authorize(
-            snapshot=snapshot,
-            request=request,
-            risk=OperationRiskContext(),
-        )
-        self.assertTrue(result.is_issued_by(service))
-        self.assertIs(result._broker_authority, result._broker_authority)
+        del snapshot, clock
         with self.assertRaises(NsValidationError):
-            copy.copy(result)
-        replay = object.__new__(type(result))
-        for field in result.__dataclass_fields__:
-            object.__setattr__(replay, field, getattr(result, field))
-        object.__setattr__(replay, "request", _access_request(
-            message_type="connection.goodbye",
-        ))
-        self.assertFalse(replay.is_issued_by(service))
+            MessageAuthorizationService(
+                iam_client=broker.iam,
+                clock=SystemClock(),
+                mode=AuthorizationMode.STRICT,
+                cache_ttl_seconds=30,
+            )
+        verified = await broker.iam.access_check_signed(request)
+        self.assertTrue(verified.result.allowed)
+        self.assertEqual(request.permission_version, verified.result.permission_version)
+        self.assertEqual("backend_allow", verified.result.reason)
+        self.assertEqual("contract-test", broker._channel._realm)
 
     async def test_payload_revalidation_is_broker_signed_and_request_bound(
         self,

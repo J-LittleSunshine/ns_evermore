@@ -2366,6 +2366,44 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 状态机仍严格为`prepared -> queued -> sending -> ack_waiting`；`WRITE_UNCERTAIN`不恢复、不重发。未新增global registry、service locator、第二event loop、TaskSupervisor、RuntimeService或shutdown owner。
 - P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership和P22 production验收均未实现；production `task.dispatch`继续disabled。
 
+## Authority broker fixed trust root 与 pickle-free IPC复核修复
+
+- 工作包：`P08-FIX-06`、`P09-FIX-10`、`P11-FIX-11`。
+- 状态：`IMPLEMENTED / F3 (local only)`；production部署root私钥不进入仓库，本机未执行固定production root的正向`main`启动，因此不把本轮记为production VERIFIED。P12继续`BLOCKED / F0`，production `task.dispatch`继续disabled。
+- 完成时间：`2026-07-27`（Asia/Shanghai）。起始branch为`codex/ns-runtime-implementation`，HEAD为`78e59bda3eb6c29b653231052d1f3682763b961f`，起始worktree干净；本轮未commit或push。
+- trust root：production公钥为broker构建预置值；公开`start_production_authority_broker(...)`永久fail closed。最外层bootstrap只读取继承的key/secrets FD编号，spawn child验证root私钥导出的公钥与预置值一致，再签发绑定realm/instance/session key/runtime/generation/time/nonce的certificate；parent验签后才接受handle与IAM result。错误root、broker自报key和普通config starter均拒绝，contract/Redis integration使用非production test realm。
+- IPC与codec：application channel全部改为`send_bytes/recv_bytes`；canonical JSON限制8 MiB frame、string/container/depth且拒绝duplicate/unknown field、non-finite number与非JSON object。IAM request/result、State read/append/health、StateTransaction mutation/record assertion/index mutation/index assertion/log append、transaction result及ordered-index cursor均有exact codec。broker使用内部role repository scope重建transaction，不接受客户端authority/caller/capability/policy；cursor绑定member/score/index name/bucket并以`start_after`调用provider。
+- composition与secret：IAM HTTP transport、credential、session decision key、raw Redis/Valkey provider、production repository/scope、resource policy与physical-domain lease只存在spawn child。主RuntimeContext只保存redacted credential状态、broker instance/public key、IAM proxy、lifecycle proxy和admission/scheduler/payload/registry/audit五个fixed-role persistence proxy，不保存raw Store、StateAccessScope、HTTP/Redis client或private key。
+- P10/P11 adapter：新增无authority的delivery persistence Protocol与transaction/result DTO；admission、scheduler、payload authority和registry改依赖窄Protocol，contract adapter只接受contract-test repository。production main显式注入五个broker repository proxy，未伪装为`StateStoreRepository`。
+- failure/close：write payload response的schema/cardinality异常、IPC timeout/EOF、malformed envelope、sequence/signature错误或broker退出在request已发送后统一为`NsRuntimeStateStoreIndeterminateWriteError`；broker确认的conflict/version/namespace/timeout仍保留typed error。close发送shutdown并bounded wait，随后terminate/kill并确认`is_alive()==False`；child finally关闭Store、HTTP和lease。
+
+### 本轮新增攻击与成功路径
+
+- 直接调用公开production starter、以任意root FD调用内部deployment入口、错误root certificate与broker自报公钥均fail closed。
+- hostile `__reduce__`未被调用；duplicate JSON key、NaN、unknown field、超大frame、非JSON object及contract broker Redis endpoint均拒绝。
+- forged/copy/role-modified handle、跨broker/request/operation IAM result、主进程HTTP method monkey patch、broker crash/restart旧handle/result、跨role repository operation继续拒绝。
+- write发送后malformed response返回indeterminate；SIGSTOP模拟broker卡死后close执行terminate/kill并确认退出。
+- 真实`/usr/bin/redis-server` broker路径实际完成admission transaction、record读取、record assertion、ordered-index mutation/assertion、cursor两页分页、transition log append、scheduler transaction和mutation/log result cardinality校验；scope injection及admission/scheduler/payload/registry跨角色访问拒绝。不同runtime ID的相同物理域第二broker拒绝，broker退出后相同physical domain可立即重新获得lease。
+
+### 本轮实际命令与结果
+
+- processor/routing/IAM authorization：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_iam_authorization tests.test_runtime_processor_boundaries tests.test_runtime_processor_pipeline tests.test_runtime_routing tests.test_runtime_routing_contracts`，`Ran 68 tests in 1.187s`，`OK`。
+- broker/IAM client/真实Redis新增路径：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_authority_broker tests.test_runtime_iam_client tests.test_redis_state_store_integration.RedisStateStoreIntegrationTestCase.test_production_repository_resource_policy_is_enforced_by_redis`，`Ran 25 tests in 46.653s`，`OK`。
+- delivery：`tests.test_runtime_delivery_admission`为`Ran 21 tests in 4.531s, OK`；`tests.test_runtime_delivery_scheduling`为`Ran 41 tests in 45.810s, OK`。
+- StateStore contract/provider：`PYTHONPATH=src python3 -m unittest -q tests.test_state_store tests.test_runtime_state_store tests.test_redis_state_store_provider`，`Ran 43 tests in 0.880s`，`OK`。
+- 真实Redis integration全模块：`PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_integration`，`Ran 19 tests in 57.294s`，`OK`。
+- main/shutdown/transport：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_event_loop_observability tests.test_runtime_shutdown tests.test_runtime_service tests.test_runtime_main tests.test_runtime_transport_metrics tests.test_runtime_transport_lifecycle tests.test_runtime_transport_identity tests.test_runtime_transport_errors tests.test_runtime_transport_contracts tests.test_runtime_transport_conformance tests.test_runtime_transport_backpressure tests.test_runtime_transport_websocket_tcp tests.test_runtime_transport_registry`，`Ran 112 tests in 11.820s`，`OK (skipped=6)`；六项skip均需仓库外deployment production root私钥的正向main启动/transport绑定测试。
+- import/dependency boundary：`PYTHONPATH=src python3 -m unittest -q tests.test_requirements tests.test_runtime_bootstrap tests.test_runtime_processor_boundaries`，`Ran 19 tests in 4.140s`，`OK`。
+- 全仓可执行测试：`PYTHONPATH=src python3 -m unittest discover -s tests -t . -p 'test_*.py' -q`，`Ran 888 tests in 192.390s`，`OK (skipped=7)`；除上述六项deployment-key skip外，另一项为既有非Windows平台条件skip。
+- 静态：`PYTHONPATH=src python3 -m compileall -q src tests`通过；`git diff --check`通过，仅输出仓库autocrlf行尾转换warning。
+
+### 未验证与冻结边界
+
+- 未持有或生成production deployment root私钥，因此固定production trust root的正向`python -m ns_runtime.main`、SIGTERM与真实production IAM backend组合未验证；错误root拒绝、独立test trust root、service/shutdown/transport及真实Redis broker均已实测。不能以test root冒充production结论。
+- Valkey server、Redis Sentinel/Cluster、replica/failover、真实Windows、uvloop全树和远程CI未验证。
+- 未新增global registry、service locator、第二RuntimeService、TaskSupervisor或shutdown owner。broker child只有隔离authority IPC事件循环。
+- 状态机仍严格为`prepared -> queued -> sending -> ack_waiting`；WRITE_UNCERTAIN不恢复、不重发。未实现P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership或P22 production验收；production `task.dispatch`继续disabled。
+
 ## 新记录模板
 
 - 工作包：
