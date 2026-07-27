@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import os
 import signal
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -206,6 +207,42 @@ class _FakeConnection:
         self.closed = True
 
 
+class _RotationResponseMutator:
+    def __init__(self, connection, mutate) -> None:
+        self._connection = connection
+        self._mutate = mutate
+        self._rotation_pending = False
+        self.sent_kinds: list[str] = []
+        self.saw_rotation_response = False
+
+    @property
+    def closed(self) -> bool:
+        return self._connection.closed
+
+    def send_bytes(self, value: bytes) -> None:
+        message = decode_frame(value)
+        kind = message.get("kind") if type(message) is dict else ""
+        self.sent_kinds.append(str(kind))
+        self._rotation_pending = kind == "rotate_session"
+        self._connection.send_bytes(value)
+
+    def poll(self, timeout: float) -> bool:
+        return self._connection.poll(timeout)
+
+    def recv_bytes(self, maximum: int) -> bytes:
+        raw = self._connection.recv_bytes(maximum)
+        if not self._rotation_pending:
+            return raw
+        self._rotation_pending = False
+        self.saw_rotation_response = True
+        message = decode_frame(raw)
+        assert type(message) is dict
+        return encode_frame(self._mutate(message))
+
+    def close(self) -> None:
+        self._connection.close()
+
+
 def _test_channel(
     response,
     *,
@@ -384,6 +421,86 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(server.close)
         self.addCleanup(broker.close)
         return broker, server
+
+    @staticmethod
+    def _admission_transaction(
+        broker,
+        *,
+        suffix: str,
+    ) -> DeliveryPersistenceTransaction:
+        partition = broker.repositories.admission.delivery_scope(
+            tenant_id="tenant:lag",
+            bucket_id=0,
+            layout_generation=1,
+        )
+        return DeliveryPersistenceTransaction(
+            partition=partition,
+            mutations=(StateMutation(
+                key=StateKey(
+                    namespace=partition.namespace,
+                    object_type="delivery",
+                    object_id="delivery:" + suffix,
+                ),
+                assertion=StateAssertion.absent(),
+                kind=StateMutationKind.CREATE,
+                document=StateDocument(
+                    schema_name="delivery_delivery",
+                    schema_version=1,
+                    state_version=1,
+                    payload=b'{"status":"prepared"}',
+                ),
+            ),),
+        )
+
+    async def _assert_ticker_progress(
+        self,
+        *,
+        channel,
+        operation,
+        expected_exception: type[BaseException] | None = None,
+    ) -> None:
+        original = (
+            broker_module.AuthorityAttestorClient
+            .current_endpoint_identity
+        )
+        delayed = False
+
+        def delayed_identity(client, **kwargs):
+            nonlocal delayed
+            if (
+                not delayed
+                and kwargs.get("endpoint_id") == channel.endpoint_id
+            ):
+                delayed = True
+                time.sleep(0.25)
+            return original(client, **kwargs)
+
+        ticks = 0
+        running = True
+
+        async def ticker() -> None:
+            nonlocal ticks
+            while running:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        ticker_task = asyncio.create_task(ticker())
+        try:
+            with mock.patch.object(
+                broker_module.AuthorityAttestorClient,
+                "current_endpoint_identity",
+                delayed_identity,
+            ):
+                if expected_exception is None:
+                    await operation()
+                else:
+                    with self.assertRaises(expected_exception):
+                        await operation()
+        finally:
+            running = False
+            await ticker_task
+        self.assertTrue(delayed)
+        self.assertGreaterEqual(ticks, 8)
 
     def test_old_pending_token_binding_and_direct_client_assembly_fail_closed(
         self,
@@ -1058,6 +1175,198 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         channel.close()
         self.assertFalse(process.is_alive())
 
+    async def test_async_authority_operations_do_not_block_event_loop(
+        self,
+    ) -> None:
+        request = _access_request()
+        broker, _ = await self._broker([_decision(request).to_wire()])
+        transaction = self._admission_transaction(
+            broker,
+            suffix="event-loop",
+        )
+        partition = transaction.partition
+        operations = (
+            (
+                broker.repositories.admission._channel,
+                lambda: broker.repositories.admission.transact_admission(
+                    tenant_id=partition.tenant_id,
+                    bucket_id=partition.bucket_id,
+                    layout_generation=partition.layout_generation,
+                    transaction=transaction,
+                ),
+                NsRuntimeStateStoreUnavailableError,
+            ),
+            (
+                broker.repositories.scheduler._channel,
+                lambda: broker.repositories.scheduler.read_scheduler_index(
+                    tenant_id=partition.tenant_id,
+                    bucket_id=partition.bucket_id,
+                    layout_generation=partition.layout_generation,
+                    index_name="delivery.prepared",
+                    limit=10,
+                ),
+                NsRuntimeStateStoreUnavailableError,
+            ),
+            (
+                broker.state_store._channel,
+                broker.state_store.health,
+                None,
+            ),
+            (
+                broker.iam._channel,
+                lambda: broker.iam.access_check(request),
+                None,
+            ),
+        )
+        for channel, operation, expected_exception in operations:
+            with self.subTest(role=channel.role.value):
+                await self._assert_ticker_progress(
+                    channel=channel,
+                    operation=operation,
+                    expected_exception=expected_exception,
+                )
+
+    async def test_endpoint_identity_provenance_failure_reaps_graph(
+        self,
+    ) -> None:
+        broker, _ = await self._broker([])
+        proxies = (
+            broker.iam,
+            broker.repositories.admission,
+            broker.repositories.scheduler,
+            broker.repositories.payload,
+            broker.repositories.registry,
+            broker.repositories.audit,
+            broker.state_store,
+        )
+        connections = tuple(proxy._channel._connection for proxy in proxies)
+        channel = broker.state_store._channel
+        process = channel._custodian.process
+        attestor = channel._attestor
+        original = (
+            broker_module.AuthorityAttestorClient
+            .current_endpoint_identity
+        )
+
+        def wrong_endpoint(client, **kwargs):
+            result = original(client, **kwargs)
+            if kwargs.get("endpoint_id") == channel.endpoint_id:
+                result["endpoint_id"] = "endpoint_wrong"
+            return result
+
+        with mock.patch.object(
+            broker_module.AuthorityAttestorClient,
+            "current_endpoint_identity",
+            wrong_endpoint,
+        ):
+            with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+                await broker.state_store.health()
+        self.assertFalse(process.is_alive())
+        self.assertFalse(attestor.alive)
+        self.assertTrue(all(connection.closed for connection in connections))
+
+    async def test_rotation_decode_failure_is_presend_unavailable_and_reaps(
+        self,
+    ) -> None:
+        for attack in ("missing_certificate", "wrong_generation"):
+            with self.subTest(attack=attack):
+                broker, _ = await self._broker(
+                    [],
+                    session_ttl_seconds=0.3,
+                )
+                transaction = self._admission_transaction(
+                    broker,
+                    suffix=attack,
+                )
+                channel = broker.repositories.admission._channel
+                process = channel._custodian.process
+                attestor = channel._attestor
+                connections = tuple(
+                    proxy._channel._connection
+                    for proxy in (
+                        broker.iam,
+                        broker.repositories.admission,
+                        broker.repositories.scheduler,
+                        broker.repositories.payload,
+                        broker.repositories.registry,
+                        broker.repositories.audit,
+                        broker.state_store,
+                    )
+                )
+
+                def mutate(message):
+                    certificate = message.get("session_certificate")
+                    if attack == "missing_certificate":
+                        message.pop("session_certificate", None)
+                    else:
+                        assert type(certificate) is dict
+                        certificate["lifecycle_generation"] = (
+                            int(certificate["lifecycle_generation"]) + 1
+                        )
+                    return message
+
+                wrapper = _RotationResponseMutator(
+                    channel._connection,
+                    mutate,
+                )
+                object.__setattr__(channel, "_connection", wrapper)
+                await asyncio.sleep(0.22)
+                with self.assertRaises(
+                    NsRuntimeStateStoreUnavailableError,
+                ):
+                    await broker.repositories.admission.transact(
+                        transaction,
+                    )
+                self.assertTrue(wrapper.saw_rotation_response)
+                self.assertNotIn("request", wrapper.sent_kinds)
+                self.assertFalse(process.is_alive())
+                self.assertFalse(attestor.alive)
+                self.assertTrue(
+                    all(connection.closed for connection in connections),
+                )
+
+    async def test_local_validation_does_not_reap_broker(self) -> None:
+        broker, _ = await self._broker([])
+        process = broker._channel._custodian.process
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await broker.repositories.admission._request(
+                "read_payload_body",
+                {},
+            )
+        with self.assertRaises(NsValidationError):
+            await broker.repositories.admission._request(
+                "transact_admission",
+                object(),
+            )
+        self.assertTrue(process.is_alive())
+        health = await broker.state_store.health()
+        self.assertEqual("ready", health.status.value)
+
+    async def test_close_closes_all_parent_endpoints_and_is_idempotent(
+        self,
+    ) -> None:
+        broker, _ = await self._broker([])
+        proxies = (
+            broker.iam,
+            broker.repositories.admission,
+            broker.repositories.scheduler,
+            broker.repositories.payload,
+            broker.repositories.registry,
+            broker.repositories.audit,
+            broker.state_store,
+        )
+        connections = tuple(proxy._channel._connection for proxy in proxies)
+        process = broker._channel._custodian.process
+        attestor_process = broker._channel._attestor._process
+        self.assertEqual(7, len({id(value) for value in connections}))
+        broker.close()
+        self.assertTrue(all(value.closed for value in connections))
+        self.assertFalse(process.is_alive())
+        self.assertFalse(attestor_process.is_alive())
+        broker.close()
+
     @unittest.skipUnless(os.name == "posix", "requires POSIX process signals")
     async def test_close_kills_broker_stuck_in_operation(self) -> None:
         broker, _ = await self._broker([])
@@ -1690,6 +1999,14 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     },
                 )
         custodian = broker._channel._custodian
+        self.assertEqual(
+            7,
+            len(custodian._endpoint_close_resources),
+        )
+        for resource in custodian._endpoint_close_resources:
+            self.assertFalse(hasattr(resource, "role"))
+            self.assertFalse(hasattr(resource, "handle"))
+            self.assertFalse(hasattr(resource, "request"))
         for slot in type(custodian).__slots__:
             value = getattr(custodian, slot)
             if type(value) is dict:
@@ -1789,7 +2106,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(NsRuntimeStateStoreUnavailableError):
             await first.repositories.admission._request(
                 "transact_admission",
-                object(),
+                {},
             )
 
         second, _ = await self._broker([])

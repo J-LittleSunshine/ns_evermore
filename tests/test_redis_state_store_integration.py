@@ -957,6 +957,120 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         finally:
             replacement.close()
 
+    async def test_rotation_provenance_and_normal_close_release_domain(
+        self,
+    ) -> None:
+        config = AuthorityBrokerConfig(
+            iam_base_url="http://127.0.0.1:1/",
+            iam_timeout_seconds=0.2,
+            iam_mode="strict",
+            permission_snapshot_ttl_seconds=60.0,
+            state_backend="redis",
+            state_endpoint=f"redis://127.0.0.1:{self._port}/0",
+            state_username="",
+            state_namespace=self.namespace + ":rotation-reap",
+            state_operation_timeout_seconds=1.0,
+            runtime_id="runtime-rotation-reap-a",
+        )
+        broker = start_integration_test_authority_broker(
+            config=config,
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+            session_ttl_seconds=0.45,
+            delegation_ttl_seconds=30.0,
+        )
+        channel = broker.state_store._channel
+        process = channel._custodian.process
+        attestor_process = channel._attestor._process
+        original = channel._connection
+        connections = (
+            broker.iam._channel._connection,
+            broker.repositories.admission._channel._connection,
+            broker.repositories.scheduler._channel._connection,
+            broker.repositories.payload._channel._connection,
+            broker.repositories.registry._channel._connection,
+            broker.repositories.audit._channel._connection,
+            original,
+        )
+
+        class MissingRotationCertificate:
+            def __init__(self) -> None:
+                self.rotation_pending = False
+                self.saw_rotation = False
+
+            def send_bytes(self, value):
+                message = broker_module.decode_frame(value)
+                self.rotation_pending = bool(
+                    type(message) is dict
+                    and message.get("kind") == "rotate_session"
+                )
+                original.send_bytes(value)
+
+            def poll(self, timeout):
+                return original.poll(timeout)
+
+            def recv_bytes(self, maximum):
+                raw = original.recv_bytes(maximum)
+                if not self.rotation_pending:
+                    return raw
+                self.rotation_pending = False
+                self.saw_rotation = True
+                message = broker_module.decode_frame(raw)
+                assert type(message) is dict
+                message.pop("session_certificate", None)
+                return broker_module.encode_frame(message)
+
+            def close(self):
+                original.close()
+
+        corrupt = MissingRotationCertificate()
+        object.__setattr__(channel, "_connection", corrupt)
+        await asyncio.sleep(0.32)
+        with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+            await broker.state_store.health()
+        self.assertTrue(corrupt.saw_rotation)
+        self.assertFalse(process.is_alive())
+        self.assertFalse(attestor_process.is_alive())
+        self.assertTrue(all(value.closed for value in connections))
+        broker.close()
+
+        replacement = start_integration_test_authority_broker(
+            config=dataclasses.replace(
+                config,
+                runtime_id="runtime-rotation-reap-b",
+            ),
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        await replacement.state_store.open()
+        replacement_connections = (
+            replacement.iam._channel._connection,
+            replacement.repositories.admission._channel._connection,
+            replacement.repositories.scheduler._channel._connection,
+            replacement.repositories.payload._channel._connection,
+            replacement.repositories.registry._channel._connection,
+            replacement.repositories.audit._channel._connection,
+            replacement.state_store._channel._connection,
+        )
+        replacement.close()
+        self.assertTrue(
+            all(value.closed for value in replacement_connections),
+        )
+
+        final = start_integration_test_authority_broker(
+            config=dataclasses.replace(
+                config,
+                runtime_id="runtime-rotation-reap-c",
+            ),
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        try:
+            await final.state_store.open()
+            self.assertTrue((await final.state_store.health()).ready)
+        finally:
+            final.close()
+
     async def test_redis_server_authentication_with_both_protocol_drivers(self) -> None:
         for backend in ("redis", "valkey"):
             with self.subTest(backend=backend):

@@ -182,6 +182,18 @@ class BrokerRepositoryRole(str, Enum):
     LIFECYCLE = "lifecycle"
 
 
+class _AuthorityProvenanceFailure(RuntimeError):
+    """Internal failure of broker or attestor identity provenance."""
+
+
+class _VerifiedRemoteBrokerError(RuntimeError):
+    """Carry an attested broker error outside provenance error handling."""
+
+    def __init__(self, value: object) -> None:
+        super().__init__("verified_remote_broker_error")
+        self.value = value
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BrokerDelegationCertificate:
     trust_realm: str
@@ -604,11 +616,29 @@ class BrokerSignedStateResponse:
         _invalid("state_response.copy")
 
 
+class _ParentEndpointCloseResource:
+    """Close-only parent resource without role, handle, or request authority."""
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: object) -> None:
+        if not callable(getattr(connection, "close", None)):
+            raise TypeError("endpoint close resource requires close()")
+        self._connection = connection
+
+    def close(self) -> None:
+        try:
+            self._connection.close()
+        except OSError:
+            pass
+
+
 class _BrokerProcessCustodian:
-    """Shared process lifecycle without retaining any role endpoint."""
+    """Shared process lifecycle with only close-only endpoint resources."""
 
     __slots__ = (
-        "process", "attestor", "_lock", "_request_lock", "_reaped",
+        "process", "attestor", "_lock", "_request_lock",
+        "_endpoint_close_resources", "_reaped",
     )
 
     def __init__(
@@ -616,7 +646,18 @@ class _BrokerProcessCustodian:
         *,
         process: multiprocessing.Process,
         attestor: AuthorityAttestorClient,
+        endpoint_close_resources: tuple[
+            _ParentEndpointCloseResource, ...
+        ] = (),
     ) -> None:
+        if (
+            type(endpoint_close_resources) is not tuple
+            or any(
+                type(resource) is not _ParentEndpointCloseResource
+                for resource in endpoint_close_resources
+            )
+        ):
+            raise TypeError("invalid endpoint close resources")
         self.process = process
         self.attestor = attestor
         self._lock = threading.Lock()
@@ -626,6 +667,7 @@ class _BrokerProcessCustodian:
         # still awaiting verification.  This lock carries no role, handle, or
         # authority material.
         self._request_lock = threading.Lock()
+        self._endpoint_close_resources = endpoint_close_resources
         self._reaped = False
 
     @property
@@ -636,6 +678,8 @@ class _BrokerProcessCustodian:
         with self._lock:
             if self._reaped:
                 return
+            for resource in self._endpoint_close_resources:
+                resource.close()
             process = self.process
             process.join(timeout=0.2)
             if process.is_alive():
@@ -712,9 +756,13 @@ class _RoleBrokerChannel:
 
     @property
     def public_key(self) -> bytes:
-        with self._lock:
-            self._sync_endpoint_identity_locked()
-            return bytes(self._public_key)
+        try:
+            with self._lock:
+                self._sync_endpoint_identity_locked()
+                return bytes(self._public_key)
+        except _AuthorityProvenanceFailure:
+            self._fail_and_reap()
+            raise _broker_unavailable("broker_provenance_invalid") from None
 
     @property
     def instance_id(self) -> str:
@@ -728,9 +776,13 @@ class _RoleBrokerChannel:
 
     @property
     def certificate(self) -> BrokerInstanceCertificate:
-        with self._lock:
-            self._sync_endpoint_identity_locked()
-            return self._certificate
+        try:
+            with self._lock:
+                self._sync_endpoint_identity_locked()
+                return self._certificate
+        except _AuthorityProvenanceFailure:
+            self._fail_and_reap()
+            raise _broker_unavailable("broker_provenance_invalid") from None
 
     @property
     def role(self) -> BrokerRepositoryRole:
@@ -745,20 +797,24 @@ class _RoleBrokerChannel:
         return self._handle
 
     def current_session_identity(self) -> Mapping[str, object]:
-        with self._lock:
-            self._sync_endpoint_identity_locked()
-            return {
-                "broker_instance_id": self._instance_id,
-                "runtime_id": self._runtime_id,
-                "lifecycle_generation": self._lifecycle_generation,
-                "session_public_key": bytes(self._public_key),
-                "session_key_fingerprint": _session_key_fingerprint(
-                    self._public_key,
-                ),
-                "certificate_fingerprint": self._certificate_fingerprint,
-                "endpoint_id": self._endpoint_id,
-                "role": self._role.value,
-            }
+        try:
+            with self._lock:
+                self._sync_endpoint_identity_locked()
+                return {
+                    "broker_instance_id": self._instance_id,
+                    "runtime_id": self._runtime_id,
+                    "lifecycle_generation": self._lifecycle_generation,
+                    "session_public_key": bytes(self._public_key),
+                    "session_key_fingerprint": _session_key_fingerprint(
+                        self._public_key,
+                    ),
+                    "certificate_fingerprint": self._certificate_fingerprint,
+                    "endpoint_id": self._endpoint_id,
+                    "role": self._role.value,
+                }
+        except _AuthorityProvenanceFailure:
+            self._fail_and_reap()
+            raise _broker_unavailable("broker_provenance_invalid") from None
 
     def _identity_is_current(
         self, now: datetime | None = None,
@@ -774,7 +830,7 @@ class _RoleBrokerChannel:
         try:
             with self._lock:
                 result = self._sync_endpoint_identity_locked()
-        except (AuthorityAttestationError, NsValidationError):
+        except _AuthorityProvenanceFailure:
             self._fail_and_reap()
             return None
         if not (
@@ -793,45 +849,57 @@ class _RoleBrokerChannel:
         return result
 
     def _sync_endpoint_identity_locked(self) -> dict[str, object]:
-        result = self._attestor.current_endpoint_identity(
-            identity_id=self._identity_id,
-            endpoint_id=self._endpoint_id,
-            role=self._role.value,
-        )
-        certificate = _decode_certificate(
-            result.get("session_certificate"),
-        )
-        handle = _decode_handle(result.get("handle"))
-        certificate_fingerprint = _certificate_fingerprint(certificate)
-        session_key_fingerprint = _session_key_fingerprint(
-            certificate.session_public_key,
-        )
-        if (
-            result.get("identity_id") != self._identity_id
-            or result.get("broker_instance_id") != self._instance_id
-            or result.get("runtime_id") != self._runtime_id
-            or result.get("endpoint_id") != self._endpoint_id
-            or result.get("role") != self._role.value
-            or result.get("lifecycle_generation")
-            != certificate.lifecycle_generation
-            or result.get("session_key_fingerprint")
-            != session_key_fingerprint
-            or result.get("certificate_fingerprint")
-            != certificate_fingerprint
-            or certificate.broker_instance_id != self._instance_id
-            or certificate.runtime_id != self._runtime_id
-            or handle.broker_instance_id != self._instance_id
-            or handle.runtime_id != self._runtime_id
-            or handle.endpoint_id != self._endpoint_id
-            or handle.role is not self._role
-            or handle.lifecycle_generation
-            != certificate.lifecycle_generation
-            or not handle.verify(
-                certificate.session_public_key,
-                instance_id=self._instance_id,
+        try:
+            result = self._attestor.current_endpoint_identity(
+                identity_id=self._identity_id,
+                endpoint_id=self._endpoint_id,
+                role=self._role.value,
             )
-        ):
-            raise AuthorityAttestationError("endpoint_identity_invalid")
+            certificate = _decode_certificate(
+                result.get("session_certificate"),
+            )
+            handle = _decode_handle(result.get("handle"))
+            certificate_fingerprint = _certificate_fingerprint(certificate)
+            session_key_fingerprint = _session_key_fingerprint(
+                certificate.session_public_key,
+            )
+            if (
+                result.get("identity_id") != self._identity_id
+                or result.get("broker_instance_id") != self._instance_id
+                or result.get("runtime_id") != self._runtime_id
+                or result.get("endpoint_id") != self._endpoint_id
+                or result.get("role") != self._role.value
+                or result.get("lifecycle_generation")
+                != certificate.lifecycle_generation
+                or result.get("session_key_fingerprint")
+                != session_key_fingerprint
+                or result.get("certificate_fingerprint")
+                != certificate_fingerprint
+                or certificate.broker_instance_id != self._instance_id
+                or certificate.runtime_id != self._runtime_id
+                or handle.broker_instance_id != self._instance_id
+                or handle.runtime_id != self._runtime_id
+                or handle.endpoint_id != self._endpoint_id
+                or handle.role is not self._role
+                or handle.lifecycle_generation
+                != certificate.lifecycle_generation
+                or not handle.verify(
+                    certificate.session_public_key,
+                    instance_id=self._instance_id,
+                )
+            ):
+                raise _AuthorityProvenanceFailure(
+                    "endpoint_identity_invalid",
+                )
+        except _AuthorityProvenanceFailure:
+            raise
+        except (
+            AuthorityAttestationError, NsValidationError, AttributeError,
+            KeyError, TypeError, ValueError,
+        ) as error:
+            raise _AuthorityProvenanceFailure(
+                "endpoint_identity_invalid",
+            ) from error
         generation_changed = (
             certificate.lifecycle_generation
             != self._lifecycle_generation
@@ -864,6 +932,14 @@ class _RoleBrokerChannel:
         operation: str,
         payload: dict[str, object] | list[object] | str | int | float | bool | None,
     ) -> object:
+        if (
+            type(operation) is not str
+            or not _role_allows(self._role, operation)
+        ):
+            raise _state_denied("role_endpoint_operation_denied")
+        # This is the pure local request boundary.  Past this point, malformed
+        # identity, rotation, ticket, or response data is provenance failure.
+        encode_frame(payload)
         with self._custodian._request_lock:
             return self._request_serialized(
                 operation=operation,
@@ -876,11 +952,6 @@ class _RoleBrokerChannel:
         operation: str,
         payload: dict[str, object] | list[object] | str | int | float | bool | None,
     ) -> object:
-        if (
-            type(operation) is not str
-            or not _role_allows(self._role, operation)
-        ):
-            raise _state_denied("role_endpoint_operation_denied")
         if self._closed or not self._custodian.alive:
             self._fail_and_reap()
             raise _operation_unavailable(operation, "broker_unavailable")
@@ -1041,10 +1112,17 @@ class _RoleBrokerChannel:
                     ),
                     "attestor.error_json",
                 )
-                _raise_remote_error(error_value)
+                _validate_remote_error(error_value)
+                raise _VerifiedRemoteBrokerError(error_value)
         except NsRuntimeStateStoreIndeterminateWriteError:
             raise
-        except AuthorityAttestationError:
+        except _VerifiedRemoteBrokerError as error:
+            _raise_remote_error(error.value)
+        except (
+            _AuthorityProvenanceFailure, AuthorityAttestationError,
+            NsValidationError, AttributeError, KeyError, TypeError,
+            ValueError,
+        ):
             self._fail_and_reap(connection=connection)
             if operation in _WRITE_OPERATIONS and send_attempted:
                 raise _indeterminate(
@@ -1053,17 +1131,6 @@ class _RoleBrokerChannel:
             raise _operation_unavailable(
                 operation, "attestor_unavailable",
             ) from None
-        except NsValidationError:
-            if not send_attempted:
-                raise
-            self._fail_and_reap(
-                connection=connection,
-            )
-            if operation in _WRITE_OPERATIONS:
-                raise _indeterminate(
-                    operation, "ipc_invalid_response",
-                ) from None
-            raise _operation_unavailable(operation, "ipc_closed") from None
         except (BrokenPipeError, EOFError, OSError):
             self._fail_and_reap(
                 connection=connection,
@@ -1071,17 +1138,30 @@ class _RoleBrokerChannel:
             if operation in _WRITE_OPERATIONS and send_attempted:
                 raise _indeterminate(operation, "ipc_invalid_response") from None
             raise _operation_unavailable(operation, "ipc_closed") from None
-        except (KeyError, TypeError, ValueError):
-            self._fail_and_reap()
-            if operation in _WRITE_OPERATIONS and send_attempted:
-                raise _indeterminate(
-                    operation, "ipc_malformed_response",
-                ) from None
-            raise _operation_unavailable(
-                operation, "malformed_response",
-            ) from None
 
     def _rotate_if_required_locked(
+        self,
+        *,
+        attestor: AuthorityAttestorClient,
+        operation: str,
+    ) -> None:
+        try:
+            self._rotate_if_required_unchecked_locked(
+                attestor=attestor,
+                operation=operation,
+            )
+        except _AuthorityProvenanceFailure:
+            raise
+        except (
+            AuthorityAttestationError, NsValidationError,
+            BrokenPipeError, EOFError, OSError, AttributeError,
+            KeyError, TypeError, ValueError,
+        ) as error:
+            raise _AuthorityProvenanceFailure(
+                "rotation_provenance_invalid",
+            ) from error
+
+    def _rotate_if_required_unchecked_locked(
         self,
         *,
         attestor: AuthorityAttestorClient,
@@ -1186,7 +1266,10 @@ class _RoleBrokerChannel:
                         decode_frame(
                             self._connection.recv_bytes(MAX_FRAME_BYTES),
                         )
-        except (BrokenPipeError, EOFError, OSError):
+        except (
+            BrokenPipeError, EOFError, OSError, NsValidationError,
+            _AuthorityProvenanceFailure,
+        ):
             pass
         finally:
             self._closed = True
@@ -1230,6 +1313,35 @@ class _ContractTestRoleBrokerChannel(_RoleBrokerChannel):
 class _IntegrationTestRoleBrokerChannel(_RoleBrokerChannel):
     """Exact real-provider integration-test channel."""
     __slots__ = ()
+
+
+def _refreshed_fixed_handle(
+    stored_handle: object,
+    channel: _RoleBrokerChannel,
+    role: BrokerRepositoryRole,
+) -> BrokerAuthorityHandle | None:
+    """Refresh only an already fixed role binding without authority IPC."""
+
+    current_handle = channel.handle
+    if (
+        type(stored_handle) is not BrokerAuthorityHandle
+        or type(current_handle) is not BrokerAuthorityHandle
+        or stored_handle.role is not role
+        or current_handle.role is not role
+    ):
+        return None
+    if stored_handle == current_handle:
+        return current_handle
+    if (
+        stored_handle.broker_instance_id
+        == current_handle.broker_instance_id
+        and stored_handle.runtime_id == current_handle.runtime_id
+        and stored_handle.endpoint_id == current_handle.endpoint_id
+        and stored_handle.lifecycle_generation
+        < current_handle.lifecycle_generation
+    ):
+        return current_handle
+    return None
 
 
 class ProductionIamAuthorityProxy(HandshakeIamAdapter):
@@ -1453,48 +1565,53 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
     ) -> VerifiedBrokerIamResult:
         if operation not in _IAM_OPERATIONS:
             _invalid("iam_proxy.provenance")
+        expected_channel_type = {
+            ProductionIamAuthorityProxy: _ProductionRoleBrokerChannel,
+            ContractTestIamAuthorityProxy: _ContractTestRoleBrokerChannel,
+            IntegrationTestIamAuthorityProxy:
+                _IntegrationTestRoleBrokerChannel,
+        }.get(type(self))
         channel = getattr(self, "_channel", None)
-        if type(channel) in {
-            _ProductionRoleBrokerChannel,
-            _ContractTestRoleBrokerChannel,
-            _IntegrationTestRoleBrokerChannel,
-        }:
-            adapter_is_current = await asyncio.to_thread(
-                self._is_broker_adapter,
-            )
-        else:
-            adapter_is_current = False
-        if not adapter_is_current:
-            handle = getattr(self, "_handle", None)
-            if (
-                type(self) in {
-                    ProductionIamAuthorityProxy,
-                    ContractTestIamAuthorityProxy,
-                    IntegrationTestIamAuthorityProxy,
-                }
-                and type(channel) in {
-                    _ProductionRoleBrokerChannel,
-                    _ContractTestRoleBrokerChannel,
-                    _IntegrationTestRoleBrokerChannel,
-                }
-                and type(handle) is BrokerAuthorityHandle
-                and handle.role is BrokerRepositoryRole.IAM
-                and not channel.alive
-            ):
-                channel._fail_and_reap()
-                raise _broker_unavailable("broker_unavailable")
+        if (
+            expected_channel_type is None
+            or type(channel) is not expected_channel_type
+            or channel.role is not BrokerRepositoryRole.IAM
+        ):
             _invalid("iam_proxy.provenance")
-        raw_result = await asyncio.to_thread(
-            self._channel.request,
-            operation=operation,
-            payload=_encode_iam_request(operation, payload),
+        encoded_payload = _encode_iam_request(operation, payload)
+        return await asyncio.to_thread(
+            self._signed_request_sync,
+            operation,
+            encoded_payload,
         )
-        self._handle = self._channel.handle
-        result = _decode_signed_iam_result(raw_result)
-        if type(result) is not BrokerSignedIamResult:
-            self._channel._fail_and_reap()
-            raise _broker_unavailable("signature_invalid")
-        typed = _decode_iam_result(operation, result.result_mapping())
+
+    def _signed_request_sync(
+        self,
+        operation: str,
+        encoded_payload: object,
+    ) -> VerifiedBrokerIamResult:
+        channel = self._channel
+        handle = _refreshed_fixed_handle(
+            getattr(self, "_handle", None),
+            channel,
+            BrokerRepositoryRole.IAM,
+        )
+        if handle is None:
+            _invalid("iam_proxy.provenance")
+        self._handle = handle
+        raw_result = channel.request(
+            operation=operation,
+            payload=encoded_payload,  # type: ignore[arg-type]
+        )
+        self._handle = channel.handle
+        try:
+            result = _decode_signed_iam_result(raw_result)
+            typed = _decode_iam_result(
+                operation, result.result_mapping(),
+            )
+        except (NsValidationError, KeyError, TypeError, ValueError):
+            channel._fail_and_reap()
+            raise _broker_unavailable("signature_invalid") from None
         return VerifiedBrokerIamResult(result=typed, authority=result)
 
     def _verify_signed_iam_authority(
@@ -1628,25 +1745,34 @@ class _RepositoryProxy:
         channel = getattr(self, "_channel", None)
         role = getattr(channel, "role", None)
         if (
-            binding is not None
-            and type(channel) is binding[1]
-            and not channel._identity_is_current()
-        ):
-            channel._fail_and_reap()
-            raise _state_unavailable("certificate_chain_invalid")
-        if (
             binding is None
-            or not self._binding_is_current()
+            or type(channel) is not binding[1]
             or type(role) is not BrokerRepositoryRole
+            or role is not binding[0]
             or operation not in _ROLE_OPERATIONS[role.value]
         ):
             raise _state_denied("repository_operation_denied")
-        result = await asyncio.to_thread(
-            self._channel.request,
-            operation=operation,
-            payload=payload,
+        return await asyncio.to_thread(
+            self._request_sync,
+            operation,
+            payload,
         )
-        self._handle = self._channel.handle
+
+    def _request_sync(self, operation: str, payload: object) -> object:
+        channel = self._channel
+        handle = _refreshed_fixed_handle(
+            getattr(self, "_handle", None),
+            channel,
+            channel.role,
+        )
+        if handle is None:
+            raise _state_denied("repository_operation_denied")
+        self._handle = handle
+        result = channel.request(
+            operation=operation,
+            payload=payload,  # type: ignore[arg-type]
+        )
+        self._handle = channel.handle
         return result
 
     def __copy__(self) -> "_RepositoryProxy":
@@ -2124,30 +2250,54 @@ class AuthorityBrokerStateStoreProxy:
         )
 
     async def open(self) -> None:
-        if not self._binding_is_current():
-            raise _state_unavailable("broker_provenance_invalid")
         if self._state == "closed":
             raise _state_unavailable("broker_closed")
-        result = decode_health(await asyncio.to_thread(
-            self._channel.request,
-            operation="state_health",
-            payload={},
-        ))
-        self._handle = self._channel.handle
-        if type(result) is not StateStoreHealth:
-            raise _state_unavailable("invalid_health")
+        self._validate_local_lifecycle_binding()
+        await asyncio.to_thread(self._health_request_sync)
         self._state = "open"
 
     async def health(self) -> StateStoreHealth:
-        if not self._binding_is_current():
+        self._validate_local_lifecycle_binding()
+        return await asyncio.to_thread(self._health_request_sync)
+
+    def _validate_local_lifecycle_binding(self) -> None:
+        expected_channel_type = {
+            AuthorityBrokerStateStoreProxy: _ProductionRoleBrokerChannel,
+            _ContractTestAuthorityBrokerStateStoreProxy:
+                _ContractTestRoleBrokerChannel,
+            _IntegrationTestAuthorityBrokerStateStoreProxy:
+                _IntegrationTestRoleBrokerChannel,
+        }.get(type(self))
+        channel = getattr(self, "_channel", None)
+        if (
+            expected_channel_type is None
+            or type(channel) is not expected_channel_type
+            or channel.role is not BrokerRepositoryRole.LIFECYCLE
+        ):
             raise _state_unavailable("broker_provenance_invalid")
-        result = decode_health(await asyncio.to_thread(
-            self._channel.request,
+
+    def _health_request_sync(self) -> StateStoreHealth:
+        channel = self._channel
+        handle = _refreshed_fixed_handle(
+            getattr(self, "_handle", None),
+            channel,
+            BrokerRepositoryRole.LIFECYCLE,
+        )
+        if handle is None:
+            raise _state_unavailable("broker_provenance_invalid")
+        self._handle = handle
+        raw_result = channel.request(
             operation="state_health",
             payload={},
-        ))
-        self._handle = self._channel.handle
+        )
+        self._handle = channel.handle
+        try:
+            result = decode_health(raw_result)
+        except (NsValidationError, KeyError, TypeError, ValueError):
+            channel._fail_and_reap()
+            raise _state_unavailable("invalid_health") from None
         if type(result) is not StateStoreHealth:
+            channel._fail_and_reap()
             raise _state_unavailable("invalid_health")
         return result
 
@@ -2607,6 +2757,10 @@ def _accept_started_authority_broker(
     custodian = _BrokerProcessCustodian(
         process=process,
         attestor=attestor,
+        endpoint_close_resources=tuple(
+            _ParentEndpointCloseResource(parents[role])
+            for role in sorted(expected_roles)
+        ),
     )
     channels = {
         BrokerRepositoryRole(role): channel_type(
@@ -5356,6 +5510,23 @@ def _exception_values(error: Exception) -> dict[str, object]:
 
 def _error_values(kind: str, reason: str) -> dict[str, object]:
     return {"kind": kind, "reason": reason}
+
+
+def _validate_remote_error(response: object) -> None:
+    values = require_object(
+        response,
+        fields={"kind", "reason"},
+        field="remote_error",
+    )
+    kind = _exact_string(values["kind"], "remote_error.kind")
+    _exact_string(values["reason"], "remote_error.reason")
+    if kind not in {
+        "iam_denied", "iam_timeout", "iam_unavailable",
+        "state_indeterminate", "state_denied", "state_conflict",
+        "state_version_mismatch", "state_namespace", "state_timeout",
+        "validation", "state_unavailable",
+    }:
+        _invalid("remote_error.kind")
 
 
 def _raise_remote_error(response: object) -> None:
