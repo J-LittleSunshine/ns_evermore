@@ -23,7 +23,7 @@ _SECRETS_FD_ENV = "NS_RUNTIME_AUTHORITY_SECRETS_FD"
 
 class InheritedAuthorityBootstrap:
     __slots__ = (
-        "_connection", "_process", "_consumed",
+        "_connection", "_process", "_attestor", "_consumed",
     )
 
     def __init__(
@@ -31,6 +31,7 @@ class InheritedAuthorityBootstrap:
         *,
         connection: Connection,
         process: multiprocessing.Process,
+        attestor: object,
     ) -> None:
         if (
             not isinstance(connection, Connection)
@@ -39,6 +40,7 @@ class InheritedAuthorityBootstrap:
             _security_error("invalid_inherited_authority_material")
         self._connection = connection
         self._process = process
+        self._attestor = attestor
         self._consumed = False
 
     def launch(self, *, config: object) -> object:
@@ -54,25 +56,33 @@ class InheritedAuthorityBootstrap:
         self._consumed = True
         connection = self._connection
         process = self._process
+        attestor = self._attestor
         self._connection = None
         self._process = None
+        self._attestor = None
         try:
             return _complete_inherited_authority_broker_start(
                 parent=connection,
                 process=process,
+                attestor=attestor,
                 config=config,
             )
         except BaseException:
             _close_pending(connection, process)
+            attestor.close()
             raise
 
     def close(self) -> None:
         connection = self._connection
         process = self._process
+        attestor = self._attestor
         self._connection = None
         self._process = None
+        self._attestor = None
         if connection is not None and process is not None:
             _close_pending(connection, process)
+        if attestor is not None:
+            attestor.close()
         self._consumed = True
 
     def __del__(self) -> None:
@@ -101,10 +111,19 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
     if root_fd == secrets_fd:
         _security_error("authority_inherited_descriptors_invalid")
     context = multiprocessing.get_context("spawn")
+    from ns_runtime.authority_attestor import start_authority_attestor
+
+    attestor = start_authority_attestor(realm="production")
     parent, child = context.Pipe(duplex=True)
     process = context.Process(
         target=_isolated_authority_bootstrap_entry,
-        args=(child, DupFd(root_fd), DupFd(secrets_fd)),
+        args=(
+            child,
+            DupFd(root_fd),
+            DupFd(secrets_fd),
+            attestor.public_key,
+            attestor.instance_id,
+        ),
         name="ns-runtime-authority-broker",
         daemon=False,
     )
@@ -122,21 +141,26 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
         or not process.is_alive()
     ):
         _close_pending(parent, process)
+        attestor.close()
         _security_error("authority_broker_bootstrap_failed")
     try:
         custody = json.loads(parent.recv_bytes(1024).decode("utf-8"))
     except (EOFError, OSError, UnicodeError, ValueError):
         _close_pending(parent, process)
+        attestor.close()
         _security_error("authority_broker_bootstrap_failed")
     if custody != {"kind": "fd_custody", "version": 1}:
         _close_pending(parent, process)
+        attestor.close()
         _security_error("authority_broker_bootstrap_failed")
     if not process.is_alive():
         parent.close()
+        attestor.close()
         _security_error("authority_broker_bootstrap_failed")
     return InheritedAuthorityBootstrap(
         connection=parent,
         process=process,
+        attestor=attestor,
     )
 
 
@@ -144,6 +168,8 @@ def _isolated_authority_bootstrap_entry(
     connection: Connection,
     root_key_handle: object,
     secrets_handle: object,
+    attestor_public_key: bytes,
+    attestor_instance_id: str,
 ) -> None:
     # This module has no runtime business imports.  The spawn child receives
     # the inherited descriptors first; only then does it import broker code.
@@ -156,6 +182,10 @@ def _isolated_authority_bootstrap_entry(
         secrets_handle,
         "production",
         b"",
+        attestor_public_key,
+        attestor_instance_id,
+        300.0,
+        30 * 24 * 60 * 60.0,
     )
 
 

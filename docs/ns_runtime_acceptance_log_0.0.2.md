@@ -2442,6 +2442,45 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - broker certificate有界过期且未实现在线续签；部署需要在certificate lifecycle内受控轮换broker。失效后当前实现fail closed。
 - 未新增global registry、service locator、第二RuntimeService、TaskSupervisor或shutdown owner。状态机仍严格为`prepared -> queued -> sending -> ack_waiting`；WRITE_UNCERTAIN不恢复、不重发。未实现P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership或P22 production验收；production `task.dispatch`继续disabled。
 
+## Authority attestor、request snapshot 与 delegated session rotation复核修复
+
+- 工作包：`P08-FIX-08`、`P09-FIX-12`、`P11-FIX-13`。
+- 状态：`IMPLEMENTED / F3 (local only)`；独立test/integration trust root与真实Redis路径已验证，但本机没有deployment production root私钥，不能把production `main`正向启动记为VERIFIED。P12继续`BLOCKED / F0`，production `task.dispatch`继续disabled。
+- 完成时间：`2026-07-27`（Asia/Shanghai）。起始branch为`codex/ns-runtime-implementation`，HEAD为`1c6e59feb0d407dd124e54122f8f37e3c3634467`，起始worktree干净；本轮未commit、未push。
+- attestor：最外层bootstrap在业务模块导入前spawn独立attestor；该进程自行加载编译时production root，不导入processor/delivery/routing/plugin，只接受bytes-only strict canonical JSON。root批准的delegation/session chain、broker identity、generation、session key和handles只由attestor保存并验证；主解释器修改root global、realm/helper、certificate/public key/instance字段不能改变批准identity。
+- rotation：root只签发30天有界delegation并从broker释放root private key；broker以delegated key签发300秒production session。session进入最后三分之一TTL后，attestor签发current/next-generation rotation ticket，broker原子生成新session/certificate/全部role handles，attestor验证delegation签名后批准。短TTL测试连续跨3次轮换，真实Redis成功链达到generation 5；旧handle和旧IAM result均拒绝。
+- TOCTOU与signed response：每次request在同一channel锁内冻结attestor identity、connection generation、broker/session/certificate、handle/role、request ID/sequence/fingerprint和expected response sequence；broker先验证attestor ticket，attestor再以同一snapshot验证StateStore外层签名和IAM内层result签名。请求期间替换connection/certificate或返回攻击者session response会关闭channel；write为indeterminate。
+- send failure：`send_attempted`在`send_bytes()`调用前设置。部分写后抛`OSError`会关闭原始/当前connection并bounded join/terminate/kill broker，旧channel/sequence不再复用；StateStore write统一为`NsRuntimeStateStoreIndeterminateWriteError`。真实Redis测试确认child退出后相同physical domain可立即重新启动。
+
+### 本轮新增攻击与耐久路径
+
+- 主解释器替换`_PRODUCTION_ROOT_PUBLIC_KEY`及attestor module同名global后，spawn production attestor仍拒绝攻击者root签发的delegation；替换`_channel_realm`和`_repository_proxy_binding`不能把contract proxy升级为production。
+- `object.__new__`伪production channel/proxy、certificate/public key/instance字段修改、connection/certificate await期间swap、unsigned/攻击者签名response、跨broker/request/operation/generation replay继续fail closed。
+- attestor wire拒绝hostile `__reduce__`、duplicate key、Infinity与超大frame；broker wire原有pickle-free/unknown-field/size边界保持。
+- 0.3秒session TTL连续轮换到generation 4并持续IAM access check和StateStore health；并发4个IAM请求与StateStore health在rotation锁下无中断。
+- 真实Redis 0.45秒session TTL跨generation 5实际完成admission transaction、record assertion/read、ordered-index mutation与cursor分页、transition log、strong audit append、scheduler transaction及跨role拒绝。
+- `send_bytes()`已开始后抛`OSError`在fake channel与真实Redis broker两层均返回write indeterminate、reap child并释放physical-domain lease。
+
+### 本轮实际测试命令与结果
+
+- processor：`PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_runtime_processor*.py' -q`，`Ran 27 tests`，`OK`。
+- routing：`PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_runtime_routing*.py' -q`，`Ran 33 tests`，`OK`。
+- authority broker/IAM/authorization：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_authority_broker tests.test_runtime_iam_client tests.test_runtime_iam_authorization`，`Ran 44 tests in 49.962s`，`OK`。
+- delivery admission/scheduling与IAM组合回归：`PYTHONPATH=src python3 -m unittest tests.test_runtime_iam_authorization tests.test_runtime_iam_client tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling -q`的可执行模块共`Ran 81 tests`并全部通过；同一命令末尾误写不存在的`tests.test_runtime_delivery_payload`产生1个loader error，该误写不记为通过，payload authority已由broker payload revalidation、delivery scheduling/admission及全仓测试覆盖。
+- StateStore contract/provider：`PYTHONPATH=src python3 -m unittest -q tests.test_state_store tests.test_runtime_state_store tests.test_redis_state_store_provider`，`Ran 43 tests in 0.853s`，`OK`。
+- 真实Redis integration：`PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_integration`，`Ran 21 tests in 64.871s`，`OK`；本机实际使用`/usr/bin/redis-server`。
+- main/shutdown/transport：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_event_loop_observability tests.test_runtime_shutdown tests.test_runtime_service tests.test_runtime_main tests.test_runtime_transport_metrics tests.test_runtime_transport_lifecycle tests.test_runtime_transport_identity tests.test_runtime_transport_errors tests.test_runtime_transport_contracts tests.test_runtime_transport_conformance tests.test_runtime_transport_backpressure tests.test_runtime_transport_websocket_tcp tests.test_runtime_transport_registry`，`Ran 112 tests in 12.743s`，`OK (skipped=6)`。
+- import/dependency boundary：`PYTHONPATH=src python3 -m unittest -q tests.test_requirements tests.test_runtime_bootstrap tests.test_runtime_processor_boundaries`，`Ran 19 tests in 4.060s`，`OK`；六个修改边界模块冷导入输出`COLD_IMPORT_BOUNDARIES_OK`，公共StateStore assertion输出`PUBLIC_IMPORTS_OK`；runtime/backend两个项目环境`pip check`均输出`No broken requirements found.`。
+- 全仓：`env -u PYTHONASYNCIODEBUG PYTHONPATH=src python3 -m unittest discover -s tests -t . -p 'test_*.py' -q`，`Ran 902 tests in 206.637s`，`OK (skipped=7)`。
+- 静态：`PYTHONPATH=src python3 -m compileall -q src tests`与`git diff --check`通过；Git只输出仓库autocrlf行尾转换warning。
+
+### 未验证与冻结边界
+
+- 未验证deployment production root正向`python -m ns_runtime.main`、真实production IAM backend与SIGTERM组合；六项相关测试按既有deployment-key条件skip。test/integration root不冒充production结论。
+- Valkey server、Redis Sentinel/Cluster、replica/failover、真实Windows、uvloop全树与远程CI未验证。
+- 30天delegation到期前仍需要受控runtime重启；本轮只实现delegation有效期内的无限短期session轮换，没有在线root delegation renewal。
+- 未新增global registry、service locator、第二RuntimeService、TaskSupervisor或shutdown owner。状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership及P22 production验收均未实现，production `task.dispatch`继续disabled。
+
 ## 新记录模板
 
 - 工作包：

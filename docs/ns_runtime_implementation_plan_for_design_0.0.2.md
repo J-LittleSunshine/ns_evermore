@@ -43,6 +43,13 @@
 - P09-FIX-11：production channel与IAM proxy使用exact production类型并永久绑定预置root签发的instance certificate；authorization/payload authority同时验证certificate chain与session-signed request-bound result。contract/integration exact类型不能通过字段、class attribute、subclass或`object.__new__`跨realm伪装。
 - P08-FIX-07：StateStore全部success/error response在DTO decode前验证session签名、request/handle/operation/fingerprint与严格response sequence。channel异常统一reap child；actual password bytes由一次性FD进入broker，physical-domain lease只绑定stable endpoint/database/namespace/principal。
 - P11-FIX-12：delivery transaction fingerprint改为完整canonical结构；result逐mutation/log绑定精确transaction，错序、错误key/document、同shape不同payload/assertion/index/log、copy/replace/tamper/replay均fail closed。
+
+### P08-FIX-08 / P09-FIX-12 / P11-FIX-13 isolated attestor and renewable session closure
+
+- 状态：`IMPLEMENTED / F3 (local only)`；本地证据见acceptance log的“Authority attestor、request snapshot与delegated session rotation复核修复”。deployment production root正向启动仍需部署环境验证，不把test/integration root记为production VERIFIED。
+- P09-FIX-12：production root批准的broker identity与IAM result最终验签迁入bootstrap前启动、且不导入业务模块的spawn attestor。root签发长期有界delegation，broker用delegated key轮换短期session；attestor原子批准新generation并拒绝旧result/handle replay。
+- P08-FIX-08：StateStore response与immutable request authority snapshot一起交给attestor验证，绑定connection generation、broker/session/certificate、handle/role、request/response sequence与fingerprint；connection/certificate/public key/instance swap只能fail closed。真实Redis transaction/read/index/log/audit/scheduler路径跨多次rotation持续成功。
+- P11-FIX-13：`send_bytes()`调用前设置send-attempted；调用开始后的OS/transport失败统一reap broker并将StateStore write映射为indeterminate。没有delivery retry、WRITE_UNCERTAIN恢复或P12状态扩展。
 - 冻结：状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12保持`BLOCKED / F0`，未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
 
 ---

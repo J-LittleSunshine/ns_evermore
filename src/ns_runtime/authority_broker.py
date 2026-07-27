@@ -111,6 +111,11 @@ from ns_runtime.authority_wire import (
     encode_transaction_result,
     require_object,
 )
+from ns_runtime.authority_attestor import (
+    AuthorityAttestationError,
+    AuthorityAttestorClient,
+    start_authority_attestor,
+)
 
 
 _IAM_OPERATIONS = frozenset({
@@ -149,7 +154,11 @@ _WRITE_OPERATIONS = frozenset({
     "transact_admission", "transact_scheduler", "transact_registry",
     "append_audit",
 })
-_ROOT_CERTIFICATE_TTL_SECONDS = 300
+_SESSION_CERTIFICATE_TTL_SECONDS = 300.0
+_DELEGATION_CERTIFICATE_TTL_SECONDS = 30 * 24 * 60 * 60.0
+_DELEGATION_USAGES = (
+    "handles", "iam-results", "rotation", "state-responses",
+)
 _BROKER_REALMS = frozenset({
     "production", "contract-test", "integration-test",
 })
@@ -170,6 +179,39 @@ class BrokerRepositoryRole(str, Enum):
     REGISTRY = "registry"
     AUDIT = "audit"
     LIFECYCLE = "lifecycle"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BrokerDelegationCertificate:
+    trust_realm: str
+    broker_instance_id: str
+    runtime_id: str
+    delegation_public_key: bytes
+    allowed_usages: tuple[str, ...]
+    issued_at: datetime
+    expires_at: datetime
+    nonce: str
+    signature: bytes
+
+    def signed_values(self) -> Mapping[str, object]:
+        return {
+            "trust_realm": self.trust_realm,
+            "broker_instance_id": self.broker_instance_id,
+            "runtime_id": self.runtime_id,
+            "delegation_public_key": encode_bytes(
+                self.delegation_public_key,
+            ),
+            "allowed_usages": list(self.allowed_usages),
+            "issued_at": encode_time(self.issued_at),
+            "expires_at": encode_time(self.expires_at),
+            "nonce": self.nonce,
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        return "sha256:" + hashlib.sha256(
+            encode_frame(_encode_delegation_certificate(self)),
+        ).hexdigest()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -224,6 +266,7 @@ class BrokerInstanceCertificate:
     session_public_key: bytes
     runtime_id: str
     lifecycle_generation: int
+    delegation_fingerprint: str
     issued_at: datetime
     expires_at: datetime
     nonce: str
@@ -236,6 +279,7 @@ class BrokerInstanceCertificate:
             "session_public_key": encode_bytes(self.session_public_key),
             "runtime_id": self.runtime_id,
             "lifecycle_generation": self.lifecycle_generation,
+            "delegation_fingerprint": self.delegation_fingerprint,
             "issued_at": encode_time(self.issued_at),
             "expires_at": encode_time(self.expires_at),
             "nonce": self.nonce,
@@ -257,11 +301,11 @@ class BrokerInstanceCertificate:
             or expected_realm not in _BROKER_REALMS
             or self.trust_realm != expected_realm
             or self.runtime_id != expected_runtime_id
-            or self.lifecycle_generation != 1
+            or self.lifecycle_generation <= 0
             or self.issued_at > now
             or self.expires_at <= now
             or self.expires_at - self.issued_at
-            > timedelta(seconds=_ROOT_CERTIFICATE_TTL_SECONDS)
+            > timedelta(seconds=_SESSION_CERTIFICATE_TTL_SECONDS)
             or len(self.session_public_key) != 32
             or len(root_public_key) != 32
             or (
@@ -331,6 +375,8 @@ class BrokerAuthorityHandle:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BrokerSignedIamResult:
     broker_instance_id: str
+    lifecycle_generation: int
+    session_key_fingerprint: str
     operation: str
     request_fingerprint: str
     request_json: str
@@ -350,6 +396,8 @@ class BrokerSignedIamResult:
     def signed_values(self) -> Mapping[str, object]:
         return {
             "broker_instance_id": self.broker_instance_id,
+            "lifecycle_generation": self.lifecycle_generation,
+            "session_key_fingerprint": self.session_key_fingerprint,
             "operation": self.operation,
             "request_fingerprint": self.request_fingerprint,
             "request_json": self.request_json,
@@ -374,6 +422,8 @@ class BrokerSignedIamResult:
         operation: str,
         request_fingerprint: str,
         now: datetime,
+        lifecycle_generation: int | None = None,
+        session_key_fingerprint: str | None = None,
     ) -> bool:
         try:
             request_values = self.request_mapping()
@@ -386,6 +436,15 @@ class BrokerSignedIamResult:
         return bool(
             type(self) is BrokerSignedIamResult
             and self.broker_instance_id == broker_instance_id
+            and (
+                lifecycle_generation is None
+                or self.lifecycle_generation == lifecycle_generation
+            )
+            and (
+                session_key_fingerprint is None
+                or self.session_key_fingerprint
+                == session_key_fingerprint
+            )
             and self.operation == operation
             and self.request_fingerprint == request_fingerprint
             and self.request_fingerprint == bound_fingerprint
@@ -535,12 +594,14 @@ class BrokerSignedStateResponse:
 
 
 class _BrokerChannel:
-    """Serialized IPC channel; it contains no signing or provider material."""
+    """Serialized broker channel whose trust decisions live in an attestor."""
 
     __slots__ = (
         "_connection", "_process", "_public_key", "_instance_id",
         "_runtime_id", "_lifecycle_generation", "_certificate",
-        "_root_public_key", "_lock", "_closed", "_process_reaped",
+        "_delegation_certificate", "_certificate_fingerprint",
+        "_attestor", "_identity_id", "_handles", "_connection_generation",
+        "_lock", "_closed", "_process_reaped",
         "_timeout_seconds", "_request_sequence", "_response_sequence",
     )
 
@@ -554,7 +615,10 @@ class _BrokerChannel:
         runtime_id: str,
         lifecycle_generation: int,
         certificate: BrokerInstanceCertificate,
-        root_public_key: bytes,
+        delegation_certificate: BrokerDelegationCertificate,
+        attestor: AuthorityAttestorClient,
+        identity_id: str,
+        handles: Mapping[str, BrokerAuthorityHandle],
         timeout_seconds: float,
     ) -> None:
         self._connection = connection
@@ -564,14 +628,21 @@ class _BrokerChannel:
         self._runtime_id = runtime_id
         self._lifecycle_generation = lifecycle_generation
         self._certificate = certificate
-        self._root_public_key = root_public_key
+        self._delegation_certificate = delegation_certificate
+        self._certificate_fingerprint = _certificate_fingerprint(
+            certificate,
+        )
+        self._attestor = attestor
+        self._identity_id = identity_id
+        self._handles = dict(handles)
+        self._connection_generation = 1
         self._lock = threading.Lock()
         self._closed = False
         self._process_reaped = False
         self._timeout_seconds = float(timeout_seconds)
         self._request_sequence = 0
         self._response_sequence = 0
-        if not self._identity_is_current(datetime.now(timezone.utc)):
+        if not self._identity_is_current():
             self._closed = True
             self._reap_process()
             _invalid("broker_channel.certificate")
@@ -590,49 +661,75 @@ class _BrokerChannel:
             not self._closed
             and not self._process_reaped
             and self._process.is_alive()
-            and self._identity_is_current(datetime.now(timezone.utc))
+            and self._identity_is_current()
         )
 
     @property
     def certificate(self) -> BrokerInstanceCertificate:
         return self._certificate
 
-    def _identity_is_current(self, now: datetime) -> bool:
-        realm = _channel_realm(type(self))
-        root_public_key = (
-            _PRODUCTION_ROOT_PUBLIC_KEY
-            if type(self) is _ProductionBrokerChannel
-            else self._root_public_key
-        )
-        certificate = getattr(self, "_certificate", None)
-        public_key = getattr(self, "_public_key", None)
-        instance_id = getattr(self, "_instance_id", None)
-        runtime_id = getattr(self, "_runtime_id", None)
-        generation = getattr(self, "_lifecycle_generation", None)
-        return bool(
-            realm is not None
-            and type(certificate) is BrokerInstanceCertificate
-            and type(public_key) is bytes
-            and type(instance_id) is str
-            and type(runtime_id) is str
-            and type(generation) is int
-            and certificate.verify(
-                root_public_key,
-                expected_realm=realm,
-                expected_runtime_id=runtime_id,
-                expected_instance_id=instance_id,
-                expected_session_public_key=public_key,
-                expected_generation=generation,
-                now=now,
+    def current_handle(
+        self,
+        role: BrokerRepositoryRole,
+    ) -> BrokerAuthorityHandle:
+        handle = self._handles.get(role.value)
+        if type(handle) is not BrokerAuthorityHandle:
+            raise _broker_unavailable("handle_invalid")
+        return handle
+
+    def _identity_is_current(
+        self, now: datetime | None = None,
+    ) -> bool:
+        del now
+        return self._attested_identity() is not None
+
+    def _attested_identity(self) -> dict[str, object] | None:
+        attestor = getattr(self, "_attestor", None)
+        if type(attestor) is not AuthorityAttestorClient:
+            return None
+        try:
+            certificate = self._certificate
+            if (
+                type(certificate) is not BrokerInstanceCertificate
+                or _certificate_fingerprint(certificate)
+                != self._certificate_fingerprint
+            ):
+                return None
+            result = attestor.verify_identity(
+                identity_id=self._identity_id,
+                broker_instance_id=self._instance_id,
+                runtime_id=self._runtime_id,
+                lifecycle_generation=self._lifecycle_generation,
+                session_key_fingerprint=_session_key_fingerprint(
+                    self._public_key,
+                ),
+                certificate_fingerprint=self._certificate_fingerprint,
             )
-        )
+        except AuthorityAttestationError:
+            return None
+        if not (
+            result.get("identity_id") == self._identity_id
+            and result.get("broker_instance_id") == self._instance_id
+            and result.get("runtime_id") == self._runtime_id
+            and result.get("lifecycle_generation")
+            == self._lifecycle_generation
+            and result.get("session_key_fingerprint")
+            == _session_key_fingerprint(self._public_key)
+            and result.get("certificate_fingerprint")
+            == self._certificate_fingerprint
+        ):
+            return None
+        return result
 
     def _is_production_certificate_chain_current(
         self, now: datetime,
     ) -> bool:
+        del now
+        identity = self._attested_identity()
         return bool(
             type(self) is _ProductionBrokerChannel
-            and self._identity_is_current(now)
+            and identity is not None
+            and identity.get("realm") == "production"
         )
 
     def request(
@@ -642,20 +739,6 @@ class _BrokerChannel:
         operation: str,
         payload: dict[str, object] | list[object] | str | int | float | bool | None,
     ) -> object:
-        now = datetime.now(timezone.utc)
-        if not self._identity_is_current(now):
-            self._fail_and_reap()
-            raise _operation_unavailable(
-                operation, "certificate_chain_invalid",
-            )
-        if not handle.verify(
-                self._public_key,
-                instance_id=self._instance_id,
-        ) or (
-            handle.runtime_id != self._runtime_id
-            or handle.lifecycle_generation != self._lifecycle_generation
-        ):
-            raise _broker_unavailable("handle_invalid")
         if self._closed or not self._process.is_alive():
             if operation in _WRITE_OPERATIONS:
                 raise NsRuntimeStateStoreIndeterminateWriteError(details={
@@ -664,8 +747,9 @@ class _BrokerChannel:
                     "reason": "broker_unavailable_outcome_unknown",
                 })
             raise _operation_unavailable(operation, "broker_unavailable")
-        request_id = "ipc_" + uuid.uuid4().hex
-        sent = False
+        send_attempted = False
+        connection = self._connection
+        process = self._process
         try:
             with self._lock:
                 if self._closed or not self._process.is_alive():
@@ -677,12 +761,62 @@ class _BrokerChannel:
                     raise _operation_unavailable(
                         operation, "broker_unavailable",
                     )
+                connection = self._connection
+                process = self._process
+                attestor = self._attestor
+                requested_role = handle.role
+                handle = self.current_handle(requested_role)
+                self._rotate_if_required_locked(
+                    attestor=attestor,
+                    handle=handle,
+                    operation=operation,
+                )
+                handle = self.current_handle(requested_role)
+                request_id = "ipc_" + uuid.uuid4().hex
                 request_sequence = self._request_sequence + 1
                 request_fingerprint = _state_request_fingerprint(
                     operation=operation,
                     handle=handle,
                     payload=payload,
                 )
+                prepared = attestor.prepare_request(
+                    identity_id=self._identity_id,
+                    connection_generation=self._connection_generation,
+                    handle=_encode_handle(handle),
+                    operation=operation,
+                    request_id=request_id,
+                    request_sequence=request_sequence,
+                    request_fingerprint=request_fingerprint,
+                )
+                if prepared.get("status") != "ready":
+                    _invalid("attestor.request_ticket")
+                ticket = prepared.get("ticket")
+                if type(ticket) is not dict:
+                    _invalid("attestor.request_ticket")
+                connection_generation = self._connection_generation
+                expected_response_sequence = self._response_sequence + 1
+                snapshot = {
+                    "identity_id": self._identity_id,
+                    "connection_generation": connection_generation,
+                    "broker_instance_id": self._instance_id,
+                    "runtime_id": self._runtime_id,
+                    "lifecycle_generation": self._lifecycle_generation,
+                    "session_key_fingerprint": _session_key_fingerprint(
+                        self._public_key,
+                    ),
+                    "certificate_fingerprint": (
+                        self._certificate_fingerprint
+                    ),
+                    "handle_id": handle.handle_id,
+                    "role": handle.role.value,
+                    "operation": operation,
+                    "request_id": request_id,
+                    "request_sequence": request_sequence,
+                    "request_fingerprint": request_fingerprint,
+                    "expected_response_sequence": (
+                        expected_response_sequence
+                    ),
+                }
                 raw_request = encode_frame({
                     "version": WIRE_VERSION,
                     "kind": "request",
@@ -691,74 +825,221 @@ class _BrokerChannel:
                     "handle": _encode_handle(handle),
                     "operation": operation,
                     "payload": payload,
+                    "attestation": ticket,
                 })
                 self._request_sequence = request_sequence
-                self._connection.send_bytes(raw_request)
-                sent = True
-                if not self._connection.poll(self._timeout_seconds):
-                    self._fail_and_reap()
+                send_attempted = True
+                connection.send_bytes(raw_request)
+                if not connection.poll(self._timeout_seconds):
+                    self._fail_and_reap(
+                        connection=connection, process=process,
+                    )
                     if operation in _WRITE_OPERATIONS:
                         raise _indeterminate(operation, "ipc_timeout")
                     raise _operation_unavailable(operation, "ipc_timeout")
                 envelope = decode_frame(
-                    self._connection.recv_bytes(MAX_FRAME_BYTES),
+                    connection.recv_bytes(MAX_FRAME_BYTES),
                 )
+                values = require_object(
+                    envelope,
+                    fields={"version", "kind", "signed_response"},
+                    field="response_envelope",
+                )
+                if (
+                    values["version"] != WIRE_VERSION
+                    or values["kind"] != "signed_response"
+                    or type(values["signed_response"]) is not dict
+                ):
+                    _invalid("response_envelope.binding")
+                verified = attestor.verify_state_response(
+                    snapshot=snapshot,
+                    signed_response=values["signed_response"],
+                )
+                if (
+                    connection is not self._connection
+                    or process is not self._process
+                    or attestor is not self._attestor
+                    or connection_generation
+                    != self._connection_generation
+                    or snapshot["certificate_fingerprint"]
+                    != self._certificate_fingerprint
+                    or snapshot["session_key_fingerprint"]
+                    != _session_key_fingerprint(self._public_key)
+                    or snapshot["broker_instance_id"]
+                    != self._instance_id
+                    or snapshot["runtime_id"] != self._runtime_id
+                    or snapshot["lifecycle_generation"]
+                    != self._lifecycle_generation
+                ):
+                    _invalid("response.connection_generation")
+                self._response_sequence = expected_response_sequence
+                if verified.get("ok") is True:
+                    decoded_result = _decode_canonical_json(
+                        _exact_string(
+                            verified.get("result_json"),
+                            "attestor.result_json",
+                        ),
+                        "attestor.result_json",
+                    )
+                    if handle.role is BrokerRepositoryRole.IAM:
+                        signed_iam = _decode_signed_iam_result(
+                            decoded_result,
+                        )
+                        typed_request = _decode_iam_request(
+                            operation, payload,
+                        )
+                        inner_verified = attestor.verify_iam_result(
+                            identity_id=self._identity_id,
+                            operation=operation,
+                            request_fingerprint=_request_fingerprint(
+                                operation, typed_request,
+                            ),
+                            signed_result=_encode_signed_iam_result(
+                                signed_iam,
+                            ),
+                        )
+                        if (
+                            inner_verified.get("verified") is not True
+                            or inner_verified.get(
+                                "lifecycle_generation",
+                            ) != snapshot["lifecycle_generation"]
+                        ):
+                            _invalid("response.iam_authority")
+                    return decoded_result
+                error_value = _decode_canonical_json(
+                    _exact_string(
+                        verified.get("error_json"),
+                        "attestor.error_json",
+                    ),
+                    "attestor.error_json",
+                )
+                _raise_remote_error(error_value)
         except NsRuntimeStateStoreIndeterminateWriteError:
             raise
+        except AuthorityAttestationError:
+            self._fail_and_reap(
+                connection=connection, process=process,
+            )
+            if operation in _WRITE_OPERATIONS and send_attempted:
+                raise _indeterminate(
+                    operation, "attestor_verification_failed",
+                ) from None
+            raise _operation_unavailable(
+                operation, "attestor_unavailable",
+            ) from None
         except NsValidationError:
-            if not sent:
+            if not send_attempted:
                 raise
-            self._fail_and_reap()
+            self._fail_and_reap(
+                connection=connection, process=process,
+            )
             if operation in _WRITE_OPERATIONS:
                 raise _indeterminate(
                     operation, "ipc_invalid_response",
                 ) from None
             raise _operation_unavailable(operation, "ipc_closed") from None
         except (BrokenPipeError, EOFError, OSError):
-            if sent:
-                self._fail_and_reap()
-            if operation in _WRITE_OPERATIONS and sent:
+            self._fail_and_reap(
+                connection=connection, process=process,
+            )
+            if operation in _WRITE_OPERATIONS and send_attempted:
                 raise _indeterminate(operation, "ipc_invalid_response") from None
             raise _operation_unavailable(operation, "ipc_closed") from None
-        try:
-            values = require_object(
-                envelope,
-                fields={"version", "kind", "signed_response"},
-                field="response_envelope",
-            )
-            if (
-                values["version"] != WIRE_VERSION
-                or values["kind"] != "signed_response"
-            ):
-                _invalid("response_envelope.binding")
-            signed = _decode_signed_state_response(
-                values["signed_response"],
-            )
-            expected_response_sequence = self._response_sequence + 1
-            if not signed.verify(
-                certificate=self._certificate,
-                request_id=request_id,
-                request_sequence=request_sequence,
-                operation=operation,
-                handle=handle,
-                request_fingerprint=request_fingerprint,
-                expected_response_sequence=expected_response_sequence,
-                now=datetime.now(timezone.utc),
-            ):
-                _invalid("response.signature")
-            self._response_sequence = expected_response_sequence
-            if signed.ok:
-                return signed.result_value()
-            _raise_remote_error(signed.error_value())
-        except (NsValidationError, KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError):
             self._fail_and_reap()
-            if operation in _WRITE_OPERATIONS and sent:
+            if operation in _WRITE_OPERATIONS and send_attempted:
                 raise _indeterminate(
                     operation, "ipc_malformed_response",
                 ) from None
             raise _operation_unavailable(
                 operation, "malformed_response",
             ) from None
+
+    def _rotate_if_required_locked(
+        self,
+        *,
+        attestor: AuthorityAttestorClient,
+        handle: BrokerAuthorityHandle,
+        operation: str,
+    ) -> None:
+        probe_id = "rotation_probe_" + uuid.uuid4().hex
+        probe_fingerprint = "sha256:" + hashlib.sha256(
+            probe_id.encode("utf-8"),
+        ).hexdigest()
+        prepared = attestor.prepare_request(
+            identity_id=self._identity_id,
+            connection_generation=self._connection_generation,
+            handle=_encode_handle(handle),
+            operation=operation,
+            request_id=probe_id,
+            request_sequence=self._request_sequence + 1,
+            request_fingerprint=probe_fingerprint,
+        )
+        if prepared.get("status") == "ready":
+            return
+        if prepared.get("status") != "rotation_required":
+            _invalid("attestor.rotation_status")
+        ticket = prepared.get("rotation_ticket")
+        if type(ticket) is not dict:
+            _invalid("attestor.rotation_ticket")
+        connection = self._connection
+        generation = self._connection_generation
+        connection.send_bytes(encode_frame({
+            "version": WIRE_VERSION,
+            "kind": "rotate_session",
+            "ticket": ticket,
+        }))
+        if not connection.poll(self._timeout_seconds):
+            raise AuthorityAttestationError("rotation_timeout")
+        rotation = decode_frame(
+            connection.recv_bytes(MAX_FRAME_BYTES),
+        )
+        if type(rotation) is not dict:
+            _invalid("rotation.response")
+        rotation_attestation = {
+            key: value for key, value in rotation.items()
+            if key != "version"
+        }
+        approved = attestor.approve_rotation(
+            identity_id=self._identity_id,
+            rotation=rotation_attestation,
+        )
+        if (
+            connection is not self._connection
+            or generation != self._connection_generation
+        ):
+            _invalid("rotation.connection_generation")
+        certificate = _decode_certificate(
+            rotation.get("session_certificate"),
+        )
+        handles_value = rotation.get("handles")
+        if type(handles_value) is not dict:
+            _invalid("rotation.handles")
+        handles = {
+            name: _decode_handle(value)
+            for name, value in handles_value.items()
+        }
+        if (
+            approved.get("broker_instance_id") != self._instance_id
+            or approved.get("runtime_id") != self._runtime_id
+            or approved.get("lifecycle_generation")
+            != certificate.lifecycle_generation
+            or approved.get("session_key_fingerprint")
+            != _session_key_fingerprint(certificate.session_public_key)
+            or approved.get("certificate_fingerprint")
+            != _certificate_fingerprint(certificate)
+        ):
+            _invalid("rotation.approval")
+        self._certificate = certificate
+        self._public_key = certificate.session_public_key
+        self._lifecycle_generation = certificate.lifecycle_generation
+        self._certificate_fingerprint = _certificate_fingerprint(
+            certificate,
+        )
+        self._handles = handles
+        self._connection_generation += 1
+        self._request_sequence = 0
+        self._response_sequence = 0
 
     def close(self, *, terminate: bool = False) -> None:
         try:
@@ -781,26 +1062,52 @@ class _BrokerChannel:
         finally:
             self._closed = True
             self._reap_process()
+            try:
+                self._attestor.close()
+            except AuthorityAttestationError:
+                pass
 
-    def _fail_and_reap(self) -> None:
+    def _fail_and_reap(
+        self,
+        *,
+        connection: object | None = None,
+        process: multiprocessing.Process | None = None,
+    ) -> None:
         self._closed = True
-        self._reap_process()
+        self._reap_process(
+            connection=connection,
+            process=process,
+        )
+        try:
+            self._attestor.close()
+        except AuthorityAttestationError:
+            pass
 
-    def _reap_process(self) -> None:
+    def _reap_process(
+        self,
+        *,
+        connection: object | None = None,
+        process: multiprocessing.Process | None = None,
+    ) -> None:
         if self._process_reaped:
             return
-        try:
-            self._connection.close()
-        except OSError:
-            pass
-        self._process.join(timeout=0.2)
-        if self._process.is_alive():
-            self._process.terminate()
-            self._process.join(timeout=5.0)
-        if self._process.is_alive():
-            self._process.kill()
-            self._process.join(timeout=5.0)
-        if self._process.is_alive():
+        owned_connection = (
+            self._connection if connection is None else connection
+        )
+        owned_process = self._process if process is None else process
+        for candidate in (owned_connection, self._connection):
+            try:
+                candidate.close()
+            except (AttributeError, OSError):
+                pass
+        owned_process.join(timeout=0.2)
+        if owned_process.is_alive():
+            owned_process.terminate()
+            owned_process.join(timeout=5.0)
+        if owned_process.is_alive():
+            owned_process.kill()
+            owned_process.join(timeout=5.0)
+        if owned_process.is_alive():
             raise _broker_unavailable("broker_process_did_not_exit")
         self._process_reaped = True
 
@@ -841,12 +1148,31 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
 
     def _verify_production_chain(self, now: datetime) -> bool:
         channel = getattr(self, "_channel", None)
-        handle = getattr(self, "_handle", None)
+        del now
+        if type(channel) is not _ProductionBrokerChannel:
+            return False
+        try:
+            handle = channel.current_handle(BrokerRepositoryRole.IAM)
+        except (NsRuntimeIamUnavailableError, AttributeError):
+            return False
+        stored_handle = getattr(self, "_handle", None)
+        if (
+            type(stored_handle) is BrokerAuthorityHandle
+            and stored_handle != handle
+            and stored_handle.role is BrokerRepositoryRole.IAM
+            and stored_handle.broker_instance_id == channel.instance_id
+            and stored_handle.runtime_id == channel._runtime_id
+            and stored_handle.lifecycle_generation
+            < handle.lifecycle_generation
+        ):
+            self._handle = handle
         return bool(
             type(self) is ProductionIamAuthorityProxy
-            and type(channel) is _ProductionBrokerChannel
             and type(handle) is BrokerAuthorityHandle
-            and channel._is_production_certificate_chain_current(now)
+            and getattr(self, "_handle", None) == handle
+            and channel._is_production_certificate_chain_current(
+                datetime.now(timezone.utc),
+            )
             and handle.role is BrokerRepositoryRole.IAM
             and handle.runtime_id == channel._runtime_id
             and handle.lifecycle_generation
@@ -868,21 +1194,37 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             ContractTestIamAuthorityProxy: _ContractTestBrokerChannel,
             IntegrationTestIamAuthorityProxy: _IntegrationTestBrokerChannel,
         }.get(type(self))
+        channel = getattr(self, "_channel", None)
+        try:
+            handle = (
+                channel.current_handle(BrokerRepositoryRole.IAM)
+                if type(channel) is expected_channel_type
+                else None
+            )
+        except (AttributeError, NsRuntimeIamUnavailableError):
+            handle = None
+        stored_handle = getattr(self, "_handle", None)
+        if (
+            type(handle) is BrokerAuthorityHandle
+            and type(stored_handle) is BrokerAuthorityHandle
+            and stored_handle != handle
+            and stored_handle.role is BrokerRepositoryRole.IAM
+            and stored_handle.broker_instance_id == channel.instance_id
+            and stored_handle.runtime_id == channel._runtime_id
+            and stored_handle.lifecycle_generation
+            < handle.lifecycle_generation
+        ):
+            self._handle = handle
         return bool(
             type(self) in {
                 ProductionIamAuthorityProxy,
                 ContractTestIamAuthorityProxy,
                 IntegrationTestIamAuthorityProxy,
             }
-            and type(getattr(self, "_channel", None))
-            is expected_channel_type
-            and type(getattr(self, "_handle", None)) is BrokerAuthorityHandle
-            and self._handle.role is BrokerRepositoryRole.IAM
-            and self._handle.verify(
-                self._channel.public_key,
-                instance_id=self._channel.instance_id,
-            )
-            and self._channel.alive
+            and type(channel) is expected_channel_type
+            and type(handle) is BrokerAuthorityHandle
+            and handle.role is BrokerRepositoryRole.IAM
+            and channel.alive
             and (
                 (
                     type(self) is ProductionIamAuthorityProxy
@@ -892,12 +1234,12 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                 )
                 or (
                     type(self) is ContractTestIamAuthorityProxy
-                    and self._channel._certificate.trust_realm
+                    and channel._attested_identity().get("realm")
                     == "contract-test"
                 )
                 or (
                     type(self) is IntegrationTestIamAuthorityProxy
-                    and self._channel._certificate.trust_realm
+                    and channel._attested_identity().get("realm")
                     == "integration-test"
                 )
             )
@@ -997,8 +1339,20 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
     ) -> VerifiedBrokerIamResult:
         if operation not in _IAM_OPERATIONS:
             _invalid("iam_proxy.provenance")
-        if not self._is_broker_adapter():
-            channel = getattr(self, "_channel", None)
+        channel = getattr(self, "_channel", None)
+        if type(channel) in {
+            _ProductionBrokerChannel,
+            _ContractTestBrokerChannel,
+            _IntegrationTestBrokerChannel,
+        }:
+            def check_adapter() -> bool:
+                with channel._lock:
+                    return self._is_broker_adapter()
+
+            adapter_is_current = await asyncio.to_thread(check_adapter)
+        else:
+            adapter_is_current = False
+        if not adapter_is_current:
             handle = getattr(self, "_handle", None)
             if (
                 type(self) in {
@@ -1022,33 +1376,50 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                 channel._fail_and_reap()
                 raise _broker_unavailable("broker_unavailable")
             _invalid("iam_proxy.provenance")
-        request_fingerprint = _request_fingerprint(operation, payload)
         raw_result = await asyncio.to_thread(
             self._channel.request,
-            handle=self._handle,
+            handle=self._channel.current_handle(
+                BrokerRepositoryRole.IAM,
+            ),
             operation=operation,
             payload=_encode_iam_request(operation, payload),
         )
-        result = _decode_signed_iam_result(raw_result)
-        now = (
-            datetime.now(timezone.utc)
-            if type(self) is ProductionIamAuthorityProxy
-            else self._clock.utc_now()
+        self._handle = self._channel.current_handle(
+            BrokerRepositoryRole.IAM,
         )
-        if (
-            type(self) is ProductionIamAuthorityProxy
-            and not self._verify_production_chain(now)
-        ) or type(result) is not BrokerSignedIamResult or not result.verify(
-            public_key=self._channel.public_key,
-            broker_instance_id=self._channel.instance_id,
-            operation=operation,
-            request_fingerprint=request_fingerprint,
-            now=now,
-        ):
+        result = _decode_signed_iam_result(raw_result)
+        if type(result) is not BrokerSignedIamResult:
             self._channel._fail_and_reap()
             raise _broker_unavailable("signature_invalid")
         typed = _decode_iam_result(operation, result.result_mapping())
         return VerifiedBrokerIamResult(result=typed, authority=result)
+
+    def _verify_signed_iam_authority(
+        self,
+        authority: BrokerSignedIamResult,
+        *,
+        operation: str,
+        request_fingerprint: str,
+    ) -> bool:
+        if (
+            type(authority) is not BrokerSignedIamResult
+            or not self._is_broker_adapter()
+        ):
+            return False
+        try:
+            result = self._channel._attestor.verify_iam_result(
+                identity_id=self._channel._identity_id,
+                operation=operation,
+                request_fingerprint=request_fingerprint,
+                signed_result=_encode_signed_iam_result(authority),
+            )
+        except AuthorityAttestationError:
+            return False
+        return bool(
+            result.get("verified") is True
+            and result.get("lifecycle_generation")
+            == self._channel._lifecycle_generation
+        )
 
     def _bind_authorization_service(self, service: object) -> None:
         if (
@@ -1084,7 +1455,7 @@ class IntegrationTestIamAuthorityProxy(ProductionIamAuthorityProxy):
 
 
 class _RepositoryProxy:
-    __slots__ = ("_channel", "_handle")
+    __slots__ = ("_channel", "_handle", "_authority_role")
     _ROLE: BrokerRepositoryRole
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -1093,20 +1464,43 @@ class _RepositoryProxy:
 
     @property
     def role(self) -> BrokerRepositoryRole:
-        binding = _repository_proxy_binding(type(self))
-        if binding is None:
+        role = getattr(self, "_authority_role", None)
+        if type(role) is not BrokerRepositoryRole:
             raise _state_denied("repository_provenance_denied")
-        return binding[0]
+        return role
 
     def _binding_is_current(self) -> bool:
         binding = _repository_proxy_binding(type(self))
         channel = getattr(self, "_channel", None)
-        handle = getattr(self, "_handle", None)
+        role = getattr(self, "_authority_role", None)
+        try:
+            handle = (
+                channel.current_handle(role)
+                if type(role) is BrokerRepositoryRole
+                else None
+            )
+        except (AttributeError, NsRuntimeIamUnavailableError):
+            handle = None
+        stored_handle = getattr(self, "_handle", None)
+        if (
+            type(handle) is BrokerAuthorityHandle
+            and type(stored_handle) is BrokerAuthorityHandle
+            and stored_handle != handle
+            and type(role) is BrokerRepositoryRole
+            and stored_handle.role is role
+            and stored_handle.broker_instance_id == channel.instance_id
+            and stored_handle.runtime_id == channel._runtime_id
+            and stored_handle.lifecycle_generation
+            < handle.lifecycle_generation
+        ):
+            self._handle = handle
         return bool(
             binding is not None
             and type(channel) is binding[1]
+            and role is binding[0]
             and type(handle) is BrokerAuthorityHandle
-            and handle.role is binding[0]
+            and getattr(self, "_handle", None) == handle
+            and handle.role is role
             and handle.runtime_id == channel._runtime_id
             and handle.lifecycle_generation
             == channel._lifecycle_generation
@@ -1114,33 +1508,39 @@ class _RepositoryProxy:
                 channel.public_key,
                 instance_id=channel.instance_id,
             )
-            and channel._identity_is_current(datetime.now(timezone.utc))
+            and channel._identity_is_current()
         )
 
     async def _request(self, operation: str, payload: object) -> object:
         binding = _repository_proxy_binding(type(self))
         channel = getattr(self, "_channel", None)
+        role = getattr(self, "_authority_role", None)
         if (
             binding is not None
             and type(channel) is binding[1]
-            and not channel._identity_is_current(
-                datetime.now(timezone.utc),
-            )
+            and not channel._identity_is_current()
         ):
+            if operation in _WRITE_OPERATIONS:
+                raise _indeterminate(
+                    operation, "broker_unavailable_outcome_unknown",
+                )
             channel._fail_and_reap()
             raise _state_unavailable("certificate_chain_invalid")
         if (
             binding is None
             or not self._binding_is_current()
-            or operation not in _ROLE_OPERATIONS[binding[0].value]
+            or type(role) is not BrokerRepositoryRole
+            or operation not in _ROLE_OPERATIONS[role.value]
         ):
             raise _state_denied("repository_operation_denied")
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             self._channel.request,
-            handle=self._handle,
+            handle=self._channel.current_handle(role),
             operation=operation,
             payload=payload,
         )
+        self._handle = self._channel.current_handle(role)
+        return result
 
     def __copy__(self) -> "_RepositoryProxy":
         _invalid("repository_proxy.copy")
@@ -1575,6 +1975,26 @@ class AuthorityBrokerStateStoreProxy:
         }.get(type(self))
         channel = getattr(self, "_channel", None)
         handle = getattr(self, "_handle", None)
+        try:
+            current_handle = (
+                channel.current_handle(BrokerRepositoryRole.LIFECYCLE)
+                if type(channel) is expected_channel_type
+                else None
+            )
+        except (AttributeError, NsRuntimeIamUnavailableError):
+            current_handle = None
+        if (
+            type(handle) is BrokerAuthorityHandle
+            and type(current_handle) is BrokerAuthorityHandle
+            and handle != current_handle
+            and handle.role is BrokerRepositoryRole.LIFECYCLE
+            and handle.broker_instance_id == channel.instance_id
+            and handle.runtime_id == channel._runtime_id
+            and handle.lifecycle_generation
+            < current_handle.lifecycle_generation
+        ):
+            self._handle = current_handle
+            handle = current_handle
         return bool(
             expected_channel_type is not None
             and type(channel) is expected_channel_type
@@ -1587,7 +2007,7 @@ class AuthorityBrokerStateStoreProxy:
                 channel.public_key,
                 instance_id=channel.instance_id,
             )
-            and channel._identity_is_current(datetime.now(timezone.utc))
+            and channel._identity_is_current()
         )
 
     async def open(self) -> None:
@@ -1597,10 +2017,15 @@ class AuthorityBrokerStateStoreProxy:
             raise _state_unavailable("broker_closed")
         result = decode_health(await asyncio.to_thread(
             self._channel.request,
-            handle=self._handle,
+            handle=self._channel.current_handle(
+                BrokerRepositoryRole.LIFECYCLE,
+            ),
             operation="state_health",
             payload={},
         ))
+        self._handle = self._channel.current_handle(
+            BrokerRepositoryRole.LIFECYCLE,
+        )
         if type(result) is not StateStoreHealth:
             raise _state_unavailable("invalid_health")
         self._state = "open"
@@ -1610,10 +2035,15 @@ class AuthorityBrokerStateStoreProxy:
             raise _state_unavailable("broker_provenance_invalid")
         result = decode_health(await asyncio.to_thread(
             self._channel.request,
-            handle=self._handle,
+            handle=self._channel.current_handle(
+                BrokerRepositoryRole.LIFECYCLE,
+            ),
             operation="state_health",
             payload={},
         ))
+        self._handle = self._channel.current_handle(
+            BrokerRepositoryRole.LIFECYCLE,
+        )
         if type(result) is not StateStoreHealth:
             raise _state_unavailable("invalid_health")
         return result
@@ -1698,6 +2128,8 @@ def start_contract_test_authority_broker(
     config: AuthorityBrokerConfig,
     iam_service_credential: str,
     startup_timeout_seconds: float = 15.0,
+    session_ttl_seconds: float = _SESSION_CERTIFICATE_TTL_SECONDS,
+    delegation_ttl_seconds: float = _DELEGATION_CERTIFICATE_TTL_SECONDS,
 ) -> ProductionAuthorityBroker:
     """Start an explicitly non-production broker under an ephemeral test root."""
 
@@ -1714,6 +2146,8 @@ def start_contract_test_authority_broker(
         state_password=None,
         startup_timeout_seconds=startup_timeout_seconds,
         realm="contract-test",
+        session_ttl_seconds=session_ttl_seconds,
+        delegation_ttl_seconds=delegation_ttl_seconds,
     )
 
 
@@ -1723,6 +2157,8 @@ def start_integration_test_authority_broker(
     iam_service_credential: str,
     state_password: str | None,
     startup_timeout_seconds: float = 15.0,
+    session_ttl_seconds: float = _SESSION_CERTIFICATE_TTL_SECONDS,
+    delegation_ttl_seconds: float = _DELEGATION_CERTIFICATE_TTL_SECONDS,
 ) -> ProductionAuthorityBroker:
     """Run real provider integration under a non-production test trust root."""
 
@@ -1743,6 +2179,8 @@ def start_integration_test_authority_broker(
         state_password=state_password,
         startup_timeout_seconds=startup_timeout_seconds,
         realm="integration-test",
+        session_ttl_seconds=session_ttl_seconds,
+        delegation_ttl_seconds=delegation_ttl_seconds,
     )
 
 
@@ -1753,6 +2191,8 @@ def _start_test_authority_broker(
     state_password: str | None,
     startup_timeout_seconds: float,
     realm: str,
+    session_ttl_seconds: float,
+    delegation_ttl_seconds: float,
 ) -> ProductionAuthorityBroker:
     root_private_key = Ed25519PrivateKey.generate()
     root_private_bytes = root_private_key.private_bytes(
@@ -1787,6 +2227,8 @@ def _start_test_authority_broker(
         secrets_fd=secrets_read,
         realm=realm,
         startup_timeout_seconds=startup_timeout_seconds,
+        session_ttl_seconds=session_ttl_seconds,
+        delegation_ttl_seconds=delegation_ttl_seconds,
     )
 
 
@@ -1814,6 +2256,8 @@ def _start_production_authority_broker_from_inherited_fds(
         secrets_fd=secrets_fd,
         realm="production",
         startup_timeout_seconds=startup_timeout_seconds,
+        session_ttl_seconds=_SESSION_CERTIFICATE_TTL_SECONDS,
+        delegation_ttl_seconds=_DELEGATION_CERTIFICATE_TTL_SECONDS,
     )
 
 
@@ -1825,10 +2269,19 @@ def _spawn_authority_broker(
     secrets_fd: int,
     realm: str,
     startup_timeout_seconds: float,
+    session_ttl_seconds: float,
+    delegation_ttl_seconds: float,
 ) -> ProductionAuthorityBroker:
     if realm not in _BROKER_REALMS:
         _invalid("broker.realm")
     context = multiprocessing.get_context("spawn")
+    attestor = start_authority_attestor(
+        realm=realm,
+        expected_test_root_public_key=(
+            None if realm == "production" else expected_root_public_key
+        ),
+        timeout_seconds=startup_timeout_seconds,
+    )
     parent, child = context.Pipe(duplex=True)
     root_key_handle = DupFd(root_key_fd)
     secrets_handle = DupFd(secrets_fd)
@@ -1841,6 +2294,10 @@ def _spawn_authority_broker(
             secrets_handle,
             realm,
             expected_root_public_key,
+            attestor.public_key,
+            attestor.instance_id,
+            float(session_ttl_seconds),
+            float(delegation_ttl_seconds),
         ),
         name="ns-runtime-authority-broker",
         daemon=False,
@@ -1854,20 +2311,25 @@ def _spawn_authority_broker(
                 os.close(fd)
             except OSError:
                 pass
-    return _accept_started_authority_broker(
-        parent=parent,
-        process=process,
-        config=config,
-        expected_root_public_key=expected_root_public_key,
-        realm=realm,
-        startup_timeout_seconds=startup_timeout_seconds,
-    )
+    try:
+        return _accept_started_authority_broker(
+            parent=parent,
+            process=process,
+            attestor=attestor,
+            config=config,
+            realm=realm,
+            startup_timeout_seconds=startup_timeout_seconds,
+        )
+    except BaseException:
+        attestor.close()
+        raise
 
 
 def _complete_inherited_authority_broker_start(
     *,
     parent: Connection,
     process: multiprocessing.Process,
+    attestor: AuthorityAttestorClient,
     config: AuthorityBrokerConfig,
     startup_timeout_seconds: float = 15.0,
 ) -> ProductionAuthorityBroker:
@@ -1889,8 +2351,8 @@ def _complete_inherited_authority_broker_start(
     return _accept_started_authority_broker(
         parent=parent,
         process=process,
+        attestor=attestor,
         config=config,
-        expected_root_public_key=_PRODUCTION_ROOT_PUBLIC_KEY,
         realm="production",
         startup_timeout_seconds=startup_timeout_seconds,
     )
@@ -1900,8 +2362,8 @@ def _accept_started_authority_broker(
     *,
     parent: Connection,
     process: multiprocessing.Process,
+    attestor: AuthorityAttestorClient,
     config: AuthorityBrokerConfig,
-    expected_root_public_key: bytes,
     realm: str,
     startup_timeout_seconds: float,
 ) -> ProductionAuthorityBroker:
@@ -1930,19 +2392,18 @@ def _accept_started_authority_broker(
     try:
         values = require_object(
             ready,
-            fields={"version", "kind", "ok", "certificate", "handles"},
+            fields={
+                "version", "kind", "ok", "delegation_certificate",
+                "certificate", "handles",
+            },
             field="ready",
         )
         if values["version"] != WIRE_VERSION or values["kind"] != "ready":
             _invalid("ready.version")
+        delegation_certificate = _decode_delegation_certificate(
+            values["delegation_certificate"],
+        )
         certificate = _decode_certificate(values["certificate"])
-        if not certificate.verify(
-            expected_root_public_key,
-            expected_realm=realm,
-            expected_runtime_id=config.runtime_id,
-            now=datetime.now(timezone.utc),
-        ):
-            _invalid("ready.root_certificate")
         public_key = certificate.session_public_key
         instance_id = certificate.broker_instance_id
         raw_handles = values["handles"]
@@ -1952,7 +2413,24 @@ def _accept_started_authority_broker(
             key: _decode_handle(value)
             for key, value in raw_handles.items()
         }
-    except (NsValidationError, TypeError, ValueError):
+        approved = attestor.approve_identity(
+            realm=realm,
+            runtime_id=config.runtime_id,
+            delegation_certificate=_encode_delegation_certificate(
+                delegation_certificate,
+            ),
+            session_certificate=_encode_certificate(certificate),
+            handles={
+                name: _encode_handle(handle)
+                for name, handle in handles.items()
+            },
+        )
+        identity_id = _exact_string(
+            approved.get("identity_id"), "ready.identity_id",
+        )
+    except (
+        NsValidationError, AuthorityAttestationError, TypeError, ValueError,
+    ):
         process.terminate()
         process.join(timeout=5.0)
         parent.close()
@@ -1970,22 +2448,18 @@ def _accept_started_authority_broker(
         runtime_id=config.runtime_id,
         lifecycle_generation=certificate.lifecycle_generation,
         certificate=certificate,
-        root_public_key=expected_root_public_key,
+        delegation_certificate=delegation_certificate,
+        attestor=attestor,
+        identity_id=identity_id,
+        handles=handles,
         timeout_seconds=max(
             config.iam_timeout_seconds,
             config.state_operation_timeout_seconds,
         ) + 2.0,
     )
-    expected_roles = tuple(BrokerRepositoryRole)
-    for role in expected_roles:
-        handle = handles.get(role.value)
-        if (
-            type(handle) is not BrokerAuthorityHandle
-            or handle.role is not role
-            or not handle.verify(public_key, instance_id=instance_id)
-        ):
-            channel.close(terminate=True)
-            raise _broker_unavailable("startup_handle_invalid")
+    if set(handles) != {role.value for role in BrokerRepositoryRole}:
+        channel.close(terminate=True)
+        raise _broker_unavailable("startup_handle_invalid")
 
     iam_type = {
         "production": ProductionIamAuthorityProxy,
@@ -2033,6 +2507,7 @@ def _accept_started_authority_broker(
         proxy = object.__new__(proxy_type)
         proxy._channel = channel
         proxy._handle = handles[role.value]
+        proxy._authority_role = role
         proxies[role] = proxy
     repositories = AuthorityBrokerRepositories(
         admission=proxies[BrokerRepositoryRole.ADMISSION],  # type: ignore[arg-type]
@@ -2718,15 +3193,140 @@ class _BrokerStateBackend:
         raise _state_denied("repository_operation_denied")
 
 
+def _new_session_authority(
+    *,
+    delegation_private_key: Ed25519PrivateKey,
+    delegation_certificate: BrokerDelegationCertificate,
+    realm: str,
+    instance_id: str,
+    runtime_id: str,
+    generation: int,
+    session_ttl_seconds: float,
+) -> tuple[
+    Ed25519PrivateKey,
+    bytes,
+    BrokerInstanceCertificate,
+    dict[str, BrokerAuthorityHandle],
+]:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    now = datetime.now(timezone.utc)
+    expires_at = min(
+        delegation_certificate.expires_at,
+        now + timedelta(seconds=session_ttl_seconds),
+    )
+    values = {
+        "trust_realm": realm,
+        "broker_instance_id": instance_id,
+        "session_public_key": encode_bytes(public_key),
+        "runtime_id": runtime_id,
+        "lifecycle_generation": generation,
+        "delegation_fingerprint": delegation_certificate.fingerprint,
+        "issued_at": encode_time(now),
+        "expires_at": encode_time(expires_at),
+        "nonce": uuid.uuid4().hex,
+    }
+    certificate = BrokerInstanceCertificate(
+        trust_realm=realm,
+        broker_instance_id=instance_id,
+        session_public_key=public_key,
+        runtime_id=runtime_id,
+        lifecycle_generation=generation,
+        delegation_fingerprint=delegation_certificate.fingerprint,
+        issued_at=now,
+        expires_at=expires_at,
+        nonce=values["nonce"],
+        signature=delegation_private_key.sign(_canonical(values)),
+    )
+    handles = {
+        role.value: _new_handle(
+            private_key=private_key,
+            instance_id=instance_id,
+            role=role,
+            runtime_id=runtime_id,
+            generation=generation,
+        )
+        for role in BrokerRepositoryRole
+    }
+    return private_key, public_key, certificate, handles
+
+
+def _verify_attestor_ticket(
+    ticket: object,
+    *,
+    attestor_public_key: bytes,
+    attestor_instance_id: str,
+    identity_id: str,
+    instance_id: str,
+    runtime_id: str,
+    generation: int,
+    session_public_key: bytes,
+    handle: BrokerAuthorityHandle | None = None,
+    operation: str | None = None,
+    request_id: str | None = None,
+    request_sequence: int | None = None,
+    request_fingerprint: str | None = None,
+) -> dict[str, object]:
+    if type(ticket) is not dict or "signature" not in ticket:
+        _invalid("attestor.ticket")
+    signature = decode_bytes(
+        ticket["signature"], field="attestor.ticket.signature",
+    )
+    values = {
+        name: value
+        for name, value in ticket.items()
+        if name != "signature"
+    }
+    if not _verify(attestor_public_key, _canonical(values), signature):
+        _invalid("attestor.ticket.signature")
+    now = datetime.now(timezone.utc)
+    if (
+        values.get("attestor_instance_id") != attestor_instance_id
+        or values.get("identity_id") != identity_id
+        or values.get("broker_instance_id") != instance_id
+        or values.get("runtime_id") != runtime_id
+        or _parse_time(values.get("issued_at")) > now
+        or _parse_time(values.get("expires_at")) <= now
+    ):
+        _invalid("attestor.ticket.binding")
+    if handle is None:
+        if (
+            values.get("current_generation") != generation
+            or values.get("next_generation") != generation + 1
+        ):
+            _invalid("attestor.rotation_ticket")
+        return values
+    if (
+        values.get("lifecycle_generation") != generation
+        or values.get("session_key_fingerprint")
+        != _session_key_fingerprint(session_public_key)
+        or values.get("handle_id") != handle.handle_id
+        or values.get("role") != handle.role.value
+        or values.get("operation") != operation
+        or values.get("request_id") != request_id
+        or values.get("request_sequence") != request_sequence
+        or values.get("request_fingerprint") != request_fingerprint
+    ):
+        _invalid("attestor.request_ticket")
+    return values
+
+
 async def _broker_async_main(
     connection: Connection,
     config: AuthorityBrokerConfig,
     root_private_key: Ed25519PrivateKey,
     secrets: Mapping[str, object],
     realm: str,
+    attestor_public_key: bytes,
+    attestor_instance_id: str,
+    session_ttl_seconds: float,
+    delegation_ttl_seconds: float,
 ) -> None:
-    session_private_key = Ed25519PrivateKey.generate()
-    session_public_key = session_private_key.public_key().public_bytes(
+    delegation_private_key = Ed25519PrivateKey.generate()
+    delegation_public_key = delegation_private_key.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     )
@@ -2737,49 +3337,59 @@ async def _broker_async_main(
     request_sequence = 0
     response_sequence = 0
     generation = 1
-    handles = {
-        role.value: _new_handle(
-            private_key=session_private_key,
-            instance_id=instance_id,
-            role=role,
-            runtime_id=config.runtime_id,
-            generation=generation,
-        )
-        for role in BrokerRepositoryRole
-    }
     now = datetime.now(timezone.utc)
-    certificate_values = {
+    delegation_values = {
         "trust_realm": realm,
         "broker_instance_id": instance_id,
-        "session_public_key": encode_bytes(session_public_key),
         "runtime_id": config.runtime_id,
-        "lifecycle_generation": generation,
+        "delegation_public_key": encode_bytes(delegation_public_key),
+        "allowed_usages": list(_DELEGATION_USAGES),
         "issued_at": encode_time(now),
         "expires_at": encode_time(
-            now + timedelta(seconds=_ROOT_CERTIFICATE_TTL_SECONDS),
+            now + timedelta(seconds=delegation_ttl_seconds),
         ),
         "nonce": uuid.uuid4().hex,
     }
-    certificate = BrokerInstanceCertificate(
+    delegation_certificate = BrokerDelegationCertificate(
         trust_realm=realm,
         broker_instance_id=instance_id,
-        session_public_key=session_public_key,
         runtime_id=config.runtime_id,
-        lifecycle_generation=generation,
+        delegation_public_key=delegation_public_key,
+        allowed_usages=_DELEGATION_USAGES,
         issued_at=now,
-        expires_at=(
-            now + timedelta(seconds=_ROOT_CERTIFICATE_TTL_SECONDS)
-        ),
-        nonce=certificate_values["nonce"],
-        signature=root_private_key.sign(_canonical(certificate_values)),
+        expires_at=now + timedelta(seconds=delegation_ttl_seconds),
+        nonce=delegation_values["nonce"],
+        signature=root_private_key.sign(_canonical(delegation_values)),
     )
     del root_private_key
+    (
+        session_private_key,
+        session_public_key,
+        certificate,
+        handles,
+    ) = _new_session_authority(
+        delegation_private_key=delegation_private_key,
+        delegation_certificate=delegation_certificate,
+        realm=realm,
+        instance_id=instance_id,
+        runtime_id=config.runtime_id,
+        generation=generation,
+        session_ttl_seconds=session_ttl_seconds,
+    )
+    identity_id = "identity:" + hashlib.sha256(_canonical({
+        "delegation_fingerprint": delegation_certificate.fingerprint,
+        "broker_instance_id": instance_id,
+        "runtime_id": config.runtime_id,
+    })).hexdigest()
     try:
         await state.open()
         connection.send_bytes(encode_frame({
             "version": WIRE_VERSION,
             "kind": "ready",
             "ok": True,
+            "delegation_certificate": _encode_delegation_certificate(
+                delegation_certificate,
+            ),
             "certificate": _encode_certificate(certificate),
             "handles": {
                 role: _encode_handle(handle)
@@ -2804,9 +3414,72 @@ async def _broker_async_main(
                     "kind": "shutdown_complete",
                 }))
                 break
+            if (
+                type(message) is dict
+                and set(message) == {"version", "kind", "ticket"}
+                and message.get("version") == WIRE_VERSION
+                and message.get("kind") == "rotate_session"
+            ):
+                ticket = _verify_attestor_ticket(
+                    message["ticket"],
+                    attestor_public_key=attestor_public_key,
+                    attestor_instance_id=attestor_instance_id,
+                    identity_id=identity_id,
+                    instance_id=instance_id,
+                    runtime_id=config.runtime_id,
+                    generation=generation,
+                    session_public_key=session_public_key,
+                )
+                next_generation = generation + 1
+                (
+                    next_private_key,
+                    next_public_key,
+                    next_certificate,
+                    next_handles,
+                ) = _new_session_authority(
+                    delegation_private_key=delegation_private_key,
+                    delegation_certificate=delegation_certificate,
+                    realm=realm,
+                    instance_id=instance_id,
+                    runtime_id=config.runtime_id,
+                    generation=next_generation,
+                    session_ttl_seconds=session_ttl_seconds,
+                )
+                rotation_values = {
+                    "kind": "session_rotation",
+                    "ticket_nonce": ticket["nonce"],
+                    "delegation_fingerprint": (
+                        delegation_certificate.fingerprint
+                    ),
+                    "session_certificate": _encode_certificate(
+                        next_certificate,
+                    ),
+                    "handles": {
+                        role: _encode_handle(handle)
+                        for role, handle in next_handles.items()
+                    },
+                }
+                connection.send_bytes(encode_frame({
+                    "version": WIRE_VERSION,
+                    **rotation_values,
+                    "signature": encode_bytes(
+                        delegation_private_key.sign(
+                            _canonical(rotation_values),
+                        ),
+                    ),
+                }))
+                session_private_key = next_private_key
+                session_public_key = next_public_key
+                certificate = next_certificate
+                handles = next_handles
+                generation = next_generation
+                request_sequence = 0
+                response_sequence = 0
+                iam_sequence = 0
+                continue
             if type(message) is not dict or set(message) != {
                 "version", "kind", "request_id", "request_sequence",
-                "handle", "operation", "payload",
+                "handle", "operation", "payload", "attestation",
             }:
                 # No request id can be trusted, so close instead of reflecting
                 # attacker-controlled structure into a response.
@@ -2835,6 +3508,24 @@ async def _broker_async_main(
                 handle=handle,
                 payload=payload,
             )
+            try:
+                _verify_attestor_ticket(
+                    message["attestation"],
+                    attestor_public_key=attestor_public_key,
+                    attestor_instance_id=attestor_instance_id,
+                    identity_id=identity_id,
+                    instance_id=instance_id,
+                    runtime_id=config.runtime_id,
+                    generation=generation,
+                    session_public_key=session_public_key,
+                    handle=handle,
+                    operation=operation,
+                    request_id=request_id,
+                    request_sequence=request_sequence,
+                    request_fingerprint=request_fingerprint,
+                )
+            except NsValidationError:
+                break
             if (
                 not handle.verify(
                     session_public_key,
@@ -2871,11 +3562,14 @@ async def _broker_async_main(
                     result = _sign_iam_result(
                         private_key=session_private_key,
                         instance_id=instance_id,
+                        lifecycle_generation=generation,
+                        session_public_key=session_public_key,
                         operation=operation,
                         request=typed_request,
                         result=typed_result,
                         sequence=iam_sequence,
                         ttl_seconds=config.permission_snapshot_ttl_seconds,
+                        certificate_expires_at=certificate.expires_at,
                     )
                     wire_result = _encode_signed_iam_result(result)
                 else:
@@ -2934,6 +3628,10 @@ def _authority_broker_process(
     secrets_handle: object,
     realm: str,
     expected_root_public_key: bytes,
+    attestor_public_key: bytes,
+    attestor_instance_id: str,
+    session_ttl_seconds: float,
+    delegation_ttl_seconds: float,
 ) -> None:
     """Top-level spawn target; descriptors are consumed before backends load."""
 
@@ -2941,6 +3639,19 @@ def _authority_broker_process(
         _require_isolated_broker_process()
         if realm not in _BROKER_REALMS:
             _invalid("broker.realm")
+        if (
+            type(attestor_public_key) is not bytes
+            or len(attestor_public_key) != 32
+            or type(attestor_instance_id) is not str
+            or not attestor_instance_id
+            or type(session_ttl_seconds) not in {int, float}
+            or not math.isfinite(session_ttl_seconds)
+            or session_ttl_seconds <= 0
+            or type(delegation_ttl_seconds) not in {int, float}
+            or not math.isfinite(delegation_ttl_seconds)
+            or delegation_ttl_seconds <= session_ttl_seconds
+        ):
+            _invalid("broker.attestor_binding")
         root_fd = root_key_handle.detach()
         secret_fd = secrets_handle.detach()
         try:
@@ -3004,6 +3715,10 @@ def _authority_broker_process(
             root_private_key,
             secrets,
             realm,
+            attestor_public_key,
+            attestor_instance_id,
+            float(session_ttl_seconds),
+            float(delegation_ttl_seconds),
         ))
     except BaseException as error:
         try:
@@ -3059,11 +3774,14 @@ def _sign_iam_result(
     *,
     private_key: Ed25519PrivateKey,
     instance_id: str,
+    lifecycle_generation: int,
+    session_public_key: bytes,
     operation: str,
     request: object,
     result: object,
     sequence: int,
     ttl_seconds: float,
+    certificate_expires_at: datetime | None = None,
 ) -> BrokerSignedIamResult:
     now = datetime.now(timezone.utc)
     result_values = _encode_iam_result(operation, result)
@@ -3072,9 +3790,18 @@ def _sign_iam_result(
     expires_at = min(
         result_expiry,
         now + timedelta(seconds=float(ttl_seconds)),
+        (
+            certificate_expires_at
+            if certificate_expires_at is not None
+            else result_expiry
+        ),
     )
     values = {
         "broker_instance_id": instance_id,
+        "lifecycle_generation": lifecycle_generation,
+        "session_key_fingerprint": _session_key_fingerprint(
+            session_public_key,
+        ),
         "operation": operation,
         "request_fingerprint": _request_fingerprint(operation, request),
         "request_json": json.dumps(
@@ -3109,6 +3836,8 @@ def _sign_iam_result(
     signature = private_key.sign(_canonical(values))
     return BrokerSignedIamResult(
         broker_instance_id=instance_id,
+        lifecycle_generation=lifecycle_generation,
+        session_key_fingerprint=values["session_key_fingerprint"],
         operation=operation,
         request_fingerprint=values["request_fingerprint"],
         request_json=values["request_json"],
@@ -3503,8 +4232,9 @@ def _decode_certificate(value: object) -> BrokerInstanceCertificate:
         value,
         fields={
             "trust_realm", "broker_instance_id", "session_public_key",
-            "runtime_id", "lifecycle_generation", "issued_at",
-            "expires_at", "nonce", "signature",
+            "runtime_id", "lifecycle_generation",
+            "delegation_fingerprint", "issued_at", "expires_at", "nonce",
+            "signature",
         },
         field="certificate",
     )
@@ -3528,6 +4258,10 @@ def _decode_certificate(value: object) -> BrokerInstanceCertificate:
             "certificate.lifecycle_generation",
             minimum=1,
         ),
+        delegation_fingerprint=_exact_string(
+            fields["delegation_fingerprint"],
+            "certificate.delegation_fingerprint",
+        ),
         issued_at=decode_time(
             fields["issued_at"], field="certificate.issued_at",
         ),
@@ -3539,6 +4273,79 @@ def _decode_certificate(value: object) -> BrokerInstanceCertificate:
             fields["signature"], field="certificate.signature",
         ),
     )
+
+
+def _encode_delegation_certificate(
+    value: BrokerDelegationCertificate,
+) -> dict[str, object]:
+    if type(value) is not BrokerDelegationCertificate:
+        _invalid("delegation_certificate")
+    return {
+        **value.signed_values(),
+        "signature": encode_bytes(value.signature),
+    }
+
+
+def _decode_delegation_certificate(
+    value: object,
+) -> BrokerDelegationCertificate:
+    fields = require_object(
+        value,
+        fields={
+            "trust_realm", "broker_instance_id", "runtime_id",
+            "delegation_public_key", "allowed_usages", "issued_at",
+            "expires_at", "nonce", "signature",
+        },
+        field="delegation_certificate",
+    )
+    usages = fields["allowed_usages"]
+    if (
+        type(usages) is not list
+        or any(type(item) is not str for item in usages)
+    ):
+        _invalid("delegation_certificate.allowed_usages")
+    return BrokerDelegationCertificate(
+        trust_realm=_exact_string(
+            fields["trust_realm"],
+            "delegation_certificate.trust_realm",
+        ),
+        broker_instance_id=_exact_string(
+            fields["broker_instance_id"],
+            "delegation_certificate.broker_instance_id",
+        ),
+        runtime_id=_exact_string(
+            fields["runtime_id"],
+            "delegation_certificate.runtime_id",
+        ),
+        delegation_public_key=decode_bytes(
+            fields["delegation_public_key"],
+            field="delegation_certificate.delegation_public_key",
+        ),
+        allowed_usages=tuple(usages),
+        issued_at=decode_time(
+            fields["issued_at"],
+            field="delegation_certificate.issued_at",
+        ),
+        expires_at=decode_time(
+            fields["expires_at"],
+            field="delegation_certificate.expires_at",
+        ),
+        nonce=_exact_string(
+            fields["nonce"], "delegation_certificate.nonce",
+        ),
+        signature=decode_bytes(
+            fields["signature"],
+            field="delegation_certificate.signature",
+        ),
+    )
+
+
+def _certificate_fingerprint(
+    value: BrokerInstanceCertificate,
+) -> str:
+    return "sha256:" + hashlib.sha256(
+        encode_frame(_encode_certificate(value)),
+    ).hexdigest()
 
 
 def _encode_handle(value: BrokerAuthorityHandle) -> dict[str, object]:
@@ -3596,8 +4403,10 @@ def _decode_signed_iam_result(value: object) -> BrokerSignedIamResult:
     fields = require_object(
         value,
         fields={
-            "broker_instance_id", "operation", "request_fingerprint",
-            "request_json", "result_json", "backend_decision",
+            "broker_instance_id", "lifecycle_generation",
+            "session_key_fingerprint", "operation",
+            "request_fingerprint", "request_json", "result_json",
+            "backend_decision",
             "permission_snapshot_ref", "permission_version", "tenant_id",
             "target", "message_type", "issued_at", "expires_at",
             "sequence", "nonce", "signature",
@@ -3608,6 +4417,15 @@ def _decode_signed_iam_result(value: object) -> BrokerSignedIamResult:
         broker_instance_id=_exact_string(
             fields["broker_instance_id"],
             "signed_result.broker_instance_id",
+        ),
+        lifecycle_generation=_exact_int(
+            fields["lifecycle_generation"],
+            "signed_result.lifecycle_generation",
+            minimum=1,
+        ),
+        session_key_fingerprint=_exact_string(
+            fields["session_key_fingerprint"],
+            "signed_result.session_key_fingerprint",
         ),
         operation=_exact_string(
             fields["operation"], "signed_result.operation",

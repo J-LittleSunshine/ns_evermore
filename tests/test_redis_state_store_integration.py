@@ -473,6 +473,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 config=config,
                 iam_service_credential="i" * 32,
                 state_password=self._password,
+                session_ttl_seconds=0.45,
+                delegation_ttl_seconds=30.0,
             )
             self.assertIs(
                 broker_module._IntegrationTestBrokerChannel,
@@ -581,6 +583,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 score=1.0,
                 with_log=True,
             )
+            await asyncio.sleep(0.32)
             first_result = await admission.transact_admission(
                 tenant_id=partition.tenant_id,
                 bucket_id=partition.bucket_id,
@@ -619,6 +622,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                     with_log=False,
                 ),
             )
+            await asyncio.sleep(0.32)
             observed = await scheduler.read_delivery(
                 tenant_id=partition.tenant_id,
                 bucket_id=partition.bucket_id,
@@ -626,6 +630,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 delivery_id=delivery_ids[0],
             )
             self.assertIsNotNone(observed.record)
+            await asyncio.sleep(0.32)
             first_page = await scheduler.read_scheduler_index(
                 tenant_id=partition.tenant_id,
                 bucket_id=partition.bucket_id,
@@ -648,6 +653,18 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((delivery_ids[1],), tuple(
                 value.member for value in second_page.entries
             ))
+            await asyncio.sleep(0.32)
+            audit_position = await broker.repositories.audit.append_audit(
+                namespace=StateNamespace.audit(domain="processor"),
+                object_id="audit-" + uuid.uuid4().hex,
+                document=StateDocument(
+                    schema_name="runtime.processor_audit",
+                    schema_version=1,
+                    state_version=1,
+                    payload=b'{"event":"session-rotation"}',
+                ),
+            )
+            self.assertGreater(audit_position.position, 0)
             assert observed.record is not None
             scheduler_transaction = DeliveryPersistenceTransaction(
                 partition=partition,
@@ -707,6 +724,9 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(1, len(scheduler_result.records))
             self.assertEqual(1, len(scheduler_result.log_positions))
+            self.assertGreaterEqual(
+                broker._channel._lifecycle_generation, 5,
+            )
             with self.assertRaises(
                 NsRuntimeStateStoreCapabilityUnavailableError,
             ):
@@ -823,6 +843,61 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             config=dataclasses.replace(
                 config,
                 runtime_id="runtime-ipc-reap-b",
+            ),
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        try:
+            await replacement.state_store.open()
+            self.assertTrue((await replacement.state_store.health()).ready)
+        finally:
+            replacement.close()
+
+    async def test_write_send_attempt_failure_is_indeterminate_and_releases_lease(
+        self,
+    ) -> None:
+        config = AuthorityBrokerConfig(
+            iam_base_url="http://127.0.0.1:1/",
+            iam_timeout_seconds=0.2,
+            iam_mode="strict",
+            permission_snapshot_ttl_seconds=60.0,
+            state_backend="redis",
+            state_endpoint=f"redis://127.0.0.1:{self._port}/0",
+            state_username="",
+            state_namespace=self.namespace + ":send-attempt",
+            state_operation_timeout_seconds=1.0,
+            runtime_id="runtime-send-attempt-a",
+        )
+        broker = start_integration_test_authority_broker(
+            config=config,
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        process = broker._channel._process
+        original = broker._channel._connection
+
+        class RaisesAfterSend:
+            def send_bytes(self, value):
+                original.send_bytes(value)
+                raise OSError("simulated partial IPC write")
+
+            def close(self):
+                original.close()
+
+        object.__setattr__(
+            broker._channel, "_connection", RaisesAfterSend(),
+        )
+        with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
+            await broker.repositories.admission._request(
+                "transact_admission", {},
+            )
+        broker.close()
+        self.assertFalse(process.is_alive())
+
+        replacement = start_integration_test_authority_broker(
+            config=dataclasses.replace(
+                config,
+                runtime_id="runtime-send-attempt-b",
             ),
             iam_service_credential="i" * 32,
             state_password=self._password,

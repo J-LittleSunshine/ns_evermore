@@ -11,7 +11,6 @@ import re
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Mapping
@@ -226,16 +225,12 @@ class _ProductionAuthorizationEvidenceIssuer:
     def _verify(self, evidence: "AuthorizationDecisionEvidence") -> bool:
         authority = evidence._broker_authority
         iam = self._service._iam
-        now = datetime.now(timezone.utc)
         return bool(
             self._service.production_authority
-            and iam._verify_production_chain(now)
-            and authority.verify(
-                public_key=iam._channel.public_key,
-                broker_instance_id=iam._channel.instance_id,
+            and iam._verify_signed_iam_authority(
+                authority,
                 operation="runtime_access_check",
                 request_fingerprint=authority.request_fingerprint,
-                now=now,
             )
             and authority.backend_decision == "allow"
             and authority.request_mapping().get("tenant_id")

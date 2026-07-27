@@ -330,14 +330,12 @@ class _PayloadAccessEvidenceIssuer:
             or type(decision) is not PayloadRefRevalidationDecision
             or type(verified_result) is not VerifiedBrokerIamResult
             or type(broker_authority) is not BrokerSignedIamResult
-            or not broker_authority.verify(
-                public_key=self._iam._channel.public_key,
-                broker_instance_id=self._iam._channel.instance_id,
+            or not self._iam._verify_signed_iam_authority(
+                broker_authority,
                 operation="payload_revalidate",
                 request_fingerprint=broker_request_fingerprint(
                     "payload_revalidate", request,
                 ),
-                now=verification_now,
             )
             or broker_authority.result_mapping() != decision.to_wire()
             or broker_authority.request_mapping() != request.to_wire()
@@ -422,16 +420,12 @@ class _PayloadAccessEvidenceIssuer:
         authority = evidence._broker_authority
         request_values = authority.request_mapping()
         result_values = authority.result_mapping()
-        now = datetime.now(timezone.utc)
         return bool(
             self._iam._is_production_adapter()
-            and self._iam._verify_production_chain(now)
-            and authority.verify(
-                public_key=self._iam._channel.public_key,
-                broker_instance_id=self._iam._channel.instance_id,
+            and self._iam._verify_signed_iam_authority(
+                authority,
                 operation="payload_revalidate",
                 request_fingerprint=authority.request_fingerprint,
-                now=now,
             )
             and authority.backend_decision == "allow"
             and request_values.get("object_id") == evidence.object_id
