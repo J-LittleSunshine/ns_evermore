@@ -477,7 +477,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 delegation_ttl_seconds=30.0,
             )
             self.assertIs(
-                broker_module._IntegrationTestBrokerChannel,
+                broker_module._IntegrationTestRoleBrokerChannel,
                 type(broker._channel),
             )
             self.assertIs(
@@ -725,7 +725,9 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(1, len(scheduler_result.records))
             self.assertEqual(1, len(scheduler_result.log_positions))
             self.assertGreaterEqual(
-                broker._channel._lifecycle_generation, 5,
+                broker.current_session_identity()[
+                    "lifecycle_generation"
+                ], 5,
             )
             with self.assertRaises(
                 NsRuntimeStateStoreCapabilityUnavailableError,
@@ -772,8 +774,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                         payload=b"{}",
                     ),
                 )
-            broker._channel._process.terminate()
-            broker._channel._process.join(timeout=5.0)
+            broker._channel._custodian.process.terminate()
+            broker._channel._custodian.process.join(timeout=5.0)
             replacement = start_integration_test_authority_broker(
                 config=dataclasses.replace(
                     config,
@@ -814,7 +816,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             iam_service_credential="i" * 32,
             state_password=self._password,
         )
-        process = broker._channel._process
+        process = broker._channel._custodian.process
         original = broker._channel._connection
 
         class MalformedAfterSend:
@@ -873,8 +875,9 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             iam_service_credential="i" * 32,
             state_password=self._password,
         )
-        process = broker._channel._process
-        original = broker._channel._connection
+        admission_channel = broker.repositories.admission._channel
+        process = admission_channel._custodian.process
+        original = admission_channel._connection
 
         class RaisesAfterSend:
             def send_bytes(self, value):
@@ -885,7 +888,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 original.close()
 
         object.__setattr__(
-            broker._channel, "_connection", RaisesAfterSend(),
+            admission_channel, "_connection", RaisesAfterSend(),
         )
         with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
             await broker.repositories.admission._request(
@@ -898,6 +901,52 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             config=dataclasses.replace(
                 config,
                 runtime_id="runtime-send-attempt-b",
+            ),
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        try:
+            await replacement.state_store.open()
+            self.assertTrue((await replacement.state_store.health()).ready)
+        finally:
+            replacement.close()
+
+    async def test_attestor_death_reaps_broker_and_releases_lease(
+        self,
+    ) -> None:
+        config = AuthorityBrokerConfig(
+            iam_base_url="http://127.0.0.1:1/",
+            iam_timeout_seconds=0.2,
+            iam_mode="strict",
+            permission_snapshot_ttl_seconds=60.0,
+            state_backend="redis",
+            state_endpoint=f"redis://127.0.0.1:{self._port}/0",
+            state_username="",
+            state_namespace=self.namespace + ":attestor-death",
+            state_operation_timeout_seconds=1.0,
+            runtime_id="runtime-attestor-death-a",
+        )
+        broker = start_integration_test_authority_broker(
+            config=config,
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        channel = broker.repositories.admission._channel
+        process = channel._custodian.process
+        attestor_process = channel._attestor._process
+        attestor_process.terminate()
+        attestor_process.join(timeout=5.0)
+        with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+            await broker.repositories.admission._request(
+                "transact_admission", {},
+            )
+        self.assertFalse(process.is_alive())
+        broker.close()
+
+        replacement = start_integration_test_authority_broker(
+            config=dataclasses.replace(
+                config,
+                runtime_id="runtime-attestor-death-b",
             ),
             iam_service_credential="i" * 32,
             state_password=self._password,

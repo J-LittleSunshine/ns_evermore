@@ -2481,6 +2481,44 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 30天delegation到期前仍需要受控runtime重启；本轮只实现delegation有效期内的无限短期session轮换，没有在线root delegation renewal。
 - 未新增global registry、service locator、第二RuntimeService、TaskSupervisor或shutdown owner。状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership及P22 production验收均未实现，production `task.dispatch`继续disabled。
 
+## P11 authority boundary最终收口
+
+- 工作包：`P08-FIX-09`、`P09-FIX-13`、`P11-FIX-14`。
+- 状态：`IMPLEMENTED / F3 (local only)`；本轮test/integration trust root、真实Redis standalone、attestor crash与短TTL rotation已验证。没有deployment production root私钥，production正向启动不标记为VERIFIED。P12继续`BLOCKED / F0`，production `task.dispatch`继续disabled。
+- 完成时间：`2026-07-27`（Asia/Shanghai）。起始branch为`codex/ns-runtime-implementation`，HEAD为`aa45a85658100ba584a84491f02fccbf9a08e91a`，起始worktree干净；本轮未commit、未push。
+- 威胁模型：P11保证普通runtime业务模块不能让broker执行超出其被授予role endpoint的IAM/StateStore operation；production私钥、raw Store、IAM transport、resource policy和最终role判定位于broker，跨role/endpoint/broker/generation请求由broker拒绝。P11不声称防御主runtime已被任意代码执行完全攻陷，也不把业务方法、调用栈或本地Python返回值不可替换作为验收条件；proxy exact type和字段仅防误配。
+- root-bound attestor：root delegation新增broker instance/runtime、delegation public key、attestor instance/public key、usage、时效和nonce绑定。broker不再信任父进程单独传入的attestor key，只接受delegation指定attestor签发的request/rotation ticket；attestor又验证delegation明确绑定自身identity。自建exact client/process/Pipe、格式正确的攻击者ticket及修改attestor字段均拒绝。
+- role endpoint：bootstrap为`iam`、`admission`、`scheduler`、`payload`、`registry`、`audit`、`lifecycle`建立七个独立OS endpoint。request wire删除caller-provided role/handle，broker以收到消息的connection选择固定role并执行operation/resource allowlist；每个proxy只持有自身endpoint。稳定channel/custodian不保存全部handle/channel表，删除`current_handle(role)`及generic caller-handle request。共享process custodian只持有不含authority的调度锁，使独立endpoint的send/rotation/attestor verification与broker单执行队列一致，避免旧generation response和新rotation交叉。
+- failure与metadata：attestor/approved identity在write preflight、read/IAM、health、rotation或response verification失效时统一reap broker、关闭attestor并释放physical-domain lease；只有已尝试send的write映射indeterminate。`ProductionAuthorityBroker.public_key`和`current_session_identity()`动态反映当前attestor-approved generation/session key/fingerprint。
+
+### 本轮攻击与耐久路径
+
+- exact攻击者attestor在相同test root下自建process/Pipe/client仍不能批准绑定其他attestor的delegation；delegation attestor ID/key被`dataclasses.replace()`修改后因root签名失效而拒绝，攻击者签发的格式正确ticket不能通过broker delegation验证。
+- production/test/integration proxy类型、`_ROLE`、`_repository_proxy_binding`或方法被修改只会造成本地拒绝/伪造，不能改变broker connection→role映射。payload/admission raw endpoint手工发送scheduler/payload operation均被broker拒绝。
+- 七个proxy分别持有七个不同endpoint；channel/custodian不存在全部role handle/channel dict、`current_handle`或caller-selected handle API。主对象图检查继续确认无production private key、raw Store、IAM HTTP/Redis client、scope issuer或resource policy。
+- attestor在write preflight和lifecycle health前死亡均立即reap broker；真实Redis测试确认相同physical domain随后可立即启动。`send_bytes()`部分写后抛`OSError`继续返回`NsRuntimeStateStoreIndeterminateWriteError`并释放lease。
+- 0.3秒TTL连续三次rotation保持IAM与StateStore health可用，公开generation/session key/fingerprint同步；并发IAM/read rotation重复执行10轮均通过。旧handle、IAM result、ticket/response generation及跨broker replay继续拒绝。
+
+### 本轮实际测试命令与结果
+
+- authority bootstrap/attestor/broker：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_authority_broker`，最终`Ran 30 tests in 50.091s`，`OK`。
+- IAM authorization/evidence与delivery：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_iam_authorization tests.test_runtime_iam_client tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling`，最终`Ran 80 tests in 66.123s`，`OK`。
+- processor/routing：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_processor_boundaries tests.test_runtime_processor_pipeline tests.test_runtime_routing tests.test_runtime_routing_contracts`，`Ran 60 tests in 1.187s`，`OK`。
+- StateStore contract/provider：`PYTHONPATH=src python3 -m unittest -q tests.test_state_store tests.test_runtime_state_store tests.test_redis_state_store_provider`，`Ran 43 tests in 0.766s`，`OK`。
+- 真实Redis broker integration：`PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_integration`，最终`Ran 22 tests in 88.201s`，`OK`；本机实际使用`/usr/bin/redis-server`，覆盖transaction/read/assertion/index/cursor/log/audit/scheduler、cross-role拒绝、attestor crash和lease释放。
+- rotation并发耐久：同一`test_rotation_serializes_concurrent_iam_and_state_requests`连续独立执行10次，10次均`OK`；这是修复首次全仓复跑发现的跨endpoint rotation竞态后的额外稳定性证据。
+- main/shutdown/transport：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_event_loop_observability tests.test_runtime_shutdown tests.test_runtime_service tests.test_runtime_main tests.test_runtime_transport_metrics tests.test_runtime_transport_lifecycle tests.test_runtime_transport_identity tests.test_runtime_transport_errors tests.test_runtime_transport_contracts tests.test_runtime_transport_conformance tests.test_runtime_transport_backpressure tests.test_runtime_transport_websocket_tcp tests.test_runtime_transport_registry`，`Ran 112 tests in 16.421s`，`OK (skipped=6)`。
+- import/dependency boundary：`PYTHONPATH=src python3 -m unittest -q tests.test_requirements tests.test_runtime_bootstrap tests.test_runtime_processor_boundaries`，`Ran 19 tests in 5.473s`，`OK`；authority/main/delivery模块冷导入与公共StateStore assertion导出输出`COLD_IMPORT_AND_PUBLIC_EXPORTS_OK`。runtime/backend两个项目虚拟环境`pip check`均输出`No broken requirements found.`。
+- 全仓：首次复跑`Ran 907 tests in 284.391s`时暴露1个跨endpoint rotation竞态并据此修复；最终`env -u PYTHONASYNCIODEBUG PYTHONPATH=src python3 -m unittest discover -s tests -t . -p 'test_*.py' -q`为`Ran 907 tests in 262.655s`，`OK (skipped=7)`。
+- 静态：`PYTHONPATH=src python3 -m compileall -q src tests`与`git diff --check`通过；Git只输出仓库autocrlf行尾转换warning。
+
+### 未验证与冻结边界
+
+- 六项显式需要deployment production authority private key的production main/transport正向测试跳过；真实production IAM backend、production root启动与SIGTERM组合未验证，test/integration root不冒充production证据。
+- Valkey server、Redis Sentinel/Cluster、replica/failover、真实Windows（全仓另有1项平台skip）、uvloop全树及远程CI未验证。
+- 30天delegation到期前仍需受控runtime重启；没有新增在线root delegation renewal。
+- 未新增verifier进程、global registry、service locator、第二RuntimeService、TaskSupervisor或shutdown coordinator。状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；未实现ACK/NACK/Defer、retry、DLQ、cluster ownership或任何P12+能力，production `task.dispatch`继续disabled。
+
 ## 新记录模板
 
 - 工作包：

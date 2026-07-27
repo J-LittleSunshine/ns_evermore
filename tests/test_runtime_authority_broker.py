@@ -60,7 +60,10 @@ from ns_runtime.authority_broker import (
     start_contract_test_authority_broker,
     start_production_authority_broker,
 )
-from ns_runtime.authority_attestor import start_authority_attestor
+from ns_runtime.authority_attestor import (
+    AuthorityAttestationError,
+    start_authority_attestor,
+)
 import ns_runtime.authority_attestor as attestor_module
 from ns_runtime.authority_wire import (
     MAX_FRAME_BYTES,
@@ -203,8 +206,20 @@ class _FakeConnection:
         self.closed = True
 
 
-def _test_channel(response):
+def _test_channel(
+    response,
+    *,
+    role: BrokerRepositoryRole = BrokerRepositoryRole.LIFECYCLE,
+):
     root = Ed25519PrivateKey.generate()
+    root_public_key = root.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    attestor = start_authority_attestor(
+        realm="contract-test",
+        expected_test_root_public_key=root_public_key,
+    )
     delegation_signer = Ed25519PrivateKey.generate()
     delegation_public_key = delegation_signer.public_key().public_bytes(
         serialization.Encoding.Raw,
@@ -223,6 +238,10 @@ def _test_channel(response):
         "delegation_public_key": broker_module.encode_bytes(
             delegation_public_key,
         ),
+        "attestor_instance_id": attestor.instance_id,
+        "attestor_public_key": broker_module.encode_bytes(
+            attestor.public_key,
+        ),
         "allowed_usages": list(broker_module._DELEGATION_USAGES),
         "issued_at": broker_module.encode_time(now),
         "expires_at": broker_module.encode_time(
@@ -235,6 +254,8 @@ def _test_channel(response):
         broker_instance_id="broker_test",
         runtime_id="runtime:test",
         delegation_public_key=delegation_public_key,
+        attestor_instance_id=attestor.instance_id,
+        attestor_public_key=attestor.public_key,
         allowed_usages=broker_module._DELEGATION_USAGES,
         issued_at=now,
         expires_at=now + timedelta(hours=1),
@@ -246,24 +267,21 @@ def _test_channel(response):
         public_key,
         delegation_fingerprint=delegation.fingerprint,
     )
+    endpoints = {
+        item.value: "endpoint_" + item.value
+        for item in BrokerRepositoryRole
+    }
     handles = {
         role.value: broker_module._new_handle(
             private_key=session,
             instance_id=certificate.broker_instance_id,
+            endpoint_id=endpoints[role.value],
             role=role,
             runtime_id=certificate.runtime_id,
             generation=certificate.lifecycle_generation,
         )
         for role in BrokerRepositoryRole
     }
-    root_public_key = root.public_key().public_bytes(
-        serialization.Encoding.Raw,
-        serialization.PublicFormat.Raw,
-    )
-    attestor = start_authority_attestor(
-        realm="contract-test",
-        expected_test_root_public_key=root_public_key,
-    )
     approved = attestor.approve_identity(
         realm="contract-test",
         runtime_id=certificate.runtime_id,
@@ -275,12 +293,17 @@ def _test_channel(response):
             name: broker_module._encode_handle(handle)
             for name, handle in handles.items()
         },
+        endpoints=endpoints,
     )
     process = _FakeProcess()
-    connection = _FakeConnection(response)
-    channel = broker_module._ContractTestBrokerChannel(
-        connection=connection,
+    custodian = broker_module._BrokerProcessCustodian(
         process=process,
+        attestor=attestor,
+    )
+    connection = _FakeConnection(response)
+    channel = broker_module._ContractTestRoleBrokerChannel(
+        connection=connection,
+        custodian=custodian,
         public_key=public_key,
         instance_id=certificate.broker_instance_id,
         runtime_id=certificate.runtime_id,
@@ -289,7 +312,9 @@ def _test_channel(response):
         delegation_certificate=delegation,
         attestor=attestor,
         identity_id=approved["identity_id"],
-        handles=handles,
+        endpoint_id=endpoints[role.value],
+        role=role,
+        handle=handles[role.value],
         timeout_seconds=0.1,
     )
     return channel, process, connection, session, certificate
@@ -309,7 +334,17 @@ def _signed_response_bytes(
     assert sent is not None
     request = decode_frame(sent)
     assert type(request) is dict
-    request_handle = broker_module._decode_handle(request["handle"])
+    ticket = request["attestation"]
+    assert type(ticket) is dict
+    request_handle = BrokerAuthorityHandle(
+        broker_instance_id=certificate.broker_instance_id,
+        endpoint_id=ticket["endpoint_id"],
+        handle_id=ticket["handle_id"],
+        role=BrokerRepositoryRole(ticket["role"]),
+        runtime_id=certificate.runtime_id,
+        lifecycle_generation=certificate.lifecycle_generation,
+        signature=b"response-helper",
+    )
     signed = broker_module._sign_state_response(
         private_key=session,
         certificate=certificate,
@@ -379,6 +414,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(forged._is_production_adapter())
         self.assertFalse(BrokerAuthorityHandle(
             broker_instance_id="forged",
+            endpoint_id="forged",
             handle_id="forged",
             role=BrokerRepositoryRole.IAM,
             runtime_id="forged",
@@ -487,7 +523,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 for value in os.environ.values()
             ))
             self.assertEqual(
-                {"_connection", "_process", "_attestor", "_consumed"},
+                {"_connections", "_process", "_attestor", "_consumed"},
                 set(type(bootstrap).__slots__),
             )
             for slot in type(bootstrap).__slots__:
@@ -613,6 +649,10 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             "delegation_public_key": broker_module.encode_bytes(
                 delegation_public,
             ),
+            "attestor_instance_id": "attacker-attestor",
+            "attestor_public_key": broker_module.encode_bytes(
+                b"a" * 32,
+            ),
             "allowed_usages": list(broker_module._DELEGATION_USAGES),
             "issued_at": broker_module.encode_time(now),
             "expires_at": broker_module.encode_time(
@@ -625,6 +665,8 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             broker_instance_id="attacker-broker",
             runtime_id="runtime:attacker",
             delegation_public_key=delegation_public,
+            attestor_instance_id="attacker-attestor",
+            attestor_public_key=b"a" * 32,
             allowed_usages=broker_module._DELEGATION_USAGES,
             issued_at=now,
             expires_at=now + timedelta(hours=1),
@@ -644,10 +686,15 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             runtime_id="runtime:attacker",
             delegation_fingerprint=delegation.fingerprint,
         )
+        endpoints = {
+            role.value: "attacker-endpoint-" + role.value
+            for role in BrokerRepositoryRole
+        }
         handles = {
             role.value: broker_module._new_handle(
                 private_key=session,
                 instance_id="attacker-broker",
+                endpoint_id=endpoints[role.value],
                 role=role,
                 runtime_id="runtime:attacker",
                 generation=1,
@@ -689,9 +736,232 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                             name: broker_module._encode_handle(handle)
                             for name, handle in handles.items()
                         },
+                        endpoints=endpoints,
                     )
             finally:
                 attestor.close()
+
+    def test_root_delegation_binds_exact_attestor_and_ticket_signer(
+        self,
+    ) -> None:
+        root = Ed25519PrivateKey.generate()
+        root_public = root.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+        approved_attestor = start_authority_attestor(
+            realm="contract-test",
+            expected_test_root_public_key=root_public,
+        )
+        attacker_attestor = start_authority_attestor(
+            realm="contract-test",
+            expected_test_root_public_key=root_public,
+        )
+        tamper_attestor = start_authority_attestor(
+            realm="contract-test",
+            expected_test_root_public_key=root_public,
+        )
+        ticket_attestor = start_authority_attestor(
+            realm="contract-test",
+            expected_test_root_public_key=root_public,
+        )
+
+        def bundle(attestor, suffix):
+            delegation_key = Ed25519PrivateKey.generate()
+            delegation_public = (
+                delegation_key.public_key().public_bytes(
+                    serialization.Encoding.Raw,
+                    serialization.PublicFormat.Raw,
+                )
+            )
+            session_key = Ed25519PrivateKey.generate()
+            session_public = session_key.public_key().public_bytes(
+                serialization.Encoding.Raw,
+                serialization.PublicFormat.Raw,
+            )
+            now = datetime.now(timezone.utc)
+            delegation_values = {
+                "trust_realm": "contract-test",
+                "broker_instance_id": "broker-" + suffix,
+                "runtime_id": "runtime:" + suffix,
+                "delegation_public_key": broker_module.encode_bytes(
+                    delegation_public,
+                ),
+                "attestor_instance_id": attestor.instance_id,
+                "attestor_public_key": broker_module.encode_bytes(
+                    attestor.public_key,
+                ),
+                "allowed_usages": list(
+                    broker_module._DELEGATION_USAGES,
+                ),
+                "issued_at": broker_module.encode_time(now),
+                "expires_at": broker_module.encode_time(
+                    now + timedelta(hours=1),
+                ),
+                "nonce": "delegation-" + suffix,
+            }
+            delegation = BrokerDelegationCertificate(
+                trust_realm="contract-test",
+                broker_instance_id="broker-" + suffix,
+                runtime_id="runtime:" + suffix,
+                delegation_public_key=delegation_public,
+                attestor_instance_id=attestor.instance_id,
+                attestor_public_key=attestor.public_key,
+                allowed_usages=broker_module._DELEGATION_USAGES,
+                issued_at=now,
+                expires_at=now + timedelta(hours=1),
+                nonce="delegation-" + suffix,
+                signature=root.sign(
+                    broker_module._canonical(delegation_values),
+                ),
+            )
+            certificate = _test_certificate(
+                delegation_key,
+                session_public,
+                instance_id="broker-" + suffix,
+                runtime_id="runtime:" + suffix,
+                delegation_fingerprint=delegation.fingerprint,
+            )
+            endpoints = {
+                role.value: f"endpoint-{suffix}-{role.value}"
+                for role in BrokerRepositoryRole
+            }
+            handles = {
+                role.value: broker_module._new_handle(
+                    private_key=session_key,
+                    instance_id=certificate.broker_instance_id,
+                    endpoint_id=endpoints[role.value],
+                    role=role,
+                    runtime_id=certificate.runtime_id,
+                    generation=1,
+                )
+                for role in BrokerRepositoryRole
+            }
+            return delegation, certificate, endpoints, handles, session_public
+
+        try:
+            (
+                delegation,
+                certificate,
+                endpoints,
+                handles,
+                session_public,
+            ) = bundle(approved_attestor, "approved")
+            approved = approved_attestor.approve_identity(
+                realm="contract-test",
+                runtime_id=certificate.runtime_id,
+                delegation_certificate=(
+                    broker_module._encode_delegation_certificate(
+                        delegation,
+                    )
+                ),
+                session_certificate=broker_module._encode_certificate(
+                    certificate,
+                ),
+                handles={
+                    role: broker_module._encode_handle(handle)
+                    for role, handle in handles.items()
+                },
+                endpoints=endpoints,
+            )
+            with self.assertRaises(AuthorityAttestationError):
+                attacker_attestor.approve_identity(
+                    realm="contract-test",
+                    runtime_id=certificate.runtime_id,
+                    delegation_certificate=(
+                        broker_module._encode_delegation_certificate(
+                            delegation,
+                        )
+                    ),
+                    session_certificate=broker_module._encode_certificate(
+                        certificate,
+                    ),
+                    handles={
+                        role: broker_module._encode_handle(handle)
+                        for role, handle in handles.items()
+                    },
+                    endpoints=endpoints,
+                )
+            tampered = dataclasses.replace(
+                delegation,
+                attestor_instance_id=tamper_attestor.instance_id,
+                attestor_public_key=tamper_attestor.public_key,
+            )
+            with self.assertRaises(AuthorityAttestationError):
+                tamper_attestor.approve_identity(
+                    realm="contract-test",
+                    runtime_id=certificate.runtime_id,
+                    delegation_certificate=(
+                        broker_module._encode_delegation_certificate(
+                            tampered,
+                        )
+                    ),
+                    session_certificate=broker_module._encode_certificate(
+                        certificate,
+                    ),
+                    handles={
+                        role: broker_module._encode_handle(handle)
+                        for role, handle in handles.items()
+                    },
+                    endpoints=endpoints,
+                )
+
+            (
+                attacker_delegation,
+                attacker_certificate,
+                attacker_endpoints,
+                attacker_handles,
+                _,
+            ) = bundle(ticket_attestor, "attacker")
+            attacker_approved = ticket_attestor.approve_identity(
+                realm="contract-test",
+                runtime_id=attacker_certificate.runtime_id,
+                delegation_certificate=(
+                    broker_module._encode_delegation_certificate(
+                        attacker_delegation,
+                    )
+                ),
+                session_certificate=broker_module._encode_certificate(
+                    attacker_certificate,
+                ),
+                handles={
+                    role: broker_module._encode_handle(handle)
+                    for role, handle in attacker_handles.items()
+                },
+                endpoints=attacker_endpoints,
+            )
+            fake_ticket = ticket_attestor.prepare_request(
+                identity_id=attacker_approved["identity_id"],
+                connection_generation=1,
+                endpoint_id=attacker_endpoints["payload"],
+                role="payload",
+                operation="read_payload_body",
+                request_id="ipc-attacker",
+                request_sequence=1,
+                request_fingerprint="sha256:" + "a" * 64,
+            )["ticket"]
+            with self.assertRaises(NsValidationError):
+                broker_module._verify_attestor_ticket(
+                    fake_ticket,
+                    delegation_certificate=delegation,
+                    identity_id=approved["identity_id"],
+                    instance_id=certificate.broker_instance_id,
+                    runtime_id=certificate.runtime_id,
+                    generation=1,
+                    session_public_key=session_public,
+                    endpoint_id=endpoints["payload"],
+                    endpoint_role=BrokerRepositoryRole.PAYLOAD,
+                    handle=handles["payload"],
+                    operation="read_payload_body",
+                    request_id="ipc-attacker",
+                    request_sequence=1,
+                    request_fingerprint="sha256:" + "a" * 64,
+                )
+        finally:
+            approved_attestor.close()
+            attacker_attestor.close()
+            tamper_attestor.close()
+            ticket_attestor.close()
 
     def test_request_snapshot_rejects_connection_certificate_swap(
         self,
@@ -703,7 +973,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             certificate = holder["certificate"]
             session = holder["session"]
             assert isinstance(
-                channel, broker_module._ContractTestBrokerChannel,
+                channel, broker_module._ContractTestRoleBrokerChannel,
             )
             assert isinstance(certificate, BrokerInstanceCertificate)
             assert isinstance(session, Ed25519PrivateKey)
@@ -731,10 +1001,8 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             "session": session,
             "certificate": certificate,
         })
-        handle = channel.current_handle(BrokerRepositoryRole.LIFECYCLE)
         with self.assertRaises(NsRuntimeStateStoreUnavailableError):
             channel.request(
-                handle=handle,
                 operation="state_health",
                 payload={},
             )
@@ -745,6 +1013,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         channel, process, connection, _, _ = _test_channel(
             lambda sent: b"",
+            role=BrokerRepositoryRole.ADMISSION,
         )
 
         class FailsAfterStart:
@@ -758,9 +1027,6 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         object.__setattr__(channel, "_connection", FailsAfterStart())
         with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
             channel.request(
-                handle=channel.current_handle(
-                    BrokerRepositoryRole.ADMISSION,
-                ),
                 operation="transact_admission",
                 payload={},
             )
@@ -770,17 +1036,11 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
     def test_malformed_response_after_write_is_indeterminate(self) -> None:
         channel, process, connection, private_key, _ = _test_channel(
             lambda sent: b'{"malformed":true}',
-        )
-        handle = broker_module._new_handle(
-            private_key=private_key,
-            instance_id="broker_test",
             role=BrokerRepositoryRole.ADMISSION,
-            runtime_id="runtime:test",
-            generation=1,
         )
+        del private_key
         with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
             channel.request(
-                handle=handle,
                 operation="transact_admission",
                 payload={
                     "tenant_id": "tenant:1",
@@ -801,7 +1061,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
     @unittest.skipUnless(os.name == "posix", "requires POSIX process signals")
     async def test_close_kills_broker_stuck_in_operation(self) -> None:
         broker, _ = await self._broker([])
-        process = broker._channel._process
+        process = broker._channel._custodian.process
         os.kill(process.pid, signal.SIGSTOP)
         broker.close()
         self.assertFalse(process.is_alive())
@@ -904,7 +1164,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         broker, _ = await self._broker([])
         channel = broker._channel
         self.assertIs(
-            broker_module._ContractTestBrokerChannel,
+            broker_module._ContractTestRoleBrokerChannel,
             type(channel),
         )
         with self.assertRaises(AttributeError):
@@ -959,7 +1219,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             await forged_repository._request("read_delivery", {})
 
         empty_channel = object.__new__(
-            broker_module._ProductionBrokerChannel,
+            broker_module._ProductionRoleBrokerChannel,
         )
         self.assertFalse(empty_channel._identity_is_current(
             datetime.now(timezone.utc),
@@ -969,19 +1229,17 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         object.__setattr__(empty_proxy, "_handle", object())
         self.assertFalse(empty_proxy._is_production_adapter())
 
-    async def test_mutable_main_helpers_cannot_upgrade_contract_realm(
+    async def test_proxy_metadata_changes_do_not_change_endpoint_role(
         self,
     ) -> None:
         broker, _ = await self._broker([])
         admission = broker.repositories.admission
-        original_channel_realm = broker_module._channel_realm
         original_binding = broker_module._repository_proxy_binding
         try:
-            broker_module._channel_realm = lambda channel_type: "production"
             broker_module._repository_proxy_binding = (
                 lambda proxy_type: (
                     BrokerRepositoryRole.SCHEDULER,
-                    broker_module._ProductionBrokerChannel,
+                    broker_module._ProductionRoleBrokerChannel,
                 )
             )
             self.assertFalse(broker.iam._is_production_adapter())
@@ -991,10 +1249,9 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             ):
                 await admission._request("read_payload_body", {})
         finally:
-            broker_module._channel_realm = original_channel_realm
             broker_module._repository_proxy_binding = original_binding
 
-    async def test_certificate_tamper_expiry_and_session_mismatch_fail_closed(
+    async def test_main_session_metadata_is_refreshed_from_attestor(
         self,
     ) -> None:
         broker, _ = await self._broker([])
@@ -1010,16 +1267,16 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 broker_instance_id="broker_tampered",
             ),
         )
-        self.assertFalse(channel._identity_is_current(
+        self.assertTrue(channel._identity_is_current(
             datetime.now(timezone.utc),
         ))
-        object.__setattr__(channel, "_certificate", certificate)
+        self.assertEqual(certificate, channel._certificate)
 
         object.__setattr__(channel, "_public_key", os.urandom(32))
-        self.assertFalse(channel._identity_is_current(
+        self.assertTrue(channel._identity_is_current(
             datetime.now(timezone.utc),
         ))
-        object.__setattr__(channel, "_public_key", public_key)
+        self.assertEqual(public_key, channel._public_key)
 
         object.__setattr__(
             channel,
@@ -1030,13 +1287,10 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
             ),
         )
-        self.assertFalse(channel._identity_is_current(
+        self.assertTrue(channel._identity_is_current(
             datetime.now(timezone.utc),
         ))
-        object.__setattr__(channel, "_certificate", certificate)
-        self.assertFalse(channel._identity_is_current(
-            datetime.now(timezone.utc),
-        ))
+        self.assertEqual(certificate, channel._certificate)
         root = Ed25519PrivateKey.generate()
         session_public = Ed25519PrivateKey.generate().public_key().public_bytes(
             serialization.Encoding.Raw,
@@ -1072,16 +1326,9 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 "result": {},
             }),
         )
-        handle = broker_module._new_handle(
-            private_key=session,
-            instance_id=certificate.broker_instance_id,
-            role=BrokerRepositoryRole.LIFECYCLE,
-            runtime_id=certificate.runtime_id,
-            generation=certificate.lifecycle_generation,
-        )
+        del session, certificate
         with self.assertRaises(NsRuntimeStateStoreUnavailableError):
             channel.request(
-                handle=handle,
                 operation="state_health",
                 payload={},
             )
@@ -1116,6 +1363,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                         response_handle = broker_module._new_handle(
                             private_key=session,
                             instance_id=certificate.broker_instance_id,
+                            endpoint_id="endpoint_admission",
                             role=BrokerRepositoryRole.ADMISSION,
                             runtime_id=certificate.runtime_id,
                             generation=1,
@@ -1167,13 +1415,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 channel, process, _, session, certificate = _test_channel(
                     response,
                 )
-                handle = broker_module._new_handle(
-                    private_key=session,
-                    instance_id=certificate.broker_instance_id,
-                    role=BrokerRepositoryRole.LIFECYCLE,
-                    runtime_id=certificate.runtime_id,
-                    generation=1,
-                )
+                handle = channel.handle
                 holder.update({
                     "session": session,
                     "certificate": certificate,
@@ -1181,7 +1423,6 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 })
                 with self.assertRaises(NsRuntimeStateStoreUnavailableError):
                     channel.request(
-                        handle=handle,
                         operation="state_health",
                         payload={},
                     )
@@ -1202,13 +1443,6 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         channel, process, _, session, certificate = _test_channel(replay)
-        handle = broker_module._new_handle(
-            private_key=session,
-            instance_id=certificate.broker_instance_id,
-            role=BrokerRepositoryRole.LIFECYCLE,
-            runtime_id=certificate.runtime_id,
-            generation=1,
-        )
         holder.update({
             "session": session,
             "certificate": certificate,
@@ -1216,14 +1450,12 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             {"status": "ok"},
             channel.request(
-                handle=handle,
                 operation="state_health",
                 payload={},
             ),
         )
         with self.assertRaises(NsRuntimeStateStoreUnavailableError):
             channel.request(
-                handle=handle,
                 operation="state_health",
                 payload={},
             )
@@ -1241,19 +1473,15 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         write_channel, write_process, _, write_session, write_cert = (
-            _test_channel(wrong_write_signature)
+            _test_channel(
+                wrong_write_signature,
+                role=BrokerRepositoryRole.ADMISSION,
+            )
         )
         write_holder["certificate"] = write_cert
-        write_handle = broker_module._new_handle(
-            private_key=write_session,
-            instance_id=write_cert.broker_instance_id,
-            role=BrokerRepositoryRole.ADMISSION,
-            runtime_id=write_cert.runtime_id,
-            generation=1,
-        )
+        del write_session
         with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
             write_channel.request(
-                handle=write_handle,
                 operation="transact_admission",
                 payload={},
             )
@@ -1334,7 +1562,19 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 old_authority = signed.authority
             self.assertEqual(
                 expected_generation,
-                broker._channel._lifecycle_generation,
+                broker.current_session_identity()[
+                    "lifecycle_generation"
+                ],
+            )
+            identity = broker.current_session_identity()
+            self.assertEqual(
+                identity["session_public_key"], broker.public_key,
+            )
+            self.assertEqual(
+                identity["session_key_fingerprint"],
+                broker_module._session_key_fingerprint(
+                    broker.public_key,
+                ),
             )
             await broker.state_store.health()
         self.assertFalse(old_handle.verify(
@@ -1363,7 +1603,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(all(result.allowed for result in results[:4]))
         self.assertGreaterEqual(
-            broker._channel._lifecycle_generation, 2,
+            broker.current_session_identity()["lifecycle_generation"], 2,
         )
         self.assertTrue(broker._channel._identity_is_current())
 
@@ -1402,6 +1642,125 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             )
         object.__setattr__(admission, "_handle", original)
 
+    async def test_each_proxy_owns_one_role_endpoint_without_handle_table(
+        self,
+    ) -> None:
+        broker, _ = await self._broker([])
+        proxies = (
+            broker.iam,
+            broker.repositories.admission,
+            broker.repositories.scheduler,
+            broker.repositories.payload,
+            broker.repositories.registry,
+            broker.repositories.audit,
+            broker.state_store,
+        )
+        channels = tuple(proxy._channel for proxy in proxies)
+        self.assertEqual(7, len({id(channel) for channel in channels}))
+        self.assertEqual(
+            {role for role in BrokerRepositoryRole},
+            {channel.role for channel in channels},
+        )
+        self.assertEqual(
+            7, len({channel.endpoint_id for channel in channels}),
+        )
+        self.assertIs(
+            BrokerRepositoryRole.PAYLOAD,
+            broker.repositories.payload._channel.role,
+        )
+        self.assertIs(
+            BrokerRepositoryRole.SCHEDULER,
+            broker.repositories.scheduler._channel.role,
+        )
+        self.assertIsNot(
+            broker.repositories.payload._channel,
+            broker.repositories.scheduler._channel,
+        )
+        for channel in channels:
+            self.assertFalse(hasattr(channel, "_handles"))
+            self.assertFalse(hasattr(channel, "current_handle"))
+            for slot in broker_module._RoleBrokerChannel.__slots__:
+                if not hasattr(channel, slot):
+                    continue
+                value = getattr(channel, slot)
+                self.assertFalse(
+                    type(value) is dict
+                    and set(value) == {
+                        role.value for role in BrokerRepositoryRole
+                    },
+                )
+        custodian = broker._channel._custodian
+        for slot in type(custodian).__slots__:
+            value = getattr(custodian, slot)
+            if type(value) is dict:
+                self.assertFalse(
+                    all(
+                        isinstance(
+                            item, broker_module._RoleBrokerChannel,
+                        )
+                        for item in value.values()
+                    ),
+                )
+
+    async def test_raw_role_endpoints_reject_cross_role_operations(
+        self,
+    ) -> None:
+        for source_role, operation in (
+            (BrokerRepositoryRole.PAYLOAD, "transact_scheduler"),
+            (BrokerRepositoryRole.ADMISSION, "read_payload_body"),
+        ):
+            with self.subTest(source_role=source_role.value):
+                broker, _ = await self._broker([])
+                channel = {
+                    BrokerRepositoryRole.PAYLOAD:
+                        broker.repositories.payload._channel,
+                    BrokerRepositoryRole.ADMISSION:
+                        broker.repositories.admission._channel,
+                }[source_role]
+                process = channel._custodian.process
+                channel._connection.send_bytes(encode_frame({
+                    "version": 1,
+                    "kind": "request",
+                    "request_id": "raw-cross-role",
+                    "request_sequence": 1,
+                    "operation": operation,
+                    "payload": {},
+                    "attestation": {},
+                }))
+                for _ in range(100):
+                    if not process.is_alive():
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertFalse(process.is_alive())
+                broker.close()
+
+    async def test_attestor_death_reaps_broker_for_write_and_health(
+        self,
+    ) -> None:
+        for operation in ("write", "health"):
+            with self.subTest(operation=operation):
+                broker, _ = await self._broker([])
+                channel = (
+                    broker.repositories.admission._channel
+                    if operation == "write"
+                    else broker.state_store._channel
+                )
+                process = channel._custodian.process
+                attestor_process = channel._attestor._process
+                attestor_process.terminate()
+                attestor_process.join(timeout=5.0)
+                with self.assertRaises(
+                    NsRuntimeStateStoreUnavailableError,
+                ):
+                    if operation == "write":
+                        await broker.repositories.admission._request(
+                            "transact_admission", {},
+                        )
+                    else:
+                        await broker.state_store.health()
+                self.assertFalse(process.is_alive())
+                self.assertFalse(channel._attestor.alive)
+
     async def test_main_http_monkey_patch_cannot_change_broker_transport(
         self,
     ) -> None:
@@ -1423,11 +1782,11 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         first, _ = await self._broker([_decision(request).to_wire()])
         signed = await first.iam.access_check_signed(request)
         old_handle = first.repositories.admission._handle
-        first._channel._process.terminate()
-        first._channel._process.join(timeout=5.0)
+        first._channel._custodian.process.terminate()
+        first._channel._custodian.process.join(timeout=5.0)
         with self.assertRaises(NsRuntimeIamUnavailableError):
             await first.iam.access_check(request)
-        with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
+        with self.assertRaises(NsRuntimeStateStoreUnavailableError):
             await first.repositories.admission._request(
                 "transact_admission",
                 object(),

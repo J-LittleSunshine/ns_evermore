@@ -65,7 +65,7 @@ _ROLE_OPERATIONS: Mapping[str, frozenset[str]] = {
     "lifecycle": frozenset({"state_health"}),
 }
 _DELEGATION_USAGES = (
-    "handles", "iam-results", "rotation", "state-responses",
+    "role-endpoints", "iam-results", "rotation", "state-responses",
 )
 
 
@@ -137,6 +137,7 @@ class AuthorityAttestorClient:
         delegation_certificate: dict[str, object],
         session_certificate: dict[str, object],
         handles: dict[str, object],
+        endpoints: dict[str, object],
     ) -> dict[str, object]:
         return self._rpc("approve_identity", {
             "realm": realm,
@@ -144,6 +145,7 @@ class AuthorityAttestorClient:
             "delegation_certificate": delegation_certificate,
             "session_certificate": session_certificate,
             "handles": handles,
+            "endpoints": endpoints,
         })
 
     def verify_identity(
@@ -170,7 +172,8 @@ class AuthorityAttestorClient:
         *,
         identity_id: str,
         connection_generation: int,
-        handle: dict[str, object],
+        endpoint_id: str,
+        role: str,
         operation: str,
         request_id: str,
         request_sequence: int,
@@ -179,11 +182,25 @@ class AuthorityAttestorClient:
         return self._rpc("prepare_request", {
             "identity_id": identity_id,
             "connection_generation": connection_generation,
-            "handle": handle,
+            "endpoint_id": endpoint_id,
+            "role": role,
             "operation": operation,
             "request_id": request_id,
             "request_sequence": request_sequence,
             "request_fingerprint": request_fingerprint,
+        })
+
+    def current_endpoint_identity(
+        self,
+        *,
+        identity_id: str,
+        endpoint_id: str,
+        role: str,
+    ) -> dict[str, object]:
+        return self._rpc("current_endpoint_identity", {
+            "identity_id": identity_id,
+            "endpoint_id": endpoint_id,
+            "role": role,
         })
 
     def approve_rotation(
@@ -506,7 +523,7 @@ def _execute_attestation(
             raise ValueError
         fields = _require_exact(payload, {
             "realm", "runtime_id", "delegation_certificate",
-            "session_certificate", "handles",
+            "session_certificate", "handles", "endpoints",
         })
         if _string(fields["realm"]) != realm:
             raise ValueError
@@ -519,6 +536,12 @@ def _execute_attestation(
             ),
             session=_require_object_value(fields["session_certificate"]),
             handles=_require_object_value(fields["handles"]),
+            endpoints=_require_object_value(fields["endpoints"]),
+            attestor_instance_id=attestor_instance_id,
+            attestor_public_key=attestor_private_key.public_key().public_bytes(
+                serialization.Encoding.Raw,
+                serialization.PublicFormat.Raw,
+            ),
             now=now,
         )
         return _identity_result(approved), approved, None
@@ -537,15 +560,18 @@ def _execute_attestation(
         }, approved, pending_rotation
     if operation == "prepare_request":
         fields = _require_exact(payload, {
-            "identity_id", "connection_generation", "handle",
+            "identity_id", "connection_generation", "endpoint_id", "role",
             "operation", "request_id", "request_sequence",
             "request_fingerprint",
         })
         if _string(fields["identity_id"]) != approved["identity_id"]:
             raise ValueError
-        handle = _require_object_value(fields["handle"])
-        _verify_handle(handle, approved)
-        role = _string(handle["role"])
+        role = _string(fields["role"])
+        endpoint_id = _string(fields["endpoint_id"])
+        _require_endpoint(approved, endpoint_id=endpoint_id, role=role)
+        handle = _require_object_value(
+            _require_object_value(approved["handles"])[role],
+        )
         requested_operation = _string(fields["operation"])
         if requested_operation not in _ROLE_OPERATIONS[role]:
             raise ValueError
@@ -556,6 +582,8 @@ def _execute_attestation(
                     "identity_id": approved["identity_id"],
                     "broker_instance_id": approved["broker_instance_id"],
                     "runtime_id": approved["runtime_id"],
+                    "endpoint_id": endpoint_id,
+                    "role": role,
                     "current_generation": approved["lifecycle_generation"],
                     "next_generation": (
                         int(approved["lifecycle_generation"]) + 1
@@ -574,6 +602,16 @@ def _execute_attestation(
                         ),
                     ),
                 }
+            elif (
+                pending_rotation["endpoint_id"] != endpoint_id
+                or pending_rotation["role"] != role
+            ):
+                return {
+                    "status": "rotation_in_progress",
+                    "lifecycle_generation": approved[
+                        "lifecycle_generation"
+                    ],
+                }, approved, pending_rotation
             return {
                 "status": "rotation_required",
                 "rotation_ticket": pending_rotation,
@@ -593,6 +631,7 @@ def _execute_attestation(
             "connection_generation": _positive_int(
                 fields["connection_generation"],
             ),
+            "endpoint_id": endpoint_id,
             "handle_id": _string(handle["handle_id"]),
             "role": role,
             "operation": requested_operation,
@@ -609,6 +648,9 @@ def _execute_attestation(
         }
         return {
             "status": "ready",
+            "endpoint_identity": _endpoint_identity_result(
+                approved, endpoint_id=endpoint_id, role=role,
+            ),
             "ticket": {
                 **ticket_values,
                 "signature": _encode_bytes(
@@ -616,6 +658,18 @@ def _execute_attestation(
                 ),
             },
         }, approved, pending_rotation
+    if operation == "current_endpoint_identity":
+        fields = _require_exact(payload, {
+            "identity_id", "endpoint_id", "role",
+        })
+        if _string(fields["identity_id"]) != approved["identity_id"]:
+            raise ValueError
+        endpoint_id = _string(fields["endpoint_id"])
+        role = _string(fields["role"])
+        _require_endpoint(approved, endpoint_id=endpoint_id, role=role)
+        return _endpoint_identity_result(
+            approved, endpoint_id=endpoint_id, role=role,
+        ), approved, pending_rotation
     if operation == "approve_rotation":
         fields = _require_exact(payload, {"identity_id", "rotation"})
         if (
@@ -675,17 +729,25 @@ def _verify_identity_bundle(
     delegation: dict[str, object],
     session: dict[str, object],
     handles: dict[str, object],
+    endpoints: dict[str, object],
+    attestor_instance_id: str,
+    attestor_public_key: bytes,
     now: datetime,
 ) -> dict[str, object]:
     delegation_values = _without_signature(delegation, {
         "trust_realm", "broker_instance_id", "runtime_id",
-        "delegation_public_key", "allowed_usages", "issued_at",
+        "delegation_public_key", "attestor_instance_id",
+        "attestor_public_key", "allowed_usages", "issued_at",
         "expires_at", "nonce", "signature",
     })
     usages = delegation_values["allowed_usages"]
     if (
         delegation_values["trust_realm"] != realm
         or delegation_values["runtime_id"] != expected_runtime_id
+        or delegation_values["attestor_instance_id"]
+        != attestor_instance_id
+        or _decode_bytes(delegation_values["attestor_public_key"])
+        != attestor_public_key
         or usages != list(_DELEGATION_USAGES)
     ):
         raise ValueError
@@ -755,7 +817,12 @@ def _verify_identity_bundle(
         "session_issued_at": session_issued,
         "session_expires_at": session_expiry,
         "handles": handles,
+        "endpoints": endpoints,
+        "session": session,
+        "attestor_instance_id": attestor_instance_id,
+        "attestor_public_key": attestor_public_key,
     }
+    _verify_endpoints(endpoints)
     _verify_all_handles(handles, approved)
     return approved
 
@@ -826,6 +893,7 @@ def _verify_rotation(
         "session_issued_at": issued_at,
         "session_expires_at": expires_at,
         "handles": _require_object_value(fields["handles"]),
+        "session": session,
     }
     _verify_all_handles(updated["handles"], updated)
     return updated
@@ -959,7 +1027,7 @@ def _require_snapshot(
     required = {
         "identity_id", "connection_generation", "broker_instance_id",
         "runtime_id", "lifecycle_generation", "session_key_fingerprint",
-        "certificate_fingerprint", "handle_id", "role", "operation",
+        "certificate_fingerprint", "endpoint_id", "handle_id", "role", "operation",
         "request_id", "request_sequence", "request_fingerprint",
         "expected_response_sequence",
     }
@@ -972,6 +1040,11 @@ def _require_snapshot(
         if fields[name] != approved[name]:
             raise ValueError
     role = _string(fields["role"])
+    _require_endpoint(
+        approved,
+        endpoint_id=_string(fields["endpoint_id"]),
+        role=role,
+    )
     handle = _require_object_value(approved["handles"])[role]
     if _require_object_value(handle)["handle_id"] != fields["handle_id"]:
         raise ValueError
@@ -991,6 +1064,9 @@ def _verify_all_handles(
         _verify_handle(handle, approved)
         if handle["role"] != role:
             raise ValueError
+        endpoint = _require_object_value(approved["endpoints"])[role]
+        if handle["endpoint_id"] != endpoint:
+            raise ValueError
 
 
 def _verify_handle(
@@ -998,12 +1074,15 @@ def _verify_handle(
     approved: dict[str, object],
 ) -> None:
     values = _without_signature(handle, {
-        "broker_instance_id", "handle_id", "role", "runtime_id",
+        "broker_instance_id", "endpoint_id", "handle_id", "role", "runtime_id",
         "lifecycle_generation", "signature",
     })
     if (
         values["broker_instance_id"] != approved["broker_instance_id"]
         or values["runtime_id"] != approved["runtime_id"]
+        or _require_object_value(approved["endpoints"]).get(
+            _string(values["role"]),
+        ) != values["endpoint_id"]
         or values["lifecycle_generation"]
         != approved["lifecycle_generation"]
         or values["role"] not in _ROLES
@@ -1044,8 +1123,49 @@ def _identity_result(approved: dict[str, object]) -> dict[str, object]:
         "session_expires_at": _encode_time(
             approved["session_expires_at"],
         ),
-        "handles": approved["handles"],
     }
+
+
+def _endpoint_identity_result(
+    approved: dict[str, object],
+    *,
+    endpoint_id: str,
+    role: str,
+) -> dict[str, object]:
+    _require_endpoint(approved, endpoint_id=endpoint_id, role=role)
+    return {
+        **_identity_result(approved),
+        "endpoint_id": endpoint_id,
+        "role": role,
+        "session_certificate": approved["session"],
+        "handle": _require_object_value(approved["handles"])[role],
+    }
+
+
+def _verify_endpoints(endpoints: object) -> None:
+    values = _require_object_value(endpoints)
+    if set(values) != _ROLES:
+        raise ValueError
+    seen: set[str] = set()
+    for role in _ROLES:
+        endpoint_id = _string(values[role])
+        if endpoint_id in seen:
+            raise ValueError
+        seen.add(endpoint_id)
+
+
+def _require_endpoint(
+    approved: dict[str, object],
+    *,
+    endpoint_id: str,
+    role: str,
+) -> None:
+    if (
+        role not in _ROLES
+        or _require_object_value(approved["endpoints"]).get(role)
+        != endpoint_id
+    ):
+        raise ValueError
 
 
 def _verify_attestor_response(

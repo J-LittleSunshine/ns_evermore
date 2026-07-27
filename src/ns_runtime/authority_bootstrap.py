@@ -19,26 +19,35 @@ from ns_common.exceptions import NsRuntimeStartupSecurityError
 
 _ROOT_KEY_FD_ENV = "NS_RUNTIME_AUTHORITY_KEY_FD"
 _SECRETS_FD_ENV = "NS_RUNTIME_AUTHORITY_SECRETS_FD"
+_ENDPOINT_ROLES = (
+    "iam", "admission", "scheduler", "payload", "registry", "audit",
+    "lifecycle",
+)
 
 
 class InheritedAuthorityBootstrap:
     __slots__ = (
-        "_connection", "_process", "_attestor", "_consumed",
+        "_connections", "_process", "_attestor", "_consumed",
     )
 
     def __init__(
         self,
         *,
-        connection: Connection,
+        connections: dict[str, Connection],
         process: multiprocessing.Process,
         attestor: object,
     ) -> None:
         if (
-            not isinstance(connection, Connection)
+            type(connections) is not dict
+            or set(connections) != set(_ENDPOINT_ROLES)
+            or any(
+                not isinstance(connection, Connection)
+                for connection in connections.values()
+            )
             or not process.is_alive()
         ):
             _security_error("invalid_inherited_authority_material")
-        self._connection = connection
+        self._connections = dict(connections)
         self._process = process
         self._attestor = attestor
         self._consumed = False
@@ -54,33 +63,33 @@ class InheritedAuthorityBootstrap:
         if type(config) is not AuthorityBrokerConfig:
             _security_error("invalid_authority_broker_config")
         self._consumed = True
-        connection = self._connection
+        connections = self._connections
         process = self._process
         attestor = self._attestor
-        self._connection = None
+        self._connections = None
         self._process = None
         self._attestor = None
         try:
             return _complete_inherited_authority_broker_start(
-                parent=connection,
+                parents=connections,
                 process=process,
                 attestor=attestor,
                 config=config,
             )
         except BaseException:
-            _close_pending(connection, process)
+            _close_pending(connections, process)
             attestor.close()
             raise
 
     def close(self) -> None:
-        connection = self._connection
+        connections = self._connections
         process = self._process
         attestor = self._attestor
-        self._connection = None
+        self._connections = None
         self._process = None
         self._attestor = None
-        if connection is not None and process is not None:
-            _close_pending(connection, process)
+        if connections is not None and process is not None:
+            _close_pending(connections, process)
         if attestor is not None:
             attestor.close()
         self._consumed = True
@@ -114,11 +123,16 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
     from ns_runtime.authority_attestor import start_authority_attestor
 
     attestor = start_authority_attestor(realm="production")
-    parent, child = context.Pipe(duplex=True)
+    pairs = {
+        role: context.Pipe(duplex=True)
+        for role in _ENDPOINT_ROLES
+    }
+    parents = {role: pair[0] for role, pair in pairs.items()}
+    children = {role: pair[1] for role, pair in pairs.items()}
     process = context.Process(
         target=_isolated_authority_bootstrap_entry,
         args=(
-            child,
+            children,
             DupFd(root_fd),
             DupFd(secrets_fd),
             attestor.public_key,
@@ -130,42 +144,46 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
     try:
         process.start()
     finally:
-        child.close()
+        for child in children.values():
+            child.close()
         for fd in (root_fd, secrets_fd):
             try:
                 os.close(fd)
             except OSError:
                 pass
     if (
-        not parent.poll(10.0)
+        not parents["lifecycle"].poll(10.0)
         or not process.is_alive()
     ):
-        _close_pending(parent, process)
+        _close_pending(parents, process)
         attestor.close()
         _security_error("authority_broker_bootstrap_failed")
     try:
-        custody = json.loads(parent.recv_bytes(1024).decode("utf-8"))
+        custody = json.loads(
+            parents["lifecycle"].recv_bytes(1024).decode("utf-8"),
+        )
     except (EOFError, OSError, UnicodeError, ValueError):
-        _close_pending(parent, process)
+        _close_pending(parents, process)
         attestor.close()
         _security_error("authority_broker_bootstrap_failed")
     if custody != {"kind": "fd_custody", "version": 1}:
-        _close_pending(parent, process)
+        _close_pending(parents, process)
         attestor.close()
         _security_error("authority_broker_bootstrap_failed")
     if not process.is_alive():
-        parent.close()
+        for parent in parents.values():
+            parent.close()
         attestor.close()
         _security_error("authority_broker_bootstrap_failed")
     return InheritedAuthorityBootstrap(
-        connection=parent,
+        connections=parents,
         process=process,
         attestor=attestor,
     )
 
 
 def _isolated_authority_bootstrap_entry(
-    connection: Connection,
+    connections: dict[str, Connection],
     root_key_handle: object,
     secrets_handle: object,
     attestor_public_key: bytes,
@@ -176,7 +194,7 @@ def _isolated_authority_bootstrap_entry(
     from ns_runtime.authority_broker import _authority_broker_process
 
     _authority_broker_process(
-        connection,
+        connections,
         None,
         root_key_handle,
         secrets_handle,
@@ -190,11 +208,12 @@ def _isolated_authority_bootstrap_entry(
 
 
 def _close_pending(
-    connection: Connection,
+    connections: dict[str, Connection],
     process: multiprocessing.Process,
 ) -> None:
     try:
-        connection.close()
+        for connection in connections.values():
+            connection.close()
     except OSError:
         pass
     process.join(timeout=0.2)

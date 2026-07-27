@@ -18,11 +18,12 @@ import multiprocessing
 import os
 import tempfile
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from multiprocessing.connection import Connection
+from multiprocessing.connection import Connection, wait as wait_connections
 from multiprocessing.reduction import DupFd
 from pathlib import Path
 from typing import Mapping
@@ -157,7 +158,7 @@ _WRITE_OPERATIONS = frozenset({
 _SESSION_CERTIFICATE_TTL_SECONDS = 300.0
 _DELEGATION_CERTIFICATE_TTL_SECONDS = 30 * 24 * 60 * 60.0
 _DELEGATION_USAGES = (
-    "handles", "iam-results", "rotation", "state-responses",
+    "role-endpoints", "iam-results", "rotation", "state-responses",
 )
 _BROKER_REALMS = frozenset({
     "production", "contract-test", "integration-test",
@@ -187,6 +188,8 @@ class BrokerDelegationCertificate:
     broker_instance_id: str
     runtime_id: str
     delegation_public_key: bytes
+    attestor_instance_id: str
+    attestor_public_key: bytes
     allowed_usages: tuple[str, ...]
     issued_at: datetime
     expires_at: datetime
@@ -200,6 +203,10 @@ class BrokerDelegationCertificate:
             "runtime_id": self.runtime_id,
             "delegation_public_key": encode_bytes(
                 self.delegation_public_key,
+            ),
+            "attestor_instance_id": self.attestor_instance_id,
+            "attestor_public_key": encode_bytes(
+                self.attestor_public_key,
             ),
             "allowed_usages": list(self.allowed_usages),
             "issued_at": encode_time(self.issued_at),
@@ -335,6 +342,7 @@ class BrokerInstanceCertificate:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BrokerAuthorityHandle:
     broker_instance_id: str
+    endpoint_id: str
     handle_id: str
     role: BrokerRepositoryRole
     runtime_id: str
@@ -344,6 +352,7 @@ class BrokerAuthorityHandle:
     def signed_values(self) -> Mapping[str, object]:
         return {
             "broker_instance_id": self.broker_instance_id,
+            "endpoint_id": self.endpoint_id,
             "handle_id": self.handle_id,
             "role": self.role.value,
             "runtime_id": self.runtime_id,
@@ -354,6 +363,8 @@ class BrokerAuthorityHandle:
         if (
             type(self) is not BrokerAuthorityHandle
             or self.broker_instance_id != instance_id
+            or type(self.endpoint_id) is not str
+            or not self.endpoint_id
             or type(self.handle_id) is not str
             or not self.handle_id
             or not isinstance(self.role, BrokerRepositoryRole)
@@ -593,15 +604,64 @@ class BrokerSignedStateResponse:
         _invalid("state_response.copy")
 
 
-class _BrokerChannel:
-    """Serialized broker channel whose trust decisions live in an attestor."""
+class _BrokerProcessCustodian:
+    """Shared process lifecycle without retaining any role endpoint."""
 
     __slots__ = (
-        "_connection", "_process", "_public_key", "_instance_id",
+        "process", "attestor", "_lock", "_request_lock", "_reaped",
+    )
+
+    def __init__(
+        self,
+        *,
+        process: multiprocessing.Process,
+        attestor: AuthorityAttestorClient,
+    ) -> None:
+        self.process = process
+        self.attestor = attestor
+        self._lock = threading.Lock()
+        # The broker executes one request at a time.  Matching that boundary
+        # here prevents a session rotation on one role endpoint from advancing
+        # the attestor generation while another endpoint's signed response is
+        # still awaiting verification.  This lock carries no role, handle, or
+        # authority material.
+        self._request_lock = threading.Lock()
+        self._reaped = False
+
+    @property
+    def alive(self) -> bool:
+        return bool(not self._reaped and self.process.is_alive())
+
+    def reap(self) -> None:
+        with self._lock:
+            if self._reaped:
+                return
+            process = self.process
+            process.join(timeout=0.2)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5.0)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5.0)
+            if process.is_alive():
+                raise _broker_unavailable("broker_process_did_not_exit")
+            try:
+                self.attestor.close()
+            except AuthorityAttestationError:
+                pass
+            self._reaped = True
+
+
+class _RoleBrokerChannel:
+    """One OS endpoint permanently bound to one broker-side role."""
+
+    __slots__ = (
+        "_connection", "_custodian", "_public_key", "_instance_id",
         "_runtime_id", "_lifecycle_generation", "_certificate",
         "_delegation_certificate", "_certificate_fingerprint",
-        "_attestor", "_identity_id", "_handles", "_connection_generation",
-        "_lock", "_closed", "_process_reaped",
+        "_attestor", "_identity_id", "_endpoint_id", "_role", "_handle",
+        "_connection_generation", "_lock", "_closed",
         "_timeout_seconds", "_request_sequence", "_response_sequence",
     )
 
@@ -609,7 +669,7 @@ class _BrokerChannel:
         self,
         *,
         connection: Connection,
-        process: multiprocessing.Process,
+        custodian: _BrokerProcessCustodian,
         public_key: bytes,
         instance_id: str,
         runtime_id: str,
@@ -618,11 +678,13 @@ class _BrokerChannel:
         delegation_certificate: BrokerDelegationCertificate,
         attestor: AuthorityAttestorClient,
         identity_id: str,
-        handles: Mapping[str, BrokerAuthorityHandle],
+        endpoint_id: str,
+        role: BrokerRepositoryRole,
+        handle: BrokerAuthorityHandle,
         timeout_seconds: float,
     ) -> None:
         self._connection = connection
-        self._process = process
+        self._custodian = custodian
         self._public_key = public_key
         self._instance_id = instance_id
         self._runtime_id = runtime_id
@@ -634,22 +696,25 @@ class _BrokerChannel:
         )
         self._attestor = attestor
         self._identity_id = identity_id
-        self._handles = dict(handles)
+        self._endpoint_id = endpoint_id
+        self._role = role
+        self._handle = handle
         self._connection_generation = 1
         self._lock = threading.Lock()
         self._closed = False
-        self._process_reaped = False
         self._timeout_seconds = float(timeout_seconds)
         self._request_sequence = 0
         self._response_sequence = 0
         if not self._identity_is_current():
             self._closed = True
-            self._reap_process()
+            self._fail_and_reap()
             _invalid("broker_channel.certificate")
 
     @property
     def public_key(self) -> bytes:
-        return bytes(self._public_key)
+        with self._lock:
+            self._sync_endpoint_identity_locked()
+            return bytes(self._public_key)
 
     @property
     def instance_id(self) -> str:
@@ -657,25 +722,43 @@ class _BrokerChannel:
 
     @property
     def alive(self) -> bool:
-        return bool(
-            not self._closed
-            and not self._process_reaped
-            and self._process.is_alive()
-            and self._identity_is_current()
-        )
+        if self._closed or not self._custodian.alive:
+            return False
+        return self._identity_is_current()
 
     @property
     def certificate(self) -> BrokerInstanceCertificate:
-        return self._certificate
+        with self._lock:
+            self._sync_endpoint_identity_locked()
+            return self._certificate
 
-    def current_handle(
-        self,
-        role: BrokerRepositoryRole,
-    ) -> BrokerAuthorityHandle:
-        handle = self._handles.get(role.value)
-        if type(handle) is not BrokerAuthorityHandle:
-            raise _broker_unavailable("handle_invalid")
-        return handle
+    @property
+    def role(self) -> BrokerRepositoryRole:
+        return self._role
+
+    @property
+    def endpoint_id(self) -> str:
+        return self._endpoint_id
+
+    @property
+    def handle(self) -> BrokerAuthorityHandle:
+        return self._handle
+
+    def current_session_identity(self) -> Mapping[str, object]:
+        with self._lock:
+            self._sync_endpoint_identity_locked()
+            return {
+                "broker_instance_id": self._instance_id,
+                "runtime_id": self._runtime_id,
+                "lifecycle_generation": self._lifecycle_generation,
+                "session_public_key": bytes(self._public_key),
+                "session_key_fingerprint": _session_key_fingerprint(
+                    self._public_key,
+                ),
+                "certificate_fingerprint": self._certificate_fingerprint,
+                "endpoint_id": self._endpoint_id,
+                "role": self._role.value,
+            }
 
     def _identity_is_current(
         self, now: datetime | None = None,
@@ -686,26 +769,13 @@ class _BrokerChannel:
     def _attested_identity(self) -> dict[str, object] | None:
         attestor = getattr(self, "_attestor", None)
         if type(attestor) is not AuthorityAttestorClient:
+            self._fail_and_reap()
             return None
         try:
-            certificate = self._certificate
-            if (
-                type(certificate) is not BrokerInstanceCertificate
-                or _certificate_fingerprint(certificate)
-                != self._certificate_fingerprint
-            ):
-                return None
-            result = attestor.verify_identity(
-                identity_id=self._identity_id,
-                broker_instance_id=self._instance_id,
-                runtime_id=self._runtime_id,
-                lifecycle_generation=self._lifecycle_generation,
-                session_key_fingerprint=_session_key_fingerprint(
-                    self._public_key,
-                ),
-                certificate_fingerprint=self._certificate_fingerprint,
-            )
-        except AuthorityAttestationError:
+            with self._lock:
+                result = self._sync_endpoint_identity_locked()
+        except (AuthorityAttestationError, NsValidationError):
+            self._fail_and_reap()
             return None
         if not (
             result.get("identity_id") == self._identity_id
@@ -718,8 +788,64 @@ class _BrokerChannel:
             and result.get("certificate_fingerprint")
             == self._certificate_fingerprint
         ):
+            self._fail_and_reap()
             return None
         return result
+
+    def _sync_endpoint_identity_locked(self) -> dict[str, object]:
+        result = self._attestor.current_endpoint_identity(
+            identity_id=self._identity_id,
+            endpoint_id=self._endpoint_id,
+            role=self._role.value,
+        )
+        certificate = _decode_certificate(
+            result.get("session_certificate"),
+        )
+        handle = _decode_handle(result.get("handle"))
+        certificate_fingerprint = _certificate_fingerprint(certificate)
+        session_key_fingerprint = _session_key_fingerprint(
+            certificate.session_public_key,
+        )
+        if (
+            result.get("identity_id") != self._identity_id
+            or result.get("broker_instance_id") != self._instance_id
+            or result.get("runtime_id") != self._runtime_id
+            or result.get("endpoint_id") != self._endpoint_id
+            or result.get("role") != self._role.value
+            or result.get("lifecycle_generation")
+            != certificate.lifecycle_generation
+            or result.get("session_key_fingerprint")
+            != session_key_fingerprint
+            or result.get("certificate_fingerprint")
+            != certificate_fingerprint
+            or certificate.broker_instance_id != self._instance_id
+            or certificate.runtime_id != self._runtime_id
+            or handle.broker_instance_id != self._instance_id
+            or handle.runtime_id != self._runtime_id
+            or handle.endpoint_id != self._endpoint_id
+            or handle.role is not self._role
+            or handle.lifecycle_generation
+            != certificate.lifecycle_generation
+            or not handle.verify(
+                certificate.session_public_key,
+                instance_id=self._instance_id,
+            )
+        ):
+            raise AuthorityAttestationError("endpoint_identity_invalid")
+        generation_changed = (
+            certificate.lifecycle_generation
+            != self._lifecycle_generation
+        )
+        self._certificate = certificate
+        self._public_key = certificate.session_public_key
+        self._lifecycle_generation = certificate.lifecycle_generation
+        self._certificate_fingerprint = certificate_fingerprint
+        self._handle = handle
+        if generation_changed:
+            self._connection_generation += 1
+            self._request_sequence = 0
+            self._response_sequence = 0
+        return dict(result)
 
     def _is_production_certificate_chain_current(
         self, now: datetime,
@@ -727,7 +853,7 @@ class _BrokerChannel:
         del now
         identity = self._attested_identity()
         return bool(
-            type(self) is _ProductionBrokerChannel
+            type(self) is _ProductionRoleBrokerChannel
             and identity is not None
             and identity.get("realm") == "production"
         )
@@ -735,43 +861,47 @@ class _BrokerChannel:
     def request(
         self,
         *,
-        handle: BrokerAuthorityHandle,
         operation: str,
         payload: dict[str, object] | list[object] | str | int | float | bool | None,
     ) -> object:
-        if self._closed or not self._process.is_alive():
-            if operation in _WRITE_OPERATIONS:
-                raise NsRuntimeStateStoreIndeterminateWriteError(details={
-                    "component": "authority_broker",
-                    "operation": operation,
-                    "reason": "broker_unavailable_outcome_unknown",
-                })
+        with self._custodian._request_lock:
+            return self._request_serialized(
+                operation=operation,
+                payload=payload,
+            )
+
+    def _request_serialized(
+        self,
+        *,
+        operation: str,
+        payload: dict[str, object] | list[object] | str | int | float | bool | None,
+    ) -> object:
+        if (
+            type(operation) is not str
+            or not _role_allows(self._role, operation)
+        ):
+            raise _state_denied("role_endpoint_operation_denied")
+        if self._closed or not self._custodian.alive:
+            self._fail_and_reap()
             raise _operation_unavailable(operation, "broker_unavailable")
         send_attempted = False
         connection = self._connection
-        process = self._process
         try:
             with self._lock:
-                if self._closed or not self._process.is_alive():
-                    if operation in _WRITE_OPERATIONS:
-                        raise _indeterminate(
-                            operation,
-                            "broker_unavailable_outcome_unknown",
-                        )
+                if self._closed or not self._custodian.alive:
+                    self._fail_and_reap()
                     raise _operation_unavailable(
                         operation, "broker_unavailable",
                     )
                 connection = self._connection
-                process = self._process
                 attestor = self._attestor
-                requested_role = handle.role
-                handle = self.current_handle(requested_role)
+                self._sync_endpoint_identity_locked()
                 self._rotate_if_required_locked(
                     attestor=attestor,
-                    handle=handle,
                     operation=operation,
                 )
-                handle = self.current_handle(requested_role)
+                self._sync_endpoint_identity_locked()
+                handle = self._handle
                 request_id = "ipc_" + uuid.uuid4().hex
                 request_sequence = self._request_sequence + 1
                 request_fingerprint = _state_request_fingerprint(
@@ -782,7 +912,8 @@ class _BrokerChannel:
                 prepared = attestor.prepare_request(
                     identity_id=self._identity_id,
                     connection_generation=self._connection_generation,
-                    handle=_encode_handle(handle),
+                    endpoint_id=self._endpoint_id,
+                    role=self._role.value,
                     operation=operation,
                     request_id=request_id,
                     request_sequence=request_sequence,
@@ -807,8 +938,9 @@ class _BrokerChannel:
                     "certificate_fingerprint": (
                         self._certificate_fingerprint
                     ),
+                    "endpoint_id": self._endpoint_id,
                     "handle_id": handle.handle_id,
-                    "role": handle.role.value,
+                    "role": self._role.value,
                     "operation": operation,
                     "request_id": request_id,
                     "request_sequence": request_sequence,
@@ -822,7 +954,6 @@ class _BrokerChannel:
                     "kind": "request",
                     "request_id": request_id,
                     "request_sequence": request_sequence,
-                    "handle": _encode_handle(handle),
                     "operation": operation,
                     "payload": payload,
                     "attestation": ticket,
@@ -831,9 +962,7 @@ class _BrokerChannel:
                 send_attempted = True
                 connection.send_bytes(raw_request)
                 if not connection.poll(self._timeout_seconds):
-                    self._fail_and_reap(
-                        connection=connection, process=process,
-                    )
+                    self._fail_and_reap(connection=connection)
                     if operation in _WRITE_OPERATIONS:
                         raise _indeterminate(operation, "ipc_timeout")
                     raise _operation_unavailable(operation, "ipc_timeout")
@@ -857,7 +986,6 @@ class _BrokerChannel:
                 )
                 if (
                     connection is not self._connection
-                    or process is not self._process
                     or attestor is not self._attestor
                     or connection_generation
                     != self._connection_generation
@@ -881,7 +1009,7 @@ class _BrokerChannel:
                         ),
                         "attestor.result_json",
                     )
-                    if handle.role is BrokerRepositoryRole.IAM:
+                    if self._role is BrokerRepositoryRole.IAM:
                         signed_iam = _decode_signed_iam_result(
                             decoded_result,
                         )
@@ -917,9 +1045,7 @@ class _BrokerChannel:
         except NsRuntimeStateStoreIndeterminateWriteError:
             raise
         except AuthorityAttestationError:
-            self._fail_and_reap(
-                connection=connection, process=process,
-            )
+            self._fail_and_reap(connection=connection)
             if operation in _WRITE_OPERATIONS and send_attempted:
                 raise _indeterminate(
                     operation, "attestor_verification_failed",
@@ -931,7 +1057,7 @@ class _BrokerChannel:
             if not send_attempted:
                 raise
             self._fail_and_reap(
-                connection=connection, process=process,
+                connection=connection,
             )
             if operation in _WRITE_OPERATIONS:
                 raise _indeterminate(
@@ -940,7 +1066,7 @@ class _BrokerChannel:
             raise _operation_unavailable(operation, "ipc_closed") from None
         except (BrokenPipeError, EOFError, OSError):
             self._fail_and_reap(
-                connection=connection, process=process,
+                connection=connection,
             )
             if operation in _WRITE_OPERATIONS and send_attempted:
                 raise _indeterminate(operation, "ipc_invalid_response") from None
@@ -959,7 +1085,6 @@ class _BrokerChannel:
         self,
         *,
         attestor: AuthorityAttestorClient,
-        handle: BrokerAuthorityHandle,
         operation: str,
     ) -> None:
         probe_id = "rotation_probe_" + uuid.uuid4().hex
@@ -969,7 +1094,8 @@ class _BrokerChannel:
         prepared = attestor.prepare_request(
             identity_id=self._identity_id,
             connection_generation=self._connection_generation,
-            handle=_encode_handle(handle),
+            endpoint_id=self._endpoint_id,
+            role=self._role.value,
             operation=operation,
             request_id=probe_id,
             request_sequence=self._request_sequence + 1,
@@ -977,6 +1103,15 @@ class _BrokerChannel:
         )
         if prepared.get("status") == "ready":
             return
+        if prepared.get("status") == "rotation_in_progress":
+            previous_generation = self._lifecycle_generation
+            deadline = time.monotonic() + self._timeout_seconds
+            while time.monotonic() < deadline:
+                self._sync_endpoint_identity_locked()
+                if self._lifecycle_generation > previous_generation:
+                    return
+                time.sleep(0.005)
+            raise AuthorityAttestationError("rotation_wait_timeout")
         if prepared.get("status") != "rotation_required":
             _invalid("attestor.rotation_status")
         ticket = prepared.get("rotation_ticket")
@@ -1012,13 +1147,6 @@ class _BrokerChannel:
         certificate = _decode_certificate(
             rotation.get("session_certificate"),
         )
-        handles_value = rotation.get("handles")
-        if type(handles_value) is not dict:
-            _invalid("rotation.handles")
-        handles = {
-            name: _decode_handle(value)
-            for name, value in handles_value.items()
-        }
         if (
             approved.get("broker_instance_id") != self._instance_id
             or approved.get("runtime_id") != self._runtime_id
@@ -1036,18 +1164,19 @@ class _BrokerChannel:
         self._certificate_fingerprint = _certificate_fingerprint(
             certificate,
         )
-        self._handles = handles
         self._connection_generation += 1
         self._request_sequence = 0
         self._response_sequence = 0
+        self._sync_endpoint_identity_locked()
 
     def close(self, *, terminate: bool = False) -> None:
         try:
             with self._lock:
                 if (
                     not self._closed
-                    and self._process.is_alive()
+                    and self._custodian.alive
                     and not terminate
+                    and self._role is BrokerRepositoryRole.LIFECYCLE
                 ):
                     self._connection.send_bytes(encode_frame({
                         "version": WIRE_VERSION,
@@ -1061,68 +1190,44 @@ class _BrokerChannel:
             pass
         finally:
             self._closed = True
-            self._reap_process()
             try:
-                self._attestor.close()
-            except AuthorityAttestationError:
+                self._connection.close()
+            except OSError:
                 pass
+            self._custodian.reap()
 
     def _fail_and_reap(
         self,
         *,
         connection: object | None = None,
-        process: multiprocessing.Process | None = None,
     ) -> None:
-        self._closed = True
-        self._reap_process(
-            connection=connection,
-            process=process,
-        )
         try:
-            self._attestor.close()
-        except AuthorityAttestationError:
-            pass
-
-    def _reap_process(
-        self,
-        *,
-        connection: object | None = None,
-        process: multiprocessing.Process | None = None,
-    ) -> None:
-        if self._process_reaped:
+            self._closed = True
+        except AttributeError:
             return
-        owned_connection = (
-            self._connection if connection is None else connection
-        )
-        owned_process = self._process if process is None else process
-        for candidate in (owned_connection, self._connection):
-            try:
-                candidate.close()
-            except (AttributeError, OSError):
-                pass
-        owned_process.join(timeout=0.2)
-        if owned_process.is_alive():
-            owned_process.terminate()
-            owned_process.join(timeout=5.0)
-        if owned_process.is_alive():
-            owned_process.kill()
-            owned_process.join(timeout=5.0)
-        if owned_process.is_alive():
-            raise _broker_unavailable("broker_process_did_not_exit")
-        self._process_reaped = True
+        try:
+            (
+                getattr(self, "_connection", None)
+                if connection is None else connection
+            ).close()
+        except (AttributeError, OSError):
+            pass
+        custodian = getattr(self, "_custodian", None)
+        if type(custodian) is _BrokerProcessCustodian:
+            custodian.reap()
 
 
-class _ProductionBrokerChannel(_BrokerChannel):
+class _ProductionRoleBrokerChannel(_RoleBrokerChannel):
     """Exact production channel bound to the compiled deployment root."""
     __slots__ = ()
 
 
-class _ContractTestBrokerChannel(_BrokerChannel):
+class _ContractTestRoleBrokerChannel(_RoleBrokerChannel):
     """Exact deterministic contract-test channel."""
     __slots__ = ()
 
 
-class _IntegrationTestBrokerChannel(_BrokerChannel):
+class _IntegrationTestRoleBrokerChannel(_RoleBrokerChannel):
     """Exact real-provider integration-test channel."""
     __slots__ = ()
 
@@ -1149,10 +1254,15 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
     def _verify_production_chain(self, now: datetime) -> bool:
         channel = getattr(self, "_channel", None)
         del now
-        if type(channel) is not _ProductionBrokerChannel:
+        if (
+            type(channel) is not _ProductionRoleBrokerChannel
+            or channel.role is not BrokerRepositoryRole.IAM
+        ):
             return False
         try:
-            handle = channel.current_handle(BrokerRepositoryRole.IAM)
+            if not channel._identity_is_current():
+                return False
+            handle = channel.handle
         except (NsRuntimeIamUnavailableError, AttributeError):
             return False
         stored_handle = getattr(self, "_handle", None)
@@ -1190,15 +1300,19 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             "revalidate_payload_ref",
         }.intersection(getattr(self, "__dict__", {}))
         expected_channel_type = {
-            ProductionIamAuthorityProxy: _ProductionBrokerChannel,
-            ContractTestIamAuthorityProxy: _ContractTestBrokerChannel,
-            IntegrationTestIamAuthorityProxy: _IntegrationTestBrokerChannel,
+            ProductionIamAuthorityProxy: _ProductionRoleBrokerChannel,
+            ContractTestIamAuthorityProxy: _ContractTestRoleBrokerChannel,
+            IntegrationTestIamAuthorityProxy: _IntegrationTestRoleBrokerChannel,
         }.get(type(self))
         channel = getattr(self, "_channel", None)
         try:
             handle = (
-                channel.current_handle(BrokerRepositoryRole.IAM)
-                if type(channel) is expected_channel_type
+                channel.handle
+                if (
+                    type(channel) is expected_channel_type
+                    and channel.role is BrokerRepositoryRole.IAM
+                    and channel._identity_is_current()
+                )
                 else None
             )
         except (AttributeError, NsRuntimeIamUnavailableError):
@@ -1341,15 +1455,13 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             _invalid("iam_proxy.provenance")
         channel = getattr(self, "_channel", None)
         if type(channel) in {
-            _ProductionBrokerChannel,
-            _ContractTestBrokerChannel,
-            _IntegrationTestBrokerChannel,
+            _ProductionRoleBrokerChannel,
+            _ContractTestRoleBrokerChannel,
+            _IntegrationTestRoleBrokerChannel,
         }:
-            def check_adapter() -> bool:
-                with channel._lock:
-                    return self._is_broker_adapter()
-
-            adapter_is_current = await asyncio.to_thread(check_adapter)
+            adapter_is_current = await asyncio.to_thread(
+                self._is_broker_adapter,
+            )
         else:
             adapter_is_current = False
         if not adapter_is_current:
@@ -1361,16 +1473,12 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                     IntegrationTestIamAuthorityProxy,
                 }
                 and type(channel) in {
-                    _ProductionBrokerChannel,
-                    _ContractTestBrokerChannel,
-                    _IntegrationTestBrokerChannel,
+                    _ProductionRoleBrokerChannel,
+                    _ContractTestRoleBrokerChannel,
+                    _IntegrationTestRoleBrokerChannel,
                 }
                 and type(handle) is BrokerAuthorityHandle
                 and handle.role is BrokerRepositoryRole.IAM
-                and handle.verify(
-                    channel.public_key,
-                    instance_id=channel.instance_id,
-                )
                 and not channel.alive
             ):
                 channel._fail_and_reap()
@@ -1378,15 +1486,10 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             _invalid("iam_proxy.provenance")
         raw_result = await asyncio.to_thread(
             self._channel.request,
-            handle=self._channel.current_handle(
-                BrokerRepositoryRole.IAM,
-            ),
             operation=operation,
             payload=_encode_iam_request(operation, payload),
         )
-        self._handle = self._channel.current_handle(
-            BrokerRepositoryRole.IAM,
-        )
+        self._handle = self._channel.handle
         result = _decode_signed_iam_result(raw_result)
         if type(result) is not BrokerSignedIamResult:
             self._channel._fail_and_reap()
@@ -1414,6 +1517,7 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                 signed_result=_encode_signed_iam_result(authority),
             )
         except AuthorityAttestationError:
+            self._channel._fail_and_reap()
             return False
         return bool(
             result.get("verified") is True
@@ -1455,7 +1559,7 @@ class IntegrationTestIamAuthorityProxy(ProductionIamAuthorityProxy):
 
 
 class _RepositoryProxy:
-    __slots__ = ("_channel", "_handle", "_authority_role")
+    __slots__ = ("_channel", "_handle")
     _ROLE: BrokerRepositoryRole
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -1464,7 +1568,8 @@ class _RepositoryProxy:
 
     @property
     def role(self) -> BrokerRepositoryRole:
-        role = getattr(self, "_authority_role", None)
+        channel = getattr(self, "_channel", None)
+        role = getattr(channel, "role", None)
         if type(role) is not BrokerRepositoryRole:
             raise _state_denied("repository_provenance_denied")
         return role
@@ -1472,11 +1577,16 @@ class _RepositoryProxy:
     def _binding_is_current(self) -> bool:
         binding = _repository_proxy_binding(type(self))
         channel = getattr(self, "_channel", None)
-        role = getattr(self, "_authority_role", None)
+        role = getattr(channel, "role", None)
         try:
             handle = (
-                channel.current_handle(role)
-                if type(role) is BrokerRepositoryRole
+                channel.handle
+                if (
+                    binding is not None
+                    and type(channel) is binding[1]
+                    and type(role) is BrokerRepositoryRole
+                    and channel._identity_is_current()
+                )
                 else None
             )
         except (AttributeError, NsRuntimeIamUnavailableError):
@@ -1494,6 +1604,8 @@ class _RepositoryProxy:
             < handle.lifecycle_generation
         ):
             self._handle = handle
+        if type(handle) is not BrokerAuthorityHandle:
+            return False
         return bool(
             binding is not None
             and type(channel) is binding[1]
@@ -1514,16 +1626,12 @@ class _RepositoryProxy:
     async def _request(self, operation: str, payload: object) -> object:
         binding = _repository_proxy_binding(type(self))
         channel = getattr(self, "_channel", None)
-        role = getattr(self, "_authority_role", None)
+        role = getattr(channel, "role", None)
         if (
             binding is not None
             and type(channel) is binding[1]
             and not channel._identity_is_current()
         ):
-            if operation in _WRITE_OPERATIONS:
-                raise _indeterminate(
-                    operation, "broker_unavailable_outcome_unknown",
-                )
             channel._fail_and_reap()
             raise _state_unavailable("certificate_chain_invalid")
         if (
@@ -1535,11 +1643,10 @@ class _RepositoryProxy:
             raise _state_denied("repository_operation_denied")
         result = await asyncio.to_thread(
             self._channel.request,
-            handle=self._channel.current_handle(role),
             operation=operation,
             payload=payload,
         )
-        self._handle = self._channel.current_handle(role)
+        self._handle = self._channel.handle
         return result
 
     def __copy__(self) -> "_RepositoryProxy":
@@ -1967,22 +2074,28 @@ class AuthorityBrokerStateStoreProxy:
 
     def _binding_is_current(self) -> bool:
         expected_channel_type = {
-            AuthorityBrokerStateStoreProxy: _ProductionBrokerChannel,
+            AuthorityBrokerStateStoreProxy: _ProductionRoleBrokerChannel,
             _ContractTestAuthorityBrokerStateStoreProxy:
-                _ContractTestBrokerChannel,
+                _ContractTestRoleBrokerChannel,
             _IntegrationTestAuthorityBrokerStateStoreProxy:
-                _IntegrationTestBrokerChannel,
+                _IntegrationTestRoleBrokerChannel,
         }.get(type(self))
         channel = getattr(self, "_channel", None)
         handle = getattr(self, "_handle", None)
         try:
             current_handle = (
-                channel.current_handle(BrokerRepositoryRole.LIFECYCLE)
-                if type(channel) is expected_channel_type
+                channel.handle
+                if (
+                    type(channel) is expected_channel_type
+                    and channel.role is BrokerRepositoryRole.LIFECYCLE
+                    and channel._identity_is_current()
+                )
                 else None
             )
         except (AttributeError, NsRuntimeIamUnavailableError):
             current_handle = None
+        if type(current_handle) is not BrokerAuthorityHandle:
+            return False
         if (
             type(handle) is BrokerAuthorityHandle
             and type(current_handle) is BrokerAuthorityHandle
@@ -2017,15 +2130,10 @@ class AuthorityBrokerStateStoreProxy:
             raise _state_unavailable("broker_closed")
         result = decode_health(await asyncio.to_thread(
             self._channel.request,
-            handle=self._channel.current_handle(
-                BrokerRepositoryRole.LIFECYCLE,
-            ),
             operation="state_health",
             payload={},
         ))
-        self._handle = self._channel.current_handle(
-            BrokerRepositoryRole.LIFECYCLE,
-        )
+        self._handle = self._channel.handle
         if type(result) is not StateStoreHealth:
             raise _state_unavailable("invalid_health")
         self._state = "open"
@@ -2035,15 +2143,10 @@ class AuthorityBrokerStateStoreProxy:
             raise _state_unavailable("broker_provenance_invalid")
         result = decode_health(await asyncio.to_thread(
             self._channel.request,
-            handle=self._channel.current_handle(
-                BrokerRepositoryRole.LIFECYCLE,
-            ),
             operation="state_health",
             payload={},
         ))
-        self._handle = self._channel.current_handle(
-            BrokerRepositoryRole.LIFECYCLE,
-        )
+        self._handle = self._channel.handle
         if type(result) is not StateStoreHealth:
             raise _state_unavailable("invalid_health")
         return result
@@ -2080,7 +2183,7 @@ class ProductionAuthorityBroker:
     """Main-process ownership of only IPC proxies and public verification data."""
 
     __slots__ = (
-        "iam", "repositories", "state_store", "public_key",
+        "iam", "repositories", "state_store",
         "broker_instance_id", "_channel",
     )
 
@@ -2092,15 +2195,22 @@ class ProductionAuthorityBroker:
     def alive(self) -> bool:
         return self._channel.alive
 
+    @property
+    def public_key(self) -> bytes:
+        return self._channel.public_key
+
+    def current_session_identity(self) -> Mapping[str, object]:
+        return self._channel.current_session_identity()
+
     def close(self, *, terminate: bool = False) -> None:
         self._channel.close(terminate=terminate)
 
     def __del__(self) -> None:
         channel = getattr(self, "_channel", None)
         if type(channel) in {
-            _ProductionBrokerChannel,
-            _ContractTestBrokerChannel,
-            _IntegrationTestBrokerChannel,
+            _ProductionRoleBrokerChannel,
+            _ContractTestRoleBrokerChannel,
+            _IntegrationTestRoleBrokerChannel,
         }:
             channel.close(terminate=True)
 
@@ -2282,13 +2392,22 @@ def _spawn_authority_broker(
         ),
         timeout_seconds=startup_timeout_seconds,
     )
-    parent, child = context.Pipe(duplex=True)
+    endpoint_pairs = {
+        role.value: context.Pipe(duplex=True)
+        for role in BrokerRepositoryRole
+    }
+    parents = {
+        role: pair[0] for role, pair in endpoint_pairs.items()
+    }
+    children = {
+        role: pair[1] for role, pair in endpoint_pairs.items()
+    }
     root_key_handle = DupFd(root_key_fd)
     secrets_handle = DupFd(secrets_fd)
     process = context.Process(
         target=_authority_broker_process,
         args=(
-            child,
+            children,
             encode_frame(_encode_broker_config(config)),
             root_key_handle,
             secrets_handle,
@@ -2305,7 +2424,8 @@ def _spawn_authority_broker(
     try:
         process.start()
     finally:
-        child.close()
+        for child in children.values():
+            child.close()
         for fd in (root_key_fd, secrets_fd):
             try:
                 os.close(fd)
@@ -2313,7 +2433,7 @@ def _spawn_authority_broker(
                 pass
     try:
         return _accept_started_authority_broker(
-            parent=parent,
+            parents=parents,
             process=process,
             attestor=attestor,
             config=config,
@@ -2321,13 +2441,18 @@ def _spawn_authority_broker(
             startup_timeout_seconds=startup_timeout_seconds,
         )
     except BaseException:
+        for parent in parents.values():
+            try:
+                parent.close()
+            except OSError:
+                pass
         attestor.close()
         raise
 
 
 def _complete_inherited_authority_broker_start(
     *,
-    parent: Connection,
+    parents: Mapping[str, Connection],
     process: multiprocessing.Process,
     attestor: AuthorityAttestorClient,
     config: AuthorityBrokerConfig,
@@ -2338,10 +2463,12 @@ def _complete_inherited_authority_broker_start(
     if (
         type(config) is not AuthorityBrokerConfig
         or not process.is_alive()
+        or set(parents) != {role.value for role in BrokerRepositoryRole}
     ):
         _invalid("broker.pending_bootstrap")
+    lifecycle = parents[BrokerRepositoryRole.LIFECYCLE.value]
     try:
-        parent.send_bytes(encode_frame({
+        lifecycle.send_bytes(encode_frame({
             "version": WIRE_VERSION,
             "kind": "bootstrap_config",
             "config": _encode_broker_config(config),
@@ -2349,7 +2476,7 @@ def _complete_inherited_authority_broker_start(
     except (BrokenPipeError, EOFError, OSError):
         raise _broker_unavailable("bootstrap_channel_closed") from None
     return _accept_started_authority_broker(
-        parent=parent,
+        parents=parents,
         process=process,
         attestor=attestor,
         config=config,
@@ -2360,59 +2487,94 @@ def _complete_inherited_authority_broker_start(
 
 def _accept_started_authority_broker(
     *,
-    parent: Connection,
+    parents: Mapping[str, Connection],
     process: multiprocessing.Process,
     attestor: AuthorityAttestorClient,
     config: AuthorityBrokerConfig,
     realm: str,
     startup_timeout_seconds: float,
 ) -> ProductionAuthorityBroker:
-    if not parent.poll(startup_timeout_seconds):
+    expected_roles = {role.value for role in BrokerRepositoryRole}
+    if set(parents) != expected_roles:
+        raise _broker_unavailable("startup_endpoint_set_invalid")
+    ready_by_role: dict[str, dict[str, object]] = {}
+    try:
+        for role, parent in parents.items():
+            if not parent.poll(startup_timeout_seconds):
+                raise _broker_unavailable("startup_timeout")
+            ready = decode_frame(parent.recv_bytes(MAX_FRAME_BYTES))
+            if type(ready) is not dict or ready.get("ok") is not True:
+                reason = (
+                    ready.get("reason", "startup_failed")
+                    if type(ready) is dict
+                    else "startup_failed"
+                )
+                if reason == "parallel_production_composition":
+                    raise _state_denied(reason)
+                raise _broker_unavailable(str(reason))
+            ready_by_role[role] = ready
+    except (EOFError, OSError, NsValidationError):
+        raise _broker_unavailable("startup_failed") from None
+    except BaseException:
         process.terminate()
         process.join(timeout=5.0)
-        parent.close()
-        raise _broker_unavailable("startup_timeout")
+        for parent in parents.values():
+            parent.close()
+        raise
     try:
-        ready = decode_frame(parent.recv_bytes(MAX_FRAME_BYTES))
-    except (EOFError, OSError, NsValidationError):
-        process.join(timeout=5.0)
-        parent.close()
-        raise _broker_unavailable("startup_failed") from None
-    if type(ready) is not dict or ready.get("ok") is not True:
-        process.join(timeout=5.0)
-        parent.close()
-        reason = (
-            ready.get("reason", "startup_failed")
-            if type(ready) is dict
-            else "startup_failed"
-        )
-        if reason == "parallel_production_composition":
-            raise _state_denied(reason)
-        raise _broker_unavailable(str(reason))
-    try:
-        values = require_object(
-            ready,
-            fields={
+        decoded: dict[str, tuple[dict[str, object], BrokerAuthorityHandle]] = {}
+        for role, ready in ready_by_role.items():
+            values = require_object(
+                ready,
+                fields={
                 "version", "kind", "ok", "delegation_certificate",
-                "certificate", "handles",
-            },
-            field="ready",
-        )
-        if values["version"] != WIRE_VERSION or values["kind"] != "ready":
-            _invalid("ready.version")
+                    "certificate", "endpoint_id", "role", "handle",
+                    "identity_handles", "identity_endpoints",
+                },
+                field="ready",
+            )
+            if (
+                values["version"] != WIRE_VERSION
+                or values["kind"] != "ready"
+                or values["role"] != role
+            ):
+                _invalid("ready.version")
+            decoded[role] = (values, _decode_handle(values["handle"]))
+        lifecycle_values = decoded[
+            BrokerRepositoryRole.LIFECYCLE.value
+        ][0]
         delegation_certificate = _decode_delegation_certificate(
-            values["delegation_certificate"],
+            lifecycle_values["delegation_certificate"],
         )
-        certificate = _decode_certificate(values["certificate"])
+        certificate = _decode_certificate(
+            lifecycle_values["certificate"],
+        )
         public_key = certificate.session_public_key
         instance_id = certificate.broker_instance_id
-        raw_handles = values["handles"]
+        raw_handles = lifecycle_values["identity_handles"]
         if type(raw_handles) is not dict:
             _invalid("ready.handles")
         handles = {
             key: _decode_handle(value)
             for key, value in raw_handles.items()
         }
+        raw_endpoints = lifecycle_values["identity_endpoints"]
+        if type(raw_endpoints) is not dict:
+            _invalid("ready.endpoints")
+        endpoints = {
+            _exact_string(key, "ready.endpoint_role"):
+                _exact_string(value, "ready.endpoint_id")
+            for key, value in raw_endpoints.items()
+        }
+        for role, (values, handle) in decoded.items():
+            if (
+                values["delegation_certificate"]
+                != lifecycle_values["delegation_certificate"]
+                or values["certificate"] != lifecycle_values["certificate"]
+                or values["endpoint_id"] != endpoints[role]
+                or handle != handles[role]
+            ):
+                _invalid("ready.endpoint_binding")
         approved = attestor.approve_identity(
             realm=realm,
             runtime_id=config.runtime_id,
@@ -2424,6 +2586,7 @@ def _accept_started_authority_broker(
                 name: _encode_handle(handle)
                 for name, handle in handles.items()
             },
+            endpoints=endpoints,
         )
         identity_id = _exact_string(
             approved.get("identity_id"), "ready.identity_id",
@@ -2433,32 +2596,42 @@ def _accept_started_authority_broker(
     ):
         process.terminate()
         process.join(timeout=5.0)
-        parent.close()
+        for parent in parents.values():
+            parent.close()
         raise _broker_unavailable("startup_handshake_invalid")
     channel_type = {
-        "production": _ProductionBrokerChannel,
-        "contract-test": _ContractTestBrokerChannel,
-        "integration-test": _IntegrationTestBrokerChannel,
+        "production": _ProductionRoleBrokerChannel,
+        "contract-test": _ContractTestRoleBrokerChannel,
+        "integration-test": _IntegrationTestRoleBrokerChannel,
     }[realm]
-    channel = channel_type(
-        connection=parent,
+    custodian = _BrokerProcessCustodian(
         process=process,
-        public_key=public_key,
-        instance_id=instance_id,
-        runtime_id=config.runtime_id,
-        lifecycle_generation=certificate.lifecycle_generation,
-        certificate=certificate,
-        delegation_certificate=delegation_certificate,
         attestor=attestor,
-        identity_id=identity_id,
-        handles=handles,
-        timeout_seconds=max(
-            config.iam_timeout_seconds,
-            config.state_operation_timeout_seconds,
-        ) + 2.0,
     )
+    channels = {
+        BrokerRepositoryRole(role): channel_type(
+            connection=parents[role],
+            custodian=custodian,
+            public_key=public_key,
+            instance_id=instance_id,
+            runtime_id=config.runtime_id,
+            lifecycle_generation=certificate.lifecycle_generation,
+            certificate=certificate,
+            delegation_certificate=delegation_certificate,
+            attestor=attestor,
+            identity_id=identity_id,
+            endpoint_id=endpoints[role],
+            role=BrokerRepositoryRole(role),
+            handle=handles[role],
+            timeout_seconds=max(
+                config.iam_timeout_seconds,
+                config.state_operation_timeout_seconds,
+            ) + 2.0,
+        )
+        for role in sorted(expected_roles)
+    }
     if set(handles) != {role.value for role in BrokerRepositoryRole}:
-        channel.close(terminate=True)
+        channels[BrokerRepositoryRole.LIFECYCLE].close(terminate=True)
         raise _broker_unavailable("startup_handle_invalid")
 
     iam_type = {
@@ -2467,7 +2640,7 @@ def _accept_started_authority_broker(
         "integration-test": IntegrationTestIamAuthorityProxy,
     }[realm]
     iam = object.__new__(iam_type)
-    iam._channel = channel
+    iam._channel = channels[BrokerRepositoryRole.IAM]
     iam._handle = handles[BrokerRepositoryRole.IAM.value]
     iam._clock = SystemClock()
     iam._iam_mode = config.iam_mode
@@ -2505,9 +2678,8 @@ def _accept_started_authority_broker(
         BrokerRepositoryRole.AUDIT,
     ), proxy_types):
         proxy = object.__new__(proxy_type)
-        proxy._channel = channel
+        proxy._channel = channels[role]
         proxy._handle = handles[role.value]
-        proxy._authority_role = role
         proxies[role] = proxy
     repositories = AuthorityBrokerRepositories(
         admission=proxies[BrokerRepositoryRole.ADMISSION],  # type: ignore[arg-type]
@@ -2522,7 +2694,7 @@ def _accept_started_authority_broker(
         "integration-test": _IntegrationTestAuthorityBrokerStateStoreProxy,
     }[realm]
     state_store = object.__new__(state_store_type)
-    state_store._channel = channel
+    state_store._channel = channels[BrokerRepositoryRole.LIFECYCLE]
     state_store._handle = handles[BrokerRepositoryRole.LIFECYCLE.value]
     state_store._state = "new"
 
@@ -2535,9 +2707,8 @@ def _accept_started_authority_broker(
     value.iam = iam
     value.repositories = repositories
     value.state_store = state_store
-    value.public_key = bytes(public_key)
     value.broker_instance_id = instance_id
-    value._channel = channel
+    value._channel = channels[BrokerRepositoryRole.LIFECYCLE]
     return value
 
 
@@ -3201,6 +3372,7 @@ def _new_session_authority(
     instance_id: str,
     runtime_id: str,
     generation: int,
+    endpoints: Mapping[str, str],
     session_ttl_seconds: float,
 ) -> tuple[
     Ed25519PrivateKey,
@@ -3245,6 +3417,7 @@ def _new_session_authority(
         role.value: _new_handle(
             private_key=private_key,
             instance_id=instance_id,
+            endpoint_id=endpoints[role.value],
             role=role,
             runtime_id=runtime_id,
             generation=generation,
@@ -3257,13 +3430,14 @@ def _new_session_authority(
 def _verify_attestor_ticket(
     ticket: object,
     *,
-    attestor_public_key: bytes,
-    attestor_instance_id: str,
+    delegation_certificate: BrokerDelegationCertificate,
     identity_id: str,
     instance_id: str,
     runtime_id: str,
     generation: int,
     session_public_key: bytes,
+    endpoint_id: str,
+    endpoint_role: BrokerRepositoryRole,
     handle: BrokerAuthorityHandle | None = None,
     operation: str | None = None,
     request_id: str | None = None,
@@ -3280,11 +3454,16 @@ def _verify_attestor_ticket(
         for name, value in ticket.items()
         if name != "signature"
     }
-    if not _verify(attestor_public_key, _canonical(values), signature):
+    if not _verify(
+        delegation_certificate.attestor_public_key,
+        _canonical(values),
+        signature,
+    ):
         _invalid("attestor.ticket.signature")
     now = datetime.now(timezone.utc)
     if (
-        values.get("attestor_instance_id") != attestor_instance_id
+        values.get("attestor_instance_id")
+        != delegation_certificate.attestor_instance_id
         or values.get("identity_id") != identity_id
         or values.get("broker_instance_id") != instance_id
         or values.get("runtime_id") != runtime_id
@@ -3294,7 +3473,9 @@ def _verify_attestor_ticket(
         _invalid("attestor.ticket.binding")
     if handle is None:
         if (
-            values.get("current_generation") != generation
+            values.get("endpoint_id") != endpoint_id
+            or values.get("role") != endpoint_role.value
+            or values.get("current_generation") != generation
             or values.get("next_generation") != generation + 1
         ):
             _invalid("attestor.rotation_ticket")
@@ -3304,7 +3485,9 @@ def _verify_attestor_ticket(
         or values.get("session_key_fingerprint")
         != _session_key_fingerprint(session_public_key)
         or values.get("handle_id") != handle.handle_id
+        or values.get("endpoint_id") != endpoint_id
         or values.get("role") != handle.role.value
+        or handle.role is not endpoint_role
         or values.get("operation") != operation
         or values.get("request_id") != request_id
         or values.get("request_sequence") != request_sequence
@@ -3315,7 +3498,7 @@ def _verify_attestor_ticket(
 
 
 async def _broker_async_main(
-    connection: Connection,
+    connections: Mapping[str, Connection],
     config: AuthorityBrokerConfig,
     root_private_key: Ed25519PrivateKey,
     secrets: Mapping[str, object],
@@ -3325,6 +3508,17 @@ async def _broker_async_main(
     session_ttl_seconds: float,
     delegation_ttl_seconds: float,
 ) -> None:
+    expected_roles = {role.value for role in BrokerRepositoryRole}
+    if set(connections) != expected_roles:
+        _invalid("broker.endpoint_set")
+    endpoints = {
+        role: "endpoint_" + uuid.uuid4().hex
+        for role in expected_roles
+    }
+    connection_roles = {
+        id(connection): BrokerRepositoryRole(role)
+        for role, connection in connections.items()
+    }
     delegation_private_key = Ed25519PrivateKey.generate()
     delegation_public_key = delegation_private_key.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
@@ -3334,8 +3528,8 @@ async def _broker_async_main(
     iam = _BrokerIamBackend(config, secrets)
     state = _BrokerStateBackend(config, secrets)
     iam_sequence = 0
-    request_sequence = 0
-    response_sequence = 0
+    request_sequences = {role: 0 for role in expected_roles}
+    response_sequences = {role: 0 for role in expected_roles}
     generation = 1
     now = datetime.now(timezone.utc)
     delegation_values = {
@@ -3343,6 +3537,8 @@ async def _broker_async_main(
         "broker_instance_id": instance_id,
         "runtime_id": config.runtime_id,
         "delegation_public_key": encode_bytes(delegation_public_key),
+        "attestor_instance_id": attestor_instance_id,
+        "attestor_public_key": encode_bytes(attestor_public_key),
         "allowed_usages": list(_DELEGATION_USAGES),
         "issued_at": encode_time(now),
         "expires_at": encode_time(
@@ -3355,6 +3551,8 @@ async def _broker_async_main(
         broker_instance_id=instance_id,
         runtime_id=config.runtime_id,
         delegation_public_key=delegation_public_key,
+        attestor_instance_id=attestor_instance_id,
+        attestor_public_key=attestor_public_key,
         allowed_usages=_DELEGATION_USAGES,
         issued_at=now,
         expires_at=now + timedelta(seconds=delegation_ttl_seconds),
@@ -3374,6 +3572,7 @@ async def _broker_async_main(
         instance_id=instance_id,
         runtime_id=config.runtime_id,
         generation=generation,
+        endpoints=endpoints,
         session_ttl_seconds=session_ttl_seconds,
     )
     identity_id = "identity:" + hashlib.sha256(_canonical({
@@ -3383,246 +3582,284 @@ async def _broker_async_main(
     })).hexdigest()
     try:
         await state.open()
-        connection.send_bytes(encode_frame({
-            "version": WIRE_VERSION,
-            "kind": "ready",
-            "ok": True,
-            "delegation_certificate": _encode_delegation_certificate(
-                delegation_certificate,
-            ),
-            "certificate": _encode_certificate(certificate),
-            "handles": {
-                role: _encode_handle(handle)
-                for role, handle in handles.items()
-            },
-        }))
-        while True:
-            try:
-                raw_message = await asyncio.to_thread(
-                    connection.recv_bytes,
-                    MAX_FRAME_BYTES,
-                )
-                message = decode_frame(raw_message)
-            except (EOFError, OSError, NsValidationError):
-                break
-            if message == {
+        encoded_handles = {
+            role: _encode_handle(handle)
+            for role, handle in handles.items()
+        }
+        for role, connection in connections.items():
+            connection.send_bytes(encode_frame({
                 "version": WIRE_VERSION,
-                "kind": "shutdown",
-            }:
-                connection.send_bytes(encode_frame({
-                    "version": WIRE_VERSION,
-                    "kind": "shutdown_complete",
-                }))
-                break
-            if (
-                type(message) is dict
-                and set(message) == {"version", "kind", "ticket"}
-                and message.get("version") == WIRE_VERSION
-                and message.get("kind") == "rotate_session"
-            ):
-                ticket = _verify_attestor_ticket(
-                    message["ticket"],
-                    attestor_public_key=attestor_public_key,
-                    attestor_instance_id=attestor_instance_id,
-                    identity_id=identity_id,
-                    instance_id=instance_id,
-                    runtime_id=config.runtime_id,
-                    generation=generation,
-                    session_public_key=session_public_key,
-                )
-                next_generation = generation + 1
-                (
-                    next_private_key,
-                    next_public_key,
-                    next_certificate,
-                    next_handles,
-                ) = _new_session_authority(
-                    delegation_private_key=delegation_private_key,
-                    delegation_certificate=delegation_certificate,
-                    realm=realm,
-                    instance_id=instance_id,
-                    runtime_id=config.runtime_id,
-                    generation=next_generation,
-                    session_ttl_seconds=session_ttl_seconds,
-                )
-                rotation_values = {
-                    "kind": "session_rotation",
-                    "ticket_nonce": ticket["nonce"],
-                    "delegation_fingerprint": (
-                        delegation_certificate.fingerprint
-                    ),
-                    "session_certificate": _encode_certificate(
-                        next_certificate,
-                    ),
-                    "handles": {
-                        role: _encode_handle(handle)
-                        for role, handle in next_handles.items()
-                    },
-                }
-                connection.send_bytes(encode_frame({
-                    "version": WIRE_VERSION,
-                    **rotation_values,
-                    "signature": encode_bytes(
-                        delegation_private_key.sign(
-                            _canonical(rotation_values),
-                        ),
-                    ),
-                }))
-                session_private_key = next_private_key
-                session_public_key = next_public_key
-                certificate = next_certificate
-                handles = next_handles
-                generation = next_generation
-                request_sequence = 0
-                response_sequence = 0
-                iam_sequence = 0
-                continue
-            if type(message) is not dict or set(message) != {
-                "version", "kind", "request_id", "request_sequence",
-                "handle", "operation", "payload", "attestation",
-            }:
-                # No request id can be trusted, so close instead of reflecting
-                # attacker-controlled structure into a response.
-                break
-            request_id = message["request_id"]
-            incoming_request_sequence = message["request_sequence"]
-            operation = message["operation"]
-            if (
-                message["version"] != WIRE_VERSION
-                or message["kind"] != "request"
-                or type(request_id) is not str
-                or not request_id
-                or type(incoming_request_sequence) is not int
-                or incoming_request_sequence != request_sequence + 1
-                or type(operation) is not str
-            ):
-                break
-            request_sequence = incoming_request_sequence
+                "kind": "ready",
+                "ok": True,
+                "delegation_certificate": _encode_delegation_certificate(
+                    delegation_certificate,
+                ),
+                "certificate": _encode_certificate(certificate),
+                "endpoint_id": endpoints[role],
+                "role": role,
+                "handle": encoded_handles[role],
+                "identity_handles": encoded_handles,
+                "identity_endpoints": endpoints,
+            }))
+        stop = False
+        while not stop:
             try:
-                handle = _decode_handle(message["handle"])
-            except NsValidationError:
-                break
-            payload = message["payload"]
-            request_fingerprint = _state_request_fingerprint(
-                operation=operation,
-                handle=handle,
-                payload=payload,
-            )
-            try:
-                _verify_attestor_ticket(
-                    message["attestation"],
-                    attestor_public_key=attestor_public_key,
-                    attestor_instance_id=attestor_instance_id,
-                    identity_id=identity_id,
-                    instance_id=instance_id,
-                    runtime_id=config.runtime_id,
-                    generation=generation,
-                    session_public_key=session_public_key,
-                    handle=handle,
-                    operation=operation,
-                    request_id=request_id,
-                    request_sequence=request_sequence,
-                    request_fingerprint=request_fingerprint,
+                ready_connections = await asyncio.to_thread(
+                    wait_connections,
+                    tuple(connections.values()),
                 )
-            except NsValidationError:
+            except (OSError, ValueError):
                 break
-            if (
-                not handle.verify(
-                    session_public_key,
-                    instance_id=instance_id,
-                )
-                or handle.lifecycle_generation != generation
-                or handles.get(handle.role.value) != handle
-                or not _role_allows(handle.role, operation)
-            ):
-                response_sequence += 1
-                connection.send_bytes(encode_frame(_signed_response_envelope(
-                    _sign_state_response(
-                        private_key=session_private_key,
-                        certificate=certificate,
-                        request_id=request_id,
-                        request_sequence=request_sequence,
-                        operation=operation,
-                        handle=handle,
-                        request_fingerprint=request_fingerprint,
-                        response_sequence=response_sequence,
-                        error=_error_values(
-                            "state_denied", "handle_denied",
-                        ),
-                    ),
-                )))
-                continue
-            try:
-                if handle.role is BrokerRepositoryRole.IAM:
-                    typed_request = _decode_iam_request(operation, payload)
-                    typed_result = await iam.execute(
-                        operation, typed_request,
+            for connection in ready_connections:
+                endpoint_role = connection_roles.get(id(connection))
+                if endpoint_role is None:
+                    stop = True
+                    break
+                role_name = endpoint_role.value
+                endpoint_id = endpoints[role_name]
+                try:
+                    message = decode_frame(
+                        connection.recv_bytes(MAX_FRAME_BYTES),
                     )
-                    iam_sequence += 1
-                    result = _sign_iam_result(
-                        private_key=session_private_key,
+                except (EOFError, OSError, NsValidationError):
+                    stop = True
+                    break
+                if message == {
+                    "version": WIRE_VERSION,
+                    "kind": "shutdown",
+                }:
+                    if endpoint_role is not BrokerRepositoryRole.LIFECYCLE:
+                        stop = True
+                        break
+                    connection.send_bytes(encode_frame({
+                        "version": WIRE_VERSION,
+                        "kind": "shutdown_complete",
+                    }))
+                    stop = True
+                    break
+                if (
+                    type(message) is dict
+                    and set(message) == {"version", "kind", "ticket"}
+                    and message.get("version") == WIRE_VERSION
+                    and message.get("kind") == "rotate_session"
+                ):
+                    ticket = _verify_attestor_ticket(
+                        message["ticket"],
+                        delegation_certificate=delegation_certificate,
+                        identity_id=identity_id,
                         instance_id=instance_id,
-                        lifecycle_generation=generation,
+                        runtime_id=config.runtime_id,
+                        generation=generation,
                         session_public_key=session_public_key,
+                        endpoint_id=endpoint_id,
+                        endpoint_role=endpoint_role,
+                    )
+                    next_generation = generation + 1
+                    (
+                        next_private_key,
+                        next_public_key,
+                        next_certificate,
+                        next_handles,
+                    ) = _new_session_authority(
+                        delegation_private_key=delegation_private_key,
+                        delegation_certificate=delegation_certificate,
+                        realm=realm,
+                        instance_id=instance_id,
+                        runtime_id=config.runtime_id,
+                        generation=next_generation,
+                        endpoints=endpoints,
+                        session_ttl_seconds=session_ttl_seconds,
+                    )
+                    rotation_values = {
+                        "kind": "session_rotation",
+                        "ticket_nonce": ticket["nonce"],
+                        "delegation_fingerprint": (
+                            delegation_certificate.fingerprint
+                        ),
+                        "session_certificate": _encode_certificate(
+                            next_certificate,
+                        ),
+                        "handles": {
+                            role: _encode_handle(handle)
+                            for role, handle in next_handles.items()
+                        },
+                    }
+                    connection.send_bytes(encode_frame({
+                        "version": WIRE_VERSION,
+                        **rotation_values,
+                        "signature": encode_bytes(
+                            delegation_private_key.sign(
+                                _canonical(rotation_values),
+                            ),
+                        ),
+                    }))
+                    session_private_key = next_private_key
+                    session_public_key = next_public_key
+                    certificate = next_certificate
+                    handles = next_handles
+                    generation = next_generation
+                    request_sequences = {
+                        role: 0 for role in expected_roles
+                    }
+                    response_sequences = {
+                        role: 0 for role in expected_roles
+                    }
+                    iam_sequence = 0
+                    continue
+                if type(message) is not dict or set(message) != {
+                    "version", "kind", "request_id", "request_sequence",
+                    "operation", "payload", "attestation",
+                }:
+                    stop = True
+                    break
+                request_id = message["request_id"]
+                incoming_request_sequence = message["request_sequence"]
+                operation = message["operation"]
+                if (
+                    message["version"] != WIRE_VERSION
+                    or message["kind"] != "request"
+                    or type(request_id) is not str
+                    or not request_id
+                    or type(incoming_request_sequence) is not int
+                    or incoming_request_sequence
+                    != request_sequences[role_name] + 1
+                    or type(operation) is not str
+                ):
+                    stop = True
+                    break
+                request_sequences[role_name] = incoming_request_sequence
+                handle = handles[role_name]
+                payload = message["payload"]
+                request_fingerprint = _state_request_fingerprint(
+                    operation=operation,
+                    handle=handle,
+                    payload=payload,
+                )
+                try:
+                    _verify_attestor_ticket(
+                        message["attestation"],
+                        delegation_certificate=delegation_certificate,
+                        identity_id=identity_id,
+                        instance_id=instance_id,
+                        runtime_id=config.runtime_id,
+                        generation=generation,
+                        session_public_key=session_public_key,
+                        endpoint_id=endpoint_id,
+                        endpoint_role=endpoint_role,
+                        handle=handle,
                         operation=operation,
-                        request=typed_request,
-                        result=typed_result,
-                        sequence=iam_sequence,
-                        ttl_seconds=config.permission_snapshot_ttl_seconds,
-                        certificate_expires_at=certificate.expires_at,
+                        request_id=request_id,
+                        request_sequence=incoming_request_sequence,
+                        request_fingerprint=request_fingerprint,
                     )
-                    wire_result = _encode_signed_iam_result(result)
-                else:
-                    result = await state.execute(
-                        role=handle.role,
-                        operation=operation,
-                        payload=payload,
+                except NsValidationError:
+                    stop = True
+                    break
+                if (
+                    handle.endpoint_id != endpoint_id
+                    or handle.role is not endpoint_role
+                    or not handle.verify(
+                        session_public_key,
+                        instance_id=instance_id,
                     )
-                    wire_result = _encode_state_response(
-                        operation, result, payload,
-                    )
-            except BaseException as error:
-                if not isinstance(error, Exception):
-                    raise
-                response_sequence += 1
-                connection.send_bytes(encode_frame(_signed_response_envelope(
-                    _sign_state_response(
+                    or handle.lifecycle_generation != generation
+                    or not _role_allows(endpoint_role, operation)
+                ):
+                    response_sequences[role_name] += 1
+                    connection.send_bytes(encode_frame(
+                        _signed_response_envelope(_sign_state_response(
+                            private_key=session_private_key,
+                            certificate=certificate,
+                            request_id=request_id,
+                            request_sequence=incoming_request_sequence,
+                            operation=operation,
+                            handle=handle,
+                            request_fingerprint=request_fingerprint,
+                            response_sequence=response_sequences[role_name],
+                            error=_error_values(
+                                "state_denied", "endpoint_role_denied",
+                            ),
+                        )),
+                    ))
+                    continue
+                try:
+                    if endpoint_role is BrokerRepositoryRole.IAM:
+                        typed_request = _decode_iam_request(
+                            operation, payload,
+                        )
+                        typed_result = await iam.execute(
+                            operation, typed_request,
+                        )
+                        iam_sequence += 1
+                        result = _sign_iam_result(
+                            private_key=session_private_key,
+                            instance_id=instance_id,
+                            lifecycle_generation=generation,
+                            session_public_key=session_public_key,
+                            operation=operation,
+                            request=typed_request,
+                            result=typed_result,
+                            sequence=iam_sequence,
+                            ttl_seconds=(
+                                config.permission_snapshot_ttl_seconds
+                            ),
+                            certificate_expires_at=certificate.expires_at,
+                        )
+                        wire_result = _encode_signed_iam_result(result)
+                    else:
+                        result = await state.execute(
+                            role=endpoint_role,
+                            operation=operation,
+                            payload=payload,
+                        )
+                        wire_result = _encode_state_response(
+                            operation, result, payload,
+                        )
+                except BaseException as error:
+                    if not isinstance(error, Exception):
+                        raise
+                    response_sequences[role_name] += 1
+                    signed_response = _sign_state_response(
                         private_key=session_private_key,
                         certificate=certificate,
                         request_id=request_id,
-                        request_sequence=request_sequence,
+                        request_sequence=incoming_request_sequence,
                         operation=operation,
                         handle=handle,
                         request_fingerprint=request_fingerprint,
-                        response_sequence=response_sequence,
+                        response_sequence=response_sequences[role_name],
                         error=_exception_values(error),
-                    ),
-                )))
-            else:
-                response_sequence += 1
-                connection.send_bytes(encode_frame(_signed_response_envelope(
-                    _sign_state_response(
+                    )
+                else:
+                    response_sequences[role_name] += 1
+                    signed_response = _sign_state_response(
                         private_key=session_private_key,
                         certificate=certificate,
                         request_id=request_id,
-                        request_sequence=request_sequence,
+                        request_sequence=incoming_request_sequence,
                         operation=operation,
                         handle=handle,
                         request_fingerprint=request_fingerprint,
-                        response_sequence=response_sequence,
+                        response_sequence=response_sequences[role_name],
                         result=wire_result,
-                    ),
-                )))
+                    )
+                connection.send_bytes(encode_frame(
+                    _signed_response_envelope(signed_response),
+                ))
     finally:
         try:
             await state.close()
         finally:
             await iam.close()
-            connection.close()
+            for connection in connections.values():
+                try:
+                    connection.close()
+                except OSError:
+                    pass
 
 
 def _authority_broker_process(
-    connection: Connection,
+    connections: Mapping[str, Connection],
     config_raw: bytes | None,
     root_key_handle: object,
     secrets_handle: object,
@@ -3637,6 +3874,11 @@ def _authority_broker_process(
 
     try:
         _require_isolated_broker_process()
+        if set(connections) != {
+            role.value for role in BrokerRepositoryRole
+        }:
+            _invalid("broker.endpoint_set")
+        lifecycle = connections[BrokerRepositoryRole.LIFECYCLE.value]
         if realm not in _BROKER_REALMS:
             _invalid("broker.realm")
         if (
@@ -3670,12 +3912,12 @@ def _authority_broker_process(
         )
         root_private_bytes = b"\0" * len(root_private_bytes)
         if config_raw is None:
-            connection.send_bytes(encode_frame({
+            lifecycle.send_bytes(encode_frame({
                 "version": WIRE_VERSION,
                 "kind": "fd_custody",
             }))
             bootstrap_message = require_object(
-                decode_frame(connection.recv_bytes(MAX_FRAME_BYTES)),
+                decode_frame(lifecycle.recv_bytes(MAX_FRAME_BYTES)),
                 fields={"version", "kind", "config"},
                 field="broker.bootstrap_config",
             )
@@ -3710,7 +3952,7 @@ def _authority_broker_process(
         secrets = _decode_broker_secrets(decode_frame(secrets_raw))
         secrets_raw = b"\0" * len(secrets_raw)
         asyncio.run(_broker_async_main(
-            connection,
+            connections,
             config,
             root_private_key,
             secrets,
@@ -3730,17 +3972,19 @@ def _authority_broker_process(
                 )
                 else type(error).__name__
             )
-            connection.send_bytes(encode_frame({
-                "version": WIRE_VERSION,
-                "kind": "ready_error",
-                "ok": False,
-                "reason": str(reason),
-            }))
+            for connection in connections.values():
+                connection.send_bytes(encode_frame({
+                    "version": WIRE_VERSION,
+                    "kind": "ready_error",
+                    "ok": False,
+                    "reason": str(reason),
+                }))
         except (BrokenPipeError, EOFError, OSError):
             pass
         finally:
             try:
-                connection.close()
+                for connection in connections.values():
+                    connection.close()
             except OSError:
                 pass
 
@@ -3749,12 +3993,14 @@ def _new_handle(
     *,
     private_key: Ed25519PrivateKey,
     instance_id: str,
+    endpoint_id: str,
     role: BrokerRepositoryRole,
     runtime_id: str,
     generation: int,
 ) -> BrokerAuthorityHandle:
     values = {
         "broker_instance_id": instance_id,
+        "endpoint_id": endpoint_id,
         "handle_id": "handle_" + uuid.uuid4().hex,
         "role": role.value,
         "runtime_id": runtime_id,
@@ -3762,6 +4008,7 @@ def _new_handle(
     }
     return BrokerAuthorityHandle(
         broker_instance_id=instance_id,
+        endpoint_id=endpoint_id,
         handle_id=values["handle_id"],
         role=role,
         runtime_id=runtime_id,
@@ -4068,24 +4315,16 @@ def _role_allows(role: BrokerRepositoryRole, operation: str) -> bool:
     return operation in _ROLE_OPERATIONS.get(role.value, frozenset())
 
 
-def _channel_realm(channel_type: type[object]) -> str | None:
-    return {
-        _ProductionBrokerChannel: "production",
-        _ContractTestBrokerChannel: "contract-test",
-        _IntegrationTestBrokerChannel: "integration-test",
-    }.get(channel_type)
-
-
 def _repository_proxy_binding(
     proxy_type: type[object],
-) -> tuple[BrokerRepositoryRole, type[_BrokerChannel]] | None:
+) -> tuple[BrokerRepositoryRole, type[_RoleBrokerChannel]] | None:
     values: dict[
         type[object],
-        tuple[BrokerRepositoryRole, type[_BrokerChannel]],
+        tuple[BrokerRepositoryRole, type[_RoleBrokerChannel]],
     ] = {}
     for channel_type, proxy_types in (
         (
-            _ProductionBrokerChannel,
+            _ProductionRoleBrokerChannel,
             (
                 AdmissionRepositoryProxy,
                 SchedulerRepositoryProxy,
@@ -4095,7 +4334,7 @@ def _repository_proxy_binding(
             ),
         ),
         (
-            _ContractTestBrokerChannel,
+            _ContractTestRoleBrokerChannel,
             (
                 _ContractTestAdmissionRepositoryProxy,
                 _ContractTestSchedulerRepositoryProxy,
@@ -4105,7 +4344,7 @@ def _repository_proxy_binding(
             ),
         ),
         (
-            _IntegrationTestBrokerChannel,
+            _IntegrationTestRoleBrokerChannel,
             (
                 _IntegrationTestAdmissionRepositoryProxy,
                 _IntegrationTestSchedulerRepositoryProxy,
@@ -4293,7 +4532,8 @@ def _decode_delegation_certificate(
         value,
         fields={
             "trust_realm", "broker_instance_id", "runtime_id",
-            "delegation_public_key", "allowed_usages", "issued_at",
+            "delegation_public_key", "attestor_instance_id",
+            "attestor_public_key", "allowed_usages", "issued_at",
             "expires_at", "nonce", "signature",
         },
         field="delegation_certificate",
@@ -4320,6 +4560,14 @@ def _decode_delegation_certificate(
         delegation_public_key=decode_bytes(
             fields["delegation_public_key"],
             field="delegation_certificate.delegation_public_key",
+        ),
+        attestor_instance_id=_exact_string(
+            fields["attestor_instance_id"],
+            "delegation_certificate.attestor_instance_id",
+        ),
+        attestor_public_key=decode_bytes(
+            fields["attestor_public_key"],
+            field="delegation_certificate.attestor_public_key",
         ),
         allowed_usages=tuple(usages),
         issued_at=decode_time(
@@ -4359,7 +4607,7 @@ def _decode_handle(value: object) -> BrokerAuthorityHandle:
     fields = require_object(
         value,
         fields={
-            "broker_instance_id", "handle_id", "role", "runtime_id",
+            "broker_instance_id", "endpoint_id", "handle_id", "role", "runtime_id",
             "lifecycle_generation", "signature",
         },
         field="handle",
@@ -4373,6 +4621,9 @@ def _decode_handle(value: object) -> BrokerAuthorityHandle:
     return BrokerAuthorityHandle(
         broker_instance_id=_exact_string(
             fields["broker_instance_id"], "handle.broker_instance_id",
+        ),
+        endpoint_id=_exact_string(
+            fields["endpoint_id"], "handle.endpoint_id",
         ),
         handle_id=_exact_string(fields["handle_id"], "handle.handle_id"),
         role=role,
@@ -4734,6 +4985,7 @@ def _state_request_fingerprint(
         _invalid("state_request.binding")
     return "sha256:" + hashlib.sha256(encode_frame({
         "operation": operation,
+        "endpoint_id": handle.endpoint_id,
         "handle_id": handle.handle_id,
         "role": handle.role.value,
         "payload": payload,

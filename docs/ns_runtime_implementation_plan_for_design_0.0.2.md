@@ -52,6 +52,15 @@
 - P11-FIX-13：`send_bytes()`调用前设置send-attempted；调用开始后的OS/transport失败统一reap broker并将StateStore write映射为indeterminate。没有delivery retry、WRITE_UNCERTAIN恢复或P12状态扩展。
 - 冻结：状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12保持`BLOCKED / F0`，未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
 
+### P08-FIX-09 / P09-FIX-13 / P11-FIX-14 root-bound attestor and role endpoint closure
+
+- 状态：`IMPLEMENTED / F3 (local only)`；本轮威胁模型、root-bound attestor与role-specific endpoint见ADR-052。本地test/integration root、真实Redis standalone及attestor crash/rotation已执行；deployment production root正向启动仍未验证，不标记为production VERIFIED。
+- 威胁模型：P11保证普通runtime模块不能让broker执行超出其固定role endpoint的IAM/StateStore操作；不把主runtime已遭任意代码执行完全攻陷、业务方法/调用栈/本地返回值可被替换列为P11防御声明。最终authority只由broker endpoint映射、broker resource policy和root-bound attestor决定，proxy type与字段只防误配。
+- P09-FIX-13：root delegation新增attestor instance/public key、用途、时效和nonce绑定。broker仅接受delegation指定attestor签发的ticket，attestor也拒绝未绑定自身identity的delegation；攻击者自建exact client/process/Pipe及格式正确ticket不能获得production批准。
+- P08-FIX-09：bootstrap为IAM、五个repository role及lifecycle分别建立独立OS endpoint。请求不发送caller-selected role/handle，broker按实际connection决定role并执行operation/resource allowlist；每个proxy只持有自身endpoint，稳定main图不保存全部role handle/channel collection。与broker单执行队列一致的非authority调度锁串行send/rotation/attestor verification，关闭跨endpoint轮换时的旧generation response竞态，但不保存endpoint或handle集合。
+- P11-FIX-14：attestor或approved identity失效会立即reap broker并释放physical-domain lease；只有send已尝试的write为indeterminate。公开session key/generation/fingerprint动态跟随attestor批准的当前rotation generation；旧endpoint/ticket/response/generation继续拒绝。
+- 冻结：状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12保持`BLOCKED / F0`，未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
+
 ---
 
 ## 0. 文档执行规则
