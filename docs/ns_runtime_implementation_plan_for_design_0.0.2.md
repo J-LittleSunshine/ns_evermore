@@ -37,6 +37,14 @@
 - P11-FIX-11：delivery admission/scheduler/payload/registry/audit改依赖窄Persistence Protocol，production graph注入对应broker proxy；已发送write遇到IPC timeout/EOF/malformed/signature/sequence/broker exit统一indeterminate，关闭路径执行shutdown/join/terminate/kill。
 - 冻结：状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12保持`BLOCKED / F0`，production `task.dispatch`保持disabled。
 
+### P08-FIX-07 / P09-FIX-11 / P11-FIX-12 certificate chain and signed response closure
+
+- 状态：`IMPLEMENTED / F3 (local only)`；本地证据见acceptance log的“Authority broker certificate chain 与 signed StateStore response复核修复”。没有deployment production root私钥，因此production `main`正向启动仍未验证，不能标记为production VERIFIED。
+- P09-FIX-11：production channel与IAM proxy使用exact production类型并永久绑定预置root签发的instance certificate；authorization/payload authority同时验证certificate chain与session-signed request-bound result。contract/integration exact类型不能通过字段、class attribute、subclass或`object.__new__`跨realm伪装。
+- P08-FIX-07：StateStore全部success/error response在DTO decode前验证session签名、request/handle/operation/fingerprint与严格response sequence。channel异常统一reap child；actual password bytes由一次性FD进入broker，physical-domain lease只绑定stable endpoint/database/namespace/principal。
+- P11-FIX-12：delivery transaction fingerprint改为完整canonical结构；result逐mutation/log绑定精确transaction，错序、错误key/document、同shape不同payload/assertion/index/log、copy/replace/tamper/replay均fail closed。
+- 冻结：状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12保持`BLOCKED / F0`，未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
+
 ---
 
 ## 0. 文档执行规则

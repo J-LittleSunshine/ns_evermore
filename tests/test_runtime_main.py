@@ -47,7 +47,7 @@ def main(**values: object) -> int:
         os.write(key_write, os.urandom(32))
         os.write(secrets_write, json.dumps({
             "iam_service_credential": "test-only-untrusted",
-            "state_password_source": "none",
+            "state_password_base64": None,
         }).encode())
     finally:
         os.close(key_write)

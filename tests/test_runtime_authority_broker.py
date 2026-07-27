@@ -17,6 +17,7 @@ from ns_common.exceptions import (
     NsRuntimeIamUnavailableError,
     NsRuntimeStateStoreCapabilityUnavailableError,
     NsRuntimeStateStoreIndeterminateWriteError,
+    NsRuntimeStateStoreUnavailableError,
     NsValidationError,
 )
 from ns_common.config import NsRuntimeStateStoreConfig
@@ -32,9 +33,16 @@ from ns_common.iam import (
     PayloadRefRevalidationRequest,
 )
 from ns_common.state_store import (
+    StateAssertion,
     StateDocument,
+    StateKey,
+    StateMutation,
+    StateMutationKind,
     StateNamespace,
     StateNamespaceKind,
+    StateRecord,
+    StateRecordReadAssertion,
+    StateRevision,
     create_state_store_provider,
 )
 from ns_common.time import ControlledClock, SystemClock
@@ -45,6 +53,7 @@ from ns_runtime.authority_broker import (
     BrokerInstanceCertificate,
     BrokerRepositoryRole,
     BrokerSignedIamResult,
+    AdmissionRepositoryProxy,
     ProductionIamAuthorityProxy,
     start_contract_test_authority_broker,
     start_production_authority_broker,
@@ -56,6 +65,12 @@ from ns_runtime.authority_wire import (
     require_object,
 )
 from ns_runtime.authority_bootstrap import load_inherited_authority_bootstrap
+from ns_runtime.context import RuntimeDependencySlots
+from ns_runtime.delivery_persistence import (
+    DeliveryPersistencePartition,
+    DeliveryPersistenceTransaction,
+    DeliveryPersistenceTransactionResult,
+)
 from ns_runtime.iam import (
     AuthorizationMode,
     IamClient,
@@ -101,6 +116,145 @@ def _decision(request: IamAccessCheckRequest) -> IamAccessDecision:
         permission_version=request.permission_version,
         decided_at=now,
     )
+
+
+def _test_certificate(
+    root_private_key: Ed25519PrivateKey,
+    session_public_key: bytes,
+    *,
+    instance_id: str = "broker_test",
+    runtime_id: str = "runtime:test",
+    issued_at: datetime | None = None,
+    expires_at: datetime | None = None,
+) -> BrokerInstanceCertificate:
+    issued = issued_at or datetime.now(timezone.utc)
+    expires = expires_at or issued + timedelta(minutes=4)
+    values = {
+        "trust_realm": "contract-test",
+        "broker_instance_id": instance_id,
+        "session_public_key": broker_module.encode_bytes(
+            session_public_key,
+        ),
+        "runtime_id": runtime_id,
+        "lifecycle_generation": 1,
+        "issued_at": broker_module.encode_time(issued),
+        "expires_at": broker_module.encode_time(expires),
+        "nonce": "certificate-nonce",
+    }
+    return BrokerInstanceCertificate(
+        trust_realm="contract-test",
+        broker_instance_id=instance_id,
+        session_public_key=session_public_key,
+        runtime_id=runtime_id,
+        lifecycle_generation=1,
+        issued_at=issued,
+        expires_at=expires,
+        nonce="certificate-nonce",
+        signature=root_private_key.sign(broker_module._canonical(values)),
+    )
+
+
+class _FakeProcess:
+    def __init__(self) -> None:
+        self.running = True
+        self.terminated = False
+        self.killed = False
+
+    def is_alive(self) -> bool:
+        return self.running
+
+    def join(self, timeout=None) -> None:
+        del timeout
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.running = False
+
+    def kill(self) -> None:
+        self.killed = True
+        self.running = False
+
+
+class _FakeConnection:
+    def __init__(self, response) -> None:
+        self.response = response
+        self.sent: bytes | None = None
+        self.closed = False
+
+    def send_bytes(self, value: bytes) -> None:
+        self.sent = value
+
+    def poll(self, timeout: float) -> bool:
+        del timeout
+        return True
+
+    def recv_bytes(self, maximum: int) -> bytes:
+        del maximum
+        return self.response(self.sent)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _test_channel(response):
+    root = Ed25519PrivateKey.generate()
+    session = Ed25519PrivateKey.generate()
+    public_key = session.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    certificate = _test_certificate(root, public_key)
+    process = _FakeProcess()
+    connection = _FakeConnection(response)
+    channel = broker_module._ContractTestBrokerChannel(
+        connection=connection,
+        process=process,
+        public_key=public_key,
+        instance_id=certificate.broker_instance_id,
+        runtime_id=certificate.runtime_id,
+        lifecycle_generation=certificate.lifecycle_generation,
+        certificate=certificate,
+        root_public_key=root.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        ),
+        timeout_seconds=0.1,
+    )
+    return channel, process, connection, session, certificate
+
+
+def _signed_response_bytes(
+    sent: bytes | None,
+    *,
+    session: Ed25519PrivateKey,
+    certificate: BrokerInstanceCertificate,
+    response_sequence: int,
+    operation: str | None = None,
+    response_handle: BrokerAuthorityHandle | None = None,
+    result: object = None,
+    error: object = None,
+) -> bytes:
+    assert sent is not None
+    request = decode_frame(sent)
+    assert type(request) is dict
+    request_handle = broker_module._decode_handle(request["handle"])
+    signed = broker_module._sign_state_response(
+        private_key=session,
+        certificate=certificate,
+        request_id=request["request_id"],
+        request_sequence=request["request_sequence"],
+        operation=operation or request["operation"],
+        handle=response_handle or request_handle,
+        request_fingerprint=broker_module._state_request_fingerprint(
+            operation=request["operation"],
+            handle=request_handle,
+            payload=request["payload"],
+        ),
+        response_sequence=response_sequence,
+        result=({"status": "ok"} if result is None and error is None else result),
+        error=error,
+    )
+    return encode_frame(broker_module._signed_response_envelope(signed))
 
 
 class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
@@ -156,7 +310,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 _config("https://iam.invalid/"),
                 {
                     "iam_service_credential": "s" * 32,
-                    "state_password_source": "none",
+                    "state_password_base64": None,
                 },
             )
         with self.assertRaises(NsValidationError):
@@ -164,7 +318,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 _config("https://iam.invalid/"),
                 {
                     "iam_service_credential": "s" * 32,
-                    "state_password_source": "none",
+                    "state_password_base64": None,
                 },
             )
 
@@ -200,7 +354,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             os.write(key_write, root_bytes)
             os.write(secrets_write, encode_frame({
                 "iam_service_credential": "s" * 32,
-                "state_password_source": "none",
+                "state_password_base64": None,
             }))
         finally:
             os.close(key_write)
@@ -233,7 +387,9 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             os.write(key_write, os.urandom(32))
             os.write(secrets_write, encode_frame({
                 "iam_service_credential": secret_marker,
-                "state_password_source": "none",
+                "state_password_base64": broker_module.encode_bytes(
+                    secret_marker.encode("utf-8"),
+                ),
             }))
         finally:
             os.close(key_write)
@@ -245,6 +401,10 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             bootstrap = load_inherited_authority_bootstrap()
             self.assertNotIn("NS_RUNTIME_AUTHORITY_KEY_FD", os.environ)
             self.assertNotIn("NS_RUNTIME_AUTHORITY_SECRETS_FD", os.environ)
+            self.assertFalse(any(
+                secret_marker in value
+                for value in os.environ.values()
+            ))
             self.assertEqual(
                 {"_connection", "_process", "_consumed"},
                 set(type(bootstrap).__slots__),
@@ -342,10 +502,8 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
     def test_malformed_response_after_write_is_indeterminate(self) -> None:
-        private_key = Ed25519PrivateKey.generate()
-        public_key = private_key.public_key().public_bytes(
-            serialization.Encoding.Raw,
-            serialization.PublicFormat.Raw,
+        channel, process, connection, private_key, _ = _test_channel(
+            lambda sent: b'{"malformed":true}',
         )
         handle = broker_module._new_handle(
             private_key=private_key,
@@ -353,43 +511,6 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             role=BrokerRepositoryRole.ADMISSION,
             runtime_id="runtime:test",
             generation=1,
-        )
-
-        class Process:
-            def is_alive(self):
-                return True
-
-            def join(self, timeout=None):
-                del timeout
-
-            def terminate(self):
-                pass
-
-            def kill(self):
-                pass
-
-        class Connection:
-            def send_bytes(self, value):
-                self.sent = value
-
-            def poll(self, timeout):
-                del timeout
-                return True
-
-            def recv_bytes(self, maximum):
-                del maximum
-                return b'{"malformed":true}'
-
-            def close(self):
-                pass
-
-        channel = broker_module._BrokerChannel(
-            connection=Connection(),
-            process=Process(),
-            public_key=public_key,
-            instance_id="broker_test",
-            timeout_seconds=0.1,
-            realm="contract-test",
         )
         with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
             channel.request(
@@ -406,6 +527,10 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     "log_appends": [],
                 },
             )
+        self.assertFalse(process.is_alive())
+        self.assertTrue(connection.closed)
+        channel.close()
+        self.assertFalse(process.is_alive())
 
     @unittest.skipUnless(os.name == "posix", "requires POSIX process signals")
     async def test_close_kills_broker_stuck_in_operation(self) -> None:
@@ -502,7 +627,346 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(verified.result.allowed)
         self.assertEqual(request.permission_version, verified.result.permission_version)
         self.assertEqual("backend_allow", verified.result.reason)
-        self.assertEqual("contract-test", broker._channel._realm)
+        self.assertEqual(
+            "contract-test",
+            broker._channel.certificate.trust_realm,
+        )
+
+    async def test_exact_realm_types_and_certificate_chain_reject_forgery(
+        self,
+    ) -> None:
+        broker, _ = await self._broker([])
+        channel = broker._channel
+        self.assertIs(
+            broker_module._ContractTestBrokerChannel,
+            type(channel),
+        )
+        with self.assertRaises(AttributeError):
+            object.__setattr__(channel, "_realm", "production")
+
+        forged_iam = object.__new__(ProductionIamAuthorityProxy)
+        for name, value in (
+            ("_channel", channel),
+            ("_handle", broker.iam._handle),
+            ("_clock", SystemClock()),
+            ("_iam_mode", "strict"),
+            ("_authorization_service", None),
+        ):
+            object.__setattr__(forged_iam, name, value)
+        self.assertFalse(forged_iam._is_production_adapter())
+
+        contract_admission = broker.repositories.admission
+        self.assertIs(
+            broker_module._ContractTestAdmissionRepositoryProxy,
+            type(contract_admission),
+        )
+        original_role = (
+            broker_module._ContractTestAdmissionRepositoryProxy._ROLE
+        )
+        broker_module._ContractTestAdmissionRepositoryProxy._ROLE = (
+            BrokerRepositoryRole.SCHEDULER
+        )
+        try:
+            self.assertIs(
+                BrokerRepositoryRole.ADMISSION,
+                contract_admission.role,
+            )
+        finally:
+            broker_module._ContractTestAdmissionRepositoryProxy._ROLE = (
+                original_role
+            )
+        forged_repository = object.__new__(AdmissionRepositoryProxy)
+        object.__setattr__(
+            forged_repository, "_channel", channel,
+        )
+        object.__setattr__(
+            forged_repository, "_handle", contract_admission._handle,
+        )
+        self.assertFalse(forged_repository._binding_is_current())
+        with self.assertRaises(NsValidationError):
+            RuntimeDependencySlots(
+                delivery_admission_persistence=forged_repository,
+            )
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await forged_repository._request("read_delivery", {})
+
+        empty_channel = object.__new__(
+            broker_module._ProductionBrokerChannel,
+        )
+        self.assertFalse(empty_channel._identity_is_current(
+            datetime.now(timezone.utc),
+        ))
+        empty_proxy = object.__new__(ProductionIamAuthorityProxy)
+        object.__setattr__(empty_proxy, "_channel", empty_channel)
+        object.__setattr__(empty_proxy, "_handle", object())
+        self.assertFalse(empty_proxy._is_production_adapter())
+
+    async def test_certificate_tamper_expiry_and_session_mismatch_fail_closed(
+        self,
+    ) -> None:
+        broker, _ = await self._broker([])
+        channel = broker._channel
+        certificate = channel._certificate
+        public_key = channel._public_key
+
+        object.__setattr__(
+            channel,
+            "_certificate",
+            dataclasses.replace(
+                certificate,
+                broker_instance_id="broker_tampered",
+            ),
+        )
+        self.assertFalse(channel._identity_is_current(
+            datetime.now(timezone.utc),
+        ))
+        object.__setattr__(channel, "_certificate", certificate)
+
+        object.__setattr__(channel, "_public_key", os.urandom(32))
+        self.assertFalse(channel._identity_is_current(
+            datetime.now(timezone.utc),
+        ))
+        object.__setattr__(channel, "_public_key", public_key)
+
+        object.__setattr__(
+            channel,
+            "_certificate",
+            dataclasses.replace(
+                certificate,
+                issued_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+                expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            ),
+        )
+        self.assertFalse(channel._identity_is_current(
+            datetime.now(timezone.utc),
+        ))
+        object.__setattr__(channel, "_certificate", certificate)
+        self.assertTrue(channel._identity_is_current(
+            datetime.now(timezone.utc),
+        ))
+        root = Ed25519PrivateKey.generate()
+        session_public = Ed25519PrivateKey.generate().public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+        expired = _test_certificate(
+            root,
+            session_public,
+            issued_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        )
+        self.assertFalse(expired.verify(
+            root.public_key().public_bytes(
+                serialization.Encoding.Raw,
+                serialization.PublicFormat.Raw,
+            ),
+            expected_realm="contract-test",
+            expected_runtime_id=expired.runtime_id,
+            expected_instance_id=expired.broker_instance_id,
+            expected_session_public_key=expired.session_public_key,
+            expected_generation=expired.lifecycle_generation,
+            now=datetime.now(timezone.utc),
+        ))
+
+    def test_unsigned_state_response_is_rejected_and_process_reaped(
+        self,
+    ) -> None:
+        channel, process, _, session, certificate = _test_channel(
+            lambda sent: encode_frame({
+                "version": 1,
+                "kind": "response",
+                "request_id": "unsigned",
+                "result": {},
+            }),
+        )
+        handle = broker_module._new_handle(
+            private_key=session,
+            instance_id=certificate.broker_instance_id,
+            role=BrokerRepositoryRole.LIFECYCLE,
+            runtime_id=certificate.runtime_id,
+            generation=certificate.lifecycle_generation,
+        )
+        with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+            channel.request(
+                handle=handle,
+                operation="state_health",
+                payload={},
+            )
+        self.assertFalse(process.is_alive())
+        channel.close()
+        self.assertFalse(process.is_alive())
+
+    def test_signed_state_response_replay_bindings_fail_closed(self) -> None:
+        attacks = (
+            "operation", "handle", "broker", "request_id",
+            "fingerprint", "sequence", "result", "error",
+        )
+        for attack in attacks:
+            with self.subTest(attack=attack):
+                holder: dict[str, object] = {}
+
+                def response(sent):
+                    session = holder["session"]
+                    certificate = holder["certificate"]
+                    handle = holder["handle"]
+                    assert isinstance(session, Ed25519PrivateKey)
+                    assert isinstance(
+                        certificate, BrokerInstanceCertificate,
+                    )
+                    assert isinstance(handle, BrokerAuthorityHandle)
+                    response_session = session
+                    response_handle = None
+                    operation = None
+                    if attack == "operation":
+                        operation = "read_delivery"
+                    elif attack == "handle":
+                        response_handle = broker_module._new_handle(
+                            private_key=session,
+                            instance_id=certificate.broker_instance_id,
+                            role=BrokerRepositoryRole.ADMISSION,
+                            runtime_id=certificate.runtime_id,
+                            generation=1,
+                        )
+                    elif attack == "broker":
+                        response_session = Ed25519PrivateKey.generate()
+                    raw = _signed_response_bytes(
+                        sent,
+                        session=response_session,
+                        certificate=certificate,
+                        response_sequence=(2 if attack == "sequence" else 1),
+                        operation=operation,
+                        response_handle=response_handle,
+                        error=(
+                            {
+                                "kind": "state_unavailable",
+                                "reason": "signed_error",
+                                "details": {
+                                    "component": "authority_broker",
+                                },
+                            }
+                            if attack == "error" else None
+                        ),
+                    )
+                    if attack in {
+                        "request_id", "fingerprint", "result", "error",
+                    }:
+                        envelope = decode_frame(raw)
+                        assert type(envelope) is dict
+                        signed_values = envelope["signed_response"]
+                        assert type(signed_values) is dict
+                        if attack == "request_id":
+                            signed_values["request_id"] = "ipc_replayed"
+                        elif attack == "fingerprint":
+                            signed_values["request_fingerprint"] = (
+                                "sha256:" + "0" * 64
+                            )
+                        elif attack == "result":
+                            signed_values["result_json"] = (
+                                '{"tampered":true}'
+                            )
+                        else:
+                            signed_values["error_json"] = (
+                                '{"kind":"state_denied"}'
+                            )
+                        return encode_frame(envelope)
+                    return raw
+
+                channel, process, _, session, certificate = _test_channel(
+                    response,
+                )
+                handle = broker_module._new_handle(
+                    private_key=session,
+                    instance_id=certificate.broker_instance_id,
+                    role=BrokerRepositoryRole.LIFECYCLE,
+                    runtime_id=certificate.runtime_id,
+                    generation=1,
+                )
+                holder.update({
+                    "session": session,
+                    "certificate": certificate,
+                    "handle": handle,
+                })
+                with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+                    channel.request(
+                        handle=handle,
+                        operation="state_health",
+                        payload={},
+                    )
+                self.assertFalse(process.is_alive())
+
+    def test_response_sequence_replay_and_write_signature_failure(
+        self,
+    ) -> None:
+        holder: dict[str, object] = {"calls": 0}
+
+        def replay(sent):
+            holder["calls"] = int(holder["calls"]) + 1
+            return _signed_response_bytes(
+                sent,
+                session=holder["session"],  # type: ignore[arg-type]
+                certificate=holder["certificate"],  # type: ignore[arg-type]
+                response_sequence=1,
+            )
+
+        channel, process, _, session, certificate = _test_channel(replay)
+        handle = broker_module._new_handle(
+            private_key=session,
+            instance_id=certificate.broker_instance_id,
+            role=BrokerRepositoryRole.LIFECYCLE,
+            runtime_id=certificate.runtime_id,
+            generation=1,
+        )
+        holder.update({
+            "session": session,
+            "certificate": certificate,
+        })
+        self.assertEqual(
+            {"status": "ok"},
+            channel.request(
+                handle=handle,
+                operation="state_health",
+                payload={},
+            ),
+        )
+        with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+            channel.request(
+                handle=handle,
+                operation="state_health",
+                payload={},
+            )
+        self.assertFalse(process.is_alive())
+
+        write_holder: dict[str, object] = {}
+
+        def wrong_write_signature(sent):
+            return _signed_response_bytes(
+                sent,
+                session=Ed25519PrivateKey.generate(),
+                certificate=write_holder["certificate"],  # type: ignore[arg-type]
+                response_sequence=1,
+                result={"records": [], "log_positions": []},
+            )
+
+        write_channel, write_process, _, write_session, write_cert = (
+            _test_channel(wrong_write_signature)
+        )
+        write_holder["certificate"] = write_cert
+        write_handle = broker_module._new_handle(
+            private_key=write_session,
+            instance_id=write_cert.broker_instance_id,
+            role=BrokerRepositoryRole.ADMISSION,
+            runtime_id=write_cert.runtime_id,
+            generation=1,
+        )
+        with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
+            write_channel.request(
+                handle=write_handle,
+                operation="transact_admission",
+                payload={},
+            )
+        self.assertFalse(write_process.is_alive())
 
     async def test_payload_revalidation_is_broker_signed_and_request_bound(
         self,
@@ -668,6 +1132,138 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     pending.extend(
                         child.values() if isinstance(child, dict) else child
                     )
+
+    def test_transaction_fingerprint_binds_payload_and_result_items(
+        self,
+    ) -> None:
+        partition = DeliveryPersistencePartition(
+            tenant_id="tenant:1",
+            bucket_id=0,
+            layout_generation=1,
+            namespace=StateNamespace.tenant(
+                tenant_id="tenant:1",
+                domain="delivery",
+            ),
+        )
+        key = StateKey(
+            namespace=partition.namespace,
+            object_type="delivery",
+            object_id="delivery:1",
+        )
+
+        def transaction(payload: bytes) -> DeliveryPersistenceTransaction:
+            return DeliveryPersistenceTransaction(
+                partition=partition,
+                mutations=(StateMutation(
+                    key=key,
+                    assertion=StateAssertion.absent(),
+                    kind=StateMutationKind.CREATE,
+                    document=StateDocument(
+                        schema_name="delivery_delivery",
+                        schema_version=1,
+                        state_version=1,
+                        payload=payload,
+                    ),
+                ),),
+                record_assertions=(
+                    StateRecordReadAssertion.absent(StateKey(
+                        namespace=partition.namespace,
+                        object_type="payload_body",
+                        object_id="payload:1",
+                    )),
+                ),
+            )
+
+        first = transaction(b'{"payload":"first"}')
+        second = transaction(b'{"payload":"second"}')
+        self.assertNotEqual(first.fingerprint, second.fingerprint)
+        assert first.mutations[0].document is not None
+        record = StateRecord(
+            key=key,
+            document=first.mutations[0].document,
+            revision=StateRevision._issue("revision:1"),
+            committed_at=datetime.now(timezone.utc),
+        )
+        result = DeliveryPersistenceTransactionResult.for_transaction(
+            first,
+            records=(record,),
+            log_positions=(),
+        )
+        self.assertTrue(result.is_for_transaction(first))
+        self.assertFalse(result.is_for_transaction(second))
+        self.assertFalse(result.is_for_transaction(transaction(
+            b'{"payload":"first"}',
+        )))
+        with self.assertRaises(NsValidationError):
+            copy.copy(result)
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(result)
+        with self.assertRaises(NsValidationError):
+            DeliveryPersistenceTransactionResult(
+                records=(record,),
+                log_positions=(),
+                request_fingerprint=first.fingerprint,
+            )
+        wrong_record = StateRecord(
+            key=StateKey(
+                namespace=partition.namespace,
+                object_type="delivery",
+                object_id="delivery:other",
+            ),
+            document=first.mutations[0].document,
+            revision=StateRevision._issue("revision:2"),
+            committed_at=datetime.now(timezone.utc),
+        )
+        with self.assertRaises(NsValidationError):
+            DeliveryPersistenceTransactionResult.for_transaction(
+                first,
+                records=(wrong_record,),
+                log_positions=(),
+            )
+        object.__setattr__(result, "records", (wrong_record,))
+        self.assertFalse(result.is_for_transaction(first))
+
+        second_key = StateKey(
+            namespace=partition.namespace,
+            object_type="delivery",
+            object_id="delivery:2",
+        )
+        second_document = StateDocument(
+            schema_name="delivery_delivery",
+            schema_version=1,
+            state_version=1,
+            payload=b'{"payload":"second-record"}',
+        )
+        multi = DeliveryPersistenceTransaction(
+            partition=partition,
+            mutations=(
+                first.mutations[0],
+                StateMutation(
+                    key=second_key,
+                    assertion=StateAssertion.absent(),
+                    kind=StateMutationKind.CREATE,
+                    document=second_document,
+                ),
+            ),
+        )
+        first_record = StateRecord(
+            key=key,
+            document=first.mutations[0].document,
+            revision=StateRevision._issue("revision:multi-1"),
+            committed_at=datetime.now(timezone.utc),
+        )
+        second_record = StateRecord(
+            key=second_key,
+            document=second_document,
+            revision=StateRevision._issue("revision:multi-2"),
+            committed_at=datetime.now(timezone.utc),
+        )
+        with self.assertRaises(NsValidationError):
+            DeliveryPersistenceTransactionResult.for_transaction(
+                multi,
+                records=(second_record, first_record),
+                log_positions=(),
+            )
 
 if __name__ == "__main__":
     unittest.main()

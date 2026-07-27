@@ -137,6 +137,7 @@ class RuntimeDependencySlots:
             ) and not (
                 isinstance(proxy_type, type)
                 and type(self.state_store) is proxy_type
+                and self.state_store._binding_is_current()
             ):
                 raise NsValidationError(
                     "RuntimeContext dependency is invalid.",
@@ -185,7 +186,11 @@ class RuntimeDependencySlots:
                 if broker_module is not None
                 else None
             )
-            if not isinstance(expected_type, type) or type(value) is not expected_type:
+            if (
+                not isinstance(expected_type, type)
+                or type(value) is not expected_type
+                or not value._binding_is_current()
+            ):
                 raise NsValidationError(
                     "RuntimeContext dependency is invalid.",
                     details={

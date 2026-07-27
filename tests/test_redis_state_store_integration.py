@@ -33,6 +33,7 @@ from ns_common.exceptions import (
     NsRuntimeStateStoreTimeoutError,
     NsRuntimeStateStoreUnavailableError,
     NsRuntimeStateStoreVersionMismatchError,
+    NsValidationError,
 )
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.config import NsConfig, NsRuntimeStateStoreConfig
@@ -92,6 +93,7 @@ from ns_runtime.authority_broker import (
     AuthorityBrokerConfig,
     start_integration_test_authority_broker,
 )
+import ns_runtime.authority_broker as broker_module
 from ns_runtime.main import _run_service_once
 from ns_runtime.delivery_persistence import DeliveryPersistenceTransaction
 from ns_runtime.authority_wire import encode_transaction_request
@@ -453,9 +455,6 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_production_repository_resource_policy_is_enforced_by_redis(
         self,
     ) -> None:
-        variable = "NS_RUNTIME_REPOSITORY_TEST_PASSWORD"
-        previous = os.environ.get(variable)
-        os.environ[variable] = self._password
         broker = None
         try:
             config = AuthorityBrokerConfig(
@@ -473,8 +472,27 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             broker = start_integration_test_authority_broker(
                 config=config,
                 iam_service_credential="i" * 32,
-                state_password_source=f"env:{variable}",
+                state_password=self._password,
             )
+            self.assertIs(
+                broker_module._IntegrationTestBrokerChannel,
+                type(broker._channel),
+            )
+            self.assertIs(
+                broker_module._IntegrationTestAdmissionRepositoryProxy,
+                type(broker.repositories.admission),
+            )
+            with self.assertRaises(NsValidationError):
+                RuntimeDependencySlots(
+                    delivery_admission_persistence=(
+                        broker.repositories.admission
+                    ),
+                )
+            self.assertNotIn(self._password, repr(broker))
+            self.assertFalse(any(
+                self._password in value
+                for value in os.environ.values()
+            ))
             await broker.state_store.open()
             self.assertEqual(
                 "ready",
@@ -698,7 +716,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                         runtime_id="runtime-production-b",
                     ),
                     iam_service_credential="i" * 32,
-                    state_password_source=f"env:{variable}",
+                    state_password="different-secret-input-channel",
                 )
             with self.assertRaises(
                 NsRuntimeStateStoreCapabilityUnavailableError,
@@ -742,7 +760,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                     runtime_id="runtime-production-after-crash",
                 ),
                 iam_service_credential="i" * 32,
-                state_password_source=f"env:{variable}",
+                state_password=self._password,
             )
             try:
                 await replacement.state_store.open()
@@ -755,10 +773,65 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         finally:
             if broker is not None:
                 broker.close()
-            if previous is None:
-                os.environ.pop(variable, None)
-            else:
-                os.environ[variable] = previous
+
+    async def test_broker_ipc_failure_reaps_child_and_releases_domain(
+        self,
+    ) -> None:
+        config = AuthorityBrokerConfig(
+            iam_base_url="http://127.0.0.1:1/",
+            iam_timeout_seconds=0.2,
+            iam_mode="strict",
+            permission_snapshot_ttl_seconds=60.0,
+            state_backend="redis",
+            state_endpoint=f"redis://127.0.0.1:{self._port}/0",
+            state_username="",
+            state_namespace=self.namespace + ":ipc-reap",
+            state_operation_timeout_seconds=1.0,
+            runtime_id="runtime-ipc-reap-a",
+        )
+        broker = start_integration_test_authority_broker(
+            config=config,
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        process = broker._channel._process
+        original = broker._channel._connection
+
+        class MalformedAfterSend:
+            def send_bytes(self, value):
+                original.send_bytes(value)
+
+            def poll(self, timeout):
+                return original.poll(timeout)
+
+            def recv_bytes(self, maximum):
+                original.recv_bytes(maximum)
+                return b'{"unsigned":true}'
+
+            def close(self):
+                original.close()
+
+        object.__setattr__(
+            broker._channel, "_connection", MalformedAfterSend(),
+        )
+        with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+            await broker.state_store.health()
+        broker.close()
+        self.assertFalse(process.is_alive())
+
+        replacement = start_integration_test_authority_broker(
+            config=dataclasses.replace(
+                config,
+                runtime_id="runtime-ipc-reap-b",
+            ),
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        try:
+            await replacement.state_store.open()
+            self.assertTrue((await replacement.state_store.health()).ready)
+        finally:
+            replacement.close()
 
     async def test_redis_server_authentication_with_both_protocol_drivers(self) -> None:
         for backend in ("redis", "valkey"):

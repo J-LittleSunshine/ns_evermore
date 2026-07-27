@@ -104,32 +104,22 @@ class DeliveryPersistenceTransaction:
 
     @property
     def fingerprint(self) -> str:
-        return "sha256:" + hashlib.sha256(json.dumps({
-            "partition": {
-                "tenant_id": self.partition.tenant_id,
-                "bucket_id": self.partition.bucket_id,
-                "layout_generation": self.partition.layout_generation,
-                "namespace": repr(self.partition.namespace),
-            },
-            "mutations": [repr(value) for value in self.mutations],
-            "ordered_index_mutations": [
-                repr(value) for value in self.ordered_index_mutations
-            ],
-            "log_appends": [repr(value) for value in self.log_appends],
-            "record_assertions": [
-                repr(value) for value in self.record_assertions
-            ],
-            "ordered_index_assertions": [
-                repr(value) for value in self.ordered_index_assertions
-            ],
-        }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return "sha256:" + hashlib.sha256(
+            _canonical_transaction_bytes(self),
+        ).hexdigest()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, init=False)
 class DeliveryPersistenceTransactionResult:
     records: tuple[StateRecord | None, ...]
     log_positions: tuple[int, ...]
     request_fingerprint: str
+    _transaction_identity: DeliveryPersistenceTransaction
+    _result_digest: str
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del self, args, kwargs
+        _invalid("transaction_result.issuer")
 
     @classmethod
     def for_transaction(
@@ -139,36 +129,66 @@ class DeliveryPersistenceTransactionResult:
         records: tuple[StateRecord | None, ...],
         log_positions: tuple[int, ...],
     ) -> "DeliveryPersistenceTransactionResult":
-        if (
-            type(transaction) is not DeliveryPersistenceTransaction
-            or type(records) is not tuple
-            or len(records) != len(transaction.mutations)
-            or any(
-                value is not None and type(value) is not StateRecord
-                for value in records
-            )
-            or type(log_positions) is not tuple
-            or len(log_positions) != len(transaction.log_appends)
-            or any(type(value) is not int or value <= 0 for value in log_positions)
-        ):
-            _invalid("transaction_result")
-        return cls(
+        if cls is not DeliveryPersistenceTransactionResult:
+            _invalid("transaction_result.type")
+        _validate_transaction_result(
+            transaction,
             records=records,
             log_positions=log_positions,
-            request_fingerprint=transaction.fingerprint,
         )
+        value = object.__new__(cls)
+        request_fingerprint = transaction.fingerprint
+        for name, item in (
+            ("records", records),
+            ("log_positions", log_positions),
+            ("request_fingerprint", request_fingerprint),
+            ("_transaction_identity", transaction),
+            (
+                "_result_digest",
+                _transaction_result_digest(
+                    records=records,
+                    log_positions=log_positions,
+                    request_fingerprint=request_fingerprint,
+                ),
+            ),
+        ):
+            object.__setattr__(value, name, item)
+        return value
 
     def is_for_transaction(
         self,
         transaction: DeliveryPersistenceTransaction,
     ) -> bool:
-        return bool(
-            type(self) is DeliveryPersistenceTransactionResult
-            and type(transaction) is DeliveryPersistenceTransaction
-            and self.request_fingerprint == transaction.fingerprint
-            and len(self.records) == len(transaction.mutations)
-            and len(self.log_positions) == len(transaction.log_appends)
-        )
+        if (
+            type(self) is not DeliveryPersistenceTransactionResult
+            or type(transaction) is not DeliveryPersistenceTransaction
+            or self._transaction_identity is not transaction
+            or self.request_fingerprint != transaction.fingerprint
+        ):
+            return False
+        try:
+            _validate_transaction_result(
+                transaction,
+                records=self.records,
+                log_positions=self.log_positions,
+            )
+            expected_digest = _transaction_result_digest(
+                records=self.records,
+                log_positions=self.log_positions,
+                request_fingerprint=self.request_fingerprint,
+            )
+        except (AttributeError, NsValidationError, TypeError, ValueError):
+            return False
+        return self._result_digest == expected_digest
+
+    def __copy__(self) -> "DeliveryPersistenceTransactionResult":
+        _invalid("transaction_result.copy")
+
+    def __deepcopy__(
+        self, memo: dict[int, object],
+    ) -> "DeliveryPersistenceTransactionResult":
+        del memo
+        _invalid("transaction_result.copy")
 
 
 @runtime_checkable
@@ -384,6 +404,192 @@ def contract_test_persistence(
     role: StateStoreRepositoryRole,
 ) -> ContractTestRepositoryPersistence:
     return ContractTestRepositoryPersistence(repository, role=role)
+
+
+def _canonical_transaction_bytes(
+    value: DeliveryPersistenceTransaction,
+) -> bytes:
+    if type(value) is not DeliveryPersistenceTransaction:
+        _invalid("transaction")
+    return _canonical_json_bytes({
+        "partition": {
+            "tenant_id": value.partition.tenant_id,
+            "bucket_id": value.partition.bucket_id,
+            "layout_generation": value.partition.layout_generation,
+            "namespace": _namespace_values(value.partition.namespace),
+        },
+        "mutations": [
+            {
+                "key": _key_values(item.key),
+                "kind": item.kind.value,
+                "assertion": {
+                    "expect_absent": item.assertion.expect_absent,
+                    "expected_revision": _revision_value(
+                        item.assertion.expected_revision,
+                    ),
+                    "expected_state_version": (
+                        item.assertion.expected_state_version
+                    ),
+                    "expected_epoch": item.assertion.expected_epoch,
+                },
+                "document": _document_values(item.document),
+            }
+            for item in value.mutations
+        ],
+        "record_assertions": [
+            {
+                "key": _key_values(item.key),
+                "expect_present": item.expect_present,
+                "expected_revision": _revision_value(
+                    item.expected_revision,
+                ),
+                "expected_state_version": item.expected_state_version,
+            }
+            for item in value.record_assertions
+        ],
+        "ordered_index_mutations": [
+            {
+                "index": _index_values(item.index),
+                "kind": item.kind.value,
+                "member": item.member,
+                "score": item.score,
+            }
+            for item in value.ordered_index_mutations
+        ],
+        "ordered_index_assertions": [
+            {
+                "index": _index_values(item.index),
+                "member": item.member,
+                "expect_present": item.expect_present,
+                "expected_score": item.expected_score,
+            }
+            for item in value.ordered_index_assertions
+        ],
+        "log_appends": [
+            {
+                "key": _key_values(item.key),
+                "document": _document_values(item.document),
+            }
+            for item in value.log_appends
+        ],
+    })
+
+
+def _validate_transaction_result(
+    transaction: DeliveryPersistenceTransaction,
+    *,
+    records: tuple[StateRecord | None, ...],
+    log_positions: tuple[int, ...],
+) -> None:
+    if (
+        type(transaction) is not DeliveryPersistenceTransaction
+        or type(records) is not tuple
+        or len(records) != len(transaction.mutations)
+        or type(log_positions) is not tuple
+        or len(log_positions) != len(transaction.log_appends)
+        or any(
+            type(value) is not int or value <= 0
+            for value in log_positions
+        )
+    ):
+        _invalid("transaction_result")
+    for mutation, record in zip(transaction.mutations, records):
+        if mutation.kind.value == "delete":
+            if record is not None:
+                _invalid("transaction_result.delete")
+            continue
+        if (
+            type(record) is not StateRecord
+            or record.key != mutation.key
+            or record.document != mutation.document
+        ):
+            _invalid("transaction_result.record_binding")
+
+
+def _transaction_result_digest(
+    *,
+    records: tuple[StateRecord | None, ...],
+    log_positions: tuple[int, ...],
+    request_fingerprint: str,
+) -> str:
+    return "sha256:" + hashlib.sha256(_canonical_json_bytes({
+        "request_fingerprint": request_fingerprint,
+        "records": [
+            None if record is None else {
+                "key": _key_values(record.key),
+                "document": _document_values(record.document),
+                "revision": record.revision._provider_token(),
+                "committed_at": record.committed_at.isoformat(),
+            }
+            for record in records
+        ],
+        "log_positions": list(log_positions),
+    })).hexdigest()
+
+
+def _namespace_values(value: StateNamespace) -> dict[str, object]:
+    return {
+        "kind": value.kind.value,
+        "domain": value.domain,
+        "tenant_id": value.tenant_id,
+        "runtime_id": value.runtime_id,
+        "plugin_name": value.plugin_name,
+    }
+
+
+def _key_values(value: StateKey) -> dict[str, object]:
+    return {
+        "namespace": _namespace_values(value.namespace),
+        "object_type": value.object_type,
+        "object_id": value.object_id,
+    }
+
+
+def _index_values(value: StateOrderedIndexKey) -> dict[str, object]:
+    return {
+        "namespace": _namespace_values(value.namespace),
+        "name": value.name,
+        "bucket": value.bucket,
+    }
+
+
+def _document_values(
+    value: StateDocument | None,
+) -> dict[str, object] | None:
+    if value is None:
+        return None
+    return {
+        "schema_name": value.schema_name,
+        "schema_version": value.schema_version,
+        "state_version": value.state_version,
+        "epoch": value.epoch,
+        "payload_sha256": hashlib.sha256(value.payload).hexdigest(),
+    }
+
+
+def _revision_value(value: object) -> str | None:
+    if value is None:
+        return None
+    provider_token = getattr(value, "_provider_token", None)
+    if not callable(provider_token):
+        _invalid("revision")
+    result = provider_token()
+    if type(result) is not str:
+        _invalid("revision")
+    return result
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        _invalid("canonical")
 
 
 def _invalid(field: str) -> None:

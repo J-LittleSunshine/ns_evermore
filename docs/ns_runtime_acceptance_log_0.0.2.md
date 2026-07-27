@@ -2404,6 +2404,44 @@ if rg -n 'get_async_http_client|_CLIENT_MAP|from .*state_store|import .*state_st
 - 未新增global registry、service locator、第二RuntimeService、TaskSupervisor或shutdown owner。broker child只有隔离authority IPC事件循环。
 - 状态机仍严格为`prepared -> queued -> sending -> ack_waiting`；WRITE_UNCERTAIN不恢复、不重发。未实现P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership或P22 production验收；production `task.dispatch`继续disabled。
 
+## Authority broker certificate chain 与 signed StateStore response复核修复
+
+- 工作包：`P08-FIX-07`、`P09-FIX-11`、`P11-FIX-12`。
+- 状态：`IMPLEMENTED / F3 (local only)`；本机没有deployment production root私钥，不能把独立test/integration trust root结果标记为production VERIFIED。P12继续`BLOCKED / F0`，production `task.dispatch`继续disabled。
+- 完成时间：`2026-07-27`（Asia/Shanghai）。起始branch为`codex/ns-runtime-implementation`，HEAD为`dab06270871052fac25b7026b925176f731abae7`，起始worktree干净；本轮未commit、未push。
+- certificate与realm：`_BrokerChannel`保存ready阶段验签的`BrokerInstanceCertificate`并在每次authority使用时重验固定root、realm、instance、session key、runtime、generation及时效；不再以可写`_realm`判断production。production/contract/integration使用exact channel、IAM、repository和StateStore proxy类型，RuntimeDependencySlots只接受exact production proxy及当前有效binding。
+- signed response与IAM：IAM外层及StateStore read/transaction/index/append/health的success与typed error都由broker session key签名；claims绑定instance/generation、request ID/sequence、operation、handle ID/role、canonical request fingerprint、完整result/error、response sequence、issued_at和nonce。runtime先验root certificate chain和response签名，再decode DTO；unsigned、跨operation/handle/broker/request replay、字段修改及sequence重复/跳号/倒退关闭channel，已发送write返回indeterminate。MessageAuthorizationService、processor authorization evidence和payload evidence也同时验证production certificate chain与session-signed IAM result。
+- transaction/result：`DeliveryPersistenceTransaction.fingerprint`改为canonical JSON SHA-256，覆盖partition、mutation顺序/key/kind/assertion、document metadata和payload digest、record/index assertions、index mutations及log appends。`DeliveryPersistenceTransactionResult.for_transaction()`逐项验证CREATE/REPLACE record key/document、DELETE为None、mutation/log cardinality及正整数log position，并绑定精确transaction identity/fingerprint；direct constructor、copy/deepcopy、replace、字段修改、错序及同shape跨transaction replay均拒绝。
+- cleanup、credential与lease：channel将`_closed`与`_process_reaped`分离；timeout/EOF/decode/signature/OS failure统一close connection并bounded join/terminate/kill，`close()`即使已closed仍确认child退出。StateStore secret FD传actual password bytes，broker一次消费并尽力清零buffer；父RuntimeContext、sanitized config、环境和普通对象不保留可解析source。physical-domain lease只绑定normalized backend/scheme/host/port/database、namespace与stable principal，不含runtime ID、secret或credential reference。
+
+### 本轮新增攻击与成功路径
+
+- contract channel修改realm、contract/integration repository冒充production、`object.__new__`构造production channel/proxy、class role attribute修改均不能通过exact type与certificate chain。
+- certificate/session key不一致、certificate字段修改、过期certificate、unsigned StateStore read、错误签名transaction result、result/error字段修改、跨operation/handle/broker/request replay及response sequence重复/跳号均fail closed；write发送后provenance错误为indeterminate。
+- payload仅一字节不同的两个transaction fingerprint不同；错误record key/document/order、direct construction、copy/replace/tamper与同shape cross-request result replay拒绝。
+- request先异常会立即reap child；随后重复`close()`保持幂等。真实Redis测试确认同physical domain立即可重启，且不同runtime ID、不同password输入仍竞争同一lease。
+- 父进程bootstrap/config/environment/object graph检索secret marker无结果；主进程HTTP monkey patch不能改变spawn broker内IAM transport。
+- 真实`/usr/bin/redis-server`成功路径覆盖admission transaction、record read、record assertion、ordered-index mutation/assertion、cursor分页、log append、scheduler transaction、result cardinality与跨role拒绝。
+
+### 本轮实际测试命令与结果
+
+- authority broker/IAM client/authorization：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_authority_broker tests.test_runtime_iam_client tests.test_runtime_iam_authorization`，`Ran 38 tests in 40.449s`，`OK`。
+- processor/routing/IAM authority：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_iam_authorization tests.test_runtime_processor_boundaries tests.test_runtime_processor_pipeline tests.test_runtime_routing tests.test_runtime_routing_contracts`，`Ran 68 tests in 1.176s`，`OK`。
+- payload authority/delivery：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling`，`Ran 62 tests in 51.191s`，`OK`。
+- StateStore contract/provider：`PYTHONPATH=src python3 -m unittest -q tests.test_state_store tests.test_runtime_state_store tests.test_redis_state_store_provider`，`Ran 43 tests in 0.845s`，`OK`。
+- 真实Redis broker integration：`PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_integration`，`Ran 20 tests in 60.172s`，`OK`。
+- main/shutdown/transport：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_event_loop_observability tests.test_runtime_shutdown tests.test_runtime_service tests.test_runtime_main tests.test_runtime_transport_metrics tests.test_runtime_transport_lifecycle tests.test_runtime_transport_identity tests.test_runtime_transport_errors tests.test_runtime_transport_contracts tests.test_runtime_transport_conformance tests.test_runtime_transport_backpressure tests.test_runtime_transport_websocket_tcp tests.test_runtime_transport_registry`，`Ran 112 tests in 11.729s`，`OK (skipped=6)`；六项均为需要仓库外deployment production root私钥的正向main/transport路径。
+- import/dependency boundary：`PYTHONPATH=src python3 -m unittest -q tests.test_requirements tests.test_runtime_bootstrap tests.test_runtime_processor_boundaries`，`Ran 19 tests in 3.842s`，`OK`；冷导入及公共StateStore assertion导出输出`COLD_IMPORT_AND_PUBLIC_EXPORTS_OK`。runtime与backend虚拟环境`pip check`均为`No broken requirements found.`；系统`/usr/bin/python3 -m pip check`因系统`pygobject`缺少`pycairo`返回非零，该系统包缺口不属于项目虚拟环境。
+- 全仓可执行测试：`PYTHONPATH=src python3 -m unittest discover -s tests -t . -p 'test_*.py' -q`，`Ran 895 tests in 190.593s`，`OK (skipped=7)`；除上述六项deployment-root skip外，另一项是既有非Windows平台条件skip。
+- 静态检查：`PYTHONPATH=src python3 -m compileall -q src tests`通过；最终`git diff --check`通过（仅Git autocrlf提示）。
+
+### 未验证与冻结边界
+
+- production deployment root正向`python -m ns_runtime.main`、真实production IAM backend与SIGTERM组合未验证；测试不生成或冒充deployment production root。
+- Valkey server、Redis Sentinel/Cluster、replica/failover、真实Windows、uvloop全树与远程CI未验证，不能由本机Redis standalone和standard asyncio结果推断。
+- broker certificate有界过期且未实现在线续签；部署需要在certificate lifecycle内受控轮换broker。失效后当前实现fail closed。
+- 未新增global registry、service locator、第二RuntimeService、TaskSupervisor或shutdown owner。状态机仍严格为`prepared -> queued -> sending -> ack_waiting`；WRITE_UNCERTAIN不恢复、不重发。未实现P12 ACK/NACK/Defer/timeout/retry、P13 DLQ/replay、P14 health/fair scheduling、P17 cluster ownership或P22 production验收；production `task.dispatch`继续disabled。
+
 ## 新记录模板
 
 - 工作包：

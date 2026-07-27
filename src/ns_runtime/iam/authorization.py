@@ -10,7 +10,7 @@ import json
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Awaitable, Callable
 
@@ -181,10 +181,13 @@ class MessageAuthorizationResult:
         if service.production_authority:
             authority = self._broker_authority
             iam = service._iam
+            now = datetime.now(timezone.utc)
             return bool(
                 type(self) is MessageAuthorizationResult
                 and self._service is service
                 and type(authority) is BrokerSignedIamResult
+                and type(iam) is IamClient
+                and iam._verify_production_chain(now)
                 and authority.verify(
                     public_key=iam._channel.public_key,
                     broker_instance_id=iam._channel.instance_id,
@@ -193,7 +196,7 @@ class MessageAuthorizationResult:
                         "runtime_access_check",
                         self.request,
                     ),
-                    now=service._clock.utc_now(),
+                    now=now,
                 )
                 and authority.result_mapping() == self.decision.to_wire()
                 and authority.permission_snapshot_ref

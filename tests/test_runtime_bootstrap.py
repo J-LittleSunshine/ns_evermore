@@ -117,7 +117,7 @@ authority_secrets_read, authority_secrets_write = os.pipe()
 os.write(authority_key_write, os.urandom(32))
 os.write(authority_secrets_write, json.dumps({
     "iam_service_credential": "untrusted-bootstrap-probe",
-    "state_password_source": "none",
+    "state_password_base64": None,
 }).encode())
 os.close(authority_key_write)
 os.close(authority_secrets_write)

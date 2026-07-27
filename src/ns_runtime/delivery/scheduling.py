@@ -322,8 +322,10 @@ class _PayloadAccessEvidenceIssuer:
 
         decision = getattr(verified_result, "result", None)
         broker_authority = getattr(verified_result, "authority", None)
+        verification_now = datetime.now(timezone.utc)
         if (
             not self._iam._is_production_adapter()
+            or not self._iam._verify_production_chain(verification_now)
             or type(request) is not PayloadRefRevalidationRequest
             or type(decision) is not PayloadRefRevalidationDecision
             or type(verified_result) is not VerifiedBrokerIamResult
@@ -335,7 +337,7 @@ class _PayloadAccessEvidenceIssuer:
                 request_fingerprint=broker_request_fingerprint(
                     "payload_revalidate", request,
                 ),
-                now=self._clock.utc_now(),
+                now=verification_now,
             )
             or broker_authority.result_mapping() != decision.to_wire()
             or broker_authority.request_mapping() != request.to_wire()
@@ -344,7 +346,7 @@ class _PayloadAccessEvidenceIssuer:
         ):
             _invalid("payload_access_issuer.result")
         evidence = delivery.payload_evidence
-        now = self._clock.utc_now()
+        now = verification_now
         expires_at = min(decision.expires_at, delivery.policy_decision.expires_at)
         if not (
             evidence.kind is PayloadKind.REFERENCE
@@ -420,14 +422,16 @@ class _PayloadAccessEvidenceIssuer:
         authority = evidence._broker_authority
         request_values = authority.request_mapping()
         result_values = authority.result_mapping()
+        now = datetime.now(timezone.utc)
         return bool(
             self._iam._is_production_adapter()
+            and self._iam._verify_production_chain(now)
             and authority.verify(
                 public_key=self._iam._channel.public_key,
                 broker_instance_id=self._iam._channel.instance_id,
                 operation="payload_revalidate",
                 request_fingerprint=authority.request_fingerprint,
-                now=self._clock.utc_now(),
+                now=now,
             )
             and authority.backend_decision == "allow"
             and request_values.get("object_id") == evidence.object_id

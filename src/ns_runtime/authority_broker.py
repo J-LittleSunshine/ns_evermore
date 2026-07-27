@@ -201,10 +201,7 @@ class AuthorityBrokerConfig:
         if self.state_backend not in {"sqlite", "redis", "valkey"}:
             _invalid("config.state_backend")
         if self.state_backend in {"redis", "valkey"}:
-            _physical_state_domain(
-                self,
-                credential_reference="validation-only",
-            )
+            _physical_state_domain(self)
         for name in (
             "iam_mode", "state_namespace",
             "runtime_id",
@@ -250,6 +247,9 @@ class BrokerInstanceCertificate:
         *,
         expected_realm: str,
         expected_runtime_id: str,
+        expected_instance_id: str | None = None,
+        expected_session_public_key: bytes | None = None,
+        expected_generation: int | None = None,
         now: datetime,
     ) -> bool:
         if (
@@ -264,6 +264,18 @@ class BrokerInstanceCertificate:
             > timedelta(seconds=_ROOT_CERTIFICATE_TTL_SECONDS)
             or len(self.session_public_key) != 32
             or len(root_public_key) != 32
+            or (
+                expected_instance_id is not None
+                and self.broker_instance_id != expected_instance_id
+            )
+            or (
+                expected_session_public_key is not None
+                and self.session_public_key != expected_session_public_key
+            )
+            or (
+                expected_generation is not None
+                and self.lifecycle_generation != expected_generation
+            )
         ):
             return False
         try:
@@ -422,12 +434,114 @@ class VerifiedBrokerIamResult:
     authority: BrokerSignedIamResult
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BrokerSignedStateResponse:
+    broker_instance_id: str
+    lifecycle_generation: int
+    session_key_fingerprint: str
+    request_id: str
+    request_sequence: int
+    operation: str
+    handle_id: str
+    role: str
+    request_fingerprint: str
+    ok: bool
+    result_json: str
+    error_json: str
+    response_sequence: int
+    issued_at: datetime
+    nonce: str
+    signature: bytes
+
+    def signed_values(self) -> Mapping[str, object]:
+        return {
+            "broker_instance_id": self.broker_instance_id,
+            "lifecycle_generation": self.lifecycle_generation,
+            "session_key_fingerprint": self.session_key_fingerprint,
+            "request_id": self.request_id,
+            "request_sequence": self.request_sequence,
+            "operation": self.operation,
+            "handle_id": self.handle_id,
+            "role": self.role,
+            "request_fingerprint": self.request_fingerprint,
+            "ok": self.ok,
+            "result_json": self.result_json,
+            "error_json": self.error_json,
+            "response_sequence": self.response_sequence,
+            "issued_at": encode_time(self.issued_at),
+            "nonce": self.nonce,
+        }
+
+    def verify(
+        self,
+        *,
+        certificate: BrokerInstanceCertificate,
+        request_id: str,
+        request_sequence: int,
+        operation: str,
+        handle: BrokerAuthorityHandle,
+        request_fingerprint: str,
+        expected_response_sequence: int,
+        now: datetime,
+    ) -> bool:
+        if (
+            type(self) is not BrokerSignedStateResponse
+            or type(certificate) is not BrokerInstanceCertificate
+            or self.broker_instance_id != certificate.broker_instance_id
+            or self.lifecycle_generation
+            != certificate.lifecycle_generation
+            or self.session_key_fingerprint
+            != _session_key_fingerprint(certificate.session_public_key)
+            or self.request_id != request_id
+            or self.request_sequence != request_sequence
+            or self.operation != operation
+            or self.handle_id != handle.handle_id
+            or self.role != handle.role.value
+            or self.request_fingerprint != request_fingerprint
+            or self.response_sequence != expected_response_sequence
+            or type(self.ok) is not bool
+            or type(self.result_json) is not str
+            or type(self.error_json) is not str
+            or type(self.nonce) is not str
+            or not self.nonce
+            or type(self.signature) is not bytes
+            or self.issued_at < certificate.issued_at
+            or self.issued_at > now
+            or now >= certificate.expires_at
+            or (self.ok and self.error_json != "null")
+            or (not self.ok and self.result_json != "null")
+        ):
+            return False
+        return _verify(
+            certificate.session_public_key,
+            _canonical(self.signed_values()),
+            self.signature,
+        )
+
+    def result_value(self) -> object:
+        return _decode_canonical_json(self.result_json, "state_response.result")
+
+    def error_value(self) -> object:
+        return _decode_canonical_json(self.error_json, "state_response.error")
+
+    def __copy__(self) -> "BrokerSignedStateResponse":
+        _invalid("state_response.copy")
+
+    def __deepcopy__(
+        self, memo: dict[int, object],
+    ) -> "BrokerSignedStateResponse":
+        del memo
+        _invalid("state_response.copy")
+
+
 class _BrokerChannel:
     """Serialized IPC channel; it contains no signing or provider material."""
 
     __slots__ = (
-        "_connection", "_process", "_public_key", "_instance_id", "_lock",
-        "_closed", "_timeout_seconds", "_realm", "_response_sequence",
+        "_connection", "_process", "_public_key", "_instance_id",
+        "_runtime_id", "_lifecycle_generation", "_certificate",
+        "_root_public_key", "_lock", "_closed", "_process_reaped",
+        "_timeout_seconds", "_request_sequence", "_response_sequence",
     )
 
     def __init__(
@@ -437,18 +551,30 @@ class _BrokerChannel:
         process: multiprocessing.Process,
         public_key: bytes,
         instance_id: str,
+        runtime_id: str,
+        lifecycle_generation: int,
+        certificate: BrokerInstanceCertificate,
+        root_public_key: bytes,
         timeout_seconds: float,
-        realm: str,
     ) -> None:
         self._connection = connection
         self._process = process
         self._public_key = public_key
         self._instance_id = instance_id
+        self._runtime_id = runtime_id
+        self._lifecycle_generation = lifecycle_generation
+        self._certificate = certificate
+        self._root_public_key = root_public_key
         self._lock = threading.Lock()
         self._closed = False
+        self._process_reaped = False
         self._timeout_seconds = float(timeout_seconds)
-        self._realm = realm
+        self._request_sequence = 0
         self._response_sequence = 0
+        if not self._identity_is_current(datetime.now(timezone.utc)):
+            self._closed = True
+            self._reap_process()
+            _invalid("broker_channel.certificate")
 
     @property
     def public_key(self) -> bytes:
@@ -460,7 +586,54 @@ class _BrokerChannel:
 
     @property
     def alive(self) -> bool:
-        return bool(not self._closed and self._process.is_alive())
+        return bool(
+            not self._closed
+            and not self._process_reaped
+            and self._process.is_alive()
+            and self._identity_is_current(datetime.now(timezone.utc))
+        )
+
+    @property
+    def certificate(self) -> BrokerInstanceCertificate:
+        return self._certificate
+
+    def _identity_is_current(self, now: datetime) -> bool:
+        realm = _channel_realm(type(self))
+        root_public_key = (
+            _PRODUCTION_ROOT_PUBLIC_KEY
+            if type(self) is _ProductionBrokerChannel
+            else self._root_public_key
+        )
+        certificate = getattr(self, "_certificate", None)
+        public_key = getattr(self, "_public_key", None)
+        instance_id = getattr(self, "_instance_id", None)
+        runtime_id = getattr(self, "_runtime_id", None)
+        generation = getattr(self, "_lifecycle_generation", None)
+        return bool(
+            realm is not None
+            and type(certificate) is BrokerInstanceCertificate
+            and type(public_key) is bytes
+            and type(instance_id) is str
+            and type(runtime_id) is str
+            and type(generation) is int
+            and certificate.verify(
+                root_public_key,
+                expected_realm=realm,
+                expected_runtime_id=runtime_id,
+                expected_instance_id=instance_id,
+                expected_session_public_key=public_key,
+                expected_generation=generation,
+                now=now,
+            )
+        )
+
+    def _is_production_certificate_chain_current(
+        self, now: datetime,
+    ) -> bool:
+        return bool(
+            type(self) is _ProductionBrokerChannel
+            and self._identity_is_current(now)
+        )
 
     def request(
         self,
@@ -469,9 +642,18 @@ class _BrokerChannel:
         operation: str,
         payload: dict[str, object] | list[object] | str | int | float | bool | None,
     ) -> object:
+        now = datetime.now(timezone.utc)
+        if not self._identity_is_current(now):
+            self._fail_and_reap()
+            raise _operation_unavailable(
+                operation, "certificate_chain_invalid",
+            )
         if not handle.verify(
                 self._public_key,
                 instance_id=self._instance_id,
+        ) or (
+            handle.runtime_id != self._runtime_id
+            or handle.lifecycle_generation != self._lifecycle_generation
         ):
             raise _broker_unavailable("handle_invalid")
         if self._closed or not self._process.is_alive():
@@ -481,78 +663,111 @@ class _BrokerChannel:
                     "operation": operation,
                     "reason": "broker_unavailable_outcome_unknown",
                 })
-            raise _broker_unavailable("broker_unavailable")
+            raise _operation_unavailable(operation, "broker_unavailable")
         request_id = "ipc_" + uuid.uuid4().hex
-        message = {
-            "version": WIRE_VERSION,
-            "kind": "request",
-            "request_id": request_id,
-            "handle": _encode_handle(handle),
-            "operation": operation,
-            "payload": payload,
-        }
-        raw_request = encode_frame(message)  # pre-send schema/size rejection
         sent = False
         try:
             with self._lock:
+                if self._closed or not self._process.is_alive():
+                    if operation in _WRITE_OPERATIONS:
+                        raise _indeterminate(
+                            operation,
+                            "broker_unavailable_outcome_unknown",
+                        )
+                    raise _operation_unavailable(
+                        operation, "broker_unavailable",
+                    )
+                request_sequence = self._request_sequence + 1
+                request_fingerprint = _state_request_fingerprint(
+                    operation=operation,
+                    handle=handle,
+                    payload=payload,
+                )
+                raw_request = encode_frame({
+                    "version": WIRE_VERSION,
+                    "kind": "request",
+                    "request_id": request_id,
+                    "request_sequence": request_sequence,
+                    "handle": _encode_handle(handle),
+                    "operation": operation,
+                    "payload": payload,
+                })
+                self._request_sequence = request_sequence
                 self._connection.send_bytes(raw_request)
                 sent = True
                 if not self._connection.poll(self._timeout_seconds):
-                    self._closed = True
-                    self._stop_process()
+                    self._fail_and_reap()
                     if operation in _WRITE_OPERATIONS:
                         raise _indeterminate(operation, "ipc_timeout")
-                    raise _broker_unavailable("ipc_timeout")
-                response = decode_frame(
+                    raise _operation_unavailable(operation, "ipc_timeout")
+                envelope = decode_frame(
                     self._connection.recv_bytes(MAX_FRAME_BYTES),
                 )
         except NsRuntimeStateStoreIndeterminateWriteError:
             raise
-        except (BrokenPipeError, EOFError, OSError, NsValidationError):
-            self._closed = True
+        except NsValidationError:
+            if not sent:
+                raise
+            self._fail_and_reap()
+            if operation in _WRITE_OPERATIONS:
+                raise _indeterminate(
+                    operation, "ipc_invalid_response",
+                ) from None
+            raise _operation_unavailable(operation, "ipc_closed") from None
+        except (BrokenPipeError, EOFError, OSError):
+            if sent:
+                self._fail_and_reap()
             if operation in _WRITE_OPERATIONS and sent:
                 raise _indeterminate(operation, "ipc_invalid_response") from None
-            raise _broker_unavailable("ipc_closed") from None
+            raise _operation_unavailable(operation, "ipc_closed") from None
         try:
             values = require_object(
-                response,
-                fields={
-                    "version", "kind", "request_id", "sequence",
-                    "ok", "result", "error",
-                },
-                field="response",
+                envelope,
+                fields={"version", "kind", "signed_response"},
+                field="response_envelope",
             )
-            sequence = values["sequence"]
             if (
                 values["version"] != WIRE_VERSION
-                or values["kind"] != "response"
-                or values["request_id"] != request_id
-                or type(sequence) is not int
-                or sequence != self._response_sequence + 1
-                or type(values["ok"]) is not bool
+                or values["kind"] != "signed_response"
             ):
-                _invalid("response.binding")
-            self._response_sequence = sequence
-            if values["ok"] is True:
-                if values["error"] is not None:
-                    _invalid("response.error")
-                return values["result"]
-            if values["result"] is not None:
-                _invalid("response.result")
-            _raise_remote_error(values["error"])
+                _invalid("response_envelope.binding")
+            signed = _decode_signed_state_response(
+                values["signed_response"],
+            )
+            expected_response_sequence = self._response_sequence + 1
+            if not signed.verify(
+                certificate=self._certificate,
+                request_id=request_id,
+                request_sequence=request_sequence,
+                operation=operation,
+                handle=handle,
+                request_fingerprint=request_fingerprint,
+                expected_response_sequence=expected_response_sequence,
+                now=datetime.now(timezone.utc),
+            ):
+                _invalid("response.signature")
+            self._response_sequence = expected_response_sequence
+            if signed.ok:
+                return signed.result_value()
+            _raise_remote_error(signed.error_value())
         except (NsValidationError, KeyError, TypeError, ValueError):
+            self._fail_and_reap()
             if operation in _WRITE_OPERATIONS and sent:
                 raise _indeterminate(
                     operation, "ipc_malformed_response",
                 ) from None
-            raise _broker_unavailable("malformed_response") from None
+            raise _operation_unavailable(
+                operation, "malformed_response",
+            ) from None
 
     def close(self, *, terminate: bool = False) -> None:
-        if self._closed:
-            return
         try:
             with self._lock:
-                if self._process.is_alive() and not terminate:
+                if (
+                    not self._closed
+                    and self._process.is_alive()
+                    and not terminate
+                ):
                     self._connection.send_bytes(encode_frame({
                         "version": WIRE_VERSION,
                         "kind": "shutdown",
@@ -565,32 +780,44 @@ class _BrokerChannel:
             pass
         finally:
             self._closed = True
-            try:
-                self._connection.close()
-            except OSError:
-                pass
-            self._process.join(timeout=5.0)
-            if self._process.is_alive():
-                self._process.terminate()
-                self._process.join(timeout=5.0)
-            if self._process.is_alive():
-                self._process.kill()
-                self._process.join(timeout=5.0)
-            if self._process.is_alive():
-                raise _broker_unavailable("broker_process_did_not_exit")
+            self._reap_process()
 
-    def _stop_process(self) -> None:
+    def _fail_and_reap(self) -> None:
+        self._closed = True
+        self._reap_process()
+
+    def _reap_process(self) -> None:
+        if self._process_reaped:
+            return
         try:
             self._connection.close()
         except OSError:
             pass
-        self._process.join(timeout=0.1)
+        self._process.join(timeout=0.2)
         if self._process.is_alive():
             self._process.terminate()
             self._process.join(timeout=5.0)
         if self._process.is_alive():
             self._process.kill()
             self._process.join(timeout=5.0)
+        if self._process.is_alive():
+            raise _broker_unavailable("broker_process_did_not_exit")
+        self._process_reaped = True
+
+
+class _ProductionBrokerChannel(_BrokerChannel):
+    """Exact production channel bound to the compiled deployment root."""
+    __slots__ = ()
+
+
+class _ContractTestBrokerChannel(_BrokerChannel):
+    """Exact deterministic contract-test channel."""
+    __slots__ = ()
+
+
+class _IntegrationTestBrokerChannel(_BrokerChannel):
+    """Exact real-provider integration-test channel."""
+    __slots__ = ()
 
 
 class ProductionIamAuthorityProxy(HandshakeIamAdapter):
@@ -609,7 +836,25 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
         return bool(
             type(self) is ProductionIamAuthorityProxy
             and self._is_broker_adapter()
-            and self._channel._realm == "production"
+            and self._verify_production_chain(SystemClock().utc_now())
+        )
+
+    def _verify_production_chain(self, now: datetime) -> bool:
+        channel = getattr(self, "_channel", None)
+        handle = getattr(self, "_handle", None)
+        return bool(
+            type(self) is ProductionIamAuthorityProxy
+            and type(channel) is _ProductionBrokerChannel
+            and type(handle) is BrokerAuthorityHandle
+            and channel._is_production_certificate_chain_current(now)
+            and handle.role is BrokerRepositoryRole.IAM
+            and handle.runtime_id == channel._runtime_id
+            and handle.lifecycle_generation
+            == channel._lifecycle_generation
+            and handle.verify(
+                channel.public_key,
+                instance_id=channel.instance_id,
+            )
         )
 
     def _is_broker_adapter(self) -> bool:
@@ -618,12 +863,19 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             "refresh_permission_snapshot", "validate_payload_ref",
             "revalidate_payload_ref",
         }.intersection(getattr(self, "__dict__", {}))
+        expected_channel_type = {
+            ProductionIamAuthorityProxy: _ProductionBrokerChannel,
+            ContractTestIamAuthorityProxy: _ContractTestBrokerChannel,
+            IntegrationTestIamAuthorityProxy: _IntegrationTestBrokerChannel,
+        }.get(type(self))
         return bool(
             type(self) in {
                 ProductionIamAuthorityProxy,
                 ContractTestIamAuthorityProxy,
+                IntegrationTestIamAuthorityProxy,
             }
-            and type(getattr(self, "_channel", None)) is _BrokerChannel
+            and type(getattr(self, "_channel", None))
+            is expected_channel_type
             and type(getattr(self, "_handle", None)) is BrokerAuthorityHandle
             and self._handle.role is BrokerRepositoryRole.IAM
             and self._handle.verify(
@@ -634,11 +886,19 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             and (
                 (
                     type(self) is ProductionIamAuthorityProxy
-                    and self._channel._realm == "production"
+                    and self._verify_production_chain(
+                        SystemClock().utc_now(),
+                    )
                 )
                 or (
                     type(self) is ContractTestIamAuthorityProxy
-                    and self._channel._realm == "contract-test"
+                    and self._channel._certificate.trust_realm
+                    == "contract-test"
+                )
+                or (
+                    type(self) is IntegrationTestIamAuthorityProxy
+                    and self._channel._certificate.trust_realm
+                    == "integration-test"
                 )
             )
             and not substituted
@@ -744,8 +1004,13 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                 type(self) in {
                     ProductionIamAuthorityProxy,
                     ContractTestIamAuthorityProxy,
+                    IntegrationTestIamAuthorityProxy,
                 }
-                and type(channel) is _BrokerChannel
+                and type(channel) in {
+                    _ProductionBrokerChannel,
+                    _ContractTestBrokerChannel,
+                    _IntegrationTestBrokerChannel,
+                }
                 and type(handle) is BrokerAuthorityHandle
                 and handle.role is BrokerRepositoryRole.IAM
                 and handle.verify(
@@ -754,6 +1019,7 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                 )
                 and not channel.alive
             ):
+                channel._fail_and_reap()
                 raise _broker_unavailable("broker_unavailable")
             _invalid("iam_proxy.provenance")
         request_fingerprint = _request_fingerprint(operation, payload)
@@ -764,13 +1030,22 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             payload=_encode_iam_request(operation, payload),
         )
         result = _decode_signed_iam_result(raw_result)
-        if type(result) is not BrokerSignedIamResult or not result.verify(
+        now = (
+            datetime.now(timezone.utc)
+            if type(self) is ProductionIamAuthorityProxy
+            else self._clock.utc_now()
+        )
+        if (
+            type(self) is ProductionIamAuthorityProxy
+            and not self._verify_production_chain(now)
+        ) or type(result) is not BrokerSignedIamResult or not result.verify(
             public_key=self._channel.public_key,
             broker_instance_id=self._channel.instance_id,
             operation=operation,
             request_fingerprint=request_fingerprint,
-            now=self._clock.utc_now(),
+            now=now,
         ):
+            self._channel._fail_and_reap()
             raise _broker_unavailable("signature_invalid")
         typed = _decode_iam_result(operation, result.result_mapping())
         return VerifiedBrokerIamResult(result=typed, authority=result)
@@ -800,6 +1075,12 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
 
 class ContractTestIamAuthorityProxy(ProductionIamAuthorityProxy):
     """Explicit non-production broker adapter bound to a test trust root."""
+    __slots__ = ()
+
+
+class IntegrationTestIamAuthorityProxy(ProductionIamAuthorityProxy):
+    """Explicit real-provider adapter under a non-production trust root."""
+    __slots__ = ()
 
 
 class _RepositoryProxy:
@@ -812,13 +1093,46 @@ class _RepositoryProxy:
 
     @property
     def role(self) -> BrokerRepositoryRole:
-        return self._ROLE
+        binding = _repository_proxy_binding(type(self))
+        if binding is None:
+            raise _state_denied("repository_provenance_denied")
+        return binding[0]
+
+    def _binding_is_current(self) -> bool:
+        binding = _repository_proxy_binding(type(self))
+        channel = getattr(self, "_channel", None)
+        handle = getattr(self, "_handle", None)
+        return bool(
+            binding is not None
+            and type(channel) is binding[1]
+            and type(handle) is BrokerAuthorityHandle
+            and handle.role is binding[0]
+            and handle.runtime_id == channel._runtime_id
+            and handle.lifecycle_generation
+            == channel._lifecycle_generation
+            and handle.verify(
+                channel.public_key,
+                instance_id=channel.instance_id,
+            )
+            and channel._identity_is_current(datetime.now(timezone.utc))
+        )
 
     async def _request(self, operation: str, payload: object) -> object:
+        binding = _repository_proxy_binding(type(self))
+        channel = getattr(self, "_channel", None)
         if (
-            type(self) is _RepositoryProxy
-            or self._handle.role is not self._ROLE
-            or operation not in _ROLE_OPERATIONS[self._ROLE.value]
+            binding is not None
+            and type(channel) is binding[1]
+            and not channel._identity_is_current(
+                datetime.now(timezone.utc),
+            )
+        ):
+            channel._fail_and_reap()
+            raise _state_unavailable("certificate_chain_invalid")
+        if (
+            binding is None
+            or not self._binding_is_current()
+            or operation not in _ROLE_OPERATIONS[binding[0].value]
         ):
             raise _state_denied("repository_operation_denied")
         return await asyncio.to_thread(
@@ -837,6 +1151,7 @@ class _RepositoryProxy:
 
 
 class AdmissionRepositoryProxy(_RepositoryProxy):
+    __slots__ = ()
     _ROLE = BrokerRepositoryRole.ADMISSION
 
     def delivery_scope(
@@ -910,6 +1225,7 @@ class AdmissionRepositoryProxy(_RepositoryProxy):
 
 
 class SchedulerRepositoryProxy(_RepositoryProxy):
+    __slots__ = ()
     _ROLE = BrokerRepositoryRole.SCHEDULER
 
     def delivery_scope(
@@ -1049,6 +1365,7 @@ class SchedulerRepositoryProxy(_RepositoryProxy):
 
 
 class PayloadRepositoryProxy(_RepositoryProxy):
+    __slots__ = ()
     _ROLE = BrokerRepositoryRole.PAYLOAD
 
     def delivery_scope(
@@ -1086,6 +1403,7 @@ class PayloadRepositoryProxy(_RepositoryProxy):
 
 
 class RegistryRepositoryProxy(_RepositoryProxy):
+    __slots__ = ()
     _ROLE = BrokerRepositoryRole.REGISTRY
 
     @property
@@ -1162,6 +1480,7 @@ class RegistryRepositoryProxy(_RepositoryProxy):
 
 
 class AuditRepositoryProxy(_RepositoryProxy):
+    __slots__ = ()
     _ROLE = BrokerRepositoryRole.AUDIT
 
     async def append_audit(
@@ -1187,6 +1506,46 @@ class AuditRepositoryProxy(_RepositoryProxy):
             ) from None
 
 
+class _ContractTestAdmissionRepositoryProxy(AdmissionRepositoryProxy):
+    __slots__ = ()
+
+
+class _ContractTestSchedulerRepositoryProxy(SchedulerRepositoryProxy):
+    __slots__ = ()
+
+
+class _ContractTestPayloadRepositoryProxy(PayloadRepositoryProxy):
+    __slots__ = ()
+
+
+class _ContractTestRegistryRepositoryProxy(RegistryRepositoryProxy):
+    __slots__ = ()
+
+
+class _ContractTestAuditRepositoryProxy(AuditRepositoryProxy):
+    __slots__ = ()
+
+
+class _IntegrationTestAdmissionRepositoryProxy(AdmissionRepositoryProxy):
+    __slots__ = ()
+
+
+class _IntegrationTestSchedulerRepositoryProxy(SchedulerRepositoryProxy):
+    __slots__ = ()
+
+
+class _IntegrationTestPayloadRepositoryProxy(PayloadRepositoryProxy):
+    __slots__ = ()
+
+
+class _IntegrationTestRegistryRepositoryProxy(RegistryRepositoryProxy):
+    __slots__ = ()
+
+
+class _IntegrationTestAuditRepositoryProxy(AuditRepositoryProxy):
+    __slots__ = ()
+
+
 class AuthorityBrokerStateStoreProxy:
     """Lifecycle/health proxy used by RuntimeContext; it is not a raw Store."""
 
@@ -1206,7 +1565,34 @@ class AuthorityBrokerStateStoreProxy:
             "closed": StateStoreLifecycleState.CLOSED,
         }[self._state]
 
+    def _binding_is_current(self) -> bool:
+        expected_channel_type = {
+            AuthorityBrokerStateStoreProxy: _ProductionBrokerChannel,
+            _ContractTestAuthorityBrokerStateStoreProxy:
+                _ContractTestBrokerChannel,
+            _IntegrationTestAuthorityBrokerStateStoreProxy:
+                _IntegrationTestBrokerChannel,
+        }.get(type(self))
+        channel = getattr(self, "_channel", None)
+        handle = getattr(self, "_handle", None)
+        return bool(
+            expected_channel_type is not None
+            and type(channel) is expected_channel_type
+            and type(handle) is BrokerAuthorityHandle
+            and handle.role is BrokerRepositoryRole.LIFECYCLE
+            and handle.runtime_id == channel._runtime_id
+            and handle.lifecycle_generation
+            == channel._lifecycle_generation
+            and handle.verify(
+                channel.public_key,
+                instance_id=channel.instance_id,
+            )
+            and channel._identity_is_current(datetime.now(timezone.utc))
+        )
+
     async def open(self) -> None:
+        if not self._binding_is_current():
+            raise _state_unavailable("broker_provenance_invalid")
         if self._state == "closed":
             raise _state_unavailable("broker_closed")
         result = decode_health(await asyncio.to_thread(
@@ -1220,6 +1606,8 @@ class AuthorityBrokerStateStoreProxy:
         self._state = "open"
 
     async def health(self) -> StateStoreHealth:
+        if not self._binding_is_current():
+            raise _state_unavailable("broker_provenance_invalid")
         result = decode_health(await asyncio.to_thread(
             self._channel.request,
             handle=self._handle,
@@ -1235,6 +1623,18 @@ class AuthorityBrokerStateStoreProxy:
             return
         self._state = "closed"
         await asyncio.to_thread(self._channel.close)
+
+
+class _ContractTestAuthorityBrokerStateStoreProxy(
+    AuthorityBrokerStateStoreProxy,
+):
+    __slots__ = ()
+
+
+class _IntegrationTestAuthorityBrokerStateStoreProxy(
+    AuthorityBrokerStateStoreProxy,
+):
+    __slots__ = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1267,8 +1667,20 @@ class ProductionAuthorityBroker:
 
     def __del__(self) -> None:
         channel = getattr(self, "_channel", None)
-        if type(channel) is _BrokerChannel:
+        if type(channel) in {
+            _ProductionBrokerChannel,
+            _ContractTestBrokerChannel,
+            _IntegrationTestBrokerChannel,
+        }:
             channel.close(terminate=True)
+
+
+class ContractTestAuthorityBroker(ProductionAuthorityBroker):
+    __slots__ = ()
+
+
+class IntegrationTestAuthorityBroker(ProductionAuthorityBroker):
+    __slots__ = ()
 
 
 def start_production_authority_broker(
@@ -1285,7 +1697,6 @@ def start_contract_test_authority_broker(
     *,
     config: AuthorityBrokerConfig,
     iam_service_credential: str,
-    state_password_source: str = "none",
     startup_timeout_seconds: float = 15.0,
 ) -> ProductionAuthorityBroker:
     """Start an explicitly non-production broker under an ephemeral test root."""
@@ -1294,15 +1705,13 @@ def start_contract_test_authority_broker(
         type(config) is not AuthorityBrokerConfig
         or type(iam_service_credential) is not str
         or not iam_service_credential
-        or type(state_password_source) is not str
-        or not state_password_source
         or config.state_backend in {"redis", "valkey"}
     ):
         _invalid("broker.contract_test_config")
     return _start_test_authority_broker(
         config=config,
         iam_service_credential=iam_service_credential,
-        state_password_source=state_password_source,
+        state_password=None,
         startup_timeout_seconds=startup_timeout_seconds,
         realm="contract-test",
     )
@@ -1312,7 +1721,7 @@ def start_integration_test_authority_broker(
     *,
     config: AuthorityBrokerConfig,
     iam_service_credential: str,
-    state_password_source: str,
+    state_password: str | None,
     startup_timeout_seconds: float = 15.0,
 ) -> ProductionAuthorityBroker:
     """Run real provider integration under a non-production test trust root."""
@@ -1322,14 +1731,16 @@ def start_integration_test_authority_broker(
         or config.state_backend not in {"redis", "valkey"}
         or type(iam_service_credential) is not str
         or not iam_service_credential
-        or type(state_password_source) is not str
-        or not state_password_source
+        or (
+            state_password is not None
+            and (type(state_password) is not str or not state_password)
+        )
     ):
         _invalid("broker.integration_test_config")
     return _start_test_authority_broker(
         config=config,
         iam_service_credential=iam_service_credential,
-        state_password_source=state_password_source,
+        state_password=state_password,
         startup_timeout_seconds=startup_timeout_seconds,
         realm="integration-test",
     )
@@ -1339,7 +1750,7 @@ def _start_test_authority_broker(
     *,
     config: AuthorityBrokerConfig,
     iam_service_credential: str,
-    state_password_source: str,
+    state_password: str | None,
     startup_timeout_seconds: float,
     realm: str,
 ) -> ProductionAuthorityBroker:
@@ -1359,7 +1770,10 @@ def _start_test_authority_broker(
         os.write(key_write, root_private_bytes)
         os.write(secrets_write, encode_frame({
             "iam_service_credential": iam_service_credential,
-            "state_password_source": state_password_source,
+            "state_password_base64": (
+                None if state_password is None
+                else encode_bytes(state_password.encode("utf-8"))
+            ),
         }))
     finally:
         os.close(key_write)
@@ -1543,16 +1957,24 @@ def _accept_started_authority_broker(
         process.join(timeout=5.0)
         parent.close()
         raise _broker_unavailable("startup_handshake_invalid")
-    channel = _BrokerChannel(
+    channel_type = {
+        "production": _ProductionBrokerChannel,
+        "contract-test": _ContractTestBrokerChannel,
+        "integration-test": _IntegrationTestBrokerChannel,
+    }[realm]
+    channel = channel_type(
         connection=parent,
         process=process,
         public_key=public_key,
         instance_id=instance_id,
+        runtime_id=config.runtime_id,
+        lifecycle_generation=certificate.lifecycle_generation,
+        certificate=certificate,
+        root_public_key=expected_root_public_key,
         timeout_seconds=max(
             config.iam_timeout_seconds,
             config.state_operation_timeout_seconds,
         ) + 2.0,
-        realm=realm,
     )
     expected_roles = tuple(BrokerRepositoryRole)
     for role in expected_roles:
@@ -1565,11 +1987,11 @@ def _accept_started_authority_broker(
             channel.close(terminate=True)
             raise _broker_unavailable("startup_handle_invalid")
 
-    iam_type = (
-        ProductionIamAuthorityProxy
-        if realm == "production"
-        else ContractTestIamAuthorityProxy
-    )
+    iam_type = {
+        "production": ProductionIamAuthorityProxy,
+        "contract-test": ContractTestIamAuthorityProxy,
+        "integration-test": IntegrationTestIamAuthorityProxy,
+    }[realm]
     iam = object.__new__(iam_type)
     iam._channel = channel
     iam._handle = handles[BrokerRepositoryRole.IAM.value]
@@ -1577,14 +1999,37 @@ def _accept_started_authority_broker(
     iam._iam_mode = config.iam_mode
     iam._authorization_service = None
 
+    proxy_types = {
+        "production": (
+            AdmissionRepositoryProxy,
+            SchedulerRepositoryProxy,
+            PayloadRepositoryProxy,
+            RegistryRepositoryProxy,
+            AuditRepositoryProxy,
+        ),
+        "contract-test": (
+            _ContractTestAdmissionRepositoryProxy,
+            _ContractTestSchedulerRepositoryProxy,
+            _ContractTestPayloadRepositoryProxy,
+            _ContractTestRegistryRepositoryProxy,
+            _ContractTestAuditRepositoryProxy,
+        ),
+        "integration-test": (
+            _IntegrationTestAdmissionRepositoryProxy,
+            _IntegrationTestSchedulerRepositoryProxy,
+            _IntegrationTestPayloadRepositoryProxy,
+            _IntegrationTestRegistryRepositoryProxy,
+            _IntegrationTestAuditRepositoryProxy,
+        ),
+    }[realm]
     proxies: dict[BrokerRepositoryRole, _RepositoryProxy] = {}
-    for role, proxy_type in (
-        (BrokerRepositoryRole.ADMISSION, AdmissionRepositoryProxy),
-        (BrokerRepositoryRole.SCHEDULER, SchedulerRepositoryProxy),
-        (BrokerRepositoryRole.PAYLOAD, PayloadRepositoryProxy),
-        (BrokerRepositoryRole.REGISTRY, RegistryRepositoryProxy),
-        (BrokerRepositoryRole.AUDIT, AuditRepositoryProxy),
-    ):
+    for role, proxy_type in zip((
+        BrokerRepositoryRole.ADMISSION,
+        BrokerRepositoryRole.SCHEDULER,
+        BrokerRepositoryRole.PAYLOAD,
+        BrokerRepositoryRole.REGISTRY,
+        BrokerRepositoryRole.AUDIT,
+    ), proxy_types):
         proxy = object.__new__(proxy_type)
         proxy._channel = channel
         proxy._handle = handles[role.value]
@@ -1596,12 +2041,22 @@ def _accept_started_authority_broker(
         registry=proxies[BrokerRepositoryRole.REGISTRY],  # type: ignore[arg-type]
         audit=proxies[BrokerRepositoryRole.AUDIT],  # type: ignore[arg-type]
     )
-    state_store = object.__new__(AuthorityBrokerStateStoreProxy)
+    state_store_type = {
+        "production": AuthorityBrokerStateStoreProxy,
+        "contract-test": _ContractTestAuthorityBrokerStateStoreProxy,
+        "integration-test": _IntegrationTestAuthorityBrokerStateStoreProxy,
+    }[realm]
+    state_store = object.__new__(state_store_type)
     state_store._channel = channel
     state_store._handle = handles[BrokerRepositoryRole.LIFECYCLE.value]
     state_store._state = "new"
 
-    value = object.__new__(ProductionAuthorityBroker)
+    broker_type = {
+        "production": ProductionAuthorityBroker,
+        "contract-test": ContractTestAuthorityBroker,
+        "integration-test": IntegrationTestAuthorityBroker,
+    }[realm]
+    value = object.__new__(broker_type)
     value.iam = iam
     value.repositories = repositories
     value.state_store = state_store
@@ -1632,6 +2087,42 @@ class _PhysicalDomainLease:
             pass
 
 
+def _broker_password_source(
+    password_buffer: bytearray | None,
+) -> object:
+    """Create a broker-local one-shot provider credential source."""
+
+    _require_isolated_broker_process()
+    from ns_common.state_store.redis_provider import StateStorePasswordSource
+
+    class _OneShotPasswordSource(StateStorePasswordSource):
+        __slots__ = ("_buffer", "_consumed")
+
+        def __init__(self, value: bytearray | None) -> None:
+            self._buffer = value
+            self._consumed = False
+
+        def resolve(self) -> str | None:
+            if self._consumed:
+                raise _state_unavailable("state_credential_already_consumed")
+            self._consumed = True
+            value = self._buffer
+            self._buffer = None
+            if value is None:
+                return None
+            try:
+                return bytes(value).decode("utf-8")
+            except UnicodeDecodeError:
+                raise _state_unavailable(
+                    "state_credential_invalid",
+                ) from None
+            finally:
+                for index in range(len(value)):
+                    value[index] = 0
+
+    return _OneShotPasswordSource(password_buffer)
+
+
 class _BrokerIamBackend:
     """Broker-private HTTP adapter with an exact fixed endpoint allowlist."""
 
@@ -1643,7 +2134,7 @@ class _BrokerIamBackend:
     def __init__(
         self,
         config: AuthorityBrokerConfig,
-        secrets: Mapping[str, str],
+        secrets: Mapping[str, object],
     ) -> None:
         _require_isolated_broker_process()
         from ns_common.http_client import NsAsyncHttpClient
@@ -1661,7 +2152,10 @@ class _BrokerIamBackend:
             },
             verify=True,
         )
-        self._credential = secrets["iam_service_credential"]
+        credential = secrets["iam_service_credential"]
+        if type(credential) is not str:
+            _invalid("broker.iam_credential")
+        self._credential = credential
         self._clock = SystemClock()
         self._iam_mode = config.iam_mode
         self._ttl = float(config.permission_snapshot_ttl_seconds)
@@ -1840,7 +2334,7 @@ class _BrokerStateBackend:
     def __init__(
         self,
         config: AuthorityBrokerConfig,
-        secrets: Mapping[str, str],
+        secrets: Mapping[str, object],
     ) -> None:
         _require_isolated_broker_process()
         self.store = None
@@ -1850,10 +2344,7 @@ class _BrokerStateBackend:
         self.available = config.state_backend in {"redis", "valkey"}
         if not self.available:
             return
-        self.lease = _acquire_physical_domain_lease(
-            config,
-            credential_reference=secrets["state_password_source"],
-        )
+        self.lease = _acquire_physical_domain_lease(config)
         try:
             self._create_provider(config, secrets)
         except BaseException:
@@ -1864,16 +2355,17 @@ class _BrokerStateBackend:
     def _create_provider(
         self,
         config: AuthorityBrokerConfig,
-        secrets: Mapping[str, str],
+        secrets: Mapping[str, object],
     ) -> None:
-        from ns_common.config import NsRuntimeStateStoreConfig
         from ns_common.state_store import (
             StateAuthorityKind,
             StateCallerCapability,
+            StateStoreCapabilities,
             StateStoreRepositoryRole,
         )
-        from ns_common.state_store.composition import (
-            _create_redis_valkey_provider,
+        from ns_common.state_store.redis_provider import (
+            RedisStateStoreOptions,
+            RedisValkeyStateStore,
         )
         from ns_common.state_store.store import _ProductionStateScopeValidator
 
@@ -1882,24 +2374,25 @@ class _BrokerStateBackend:
         validator._scopes = {}
         validator._closed = False
         validator._realm = "production-broker"
-        typed_config = NsRuntimeStateStoreConfig(
-            backend=config.state_backend,  # type: ignore[arg-type]
-            endpoint=config.state_endpoint,
-            username=config.state_username,
-            password_source=secrets["state_password_source"],
-            namespace=config.state_namespace,
-            operation_timeout_seconds=int(
-                config.state_operation_timeout_seconds,
+        password_buffer = secrets["state_password_buffer"]
+        if password_buffer is not None and type(password_buffer) is not bytearray:
+            _invalid("broker.state_password")
+        password_source = _broker_password_source(password_buffer)
+        store = RedisValkeyStateStore(
+            options=RedisStateStoreOptions(
+                backend=config.state_backend,
+                endpoint=config.state_endpoint,
+                username=config.state_username,
+                password_source=password_source,
+                namespace=config.state_namespace,
+                operation_timeout_seconds=float(
+                    config.state_operation_timeout_seconds,
+                ),
             ),
-        )
-        store = _create_redis_valkey_provider(
-            config=typed_config,
+            capabilities=StateStoreCapabilities.p10_contract(),
             clock=SystemClock(),
-            capabilities=None,
-            production_scope_validator=validator,
+            _production_scope_validator=validator,
         )
-        if store is None:
-            raise _state_unavailable("provider_unavailable")
         specs = (
             (
                 StateStoreRepositoryRole.DELIVERY_ADMISSION,
@@ -2229,7 +2722,7 @@ async def _broker_async_main(
     connection: Connection,
     config: AuthorityBrokerConfig,
     root_private_key: Ed25519PrivateKey,
-    secrets: Mapping[str, str],
+    secrets: Mapping[str, object],
     realm: str,
 ) -> None:
     session_private_key = Ed25519PrivateKey.generate()
@@ -2241,6 +2734,7 @@ async def _broker_async_main(
     iam = _BrokerIamBackend(config, secrets)
     state = _BrokerStateBackend(config, secrets)
     iam_sequence = 0
+    request_sequence = 0
     response_sequence = 0
     generation = 1
     handles = {
@@ -2311,33 +2805,36 @@ async def _broker_async_main(
                 }))
                 break
             if type(message) is not dict or set(message) != {
-                "version", "kind", "request_id", "handle",
-                "operation", "payload",
+                "version", "kind", "request_id", "request_sequence",
+                "handle", "operation", "payload",
             }:
                 # No request id can be trusted, so close instead of reflecting
                 # attacker-controlled structure into a response.
                 break
             request_id = message["request_id"]
+            incoming_request_sequence = message["request_sequence"]
             operation = message["operation"]
             if (
                 message["version"] != WIRE_VERSION
                 or message["kind"] != "request"
                 or type(request_id) is not str
                 or not request_id
+                or type(incoming_request_sequence) is not int
+                or incoming_request_sequence != request_sequence + 1
                 or type(operation) is not str
             ):
                 break
+            request_sequence = incoming_request_sequence
             try:
                 handle = _decode_handle(message["handle"])
             except NsValidationError:
-                response_sequence += 1
-                connection.send_bytes(encode_frame(_wire_response(
-                    request_id=request_id,
-                    sequence=response_sequence,
-                    error=_error_values("state_denied", "handle_denied"),
-                )))
-                continue
+                break
             payload = message["payload"]
+            request_fingerprint = _state_request_fingerprint(
+                operation=operation,
+                handle=handle,
+                payload=payload,
+            )
             if (
                 not handle.verify(
                     session_public_key,
@@ -2348,10 +2845,20 @@ async def _broker_async_main(
                 or not _role_allows(handle.role, operation)
             ):
                 response_sequence += 1
-                connection.send_bytes(encode_frame(_wire_response(
-                    request_id=request_id,
-                    sequence=response_sequence,
-                    error=_error_values("state_denied", "handle_denied"),
+                connection.send_bytes(encode_frame(_signed_response_envelope(
+                    _sign_state_response(
+                        private_key=session_private_key,
+                        certificate=certificate,
+                        request_id=request_id,
+                        request_sequence=request_sequence,
+                        operation=operation,
+                        handle=handle,
+                        request_fingerprint=request_fingerprint,
+                        response_sequence=response_sequence,
+                        error=_error_values(
+                            "state_denied", "handle_denied",
+                        ),
+                    ),
                 )))
                 continue
             try:
@@ -2384,17 +2891,33 @@ async def _broker_async_main(
                 if not isinstance(error, Exception):
                     raise
                 response_sequence += 1
-                connection.send_bytes(encode_frame(_wire_response(
-                    request_id=request_id,
-                    sequence=response_sequence,
-                    error=_exception_values(error),
+                connection.send_bytes(encode_frame(_signed_response_envelope(
+                    _sign_state_response(
+                        private_key=session_private_key,
+                        certificate=certificate,
+                        request_id=request_id,
+                        request_sequence=request_sequence,
+                        operation=operation,
+                        handle=handle,
+                        request_fingerprint=request_fingerprint,
+                        response_sequence=response_sequence,
+                        error=_exception_values(error),
+                    ),
                 )))
             else:
                 response_sequence += 1
-                connection.send_bytes(encode_frame(_wire_response(
-                    request_id=request_id,
-                    sequence=response_sequence,
-                    result=wire_result,
+                connection.send_bytes(encode_frame(_signed_response_envelope(
+                    _sign_state_response(
+                        private_key=session_private_key,
+                        certificate=certificate,
+                        request_id=request_id,
+                        request_sequence=request_sequence,
+                        operation=operation,
+                        handle=handle,
+                        request_fingerprint=request_fingerprint,
+                        response_sequence=response_sequence,
+                        result=wire_result,
+                    ),
                 )))
     finally:
         try:
@@ -2816,6 +3339,64 @@ def _role_allows(role: BrokerRepositoryRole, operation: str) -> bool:
     return operation in _ROLE_OPERATIONS.get(role.value, frozenset())
 
 
+def _channel_realm(channel_type: type[object]) -> str | None:
+    return {
+        _ProductionBrokerChannel: "production",
+        _ContractTestBrokerChannel: "contract-test",
+        _IntegrationTestBrokerChannel: "integration-test",
+    }.get(channel_type)
+
+
+def _repository_proxy_binding(
+    proxy_type: type[object],
+) -> tuple[BrokerRepositoryRole, type[_BrokerChannel]] | None:
+    values: dict[
+        type[object],
+        tuple[BrokerRepositoryRole, type[_BrokerChannel]],
+    ] = {}
+    for channel_type, proxy_types in (
+        (
+            _ProductionBrokerChannel,
+            (
+                AdmissionRepositoryProxy,
+                SchedulerRepositoryProxy,
+                PayloadRepositoryProxy,
+                RegistryRepositoryProxy,
+                AuditRepositoryProxy,
+            ),
+        ),
+        (
+            _ContractTestBrokerChannel,
+            (
+                _ContractTestAdmissionRepositoryProxy,
+                _ContractTestSchedulerRepositoryProxy,
+                _ContractTestPayloadRepositoryProxy,
+                _ContractTestRegistryRepositoryProxy,
+                _ContractTestAuditRepositoryProxy,
+            ),
+        ),
+        (
+            _IntegrationTestBrokerChannel,
+            (
+                _IntegrationTestAdmissionRepositoryProxy,
+                _IntegrationTestSchedulerRepositoryProxy,
+                _IntegrationTestPayloadRepositoryProxy,
+                _IntegrationTestRegistryRepositoryProxy,
+                _IntegrationTestAuditRepositoryProxy,
+            ),
+        ),
+    ):
+        for role, concrete_type in zip((
+            BrokerRepositoryRole.ADMISSION,
+            BrokerRepositoryRole.SCHEDULER,
+            BrokerRepositoryRole.PAYLOAD,
+            BrokerRepositoryRole.REGISTRY,
+            BrokerRepositoryRole.AUDIT,
+        ), proxy_types):
+            values[concrete_type] = (role, channel_type)
+    return values.get(proxy_type)
+
+
 def _encode_broker_config(
     config: AuthorityBrokerConfig,
 ) -> dict[str, object]:
@@ -2882,23 +3463,29 @@ def _decode_broker_config(value: object) -> AuthorityBrokerConfig:
     )
 
 
-def _decode_broker_secrets(value: object) -> dict[str, str]:
+def _decode_broker_secrets(value: object) -> dict[str, object]:
     fields = require_object(
         value,
-        fields={"iam_service_credential", "state_password_source"},
+        fields={"iam_service_credential", "state_password_base64"},
         field="broker.secrets",
     )
     credential = _exact_string(
         fields["iam_service_credential"],
         "secrets.iam_service_credential",
     )
-    password_source = _exact_string(
-        fields["state_password_source"],
-        "secrets.state_password_source",
-    )
+    raw_password = fields["state_password_base64"]
+    if raw_password is None:
+        password_buffer = None
+    else:
+        password_buffer = bytearray(decode_bytes(
+            raw_password,
+            field="secrets.state_password_base64",
+        ))
+        if not password_buffer:
+            _invalid("secrets.state_password_base64")
     return {
         "iam_service_credential": credential,
-        "state_password_source": password_source,
+        "state_password_buffer": password_buffer,
     }
 
 
@@ -3296,22 +3883,191 @@ def _encode_state_response(
     _invalid("state_response.operation")
 
 
-def _wire_response(
+def _session_key_fingerprint(public_key: bytes) -> str:
+    if type(public_key) is not bytes or len(public_key) != 32:
+        _invalid("session_public_key")
+    return "sha256:" + hashlib.sha256(public_key).hexdigest()
+
+
+def _canonical_json(value: object) -> str:
+    return encode_frame(value).decode("utf-8")  # type: ignore[arg-type]
+
+
+def _decode_canonical_json(value: str, field: str) -> object:
+    if type(value) is not str:
+        _invalid(field)
+    result = decode_frame(value.encode("utf-8"))
+    if _canonical_json(result) != value:
+        _invalid(field)
+    return result
+
+
+def _state_request_fingerprint(
     *,
+    operation: str,
+    handle: BrokerAuthorityHandle,
+    payload: object,
+) -> str:
+    if (
+        type(operation) is not str
+        or not operation
+        or type(handle) is not BrokerAuthorityHandle
+    ):
+        _invalid("state_request.binding")
+    return "sha256:" + hashlib.sha256(encode_frame({
+        "operation": operation,
+        "handle_id": handle.handle_id,
+        "role": handle.role.value,
+        "payload": payload,
+    })).hexdigest()
+
+
+def _sign_state_response(
+    *,
+    private_key: Ed25519PrivateKey,
+    certificate: BrokerInstanceCertificate,
     request_id: str,
-    sequence: int,
+    request_sequence: int,
+    operation: str,
+    handle: BrokerAuthorityHandle,
+    request_fingerprint: str,
+    response_sequence: int,
     result: object = None,
     error: object = None,
+) -> BrokerSignedStateResponse:
+    if (result is None) == (error is None):
+        _invalid("state_response.outcome")
+    now = datetime.now(timezone.utc)
+    values = {
+        "broker_instance_id": certificate.broker_instance_id,
+        "lifecycle_generation": certificate.lifecycle_generation,
+        "session_key_fingerprint": _session_key_fingerprint(
+            certificate.session_public_key,
+        ),
+        "request_id": request_id,
+        "request_sequence": request_sequence,
+        "operation": operation,
+        "handle_id": handle.handle_id,
+        "role": handle.role.value,
+        "request_fingerprint": request_fingerprint,
+        "ok": error is None,
+        "result_json": _canonical_json(
+            result if error is None else None,
+        ),
+        "error_json": _canonical_json(
+            error if error is not None else None,
+        ),
+        "response_sequence": response_sequence,
+        "issued_at": encode_time(now),
+        "nonce": uuid.uuid4().hex,
+    }
+    return BrokerSignedStateResponse(
+        broker_instance_id=values["broker_instance_id"],
+        lifecycle_generation=values["lifecycle_generation"],
+        session_key_fingerprint=values["session_key_fingerprint"],
+        request_id=values["request_id"],
+        request_sequence=values["request_sequence"],
+        operation=values["operation"],
+        handle_id=values["handle_id"],
+        role=values["role"],
+        request_fingerprint=values["request_fingerprint"],
+        ok=values["ok"],
+        result_json=values["result_json"],
+        error_json=values["error_json"],
+        response_sequence=values["response_sequence"],
+        issued_at=now,
+        nonce=values["nonce"],
+        signature=private_key.sign(_canonical(values)),
+    )
+
+
+def _signed_response_envelope(
+    value: BrokerSignedStateResponse,
 ) -> dict[str, object]:
     return {
         "version": WIRE_VERSION,
-        "kind": "response",
-        "request_id": request_id,
-        "sequence": sequence,
-        "ok": error is None,
-        "result": result if error is None else None,
-        "error": error,
+        "kind": "signed_response",
+        "signed_response": {
+            **value.signed_values(),
+            "signature": encode_bytes(value.signature),
+        },
     }
+
+
+def _decode_signed_state_response(
+    value: object,
+) -> BrokerSignedStateResponse:
+    fields = require_object(
+        value,
+        fields={
+            "broker_instance_id", "lifecycle_generation",
+            "session_key_fingerprint", "request_id", "request_sequence",
+            "operation", "handle_id", "role", "request_fingerprint",
+            "ok", "result_json", "error_json", "response_sequence",
+            "issued_at", "nonce", "signature",
+        },
+        field="signed_state_response",
+    )
+    if type(fields["ok"]) is not bool:
+        _invalid("signed_state_response.ok")
+    return BrokerSignedStateResponse(
+        broker_instance_id=_exact_string(
+            fields["broker_instance_id"],
+            "signed_state_response.broker_instance_id",
+        ),
+        lifecycle_generation=_exact_int(
+            fields["lifecycle_generation"],
+            "signed_state_response.lifecycle_generation",
+            minimum=1,
+        ),
+        session_key_fingerprint=_exact_string(
+            fields["session_key_fingerprint"],
+            "signed_state_response.session_key_fingerprint",
+        ),
+        request_id=_exact_string(
+            fields["request_id"], "signed_state_response.request_id",
+        ),
+        request_sequence=_exact_int(
+            fields["request_sequence"],
+            "signed_state_response.request_sequence",
+            minimum=1,
+        ),
+        operation=_exact_string(
+            fields["operation"], "signed_state_response.operation",
+        ),
+        handle_id=_exact_string(
+            fields["handle_id"], "signed_state_response.handle_id",
+        ),
+        role=_exact_string(
+            fields["role"], "signed_state_response.role",
+        ),
+        request_fingerprint=_exact_string(
+            fields["request_fingerprint"],
+            "signed_state_response.request_fingerprint",
+        ),
+        ok=fields["ok"],
+        result_json=_exact_string(
+            fields["result_json"], "signed_state_response.result_json",
+        ),
+        error_json=_exact_string(
+            fields["error_json"], "signed_state_response.error_json",
+        ),
+        response_sequence=_exact_int(
+            fields["response_sequence"],
+            "signed_state_response.response_sequence",
+            minimum=1,
+        ),
+        issued_at=decode_time(
+            fields["issued_at"], field="signed_state_response.issued_at",
+        ),
+        nonce=_exact_string(
+            fields["nonce"], "signed_state_response.nonce",
+        ),
+        signature=decode_bytes(
+            fields["signature"],
+            field="signed_state_response.signature",
+        ),
+    )
 
 
 def _read_fd_once(fd: int, *, maximum: int) -> bytes:
@@ -3330,8 +4086,6 @@ def _read_fd_once(fd: int, *, maximum: int) -> bytes:
 
 def _physical_state_domain(
     config: AuthorityBrokerConfig,
-    *,
-    credential_reference: str,
 ) -> str:
     parsed = urlsplit(config.state_endpoint)
     if (
@@ -3357,22 +4111,16 @@ def _physical_state_domain(
         str(int(path)),
         config.state_namespace,
         principal,
-        credential_reference,
     ))
 
 
 def _acquire_physical_domain_lease(
     config: AuthorityBrokerConfig,
-    *,
-    credential_reference: str,
 ) -> _PhysicalDomainLease:
     import portalocker
 
     identity = hashlib.sha256(
-        _physical_state_domain(
-            config,
-            credential_reference=credential_reference,
-        ).encode(),
+        _physical_state_domain(config).encode(),
     ).hexdigest()
     # A caller-selected directory would let two brokers lock different files
     # for the same physical Redis/Valkey domain.  Keep the lock location
@@ -3693,6 +4441,15 @@ def _state_unavailable(reason: str) -> NsRuntimeStateStoreUnavailableError:
         "component": "authority_broker",
         "reason": reason,
     })
+
+
+def _operation_unavailable(
+    operation: str,
+    reason: str,
+) -> Exception:
+    if operation in _IAM_OPERATIONS:
+        return _broker_unavailable(reason)
+    return _state_unavailable(reason)
 
 
 def _invalid(field: str) -> None:
