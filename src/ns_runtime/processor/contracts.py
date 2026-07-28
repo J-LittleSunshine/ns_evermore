@@ -11,6 +11,7 @@ import re
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Mapping
@@ -188,7 +189,10 @@ class _ProductionAuthorizationEvidenceIssuer:
         semantic_request["permission_version"] = (
             result.effective_snapshot.permission_version
         )
-        if result._broker_authority is None:
+        if (
+            result._broker_authority is None
+            or result._broker_verification is None
+        ):
             _invalid("authorization_evidence_issuer.broker_authority")
         return AuthorizationDecisionEvidence(
                 message_binding_reference="sha256:" + "0" * 64,
@@ -219,18 +223,30 @@ class _ProductionAuthorizationEvidenceIssuer:
                 ),
                 _issuer=self,
                 _broker_authority=result._broker_authority,
+                _broker_verification=result._broker_verification,
                 _derive_references=True,
             )
 
     def _verify(self, evidence: "AuthorizationDecisionEvidence") -> bool:
         authority = evidence._broker_authority
+        verification = evidence._broker_verification
         iam = self._service._iam
+        from ns_runtime.authority_broker import VerifiedBrokerIamResult
+
+        verified = object.__new__(VerifiedBrokerIamResult)
+        object.__setattr__(
+            verified, "result",
+            self._service_result_from_authority(authority),
+        )
+        object.__setattr__(verified, "authority", authority)
+        object.__setattr__(verified, "verification", verification)
         return bool(
             self._service.production_authority
-            and iam._verify_signed_iam_authority(
-                authority,
+            and iam._verified_iam_result_is_current_local(
+                verified,
                 operation="runtime_access_check",
                 request_fingerprint=authority.request_fingerprint,
+                now=datetime.now(timezone.utc),
             )
             and authority.backend_decision == "allow"
             and authority.request_mapping().get("tenant_id")
@@ -247,6 +263,18 @@ class _ProductionAuthorizationEvidenceIssuer:
             and authority.result_mapping().get("permission_version")
             == evidence.effective_permission_snapshot_version
         )
+
+    @staticmethod
+    def _service_result_from_authority(authority: object) -> object:
+        from ns_common.iam import IamAccessDecision
+        from ns_runtime.authority_broker import BrokerSignedIamResult
+
+        if type(authority) is not BrokerSignedIamResult:
+            return None
+        try:
+            return IamAccessDecision.from_wire(authority.result_mapping())
+        except (NsValidationError, KeyError, TypeError, ValueError):
+            return None
 
     def __copy__(self) -> "_ProductionAuthorizationEvidenceIssuer":
         _invalid("authorization_evidence_issuer.copy")
@@ -288,6 +316,9 @@ class AuthorizationDecisionEvidence:
     _issuer: object = field(init=False, repr=False, compare=False)
     _authority_signature: bytes = field(init=False, repr=False, compare=False)
     _broker_authority: object = field(init=False, repr=False, compare=False)
+    _broker_verification: object = field(
+        init=False, repr=False, compare=False,
+    )
 
     def __init__(
         self,
@@ -313,9 +344,13 @@ class AuthorizationDecisionEvidence:
         _issuer: object | None = None,
         _construction_token: object | None = None,
         _broker_authority: object | None = None,
+        _broker_verification: object | None = None,
         _derive_references: bool = False,
     ) -> None:
-        from ns_runtime.authority_broker import BrokerSignedIamResult
+        from ns_runtime.authority_broker import (
+            BrokerIamVerificationReceipt,
+            BrokerSignedIamResult,
+        )
 
         production_issuer = type(_issuer) is _ProductionAuthorizationEvidenceIssuer
         if (
@@ -323,6 +358,11 @@ class AuthorizationDecisionEvidence:
             or (
                 production_issuer
                 and type(_broker_authority) is not BrokerSignedIamResult
+            )
+            or (
+                production_issuer
+                and type(_broker_verification)
+                is not BrokerIamVerificationReceipt
             )
             or (
                 not production_issuer
@@ -398,6 +438,7 @@ class AuthorizationDecisionEvidence:
                 ),
             ),
             ("_broker_authority", _broker_authority),
+            ("_broker_verification", _broker_verification),
         ):
             object.__setattr__(self, name, value)
         self.__post_init__()

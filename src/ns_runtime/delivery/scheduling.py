@@ -315,6 +315,7 @@ class _PayloadAccessEvidenceIssuer:
             PayloadRefRevalidationRequest,
         )
         from ns_runtime.authority_broker import (
+            BrokerIamVerificationReceipt,
             BrokerSignedIamResult,
             VerifiedBrokerIamResult,
             broker_request_fingerprint,
@@ -322,20 +323,23 @@ class _PayloadAccessEvidenceIssuer:
 
         decision = getattr(verified_result, "result", None)
         broker_authority = getattr(verified_result, "authority", None)
+        broker_verification = getattr(verified_result, "verification", None)
         verification_now = datetime.now(timezone.utc)
         if (
-            not self._iam._is_production_adapter()
-            or not self._iam._verify_production_chain(verification_now)
+            not self._iam._is_production_composition_bound_local()
             or type(request) is not PayloadRefRevalidationRequest
             or type(decision) is not PayloadRefRevalidationDecision
             or type(verified_result) is not VerifiedBrokerIamResult
             or type(broker_authority) is not BrokerSignedIamResult
-            or not self._iam._verify_signed_iam_authority(
-                broker_authority,
+            or type(broker_verification)
+            is not BrokerIamVerificationReceipt
+            or not self._iam._verified_iam_result_is_current_local(
+                verified_result,
                 operation="payload_revalidate",
                 request_fingerprint=broker_request_fingerprint(
                     "payload_revalidate", request,
                 ),
+                now=verification_now,
             )
             or broker_authority.result_mapping() != decision.to_wire()
             or broker_authority.request_mapping() != request.to_wire()
@@ -414,18 +418,49 @@ class _PayloadAccessEvidenceIssuer:
             **values,
             _issuer=self,
             _broker_authority=broker_authority,
+            _broker_verification=broker_verification,
         )
 
     def _verify(self, evidence: "PayloadAccessDecisionEvidence") -> bool:
+        from ns_runtime.authority_broker import (
+            BrokerIamVerificationReceipt,
+            BrokerSignedIamResult,
+            VerifiedBrokerIamResult,
+        )
+
         authority = evidence._broker_authority
-        request_values = authority.request_mapping()
-        result_values = authority.result_mapping()
+        verification = evidence._broker_verification
+        if (
+            type(authority) is not BrokerSignedIamResult
+            or type(verification) is not BrokerIamVerificationReceipt
+        ):
+            return False
+        try:
+            request_values = authority.request_mapping()
+            result_values = authority.result_mapping()
+        except (NsValidationError, KeyError, TypeError, ValueError):
+            return False
+        from ns_common.iam import PayloadRefRevalidationDecision
+
+        try:
+            decision = PayloadRefRevalidationDecision.from_wire(
+                result_values,
+            )
+        except (NsValidationError, KeyError, TypeError, ValueError):
+            return False
+        verified = object.__new__(VerifiedBrokerIamResult)
+        object.__setattr__(verified, "result", decision)
+        object.__setattr__(verified, "authority", authority)
+        object.__setattr__(verified, "verification", verification)
+        now = datetime.now(timezone.utc)
         return bool(
-            self._iam._is_production_adapter()
-            and self._iam._verify_signed_iam_authority(
-                authority,
+            self._iam._is_production_composition_bound_local()
+            and now < evidence.expires_at
+            and self._iam._verified_iam_result_is_current_local(
+                verified,
                 operation="payload_revalidate",
                 request_fingerprint=authority.request_fingerprint,
+                now=now,
             )
             and authority.backend_decision == "allow"
             and request_values.get("object_id") == evidence.object_id
@@ -486,6 +521,9 @@ class PayloadAccessDecisionEvidence:
     _authority_seal: object = field(init=False, repr=False, compare=False)
     _authority_signature: bytes = field(init=False, repr=False, compare=False)
     _broker_authority: object = field(init=False, repr=False, compare=False)
+    _broker_verification: object = field(
+        init=False, repr=False, compare=False,
+    )
 
     def __init__(
         self,
@@ -508,13 +546,19 @@ class PayloadAccessDecisionEvidence:
         expires_at: datetime,
         _issuer: object | None = None,
         _broker_authority: object | None = None,
+        _broker_verification: object | None = None,
     ) -> None:
-        from ns_runtime.authority_broker import BrokerSignedIamResult
+        from ns_runtime.authority_broker import (
+            BrokerIamVerificationReceipt,
+            BrokerSignedIamResult,
+        )
 
         if (
             type(self) is not PayloadAccessDecisionEvidence
             or type(_issuer) is not _PayloadAccessEvidenceIssuer
             or type(_broker_authority) is not BrokerSignedIamResult
+            or type(_broker_verification)
+            is not BrokerIamVerificationReceipt
         ):
             _invalid("payload_access.issuer")
         for name, value in (
@@ -537,6 +581,7 @@ class PayloadAccessDecisionEvidence:
             ("_authority_seal", _issuer),
             ("_authority_signature", _broker_authority.signature),
             ("_broker_authority", _broker_authority),
+            ("_broker_verification", _broker_verification),
         ):
             object.__setattr__(self, name, value)
         self.__post_init__()

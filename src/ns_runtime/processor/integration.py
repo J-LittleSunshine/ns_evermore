@@ -186,6 +186,7 @@ class IamProcessorAuthorization(ProcessorAuthorization):
         return _authorization_evidence(
             context=context,
             result=result,
+            service=self._service,
         )
 
 
@@ -580,10 +581,18 @@ def _authorization_evidence(
     *,
     context: ProcessorContext,
     result: object,
+    service: object,
 ) -> AuthorizationDecisionEvidence:
-    from ns_runtime.iam import MessageAuthorizationResult
+    from ns_runtime.iam import (
+        MessageAuthorizationResult,
+        MessageAuthorizationService,
+    )
 
-    if type(result) is not MessageAuthorizationResult:
+    if (
+        type(service) is not MessageAuthorizationService
+        or type(result) is not MessageAuthorizationResult
+        or not result.is_issued_by(service)
+    ):
         _invalid("authorization.result")
     request = result.request
     effective_snapshot = result.effective_snapshot

@@ -10,6 +10,7 @@ import json
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Awaitable, Callable
 
@@ -21,6 +22,7 @@ from ns_common.exceptions import (
 from ns_common.iam import IamAccessCheckRequest, IamAccessDecision, PermissionInvalidation
 from ns_common.time import Clock
 from ns_runtime.authority_broker import (
+    BrokerIamVerificationReceipt,
     BrokerSignedIamResult,
     VerifiedBrokerIamResult,
     broker_request_fingerprint,
@@ -92,6 +94,61 @@ _PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER = object()
 _CONTRACT_TEST_MESSAGE_AUTHORIZATION_ISSUER = object()
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _CachedAuthorizationDecision:
+    decision: IamAccessDecision
+    stored_at: float
+    authority: BrokerSignedIamResult | None
+    verification: BrokerIamVerificationReceipt | None
+    broker_instance_id: str | None
+    lifecycle_generation: int | None
+    session_key_fingerprint: str | None
+    authority_expires_at: datetime | None
+
+    @classmethod
+    def from_decision(
+        cls,
+        *,
+        decision: IamAccessDecision,
+        stored_at: float,
+        verified_result: VerifiedBrokerIamResult | None,
+    ) -> "_CachedAuthorizationDecision":
+        if verified_result is None:
+            return cls(
+                decision=decision,
+                stored_at=stored_at,
+                authority=None,
+                verification=None,
+                broker_instance_id=None,
+                lifecycle_generation=None,
+                session_key_fingerprint=None,
+                authority_expires_at=None,
+            )
+        if type(verified_result) is not VerifiedBrokerIamResult:
+            _invalid("authorization_cache.verified_result")
+        authority = verified_result.authority
+        verification = verified_result.verification
+        return cls(
+            decision=decision,
+            stored_at=stored_at,
+            authority=authority,
+            verification=verification,
+            broker_instance_id=verification.broker_instance_id,
+            lifecycle_generation=verification.lifecycle_generation,
+            session_key_fingerprint=verification.session_key_fingerprint,
+            authority_expires_at=verification.authority_expires_at,
+        )
+
+    def verified_result(self) -> VerifiedBrokerIamResult | None:
+        if self.authority is None or self.verification is None:
+            return None
+        value = object.__new__(VerifiedBrokerIamResult)
+        object.__setattr__(value, "result", self.decision)
+        object.__setattr__(value, "authority", self.authority)
+        object.__setattr__(value, "verification", self.verification)
+        return value
+
+
 class ContractTestIamAuthorizationAdapter(ABC):
     """Explicit non-production backend used by authorization contract tests."""
 
@@ -115,6 +172,7 @@ class MessageAuthorizationResult:
     _service: object
     _signature: bytes
     _broker_authority: BrokerSignedIamResult | None
+    _broker_verification: BrokerIamVerificationReceipt | None
 
     def __init__(
         self,
@@ -127,19 +185,29 @@ class MessageAuthorizationResult:
         _service: object | None = None,
         _signature: bytes | None = None,
         _broker_authority: BrokerSignedIamResult | None = None,
+        _broker_verification: BrokerIamVerificationReceipt | None = None,
         _construction_token: object | None = None,
     ) -> None:
         production_authority = bool(
             type(_service) is MessageAuthorizationService
             and _service.production_authority
         )
+        broker_verified_authority = bool(
+            type(_service) is MessageAuthorizationService
+            and getattr(_service, "_broker_verified_iam", False)
+        )
         if (
             type(self) is not MessageAuthorizationResult
             or type(_service) is not MessageAuthorizationService
             or not isinstance(_signature, bytes)
             or (
-                production_authority
+                broker_verified_authority
                 and type(_broker_authority) is not BrokerSignedIamResult
+            )
+            or (
+                broker_verified_authority
+                and type(_broker_verification)
+                is not BrokerIamVerificationReceipt
             )
             or (
                 not production_authority
@@ -158,6 +226,7 @@ class MessageAuthorizationResult:
             ("_service", _service),
             ("_signature", _signature),
             ("_broker_authority", _broker_authority),
+            ("_broker_verification", _broker_verification),
         ):
             object.__setattr__(self, name, value)
         self.__post_init__()
@@ -177,21 +246,32 @@ class MessageAuthorizationResult:
     def is_issued_by(self, service: "MessageAuthorizationService") -> bool:
         if type(service) is not MessageAuthorizationService:
             return False
-        if service.production_authority:
+        if getattr(service, "_broker_verified_iam", False):
             authority = self._broker_authority
+            verification = self._broker_verification
             iam = service._iam
+            verified = object.__new__(VerifiedBrokerIamResult)
+            object.__setattr__(verified, "result", self.decision)
+            object.__setattr__(verified, "authority", authority)
+            object.__setattr__(verified, "verification", verification)
+            local_verifier = (
+                iam._verified_iam_result_is_current_local
+                if service.production_authority
+                else iam._verified_broker_iam_result_is_current_local
+            )
             return bool(
                 type(self) is MessageAuthorizationResult
                 and self._service is service
                 and type(authority) is BrokerSignedIamResult
-                and type(iam) is IamClient
-                and iam._verify_signed_iam_authority(
-                    authority,
+                and type(verification) is BrokerIamVerificationReceipt
+                and local_verifier(
+                    verified,
                     operation="runtime_access_check",
                     request_fingerprint=broker_request_fingerprint(
                         "runtime_access_check",
                         self.request,
                     ),
+                    now=datetime.now(timezone.utc),
                 )
                 and authority.result_mapping() == self.decision.to_wire()
                 and authority.permission_snapshot_ref
@@ -252,6 +332,7 @@ class MessageAuthorizationService:
             snapshot_refresher=snapshot_refresher,
             unavailable_policy=unavailable_policy,
             authority_issuer=_PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER,
+            broker_verified_iam=True,
         )
         iam_client._bind_authorization_service(self)
 
@@ -280,6 +361,40 @@ class MessageAuthorizationService:
             snapshot_refresher=snapshot_refresher,
             unavailable_policy=unavailable_policy,
             authority_issuer=_CONTRACT_TEST_MESSAGE_AUTHORIZATION_ISSUER,
+            broker_verified_iam=False,
+        )
+        return value
+
+    @classmethod
+    def for_broker_contract_tests(
+        cls,
+        *,
+        iam_client: object,
+        clock: Clock,
+        mode: AuthorizationMode,
+        cache_ttl_seconds: float,
+        snapshot_refresher: SnapshotRefresher | None = None,
+        unavailable_policy: BackendUnavailablePolicy | None = None,
+    ) -> "MessageAuthorizationService":
+        """Exercise signed broker receipts under the separate test trust root."""
+
+        from ns_runtime.authority_broker import ContractTestIamAuthorityProxy
+
+        if (
+            type(iam_client) is not ContractTestIamAuthorityProxy
+            or iam_client._broker_session_identity_snapshot_local() is None
+        ):
+            _invalid("test_broker_iam_client")
+        value = object.__new__(cls)
+        value._initialize(
+            iam_client=iam_client,
+            clock=clock,
+            mode=mode,
+            cache_ttl_seconds=cache_ttl_seconds,
+            snapshot_refresher=snapshot_refresher,
+            unavailable_policy=unavailable_policy,
+            authority_issuer=_CONTRACT_TEST_MESSAGE_AUTHORIZATION_ISSUER,
+            broker_verified_iam=True,
         )
         return value
 
@@ -293,6 +408,7 @@ class MessageAuthorizationService:
         snapshot_refresher: SnapshotRefresher | None,
         unavailable_policy: BackendUnavailablePolicy | None,
         authority_issuer: object,
+        broker_verified_iam: bool,
     ) -> None:
         if authority_issuer not in {
             _PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER,
@@ -318,6 +434,7 @@ class MessageAuthorizationService:
         self._refresher = snapshot_refresher
         self._unavailable = unavailable_policy or BackendUnavailablePolicy()
         self._authority_issuer = authority_issuer
+        self._broker_verified_iam = broker_verified_iam
         self._authorization_result_key = (
             secrets.token_bytes(32)
             if authority_issuer is _CONTRACT_TEST_MESSAGE_AUTHORIZATION_ISSUER
@@ -326,7 +443,7 @@ class MessageAuthorizationService:
         self._pending_authorization_result_token: object | None = None
         self._decisions: dict[
             tuple[object, ...],
-            tuple[IamAccessDecision, float, BrokerSignedIamResult | None],
+            _CachedAuthorizationDecision,
         ] = {}
         self._invalidations: dict[str, PermissionInvalidation] = {}
         self._lock = asyncio.Lock()
@@ -355,12 +472,21 @@ class MessageAuthorizationService:
         if issuer is _PRODUCTION_MESSAGE_AUTHORIZATION_ISSUER:
             return bool(
                 type(getattr(self, "_iam", None)) is IamClient
-                and self._iam._is_production_adapter()
-                and self._iam._owns_authorization_service(self)
+                and self._iam._is_production_composition_bound_local()
+                and self._iam._owns_authorization_service_local(self)
+            )
+        iam = getattr(self, "_iam", None)
+        if self._broker_verified_iam:
+            from ns_runtime.authority_broker import (
+                ContractTestIamAuthorityProxy,
+            )
+
+            return bool(
+                type(iam) is ContractTestIamAuthorityProxy
+                and iam._broker_session_identity_snapshot_local() is not None
             )
         return isinstance(
-            getattr(self, "_iam", None),
-            ContractTestIamAuthorizationAdapter,
+            iam, ContractTestIamAuthorizationAdapter,
         )
 
     def invalidate(self, event: PermissionInvalidation) -> None:
@@ -424,9 +550,15 @@ class MessageAuthorizationService:
         if request.permission_version != effective.permission_version:
             raise _denied("permission_version_mismatch")
         key = self._cache_key(effective, request)
-        cached_item = self._current_cached(key)
-        cached = None if cached_item is None else cached_item[0]
-        cached_authority = None if cached_item is None else cached_item[1]
+        cached_item = await self._current_cached(
+            key,
+            request=request,
+            now=now,
+        )
+        cached = None if cached_item is None else cached_item.decision
+        cached_verified = (
+            None if cached_item is None else cached_item.verified_result()
+        )
         if (
             self._mode is AuthorizationMode.CACHE
             and cached is not None
@@ -438,18 +570,13 @@ class MessageAuthorizationService:
                 effective_snapshot=effective,
                 decision=self._require_allow(cached),
                 risk=effective_risk,
-                broker_authority=cached_authority,
+                verified_result=cached_verified,
             )
         try:
-            broker_authority = None
-            if self.production_authority:
-                verified = await self._iam.access_check_signed(request)
-                if type(verified) is not VerifiedBrokerIamResult:
-                    _invalid("authorization_result.broker")
-                decision = verified.result
-                broker_authority = verified.authority
-                if type(decision) is not IamAccessDecision:
-                    _invalid("authorization_result.decision")
+            verified_result = None
+            if self._broker_verified_iam:
+                verified_result = await self._current_backend_result(request)
+                decision = verified_result.result
             else:
                 decision = await self._iam.access_check(request)
         except NsRuntimeIamUnavailableError:
@@ -466,7 +593,7 @@ class MessageAuthorizationService:
                 effective_snapshot=effective,
                 decision=degraded,
                 risk=effective_risk,
-                broker_authority=cached_authority,
+                verified_result=cached_verified,
             )
         if decision.permission_version != effective.permission_version:
             self._drop_snapshot_decisions(effective.permission_snapshot_ref)
@@ -477,9 +604,11 @@ class MessageAuthorizationService:
         if self._mode is AuthorizationMode.CACHE:
             async with self._lock:
                 self._decisions[key] = (
-                    decision,
-                    self._clock.monotonic(),
-                    broker_authority,
+                    _CachedAuthorizationDecision.from_decision(
+                        decision=decision,
+                        stored_at=self._clock.monotonic(),
+                        verified_result=verified_result,
+                    )
                 )
         return self._issue_authorization_result(
             request=request,
@@ -487,7 +616,7 @@ class MessageAuthorizationService:
             effective_snapshot=effective,
             decision=self._require_allow(decision),
             risk=effective_risk,
-            broker_authority=broker_authority,
+            verified_result=verified_result,
         )
 
     def _issue_authorization_result(
@@ -498,11 +627,35 @@ class MessageAuthorizationService:
         effective_snapshot: PermissionSnapshot,
         decision: IamAccessDecision,
         risk: OperationRiskContext,
-        broker_authority: BrokerSignedIamResult | None,
+        verified_result: VerifiedBrokerIamResult | None,
     ) -> MessageAuthorizationResult:
+        production = self.production_authority
+        broker_authority = (
+            None if verified_result is None else verified_result.authority
+        )
+        broker_verification = (
+            None if verified_result is None else verified_result.verification
+        )
+        local_verifier = (
+            self._iam._verified_iam_result_is_current_local
+            if production
+            else self._iam._verified_broker_iam_result_is_current_local
+        ) if self._broker_verified_iam else None
+        if self._broker_verified_iam and (
+            type(verified_result) is not VerifiedBrokerIamResult
+            or not local_verifier(
+                verified_result,
+                operation="runtime_access_check",
+                request_fingerprint=broker_request_fingerprint(
+                    "runtime_access_check", request,
+                ),
+                now=datetime.now(timezone.utc),
+            )
+        ):
+            _invalid("authorization_result.broker")
         signature = (
             b""
-            if self.production_authority
+            if production
             else self._authorization_result_signature(
                 request=request,
                 session_snapshot=session_snapshot,
@@ -511,7 +664,7 @@ class MessageAuthorizationService:
                 risk=risk,
             )
         )
-        token = None if self.production_authority else object()
+        token = None if production else object()
         self._pending_authorization_result_token = token
         try:
             return MessageAuthorizationResult(
@@ -523,6 +676,7 @@ class MessageAuthorizationService:
                 _service=self,
                 _signature=signature,
                 _broker_authority=broker_authority,
+                _broker_verification=broker_verification,
                 _construction_token=token,
             )
         finally:
@@ -596,6 +750,40 @@ class MessageAuthorizationService:
         self._drop_snapshot_decisions(snapshot.permission_snapshot_ref)
         return refreshed
 
+    async def _current_backend_result(
+        self,
+        request: IamAccessCheckRequest,
+    ) -> VerifiedBrokerIamResult:
+        request_fingerprint = broker_request_fingerprint(
+            "runtime_access_check", request,
+        )
+        # A concurrent request may rotate the shared IAM endpoint immediately
+        # after one worker returns.  Retry against the new local generation
+        # instead of wrapping the old authority as a current result.
+        local_verifier = (
+            self._iam._verified_iam_result_is_current_local
+            if self.production_authority
+            else self._iam._verified_broker_iam_result_is_current_local
+        )
+        for _ in range(3):
+            verified = await self._iam.access_check_signed(request)
+            if (
+                type(verified) is VerifiedBrokerIamResult
+                and type(verified.result) is IamAccessDecision
+                and local_verifier(
+                    verified,
+                    operation="runtime_access_check",
+                    request_fingerprint=request_fingerprint,
+                    now=datetime.now(timezone.utc),
+                )
+            ):
+                return verified
+        raise NsRuntimeIamUnavailableError(details={
+            "component": "runtime_authorization",
+            "operation": "authorize",
+            "reason": "session_rotation_race",
+        })
+
     @staticmethod
     def _tenant_hard_check(
         *,
@@ -614,18 +802,54 @@ class MessageAuthorizationService:
         if crosses != request.cross_tenant:
             raise _denied("tenant_boundary_mismatch")
 
-    def _current_cached(
+    async def _current_cached(
         self,
         key: tuple[object, ...],
-    ) -> tuple[IamAccessDecision, BrokerSignedIamResult | None] | None:
-        item = self._decisions.get(key)
-        if item is None:
-            return None
-        decision, stored_at, broker_authority = item
-        if self._clock.monotonic() - stored_at >= self._ttl:
-            del self._decisions[key]
-            return None
-        return decision, broker_authority
+        *,
+        request: IamAccessCheckRequest,
+        now: datetime,
+    ) -> _CachedAuthorizationDecision | None:
+        async with self._lock:
+            item = self._decisions.get(key)
+            if item is None:
+                return None
+            if self._clock.monotonic() - item.stored_at >= self._ttl:
+                del self._decisions[key]
+                return None
+            if not self._broker_verified_iam:
+                return item
+            verified = item.verified_result()
+            before = self._iam._broker_session_identity_snapshot_local()
+            local_verifier = (
+                self._iam._verified_iam_result_is_current_local
+                if self.production_authority
+                else self._iam._verified_broker_iam_result_is_current_local
+            )
+            if (
+                type(verified) is not VerifiedBrokerIamResult
+                or before is None
+                or item.broker_instance_id != before.broker_instance_id
+                or item.lifecycle_generation != before.lifecycle_generation
+                or item.session_key_fingerprint
+                != before.session_key_fingerprint
+                or item.authority_expires_at is None
+                or now >= item.authority_expires_at
+                or not local_verifier(
+                    verified,
+                    operation="runtime_access_check",
+                    request_fingerprint=broker_request_fingerprint(
+                        "runtime_access_check", request,
+                    ),
+                    now=now,
+                )
+            ):
+                del self._decisions[key]
+                return None
+            after = self._iam._broker_session_identity_snapshot_local()
+            if before != after:
+                del self._decisions[key]
+                return None
+            return item
 
     @staticmethod
     def _cache_key(

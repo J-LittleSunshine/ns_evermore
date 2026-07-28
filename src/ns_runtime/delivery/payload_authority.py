@@ -59,7 +59,7 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
     ) -> PayloadValidationResult:
         if not isinstance(delivery, DeliveryRecord) or type(target) is not LocalDeliveryTarget:
             _invalid("reference_validator.request")
-        if not self._iam._is_production_adapter():
+        if not self._iam._is_production_composition_bound_local():
             _invalid("iam_client")
         evidence = delivery.payload_evidence
         if evidence.kind is not PayloadKind.REFERENCE:

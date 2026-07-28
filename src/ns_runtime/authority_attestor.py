@@ -1001,7 +1001,20 @@ def _verify_iam_result(
     )
     return {
         "verified": True,
+        "identity_id": approved["identity_id"],
+        "broker_instance_id": approved["broker_instance_id"],
         "lifecycle_generation": approved["lifecycle_generation"],
+        "session_key_fingerprint": approved["session_key_fingerprint"],
+        "operation": operation,
+        "request_fingerprint": request_fingerprint,
+        "signed_result_fingerprint": _fingerprint(signed_result),
+        "result_fingerprint": _fingerprint(
+            _decode_frame(
+                _canonical_json_string(values["result_json"]).encode("utf-8"),
+            ),
+        ),
+        "verified_at": _encode_time(now),
+        "authority_expires_at": _encode_time(expires_at),
         "result_json": _canonical_json_string(values["result_json"]),
         "request_json": _canonical_json_string(values["request_json"]),
     }
