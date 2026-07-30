@@ -71,13 +71,29 @@ class TransportManager:
                 for adapter in self._adapters:
                     await adapter.start()
                     started.append(adapter)
-            except BaseException:
+            except BaseException as operation_failure:
                 self._state = TransportManagerState.FAILED
+                cleanup_failure: BaseException | None = None
+                failed_started: list[TransportAdapter] = []
                 for adapter in reversed(started):
                     try:
                         await adapter.close()
-                    except Exception:
-                        pass
+                    except BaseException as error:
+                        failed_started.append(adapter)
+                        cleanup_failure = _prioritize_transport_failure(
+                            cleanup_failure,
+                            error,
+                        )
+                self._adapters = (
+                    tuple(reversed(failed_started))
+                    + self._adapters[len(started):]
+                )
+                if (
+                    cleanup_failure is not None
+                    and isinstance(operation_failure, Exception)
+                    and not isinstance(cleanup_failure, Exception)
+                ):
+                    raise cleanup_failure
                 raise
             self._state = TransportManagerState.RUNNING
 
@@ -104,22 +120,36 @@ class TransportManager:
             if self._state is TransportManagerState.CLOSED:
                 return
             self._state = TransportManagerState.CLOSING
-            try:
-                await self._run_all("close", reverse=True)
-            except BaseException:
+            failure: BaseException | None = None
+            pending: list[TransportAdapter] = []
+            for adapter in reversed(self._adapters):
+                try:
+                    await adapter.close()
+                except BaseException as error:
+                    pending.append(adapter)
+                    failure = _prioritize_transport_failure(
+                        failure,
+                        error,
+                    )
+            self._adapters = tuple(reversed(pending))
+            if failure is not None:
                 self._state = TransportManagerState.FAILED
-                raise
+                if not isinstance(failure, Exception):
+                    raise failure
+                raise _lifecycle_error("close") from None
             self._state = TransportManagerState.CLOSED
 
     async def _run_all(self, operation: str, *, reverse: bool = False) -> None:
         adapters = reversed(self._adapters) if reverse else iter(self._adapters)
-        failed = False
+        failure: BaseException | None = None
         for adapter in adapters:
             try:
                 await getattr(adapter, operation)()
-            except Exception:
-                failed = True
-        if failed:
+            except BaseException as error:
+                failure = _prioritize_transport_failure(failure, error)
+        if failure is not None:
+            if not isinstance(failure, Exception):
+                raise failure
             raise _lifecycle_error(operation)
 
 
@@ -186,6 +216,17 @@ def _lifecycle_error(operation: str) -> NsRuntimeTransportError:
             "reason": "adapter_resource_failed",
         },
     )
+
+
+def _prioritize_transport_failure(
+    current: BaseException | None,
+    candidate: BaseException,
+) -> BaseException:
+    if current is None:
+        return candidate
+    if isinstance(current, Exception) and not isinstance(candidate, Exception):
+        return candidate
+    return current
 
 
 def _invalid(field_name: str) -> None:

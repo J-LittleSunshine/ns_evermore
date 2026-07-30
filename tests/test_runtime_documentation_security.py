@@ -52,6 +52,15 @@ class RuntimeDocumentationSecurityTestCase(unittest.TestCase):
             "仓库值已移除，服务端轮换待人工确认",
             text,
         )
+        self.assertIn(
+            "在该文件进入默认分支 `main` 前，GitHub Actions "
+            "人工触发入口不可用",
+            text,
+        )
+        self.assertIn(
+            "当前修复候选在本记录时没有对应远端 run，保持 `UNVERIFIED`",
+            text,
+        )
         self.assertNotRegex(text, _CREDENTIALED_URL)
         self.assertNotRegex(text, _LITERAL_PASSWORD_BULLET)
         self.assertNotRegex(text, _PASSWORD_STORAGE_PERMISSION)

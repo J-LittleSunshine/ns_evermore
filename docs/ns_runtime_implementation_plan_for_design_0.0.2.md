@@ -3,7 +3,7 @@
 > 实施文档版本：`0.0.2`
 > 设计基线：`ns_runtime 设计边界与功能清单 0.0.2`
 > 仓库基线：Code Agent 当前会话所处的 `ns_evermore` 本地工作区；远程仓库、远程分支和提交历史不作为实现状态依据
-> 当前状态校准时间：`2026-07-30T13:19:54+08:00`（最终测试事实见 acceptance log 当前记录）
+> 当前状态校准时间：`2026-07-30T15:42:58+08:00`（最终测试事实见 acceptance log 当前记录）
 > 文档用途：作为人工开发者与 Code Agent 的当前状态、阶段边界和后续执行入口。
 
 文档分工：
@@ -12,6 +12,13 @@
 - 当前状态、阶段计划和唯一执行游标：本实施计划。
 - 历史验收证据、测试命令和完成记录：[ns_runtime_acceptance_log_0.0.2.md](ns_runtime_acceptance_log_0.0.2.md)。
 - 长期架构决策与后续约束：[ns_runtime_architecture_decisions_0.0.2.md](ns_runtime_architecture_decisions_0.0.2.md)。
+
+### Authority cleanup、bounded inline seal 与 CI 状态校准
+
+- 状态：`VERIFIED / F3 (local only)`；当前工作区修复 lifecycle owner 的逐资源完成/可重试清理、child 最终存活证明、broker endpoint/process/attestor 隔离回收，以及 admission inline descriptor/seal 的统一迭代式节点/深度/字节预算。最终命令和数量只写入 acceptance log 当前记录。
+- CI：分支 push 触发、真实 Redis 强制门禁与 base-SHA/commit whitespace gate 保持不变。workflow 文件虽声明 `workflow_dispatch`，但在该文件进入默认分支 `main` 前，GitHub Actions 人工触发入口不可用，禁止声称已可人工运行。
+- 远端事实：起始提交 `af0358bf34f6713d2b029931a1b6575a4a226ab6` 的 branch-push CI 已绿色；当前修复候选在本记录时没有对应远端 run，保持 `UNVERIFIED`，不得把起始提交的绿色结果继承为当前结果。
+- 冻结：P12继续`BLOCKED / NOT_STARTED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
 
 ### P08-FIX-03 / P09-FIX-07 / P11-FIX-08 authority closure
 

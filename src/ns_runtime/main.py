@@ -35,10 +35,10 @@ async def _run_service(
             if state_store is not None:
                 store_open_attempted = True
                 await state_store.open()  # type: ignore[attr-defined]
-            if service_starting is not None:
-                service_starting()
             service_start_attempted = True
             await service.start()
+            if service_starting is not None:
+                service_starting()
             if self_check:
                 service.shutdown_coordinator.request_shutdown(
                     RuntimeShutdownReason.SELF_CHECK_COMPLETE,
@@ -114,29 +114,19 @@ class _MainCompositionResources:
         import asyncio
 
         failure: BaseException | None = None
-        manager = self.transport_manager
-        adapters = self.adapters
-        supervisor = self.task_supervisor
-        broker = self.authority_broker
-        logger = self.logger
-        self.transport_manager = None
-        self.adapters = ()
-        self.task_supervisor = None
-        self.authority_broker = None
-        self.logger = None
-
-        if manager is not None or adapters or supervisor is not None:
+        if (
+            self.transport_manager is not None
+            or self.adapters
+            or self.task_supervisor is not None
+        ):
             try:
-                asyncio.run(self._close_async(
-                    manager=manager,
-                    adapters=adapters,
-                    supervisor=supervisor,
-                ))
+                asyncio.run(self._close_async())
             except BaseException as cleanup_failure:
                 failure = _prioritize_lifecycle_failure(
                     failure,
                     cleanup_failure,
                 )
+        broker = self.authority_broker
         if broker is not None:
             try:
                 broker.close()  # type: ignore[attr-defined]
@@ -145,6 +135,9 @@ class _MainCompositionResources:
                     failure,
                     cleanup_failure,
                 )
+            else:
+                self.authority_broker = None
+        logger = self.logger
         if logger is not None:
             try:
                 logger.close()  # type: ignore[attr-defined]
@@ -153,17 +146,14 @@ class _MainCompositionResources:
                     failure,
                     cleanup_failure,
                 )
+            else:
+                self.logger = None
         if failure is not None:
             raise failure
 
-    @staticmethod
-    async def _close_async(
-        *,
-        manager: object | None,
-        adapters: tuple[object, ...],
-        supervisor: object | None,
-    ) -> None:
+    async def _close_async(self) -> None:
         failure: BaseException | None = None
+        manager = self.transport_manager
         if manager is not None:
             try:
                 await manager.close()  # type: ignore[attr-defined]
@@ -172,15 +162,22 @@ class _MainCompositionResources:
                     failure,
                     cleanup_failure,
                 )
+            else:
+                self.transport_manager = None
+                self.adapters = ()
         else:
-            for adapter in reversed(adapters):
+            pending_adapters: list[object] = []
+            for adapter in reversed(self.adapters):
                 try:
                     await adapter.close()  # type: ignore[attr-defined]
                 except BaseException as cleanup_failure:
+                    pending_adapters.append(adapter)
                     failure = _prioritize_lifecycle_failure(
                         failure,
                         cleanup_failure,
                     )
+            self.adapters = tuple(reversed(pending_adapters))
+        supervisor = self.task_supervisor
         if supervisor is not None:
             try:
                 await supervisor.shutdown()  # type: ignore[attr-defined]
@@ -189,6 +186,8 @@ class _MainCompositionResources:
                     failure,
                     cleanup_failure,
                 )
+            else:
+                self.task_supervisor = None
         if failure is not None:
             raise failure
 

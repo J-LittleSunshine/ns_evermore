@@ -249,6 +249,15 @@ class RuntimeService:
             try:
                 await self._on_stop()
                 self._shutdown_report = await self._shutdown_coordinator.shutdown()
+                if self._shutdown_coordinator.cleanup_pending:
+                    raise NsStateError(
+                        "Runtime shutdown cleanup is incomplete.",
+                        details={
+                            "component": "runtime_service",
+                            "operation": "stop",
+                            "reason": "cleanup_pending",
+                        },
+                    )
             except BaseException:
                 self._transition(RuntimeServiceState.FAILED, operation="stop")
                 raise

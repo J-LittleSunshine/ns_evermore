@@ -16,6 +16,7 @@ import json
 import math
 import multiprocessing
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -937,10 +938,7 @@ class _ParentEndpointCloseResource:
         self._connection = connection
 
     def close(self) -> None:
-        try:
-            self._connection.close()
-        except OSError:
-            pass
+        self._connection.close()
 
 
 class _BrokerProcessCustodian:
@@ -948,7 +946,8 @@ class _BrokerProcessCustodian:
 
     __slots__ = (
         "process", "attestor", "_lock", "_request_lock",
-        "_endpoint_close_resources", "_reaped",
+        "_endpoint_close_resources", "_process_reaped", "_attestor_closed",
+        "_reaped",
     )
 
     def __init__(
@@ -978,6 +977,8 @@ class _BrokerProcessCustodian:
         # authority material.
         self._request_lock = threading.Lock()
         self._endpoint_close_resources = endpoint_close_resources
+        self._process_reaped = False
+        self._attestor_closed = False
         self._reaped = False
 
     @property
@@ -988,23 +989,84 @@ class _BrokerProcessCustodian:
         with self._lock:
             if self._reaped:
                 return
+            failure: BaseException | None = None
+            pending_endpoints: list[_ParentEndpointCloseResource] = []
             for resource in self._endpoint_close_resources:
-                resource.close()
-            process = self.process
-            process.join(timeout=0.2)
-            if process.is_alive():
-                process.terminate()
-                process.join(timeout=5.0)
-            if process.is_alive():
-                process.kill()
-                process.join(timeout=5.0)
-            if process.is_alive():
-                raise _broker_unavailable("broker_process_did_not_exit")
-            try:
-                self.attestor.close()
-            except AuthorityAttestationError:
-                pass
-            self._reaped = True
+                try:
+                    resource.close()
+                except BaseException as cleanup_failure:
+                    pending_endpoints.append(resource)
+                    failure = _prioritize_broker_cleanup_failure(
+                        failure,
+                        cleanup_failure,
+                    )
+            self._endpoint_close_resources = tuple(pending_endpoints)
+
+            if not self._process_reaped:
+                process = self.process
+                for operation, timeout in (
+                    ("join", 0.2),
+                    ("terminate", 5.0),
+                    ("kill", 5.0),
+                ):
+                    try:
+                        if operation == "join":
+                            process.join(timeout=timeout)
+                        elif process.is_alive():
+                            getattr(process, operation)()
+                            process.join(timeout=timeout)
+                    except BaseException as cleanup_failure:
+                        failure = _prioritize_broker_cleanup_failure(
+                            failure,
+                            cleanup_failure,
+                        )
+                try:
+                    process_alive = process.is_alive()
+                except BaseException as cleanup_failure:
+                    failure = _prioritize_broker_cleanup_failure(
+                        failure,
+                        cleanup_failure,
+                    )
+                    process_alive = True
+                if process_alive:
+                    failure = _prioritize_broker_cleanup_failure(
+                        failure,
+                        _broker_unavailable(
+                            "broker_process_did_not_exit",
+                        ),
+                    )
+                else:
+                    self._process_reaped = True
+
+            if not self._attestor_closed:
+                try:
+                    self.attestor.close()
+                except BaseException as cleanup_failure:
+                    failure = _prioritize_broker_cleanup_failure(
+                        failure,
+                        cleanup_failure,
+                    )
+                else:
+                    self._attestor_closed = True
+
+            self._reaped = bool(
+                not self._endpoint_close_resources
+                and self._process_reaped
+                and self._attestor_closed
+            )
+            if failure is not None:
+                raise failure
+
+
+def _prioritize_broker_cleanup_failure(
+    current: BaseException | None,
+    candidate: BaseException,
+) -> BaseException:
+    if current is None:
+        return candidate
+    if isinstance(current, Exception) and not isinstance(candidate, Exception):
+        return candidate
+    return current
 
 
 class _RoleBrokerChannel:
@@ -1617,6 +1679,7 @@ class _RoleBrokerChannel:
         self._sync_endpoint_identity_locked()
 
     def close(self, *, terminate: bool = False) -> None:
+        failure: BaseException | None = None
         try:
             with self._lock:
                 if (
@@ -1638,19 +1701,35 @@ class _RoleBrokerChannel:
             _AuthorityProvenanceFailure,
         ):
             pass
+        except BaseException as error:
+            failure = error
         finally:
             self._closed = True
             try:
                 self._connection.close()
             except OSError:
                 pass
-            self._custodian.reap()
+            except BaseException as error:
+                failure = _prioritize_broker_cleanup_failure(
+                    failure,
+                    error,
+                )
+            try:
+                self._custodian.reap()
+            except BaseException as error:
+                failure = _prioritize_broker_cleanup_failure(
+                    failure,
+                    error,
+                )
+        if failure is not None:
+            raise failure
 
     def _fail_and_reap(
         self,
         *,
         connection: object | None = None,
     ) -> None:
+        failure: BaseException | None = None
         try:
             self._closed = True
         except AttributeError:
@@ -1662,9 +1741,19 @@ class _RoleBrokerChannel:
             ).close()
         except (AttributeError, OSError):
             pass
+        except BaseException as error:
+            failure = error
         custodian = getattr(self, "_custodian", None)
         if type(custodian) is _BrokerProcessCustodian:
-            custodian.reap()
+            try:
+                custodian.reap()
+            except BaseException as error:
+                failure = _prioritize_broker_cleanup_failure(
+                    failure,
+                    error,
+                )
+        if failure is not None:
+            raise failure
 
 
 class _ProductionRoleBrokerChannel(_RoleBrokerChannel):
@@ -2998,15 +3087,6 @@ class ProductionAuthorityBroker:
     def close(self, *, terminate: bool = False) -> None:
         self._channel.close(terminate=terminate)
 
-    def __del__(self) -> None:
-        channel = getattr(self, "_channel", None)
-        if type(channel) in {
-            _ProductionRoleBrokerChannel,
-            _ContractTestRoleBrokerChannel,
-            _IntegrationTestRoleBrokerChannel,
-        }:
-            channel.close(terminate=True)
-
 
 class ContractTestAuthorityBroker(ProductionAuthorityBroker):
     __slots__ = ()
@@ -3188,55 +3268,66 @@ def _spawn_authority_broker(
 ) -> ProductionAuthorityBroker:
     if realm not in _BROKER_REALMS or not isinstance(runtime_clock, Clock):
         _invalid("broker.realm")
+    from ns_runtime.authority_bootstrap import (
+        _close_connections,
+        _close_duplicate_handles,
+        _close_inherited_fds,
+        _prioritize_failure,
+        _reap_process,
+    )
+
     context = multiprocessing.get_context("spawn")
-    attestor = start_authority_attestor(
-        realm=realm,
-        expected_test_root_public_key=(
-            None if realm == "production" else expected_root_public_key
-        ),
-        timeout_seconds=startup_timeout_seconds,
-    )
-    endpoint_pairs = {
-        role.value: context.Pipe(duplex=True)
-        for role in BrokerRepositoryRole
-    }
-    parents = {
-        role: pair[0] for role, pair in endpoint_pairs.items()
-    }
-    children = {
-        role: pair[1] for role, pair in endpoint_pairs.items()
-    }
-    root_key_handle = DupFd(root_key_fd)
-    secrets_handle = DupFd(secrets_fd)
-    process = context.Process(
-        target=_authority_broker_process,
-        args=(
-            children,
-            encode_frame(_encode_broker_config(config)),
-            root_key_handle,
-            secrets_handle,
-            realm,
-            expected_root_public_key,
-            attestor.public_key,
-            attestor.instance_id,
-            float(session_ttl_seconds),
-            float(delegation_ttl_seconds),
-        ),
-        name="ns-runtime-authority-broker",
-        daemon=False,
-    )
+    parents: dict[str, Connection] = {}
+    children: dict[str, Connection] = {}
+    inherited_fds = [root_key_fd, secrets_fd]
+    duplicate_handles: list[object] = []
+    process: multiprocessing.Process | None = None
+    attestor: AuthorityAttestorClient | None = None
+    process_start_attempted = False
+    transferred = False
     try:
+        attestor = start_authority_attestor(
+            realm=realm,
+            expected_test_root_public_key=(
+                None if realm == "production" else expected_root_public_key
+            ),
+            timeout_seconds=startup_timeout_seconds,
+        )
+        for role in BrokerRepositoryRole:
+            parent, child = context.Pipe(duplex=True)
+            parents[role.value] = parent
+            children[role.value] = child
+        root_key_handle = DupFd(root_key_fd)
+        duplicate_handles.append(root_key_handle)
+        secrets_handle = DupFd(secrets_fd)
+        duplicate_handles.append(secrets_handle)
+        process = context.Process(
+            target=_authority_broker_process,
+            args=(
+                children,
+                encode_frame(_encode_broker_config(config)),
+                root_key_handle,
+                secrets_handle,
+                realm,
+                expected_root_public_key,
+                attestor.public_key,
+                attestor.instance_id,
+                float(session_ttl_seconds),
+                float(delegation_ttl_seconds),
+            ),
+            name="ns-runtime-authority-broker",
+            daemon=False,
+        )
+        process_start_attempted = True
         process.start()
-    finally:
-        for child in children.values():
-            child.close()
-        for fd in (root_key_fd, secrets_fd):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-    try:
-        return _accept_started_authority_broker(
+        duplicate_handles.clear()
+        child_close_failure = _close_connections(children)
+        fd_close_failure = _close_inherited_fds(inherited_fds)
+        if child_close_failure is not None:
+            raise child_close_failure
+        if fd_close_failure is not None:
+            raise fd_close_failure
+        broker = _accept_started_authority_broker(
             parents=parents,
             process=process,
             attestor=attestor,
@@ -3245,14 +3336,46 @@ def _spawn_authority_broker(
             startup_timeout_seconds=startup_timeout_seconds,
             runtime_clock=runtime_clock,
         )
-    except BaseException:
-        for parent in parents.values():
-            try:
-                parent.close()
-            except OSError:
-                pass
-        attestor.close()
-        raise
+        transferred = True
+        return broker
+    finally:
+        if not transferred:
+            active_failure = sys.exc_info()[1]
+            cleanup_failure = _close_connections(children)
+            cleanup_failure = _prioritize_failure(
+                cleanup_failure,
+                _close_connections(parents),
+            )
+            if process is not None:
+                cleanup_failure = _prioritize_failure(
+                    cleanup_failure,
+                    _reap_process(
+                        process,
+                        started=process_start_attempted,
+                    ),
+                )
+            cleanup_failure = _prioritize_failure(
+                cleanup_failure,
+                _close_duplicate_handles(duplicate_handles),
+            )
+            cleanup_failure = _prioritize_failure(
+                cleanup_failure,
+                _close_inherited_fds(inherited_fds),
+            )
+            if attestor is not None:
+                try:
+                    attestor.close()
+                except BaseException as cleanup_error:
+                    cleanup_failure = _prioritize_failure(
+                        cleanup_failure,
+                        cleanup_error,
+                    )
+            selected = _prioritize_failure(
+                active_failure,
+                cleanup_failure,
+            )
+            if selected is cleanup_failure and cleanup_failure is not None:
+                raise cleanup_failure
 
 
 def _complete_inherited_authority_broker_start(
@@ -3325,10 +3448,6 @@ def _accept_started_authority_broker(
     except (EOFError, OSError, NsValidationError):
         raise _broker_unavailable("startup_failed") from None
     except BaseException:
-        process.terminate()
-        process.join(timeout=5.0)
-        for parent in parents.values():
-            parent.close()
         raise
     try:
         decoded: dict[str, tuple[dict[str, object], BrokerAuthorityHandle]] = {}
@@ -3403,10 +3522,6 @@ def _accept_started_authority_broker(
     except (
         NsValidationError, AuthorityAttestationError, TypeError, ValueError,
     ):
-        process.terminate()
-        process.join(timeout=5.0)
-        for parent in parents.values():
-            parent.close()
         raise _broker_unavailable("startup_handshake_invalid")
     channel_type = {
         "production": _ProductionRoleBrokerChannel,
@@ -3543,24 +3658,24 @@ def _accept_started_authority_broker(
 
 
 class _PhysicalDomainLease:
-    __slots__ = ("file", "path")
+    __slots__ = ("file", "path", "_unlocked")
 
     def __init__(self, *, file: object, path: str) -> None:
         self.file = file
         self.path = path
+        self._unlocked = False
 
     def close(self) -> None:
         file = self.file
-        self.file = None
         if file is None:
             return
-        try:
+        if not self._unlocked:
             import portalocker
 
             portalocker.unlock(file)
-            file.close()
-        except (OSError, ValueError):
-            pass
+            self._unlocked = True
+        file.close()
+        self.file = None
 
 
 def _broker_password_source(

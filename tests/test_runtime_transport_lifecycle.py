@@ -302,6 +302,38 @@ class TransportLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
             events,
         )
 
+    async def test_close_retries_only_adapter_that_remains_owned(self) -> None:
+        events: list[str] = []
+
+        class RetryAdapter(_RecordingAdapter):
+            def __init__(self, name: str, *, fail_once: bool) -> None:
+                super().__init__(name, events)
+                self.fail_once = fail_once
+                self.close_calls = 0
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                self.events.append(f"close:{self.name}")
+                if self.fail_once and self.close_calls == 1:
+                    raise RuntimeError("close failed once")
+
+        stable = RetryAdapter("websocket_tcp", fail_once=False)
+        flaky = RetryAdapter("websocket_http3", fail_once=True)
+        manager = TransportManager((stable, flaky))
+
+        with self.assertRaises(Exception):
+            await manager.close()
+        self.assertEqual(TransportManagerState.FAILED, manager.state)
+        self.assertEqual(1, stable.close_calls)
+        self.assertEqual(1, flaky.close_calls)
+        self.assertEqual((flaky,), manager.adapters)
+
+        await manager.close()
+        self.assertEqual(TransportManagerState.CLOSED, manager.state)
+        self.assertEqual(1, stable.close_calls)
+        self.assertEqual(2, flaky.close_calls)
+        self.assertEqual((), manager.adapters)
+
     async def test_composition_root_cleans_transport_after_monitor_start_failure(
         self,
     ) -> None:
@@ -445,9 +477,17 @@ class TransportLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
                 await _run_service_once(service)
 
         self.assertIs(start_failure, raised.exception)
-        self.assertEqual(RuntimeServiceState.STOPPED, service.state)
+        self.assertEqual(RuntimeServiceState.FAILED, service.state)
         self.assertEqual(1, len(service.shutdown_report.failures))
         self.assertNotIn("transport cleanup secret", repr(service.shutdown_report))
+        adapter.failures.pop("close")
+
+        await service.stop()
+
+        self.assertEqual(RuntimeServiceState.STOPPED, service.state)
+        self.assertEqual(2, events.count("close:websocket_tcp"))
+        self.assertEqual(1, events.count("stop_admission:websocket_tcp"))
+        self.assertEqual(1, events.count("drain:websocket_tcp"))
 
     async def test_direct_ordinary_stop_error_preserves_start_error_identity(
         self,

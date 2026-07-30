@@ -6,7 +6,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import math
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -24,7 +23,8 @@ from .models import (
     AdmissionPolicyDecision, AdmissionPriority, AdmissionReliability,
     DeliveryEnvelopeAuthority, InlinePayload, InlinePayloadDescriptor,
     PayloadDependencyDisposition, PayloadReference, RejectionReason,
-    MAX_ACTIVATION_BATCH_SIZE, describe_inline_payload,
+    MAX_ACTIVATION_BATCH_SIZE, _InlinePayloadInspection,
+    _inspect_inline_payload_authority,
 )
 
 
@@ -88,11 +88,6 @@ class AdmissionPolicyConfig:
 
 _ADMISSION_REQUEST_ISSUER = object()
 _ADMISSION_REQUEST_AUTHORITY_KEY = secrets.token_bytes(32)
-_INLINE_AUTHORITY_MAX_NODES = 65_536
-_INLINE_AUTHORITY_MAX_DEPTH = 4_096
-_INLINE_AUTHORITY_MAX_BYTES = 4 * 1_048_576
-
-
 @dataclass(frozen=True, slots=True, init=False)
 class AdmissionRequest:
     plan: ResolvedRoutingPlan = field(repr=False)
@@ -139,20 +134,32 @@ class AdmissionRequest:
             ("requested_target_strategy", requested_target_strategy),
         ):
             object.__setattr__(self, name, value)
+        inline_inspection = (
+            _inspect_inline_payload_authority(payload)
+            if type(payload) is InlinePayload
+            else None
+        )
         object.__setattr__(
             self, "inline_descriptor",
-            describe_inline_payload(payload) if isinstance(payload, InlinePayload) else None,
+            (
+                None
+                if inline_inspection is None
+                else inline_inspection.descriptor
+            ),
         )
-        self.__post_init__()
-        invalid_nodes: list[object] = []
+        self.__post_init__(_inline_inspection=inline_inspection)
         authority_digest = _admission_request_authority_digest(
             self,
-            invalid_nodes=invalid_nodes,
+            inline_inspection=inline_inspection,
         )
         object.__setattr__(
             self,
             "_authority_invalid_nodes",
-            tuple(invalid_nodes),
+            (
+                ()
+                if inline_inspection is None
+                else inline_inspection.invalid_nodes
+            ),
         )
         object.__setattr__(
             self,
@@ -191,7 +198,11 @@ class AdmissionRequest:
             _issuer=_ADMISSION_REQUEST_ISSUER,
         )
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+        *,
+        _inline_inspection: _InlinePayloadInspection | None = None,
+    ) -> None:
         validate_resolved_routing_plan(self.plan)
         for name in ("message_id", "tenant_id", "source_identity",
                      "authorization_binding_reference"):
@@ -211,10 +222,15 @@ class AdmissionRequest:
             _invalid("request.payload")
         self.payload.__post_init__()
         if type(self.payload) is InlinePayload:
+            inspection = (
+                _inspect_inline_payload_authority(self.payload)
+                if _inline_inspection is None
+                else _inline_inspection
+            )
             if type(self.inline_descriptor) is not InlinePayloadDescriptor:
                 _invalid("request.inline_descriptor")
             self.inline_descriptor.__post_init__()
-            if self.inline_descriptor != describe_inline_payload(self.payload):
+            if self.inline_descriptor != inspection.descriptor:
                 _invalid("request.inline_descriptor_binding")
         elif self.inline_descriptor is not None:
             _invalid("request.inline_descriptor")
@@ -256,11 +272,20 @@ class AdmissionRequest:
             _invalid("request.plan_strategy")
 
     def validate_authority(self) -> None:
-        self.__post_init__()
-        invalid_nodes: list[object] = []
+        inline_inspection = (
+            _inspect_inline_payload_authority(self.payload)
+            if type(self.payload) is InlinePayload
+            else None
+        )
+        self.__post_init__(_inline_inspection=inline_inspection)
         authority_digest = _admission_request_authority_digest(
             self,
-            invalid_nodes=invalid_nodes,
+            inline_inspection=inline_inspection,
+        )
+        invalid_nodes = (
+            ()
+            if inline_inspection is None
+            else inline_inspection.invalid_nodes
         )
         retained_nodes = getattr(self, "_authority_invalid_nodes", None)
         if (
@@ -488,21 +513,22 @@ def _admission_request_authority_signature(
 def _admission_request_authority_digest(
     request: AdmissionRequest,
     *,
-    invalid_nodes: list[object],
+    inline_inspection: _InlinePayloadInspection | None,
 ) -> str:
     payload = request.payload
     if type(payload) is InlinePayload:
-        current_descriptor = describe_inline_payload(payload)
+        inspection = (
+            _inspect_inline_payload_authority(payload)
+            if inline_inspection is None
+            else inline_inspection
+        )
+        current_descriptor = inspection.descriptor
         payload_authority: dict[str, object] = {
             "kind": "inline",
             "media_type": payload.media_type,
             "application_limit_bytes": payload.application_limit_bytes,
             "transport_limit_bytes": payload.transport_limit_bytes,
-            "value_digest": _inline_payload_value_digest(
-                payload.value,
-                json_mode=payload.media_type == "application/json",
-                invalid_nodes=invalid_nodes,
-            ),
+            "value_digest": inspection.authority_digest,
             "canonical_bytes": (
                 None
                 if current_descriptor.canonical_bytes is None
@@ -589,178 +615,6 @@ def _admission_request_authority_digest(
         allow_nan=False,
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
-
-
-def _inline_payload_value_digest(
-    value: object,
-    *,
-    json_mode: bool,
-    invalid_nodes: list[object],
-) -> str:
-    """Seal canonical values and identity-bind every rejected JSON node."""
-
-    digest = hashlib.sha256()
-    active_containers: set[int] = set()
-    # operation, value, depth, exact container position
-    stack: list[tuple[str, object, int, bytes]] = [
-        ("value", value, 1, b"root"),
-    ]
-    observed_nodes = 0
-    observed_bytes = 0
-
-    def add_raw(raw: bytes, *, charged_bytes: int | None = None) -> None:
-        nonlocal observed_bytes
-        charge = len(raw) if charged_bytes is None else charged_bytes
-        if (
-            charge < 0
-            or charge > _INLINE_AUTHORITY_MAX_BYTES
-            or observed_bytes > _INLINE_AUTHORITY_MAX_BYTES - charge
-        ):
-            _invalid("request.inline_authority_bytes")
-        observed_bytes += charge
-        digest.update(len(raw).to_bytes(8, "big"))
-        digest.update(raw)
-
-    def add_text(token: str) -> None:
-        if len(token) > _INLINE_AUTHORITY_MAX_BYTES:
-            _invalid("request.inline_authority_bytes")
-        try:
-            raw = token.encode("utf-8", errors="strict")
-        except UnicodeError:
-            _invalid("request.inline_authority_text")
-        add_raw(raw)
-
-    def add_integer(item: int) -> None:
-        size = max(1, (item.bit_length() + 8) // 8)
-        if size > _INLINE_AUTHORITY_MAX_BYTES:
-            _invalid("request.inline_authority_bytes")
-        add_raw(item.to_bytes(size, "big", signed=True))
-
-    def add_identity(item: object, role: bytes) -> None:
-        invalid_nodes.append(item)
-        add_raw(role)
-        add_raw(id(type(item)).to_bytes(16, "big"))
-        add_raw(id(item).to_bytes(16, "big"))
-
-    while stack:
-        operation, item, depth, position = stack.pop()
-        if operation == "exit":
-            active_containers.remove(id(item))
-            add_raw(b"container:end")
-            continue
-        observed_nodes += 1
-        if (
-            observed_nodes > _INLINE_AUTHORITY_MAX_NODES
-            or depth > _INLINE_AUTHORITY_MAX_DEPTH
-        ):
-            _invalid("request.inline_authority_graph")
-        add_raw(b"node")
-        add_integer(depth)
-        add_raw(position)
-
-        if operation == "invalid_key":
-            add_identity(item, b"invalid-dict-key")
-            if item is None:
-                add_raw(b"none")
-            elif type(item) is bool:
-                add_raw(b"bool:1" if item else b"bool:0")
-            elif type(item) is int:
-                add_raw(b"int")
-                add_integer(item)
-            elif type(item) is float:
-                add_raw(b"float")
-                add_text(item.hex())
-            elif type(item) is str:
-                add_raw(b"str")
-                add_text(item)
-            elif type(item) is bytes:
-                if len(item) > _INLINE_AUTHORITY_MAX_BYTES:
-                    _invalid("request.inline_authority_bytes")
-                add_raw(b"bytes")
-                add_raw(hashlib.sha256(item).digest(), charged_bytes=len(item))
-            continue
-
-        if item is None:
-            add_raw(b"none")
-        elif type(item) is bool:
-            add_raw(b"bool:1" if item else b"bool:0")
-        elif type(item) is int:
-            add_raw(b"int")
-            add_integer(item)
-        elif type(item) is float:
-            if not math.isfinite(item):
-                add_identity(item, b"non-finite-float")
-            add_raw(b"float")
-            add_text(item.hex())
-        elif type(item) is str:
-            add_raw(b"str")
-            add_text(item)
-        elif type(item) is bytes:
-            if len(item) > _INLINE_AUTHORITY_MAX_BYTES:
-                _invalid("request.inline_authority_bytes")
-            if json_mode:
-                add_identity(item, b"invalid-json-bytes")
-            add_raw(b"bytes")
-            add_raw(hashlib.sha256(item).digest(), charged_bytes=len(item))
-        elif type(item) in {list, dict}:
-            marker = id(item)
-            if marker in active_containers:
-                add_identity(item, b"container-cycle")
-                continue
-            active_containers.add(marker)
-            stack.append(("exit", item, depth, position))
-            if type(item) is list:
-                add_raw(b"list")
-                add_integer(len(item))
-                for index in range(len(item) - 1, -1, -1):
-                    stack.append((
-                        "value",
-                        item[index],
-                        depth + 1,
-                        b"list:" + index.to_bytes(8, "big"),
-                    ))
-            else:
-                keys = tuple(item)
-                if all(type(key) is str for key in keys):
-                    ordered_keys = sorted(keys)
-                    add_raw(b"dict")
-                    add_integer(len(ordered_keys))
-                    for index in range(len(ordered_keys) - 1, -1, -1):
-                        key = ordered_keys[index]
-                        add_position = b"dict:" + index.to_bytes(8, "big")
-                        stack.append((
-                            "value",
-                            item[key],
-                            depth + 1,
-                            add_position,
-                        ))
-                        stack.append((
-                            "value",
-                            key,
-                            depth + 1,
-                            b"key:" + index.to_bytes(8, "big"),
-                        ))
-                else:
-                    add_identity(item, b"invalid-json-dict")
-                    add_integer(len(keys))
-                    pairs = tuple(item.items())
-                    for index in range(len(pairs) - 1, -1, -1):
-                        key, child = pairs[index]
-                        stack.append((
-                            "value",
-                            child,
-                            depth + 1,
-                            b"dict:" + index.to_bytes(8, "big"),
-                        ))
-                        stack.append((
-                            "invalid_key",
-                            key,
-                            depth + 1,
-                            b"key:" + index.to_bytes(8, "big"),
-                        ))
-        else:
-            add_identity(item, b"unsupported")
-    return "sha256:" + digest.hexdigest()
 
 
 def _invalid(field_name: str) -> None:

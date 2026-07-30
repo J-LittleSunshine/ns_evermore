@@ -79,6 +79,35 @@ class _Process:
         self.alive = False
 
 
+class _StubbornProcess(_Process):
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+
+
+class _RetryKillProcess(_StubbornProcess):
+    def kill(self) -> None:
+        self.kill_calls += 1
+        if self.kill_calls == 1:
+            raise RuntimeError("kill failed once")
+        self.alive = False
+
+
+class _RetryClose:
+    def __init__(self, *, failure: BaseException) -> None:
+        self.failure = failure
+        self.close_calls = 0
+        self.closed = False
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self.close_calls == 1:
+            raise self.failure
+        self.closed = True
+
+
 class _Context:
     def __init__(
         self,
@@ -321,6 +350,78 @@ class AuthorityBootstrapTransactionTestCase(unittest.TestCase):
         finally:
             for child in children:
                 child.close()
+
+    def test_reap_process_reports_stable_failure_when_kill_cannot_reap(
+        self,
+    ) -> None:
+        process = _StubbornProcess()
+        process.alive = True
+
+        failure = bootstrap_module._reap_process(process, started=True)
+
+        self.assertIsInstance(failure, NsRuntimeStartupSecurityError)
+        assert isinstance(failure, NsRuntimeStartupSecurityError)
+        self.assertEqual(
+            "authority_broker_process_did_not_exit",
+            failure.details["reason"],
+        )
+        self.assertTrue(process.is_alive())
+        self.assertEqual(1, process.terminate_calls)
+        self.assertEqual(1, process.kill_calls)
+
+    def test_pending_close_retries_only_process_that_remains_owned(self) -> None:
+        parents = {}
+        children = []
+        for role in bootstrap_module._ENDPOINT_ROLES:
+            parent, child = multiprocessing.Pipe(duplex=True)
+            parents[role] = parent
+            children.append(child)
+        process = _RetryKillProcess()
+        process.alive = True
+        attestor = _Attestor()
+        bootstrap = InheritedAuthorityBootstrap(
+            connections=parents,
+            process=process,  # type: ignore[arg-type]
+            attestor=attestor,
+        )
+        try:
+            with self.assertRaises(RuntimeError):
+                bootstrap.close()
+            self.assertTrue(process.is_alive())
+            self.assertEqual(1, attestor.close_calls)
+            self.assertTrue(all(parent.closed for parent in parents.values()))
+
+            bootstrap.close()
+            self.assertFalse(process.is_alive())
+            self.assertEqual(2, process.kill_calls)
+            self.assertEqual(1, attestor.close_calls)
+            self.assertTrue(all(parent.closed for parent in parents.values()))
+        finally:
+            for child in children:
+                child.close()
+
+    def test_pending_close_keeps_only_failed_endpoint_for_retry(self) -> None:
+        interrupt = KeyboardInterrupt("endpoint close interrupted")
+        flaky = _RetryClose(failure=interrupt)
+        stable = _RetryClose(failure=RuntimeError("unused"))
+        stable.close_calls = 1
+        bootstrap = object.__new__(InheritedAuthorityBootstrap)
+        bootstrap._connections = {"iam": flaky, "audit": stable}
+        bootstrap._process = None
+        bootstrap._attestor = None
+        bootstrap._consumed = False
+
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            bootstrap.close()
+        self.assertIs(interrupt, raised.exception)
+        self.assertEqual({"iam"}, set(bootstrap._connections))
+        self.assertEqual(1, flaky.close_calls)
+        self.assertEqual(2, stable.close_calls)
+
+        bootstrap.close()
+        self.assertIsNone(bootstrap._connections)
+        self.assertEqual(2, flaky.close_calls)
+        self.assertEqual(2, stable.close_calls)
 
 
 if __name__ == "__main__":

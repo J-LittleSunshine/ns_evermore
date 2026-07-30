@@ -7,6 +7,7 @@ from datetime import timedelta
 import json
 import math
 import unittest
+from unittest import mock
 
 from ns_common.exceptions import (
     NsRuntimeStateStoreConflictError, NsRuntimeStateStoreUnavailableError,
@@ -32,6 +33,7 @@ from ns_runtime.delivery import (
     delivery_from_dict, delivery_to_dict,
     policy_message_group,
 )
+from ns_runtime.delivery.models import _inspect_inline_payload_authority
 from ns_runtime.protocol import (
     AuthContextGroup, MessageGroup, ProtocolGroup, SourceGroup, TargetGroup,
     TraceGroup,
@@ -1044,6 +1046,114 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(NsValidationError) as raised:
             self._request(payload=InlinePayload(
                 value=[None] * 65_536,
+                media_type="application/json",
+                application_limit_bytes=1_048_576,
+                transport_limit_bytes=1_048_576,
+            ))
+        self.assertEqual(
+            "request.inline_authority_graph",
+            raised.exception.details["field"],
+        )
+        self.assertEqual([], self.store.values)
+        self.assertEqual([], self.payload_client.calls)
+
+    def test_inline_authority_handles_depth_beyond_json_recursion_limit(self) -> None:
+        value: object = 1
+        for _ in range(1_200):
+            value = [value]
+        request = self._request(payload=InlinePayload(
+            value=value,
+            media_type="application/json",
+            application_limit_bytes=16_384,
+            transport_limit_bytes=16_384,
+        ))
+        assert request.inline_descriptor is not None
+        self.assertEqual(1_201, request.inline_descriptor.observed_depth)
+        self.assertIsNone(request.inline_descriptor.rejection_reason)
+        request.validate_authority()
+
+    def test_inline_authority_width_budget_precedes_key_sort_and_suffix_access(
+        self,
+    ) -> None:
+        class MaliciousSuffix:
+            def __repr__(self) -> str:
+                raise AssertionError("budgeted traversal called repr")
+
+            def __str__(self) -> str:
+                raise AssertionError("budgeted traversal called str")
+
+        payload = InlinePayload(
+            value={"a": 1, "b": 2, "c": MaliciousSuffix()},
+            media_type="application/json",
+            application_limit_bytes=128,
+            transport_limit_bytes=128,
+        )
+        with mock.patch(
+            "ns_runtime.delivery.models.sorted",
+            side_effect=AssertionError("keys sorted before node budget"),
+            create=True,
+        ):
+            with self.assertRaises(NsValidationError) as raised:
+                _inspect_inline_payload_authority(
+                    payload,
+                    max_nodes=6,
+                    max_depth=16,
+                    max_bytes=1_024,
+                )
+        self.assertEqual(
+            "request.inline_authority_graph",
+            raised.exception.details["field"],
+        )
+
+    def test_inline_authority_byte_budget_precedes_scalar_json_encoding(
+        self,
+    ) -> None:
+        payload = InlinePayload(
+            value="x" * 65,
+            media_type="application/json",
+            application_limit_bytes=128,
+            transport_limit_bytes=128,
+        )
+        with mock.patch(
+            "ns_runtime.delivery.models.json.dumps",
+            side_effect=AssertionError("encoded before byte budget"),
+        ):
+            with self.assertRaises(NsValidationError) as raised:
+                _inspect_inline_payload_authority(
+                    payload,
+                    max_nodes=8,
+                    max_depth=8,
+                    max_bytes=64,
+                )
+        self.assertEqual(
+            "request.inline_authority_bytes",
+            raised.exception.details["field"],
+        )
+
+        octets = InlinePayload(
+            value=b"x" * 65,
+            media_type="application/octet-stream",
+            application_limit_bytes=128,
+            transport_limit_bytes=128,
+        )
+        with self.assertRaises(NsValidationError) as raised:
+            _inspect_inline_payload_authority(
+                octets,
+                max_nodes=8,
+                max_depth=8,
+                max_bytes=64,
+            )
+        self.assertEqual(
+            "request.inline_authority_bytes",
+            raised.exception.details["field"],
+        )
+
+    def test_inline_authority_rejects_superwide_dict_before_dependencies(
+        self,
+    ) -> None:
+        with self.assertRaises(NsValidationError) as raised:
+            self._request(payload=InlinePayload(
+                value={f"k{index}": None for index in range(32_768)},
                 media_type="application/json",
                 application_limit_bytes=1_048_576,
                 transport_limit_bytes=1_048_576,

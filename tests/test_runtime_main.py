@@ -1015,6 +1015,97 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                 if phase == "broker_launch":
                     self.assertEqual(1, fake_manager.close_calls)
 
+    def test_composition_close_retries_only_resources_that_failed(self) -> None:
+        class AsyncResource:
+            def __init__(self, *, fail_once: bool) -> None:
+                self.fail_once = fail_once
+                self.calls = 0
+
+            async def close(self) -> None:
+                self.calls += 1
+                if self.fail_once and self.calls == 1:
+                    raise RuntimeError("async close failed once")
+
+            async def shutdown(self) -> None:
+                await self.close()
+
+        class SyncResource:
+            def __init__(self, *, fail_once: bool) -> None:
+                self.fail_once = fail_once
+                self.calls = 0
+
+            def close(self) -> None:
+                self.calls += 1
+                if self.fail_once and self.calls == 1:
+                    raise RuntimeError("sync close failed once")
+
+        manager = AsyncResource(fail_once=True)
+        supervisor = AsyncResource(fail_once=False)
+        broker = SyncResource(fail_once=False)
+        logger = SyncResource(fail_once=True)
+        resources = _MainCompositionResources()
+        resources.transport_manager = manager
+        resources.adapters = (object(),)
+        resources.task_supervisor = supervisor
+        resources.authority_broker = broker
+        resources.logger = logger
+
+        with self.assertRaises(RuntimeError):
+            resources.close()
+        self.assertEqual(1, manager.calls)
+        self.assertEqual(1, supervisor.calls)
+        self.assertEqual(1, broker.calls)
+        self.assertEqual(1, logger.calls)
+        self.assertIs(resources.transport_manager, manager)
+        self.assertEqual((object,), tuple(type(item) for item in resources.adapters))
+        self.assertIsNone(resources.task_supervisor)
+        self.assertIsNone(resources.authority_broker)
+        self.assertIs(resources.logger, logger)
+
+        resources.close()
+        self.assertEqual(2, manager.calls)
+        self.assertEqual(1, supervisor.calls)
+        self.assertEqual(1, broker.calls)
+        self.assertEqual(2, logger.calls)
+        self.assertIsNone(resources.transport_manager)
+        self.assertEqual((), resources.adapters)
+        self.assertIsNone(resources.logger)
+
+    def test_composition_close_continues_after_process_level_failure(self) -> None:
+        calls: list[str] = []
+        interrupt = KeyboardInterrupt("manager close interrupted")
+
+        class Manager:
+            async def close(self) -> None:
+                calls.append("manager")
+                raise interrupt
+
+        class Supervisor:
+            async def shutdown(self) -> None:
+                calls.append("supervisor")
+
+        class Broker:
+            def close(self) -> None:
+                calls.append("broker")
+
+        class Logger:
+            def close(self) -> None:
+                calls.append("logger")
+
+        resources = _MainCompositionResources()
+        resources.transport_manager = Manager()
+        resources.task_supervisor = Supervisor()
+        resources.authority_broker = Broker()
+        resources.logger = Logger()
+
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            resources.close()
+        self.assertIs(interrupt, raised.exception)
+        self.assertEqual(
+            ["manager", "supervisor", "broker", "logger"],
+            calls,
+        )
+
     def test_prelaunch_baseexceptions_preserve_identity_and_close_bootstrap(
         self,
     ) -> None:

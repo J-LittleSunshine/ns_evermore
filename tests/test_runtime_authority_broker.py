@@ -563,6 +563,142 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(delayed)
         self.assertGreaterEqual(ticks, 8)
 
+    @staticmethod
+    async def _wait_for_current_certificate_rotation_window(
+        channel,
+        *,
+        clock,
+    ) -> None:
+        certificate = channel.certificate
+        lifetime = (
+            certificate.expires_at - certificate.issued_at
+        ).total_seconds()
+        rotation_at = certificate.expires_at - timedelta(
+            seconds=lifetime / 3.0,
+        )
+        while True:
+            delay = (rotation_at - clock.utc_now()).total_seconds()
+            if delay <= 0:
+                return
+            await asyncio.sleep(delay)
+
+    def test_custodian_continues_after_endpoint_keyboard_interrupt_and_retries(
+        self,
+    ) -> None:
+        class Endpoint:
+            def __init__(self, failure: BaseException | None = None) -> None:
+                self.failure = failure
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+                if self.failure is not None and self.close_calls == 1:
+                    raise self.failure
+
+        class Attestor:
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        interrupt = KeyboardInterrupt("endpoint interrupt")
+        failing = Endpoint(interrupt)
+        remaining = Endpoint()
+        process = _FakeProcess()
+        attestor = Attestor()
+        custodian = broker_module._BrokerProcessCustodian(
+            process=process,
+            attestor=attestor,
+            endpoint_close_resources=(
+                broker_module._ParentEndpointCloseResource(failing),
+                broker_module._ParentEndpointCloseResource(remaining),
+            ),
+        )
+
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            custodian.reap()
+        self.assertIs(interrupt, raised.exception)
+        self.assertEqual(1, failing.close_calls)
+        self.assertEqual(1, remaining.close_calls)
+        self.assertFalse(process.is_alive())
+        self.assertEqual(1, process.terminated)
+        self.assertEqual(1, attestor.close_calls)
+
+        custodian.reap()
+        self.assertEqual(2, failing.close_calls)
+        self.assertEqual(1, remaining.close_calls)
+        self.assertEqual(1, attestor.close_calls)
+        self.assertTrue(custodian._reaped)
+
+    def test_custodian_reports_process_that_survives_terminate_and_kill(
+        self,
+    ) -> None:
+        class StubbornProcess(_FakeProcess):
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def kill(self) -> None:
+                self.killed = True
+
+        class Attestor:
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        process = StubbornProcess()
+        attestor = Attestor()
+        custodian = broker_module._BrokerProcessCustodian(
+            process=process,
+            attestor=attestor,
+        )
+
+        with self.assertRaises(
+            NsRuntimeIamUnavailableError,
+        ) as raised:
+            custodian.reap()
+        self.assertEqual(
+            "broker_process_did_not_exit",
+            raised.exception.details["reason"],
+        )
+        self.assertTrue(process.is_alive())
+        self.assertTrue(process.terminated)
+        self.assertTrue(process.killed)
+        self.assertEqual(1, attestor.close_calls)
+        self.assertFalse(custodian._reaped)
+
+    def test_channel_close_reaps_custody_after_connection_keyboard_interrupt(
+        self,
+    ) -> None:
+        channel, process, connection, _, _ = _test_channel(
+            lambda sent: b"",
+        )
+
+        class FailOnceCloseConnection:
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+                if self.close_calls == 1:
+                    raise KeyboardInterrupt("connection close")
+                connection.close()
+
+        failing_connection = FailOnceCloseConnection()
+        object.__setattr__(channel, "_connection", failing_connection)
+        attestor = channel._custodian.attestor
+
+        with self.assertRaises(KeyboardInterrupt):
+            channel.close(terminate=True)
+
+        self.assertFalse(process.is_alive())
+        self.assertFalse(attestor.alive)
+        self.assertTrue(channel._custodian._reaped)
+        channel.close(terminate=True)
+        self.assertEqual(2, failing_connection.close_calls)
+
     def test_old_pending_token_binding_and_direct_client_assembly_fail_closed(
         self,
     ) -> None:
@@ -1770,7 +1906,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             with self.subTest(mode=mode.value):
                 broker, server = await self._broker(
                     [_decision(request).to_wire() for _ in range(5)],
-                    session_ttl_seconds=0.3,
+                    session_ttl_seconds=5.0,
                 )
                 service = (
                     MessageAuthorizationService
@@ -1793,8 +1929,18 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     old_verified = (
                         await broker.iam.access_check_signed(request)
                     )
-                await asyncio.sleep(0.22)
-                await broker.iam.access_check_signed(request)
+                initial_generation = (
+                    broker.iam._channel.certificate.lifecycle_generation
+                )
+                while (
+                    broker.iam._channel.certificate.lifecycle_generation
+                    == initial_generation
+                ):
+                    await self._wait_for_current_certificate_rotation_window(
+                        broker.iam._channel,
+                        clock=broker.iam._clock,
+                    )
+                    await broker.iam.access_check_signed(request)
                 original_backend = service._current_backend_result
                 if warm_cache:
                     cached_calls = 0
@@ -1847,13 +1993,16 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(
                     broker._channel._custodian.process.is_alive(),
                 )
-                self.assertEqual(3, len(server.calls))
                 if warm_cache:
+                    self.assertEqual(2, cached_calls)
                     cached = next(iter(service._decisions.values()))
                     self.assertEqual(
                         identity.lifecycle_generation,
                         cached.lifecycle_generation,
                     )
+                else:
+                    self.assertEqual(2, backend_calls)
+                self.assertGreaterEqual(len(server.calls), 2)
 
     async def test_unsigned_attestor_receipt_reaps_broker_graph(
         self,
@@ -2387,7 +2536,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             with self.subTest(attack=attack):
                 broker, _ = await self._broker(
                     [],
-                    session_ttl_seconds=0.3,
+                    session_ttl_seconds=5.0,
                 )
                 transaction = self._admission_transaction(
                     broker,
@@ -2425,21 +2574,10 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     mutate,
                 )
                 object.__setattr__(channel, "_connection", wrapper)
-                certificate = channel._certificate
-                lifetime = (
-                    certificate.expires_at - certificate.issued_at
-                ).total_seconds()
-                rotation_at = (
-                    certificate.expires_at
-                    - timedelta(seconds=max(0.05, lifetime / 3.0))
+                await self._wait_for_current_certificate_rotation_window(
+                    channel,
+                    clock=broker.iam._clock,
                 )
-                await asyncio.sleep(max(
-                    0.0,
-                    (
-                        rotation_at
-                        - datetime.now(timezone.utc)
-                    ).total_seconds() + 0.05,
-                ))
                 with self.assertRaises(
                     NsRuntimeStateStoreUnavailableError,
                 ):
@@ -3103,9 +3241,12 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         request = _access_request()
         broker, _ = await self._broker(
             [_decision(request).to_wire() for _ in range(4)],
-            session_ttl_seconds=0.3,
+            session_ttl_seconds=5.0,
         )
-        await asyncio.sleep(0.22)
+        await self._wait_for_current_certificate_rotation_window(
+            broker.iam._channel,
+            clock=broker.iam._clock,
+        )
         results = await asyncio.gather(
             *(broker.iam.access_check(request) for _ in range(4)),
             broker.state_store.health(),

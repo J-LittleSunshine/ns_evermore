@@ -71,11 +71,10 @@ class InheritedAuthorityBootstrap:
         connections = self._connections
         process = self._process
         attestor = self._attestor
-        self._connections = None
-        self._process = None
-        self._attestor = None
+        if connections is None or process is None or attestor is None:
+            _security_error("invalid_inherited_authority_material")
         try:
-            return _complete_inherited_authority_broker_start(
+            broker = _complete_inherited_authority_broker_start(
                 parents=connections,
                 process=process,
                 attestor=attestor,
@@ -83,14 +82,7 @@ class InheritedAuthorityBootstrap:
                 clock=clock,
             )
         except BaseException as operation_failure:
-            cleanup_failure = _close_pending(connections, process)
-            try:
-                attestor.close()
-            except BaseException as error:
-                cleanup_failure = _prioritize_failure(
-                    cleanup_failure,
-                    error,
-                )
+            cleanup_failure = self._close_owned_resources()
             selected = _prioritize_failure(
                 operation_failure,
                 cleanup_failure,
@@ -98,25 +90,43 @@ class InheritedAuthorityBootstrap:
             if selected is not operation_failure:
                 raise selected
             raise
-
-    def close(self) -> None:
-        connections = self._connections
-        process = self._process
-        attestor = self._attestor
         self._connections = None
         self._process = None
         self._attestor = None
+        return broker
+
+    def close(self) -> None:
+        failure = self._close_owned_resources()
+        self._consumed = True
+        if failure is not None:
+            raise failure
+
+    def _close_owned_resources(self) -> BaseException | None:
         failure: BaseException | None = None
-        if connections is not None and process is not None:
-            failure = _close_pending(connections, process)
+        connections = self._connections
+        if connections is not None:
+            failure = _close_connections(connections)
+            if not connections:
+                self._connections = None
+        process = self._process
+        if process is not None:
+            process_failure = _reap_process(process, started=True)
+            failure = _prioritize_failure(failure, process_failure)
+            try:
+                process_alive = process.is_alive()
+            except BaseException:
+                process_alive = True
+            if not process_alive:
+                self._process = None
+        attestor = self._attestor
         if attestor is not None:
             try:
                 attestor.close()
             except BaseException as error:
                 failure = _prioritize_failure(failure, error)
-        self._consumed = True
-        if failure is not None:
-            raise failure
+            else:
+                self._attestor = None
+        return failure
 
 
 def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
@@ -180,9 +190,7 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
         # spawn reduction protocol. They must not be detached in this parent.
         duplicate_handles.clear()
         child_close_failure = _close_connections(children)
-        children.clear()
         fd_close_failure = _close_inherited_fds(inherited_fds)
-        inherited_fds.clear()
         if child_close_failure is not None:
             raise child_close_failure
         if fd_close_failure is not None:
@@ -306,15 +314,18 @@ def _close_connections(
 ) -> BaseException | None:
     failure: BaseException | None = None
     seen: set[int] = set()
-    for connection in connections.values():
+    for role, connection in tuple(connections.items()):
         marker = id(connection)
         if marker in seen:
+            del connections[role]
             continue
         seen.add(marker)
         try:
             connection.close()
         except BaseException as error:
             failure = _prioritize_failure(failure, error)
+        else:
+            del connections[role]
     return failure
 
 
@@ -323,6 +334,7 @@ def _close_inherited_fds(
 ) -> BaseException | None:
     failure: BaseException | None = None
     seen: set[int] = set()
+    pending: list[int] = []
     for descriptor in descriptors:
         if descriptor in seen:
             continue
@@ -335,11 +347,14 @@ def _close_inherited_fds(
             pass
         except BaseException as error:
             failure = _prioritize_failure(failure, error)
+            pending.append(descriptor)
+    descriptors[:] = pending
     return failure
 
 
 def _close_duplicate_handles(handles: list[object]) -> BaseException | None:
     failure: BaseException | None = None
+    pending: list[object] = []
     for handle in handles:
         try:
             descriptor = handle.detach()
@@ -347,6 +362,7 @@ def _close_duplicate_handles(handles: list[object]) -> BaseException | None:
             continue
         except BaseException as error:
             failure = _prioritize_failure(failure, error)
+            pending.append(handle)
             continue
         try:
             os.close(descriptor)
@@ -354,6 +370,7 @@ def _close_duplicate_handles(handles: list[object]) -> BaseException | None:
             pass
         except BaseException as error:
             failure = _prioritize_failure(failure, error)
+    handles[:] = pending
     return failure
 
 
@@ -365,26 +382,40 @@ def _reap_process(
     failure: BaseException | None = None
     if not started:
         return None
+    for operation, timeout in (
+        ("join", 0.2),
+        ("terminate", 2.0),
+        ("kill", 2.0),
+    ):
+        try:
+            if operation == "join":
+                process.join(timeout=timeout)
+            elif process.is_alive():
+                getattr(process, operation)()
+                process.join(timeout=timeout)
+        except BaseException as error:
+            failure = _prioritize_failure(failure, error)
     try:
-        process.join(timeout=0.2)
-        if process.is_alive():
-            process.terminate()
-            process.join(timeout=2.0)
-        if process.is_alive():
-            process.kill()
-            process.join(timeout=2.0)
+        alive = process.is_alive()
     except BaseException as error:
         failure = _prioritize_failure(failure, error)
-        # Continue each escalation independently when a fake or partially
-        # started Process rejects one lifecycle operation.
-        for operation in ("terminate", "kill"):
-            try:
-                if process.is_alive():
-                    getattr(process, operation)()
-                    process.join(timeout=2.0)
-            except BaseException as cleanup_error:
-                failure = _prioritize_failure(failure, cleanup_error)
+        alive = True
+    if alive:
+        failure = _prioritize_failure(
+            failure,
+            _cleanup_error("authority_broker_process_did_not_exit"),
+        )
     return failure
+
+
+def _cleanup_error(reason: str) -> NsRuntimeStartupSecurityError:
+    return NsRuntimeStartupSecurityError(
+        "Runtime authority cleanup did not complete.",
+        details={
+            "component": "authority_broker_bootstrap",
+            "reason": reason,
+        },
+    )
 
 
 def _prioritize_failure(
