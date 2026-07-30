@@ -79,6 +79,44 @@ class AuthorityAttestationError(RuntimeError):
     """Stable local failure without reflecting untrusted payload text."""
 
 
+_SAFE_ATTESTOR_FAILURE_CODES = frozenset({
+    "attestation_denied",
+    "attestor_response_binding",
+    "attestor_timeout",
+    "attestor_unavailable",
+})
+
+
+def _safe_attestor_failure_code(error: BaseException) -> str:
+    if (
+        type(error) is AuthorityAttestationError
+        and len(error.args) == 1
+        and error.args[0] in _SAFE_ATTESTOR_FAILURE_CODES
+    ):
+        return str(error.args[0])
+    if isinstance(error, (BrokenPipeError, EOFError, OSError)):
+        return "attestor_ipc_closed"
+    if type(error) is ValueError:
+        return "attestor_response_malformed"
+    return "attestor_verification_failed"
+
+
+def _safe_process_status(
+    process: multiprocessing.Process,
+) -> tuple[bool, int | None]:
+    try:
+        alive = bool(process.is_alive())
+    except BaseException:
+        alive = False
+    try:
+        exitcode = process.exitcode
+    except BaseException:
+        exitcode = None
+    if type(exitcode) is not int:
+        exitcode = None
+    return alive, exitcode
+
+
 class _AttestorClock:
     """One explicit wall-clock dependency owned by the attestor child."""
 
@@ -95,6 +133,7 @@ class AuthorityAttestorClient:
         "_connection", "_process", "_public_key", "_instance_id", "_lock",
         "_closed", "_connection_closed", "_process_reaped", "_reaped",
         "_request_sequence", "_response_sequence", "_timeout_seconds",
+        "_diagnostics_enabled", "_last_failure_diagnostics",
     )
 
     def __init__(
@@ -105,6 +144,7 @@ class AuthorityAttestorClient:
         public_key: bytes,
         instance_id: str,
         timeout_seconds: float,
+        diagnostics_enabled: bool = False,
     ) -> None:
         if (
             not isinstance(connection, Connection)
@@ -115,6 +155,7 @@ class AuthorityAttestorClient:
             or not instance_id
             or not math.isfinite(timeout_seconds)
             or timeout_seconds <= 0
+            or type(diagnostics_enabled) is not bool
         ):
             raise AuthorityAttestationError("attestor_client_invalid")
         self._connection = connection
@@ -129,6 +170,8 @@ class AuthorityAttestorClient:
         self._request_sequence = 0
         self._response_sequence = 0
         self._timeout_seconds = float(timeout_seconds)
+        self._diagnostics_enabled = diagnostics_enabled
+        self._last_failure_diagnostics: dict[str, object] = {}
 
     @property
     def instance_id(self) -> str:
@@ -145,6 +188,12 @@ class AuthorityAttestorClient:
             and not self._reaped
             and self._process.is_alive()
         )
+
+    @property
+    def last_failure_diagnostics(self) -> dict[str, object]:
+        if not self._diagnostics_enabled:
+            return {}
+        return dict(self._last_failure_diagnostics)
 
     def approve_identity(
         self,
@@ -262,11 +311,25 @@ class AuthorityAttestorClient:
         operation: str,
         payload: dict[str, object],
     ) -> dict[str, object]:
+        if self._diagnostics_enabled:
+            self._last_failure_diagnostics = {}
         if self._closed or not self._process.is_alive():
+            self._record_failure_diagnostics(
+                operation=operation,
+                request_stage="attestor_preflight",
+                timeout_stage="none",
+                failure_code="attestor_unavailable",
+            )
             self._fail_and_reap()
             raise AuthorityAttestationError("attestor_unavailable")
         with self._lock:
             if self._closed or not self._process.is_alive():
+                self._record_failure_diagnostics(
+                    operation=operation,
+                    request_stage="attestor_locked_preflight",
+                    timeout_stage="none",
+                    failure_code="attestor_unavailable",
+                )
                 self._fail_and_reap()
                 raise AuthorityAttestationError("attestor_unavailable")
             request_id = "attest_" + uuid.uuid4().hex
@@ -280,13 +343,25 @@ class AuthorityAttestorClient:
                 "payload": payload,
             })
             self._request_sequence = request_sequence
+            request_stage = "attestor_send"
+            timeout_stage = "none"
             try:
                 self._connection.send_bytes(raw)
+                request_stage = "attestor_wait_response"
                 if not self._connection.poll(self._timeout_seconds):
+                    timeout_stage = "attestor_response"
+                    self._record_failure_diagnostics(
+                        operation=operation,
+                        request_stage=request_stage,
+                        timeout_stage=timeout_stage,
+                        failure_code="attestor_timeout",
+                    )
                     raise AuthorityAttestationError("attestor_timeout")
+                request_stage = "attestor_receive_response"
                 response = _decode_frame(
                     self._connection.recv_bytes(ATTESTOR_MAX_FRAME_BYTES),
                 )
+                request_stage = "attestor_verify_response"
                 expected_sequence = self._response_sequence + 1
                 result = _verify_attestor_response(
                     response,
@@ -301,11 +376,38 @@ class AuthorityAttestorClient:
             except (
                 BrokenPipeError, EOFError, OSError, ValueError,
                 AuthorityAttestationError,
-            ):
+            ) as error:
+                if not self._last_failure_diagnostics:
+                    self._record_failure_diagnostics(
+                        operation=operation,
+                        request_stage=request_stage,
+                        timeout_stage=timeout_stage,
+                        failure_code=_safe_attestor_failure_code(error),
+                    )
                 self._fail_and_reap()
                 raise AuthorityAttestationError(
                     "attestor_verification_failed",
                 ) from None
+
+    def _record_failure_diagnostics(
+        self,
+        *,
+        operation: str,
+        request_stage: str,
+        timeout_stage: str,
+        failure_code: str,
+    ) -> None:
+        if not self._diagnostics_enabled:
+            return
+        process_alive, process_exitcode = _safe_process_status(self._process)
+        self._last_failure_diagnostics = {
+            "attestor_process_alive": process_alive,
+            "attestor_exitcode": process_exitcode,
+            "attestor_operation": operation,
+            "attestor_request_stage": request_stage,
+            "attestor_timeout_stage": timeout_stage,
+            "attestor_failure_code": failure_code,
+        }
 
     def close(self) -> None:
         if not self._closed:
@@ -395,10 +497,14 @@ def start_authority_attestor(
     realm: str,
     expected_test_root_public_key: bytes | None = None,
     timeout_seconds: float = 5.0,
+    diagnostics_enabled: bool = False,
 ) -> AuthorityAttestorClient:
     """Start production attestor or an explicitly separate test attestor."""
 
-    if realm not in {"production", "contract-test", "integration-test"}:
+    if (
+        realm not in {"production", "contract-test", "integration-test"}
+        or type(diagnostics_enabled) is not bool
+    ):
         raise AuthorityAttestationError("attestor_realm_invalid")
     if realm == "production":
         test_root = b""
@@ -470,6 +576,7 @@ def start_authority_attestor(
             public_key=public_key,
             instance_id=instance_id,
             timeout_seconds=timeout_seconds,
+            diagnostics_enabled=diagnostics_enabled,
         )
         transferred = True
         cleanup_owner.process = None

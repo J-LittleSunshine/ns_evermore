@@ -156,6 +156,25 @@ def _repositories(store: RedisValkeyStateStore, *, runtime_id="runtime-local"):
     return composition.delivery_repositories(runtime_id=runtime_id)
 
 
+async def _wait_for_current_certificate_rotation_window(
+    channel,
+    *,
+    clock,
+) -> None:
+    certificate = channel.certificate
+    lifetime = (
+        certificate.expires_at - certificate.issued_at
+    ).total_seconds()
+    rotation_at = certificate.expires_at - timedelta(
+        seconds=lifetime / 3.0,
+    )
+    while True:
+        delay = (rotation_at - clock.utc_now()).total_seconds()
+        if delay <= 0:
+            return
+        await asyncio.sleep(delay)
+
+
 def _key(scope: StateAccessScope, object_id: str) -> StateKey:
     return StateKey(
         namespace=scope.namespace,
@@ -492,8 +511,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 config=config,
                 iam_service_credential="i" * 32,
                 state_password=self._password,
-                session_ttl_seconds=0.45,
+                startup_timeout_seconds=30.0,
+                session_ttl_seconds=3.0,
                 delegation_ttl_seconds=30.0,
+                broker_operation_timeout_seconds=30.0,
             )
             self.assertIs(
                 broker_module._IntegrationTestRoleBrokerChannel,
@@ -602,7 +623,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 score=1.0,
                 with_log=True,
             )
-            await asyncio.sleep(0.32)
+            await _wait_for_current_certificate_rotation_window(
+                admission._channel,
+                clock=broker.iam._clock,
+            )
             first_result = await admission.transact_admission(
                 tenant_id=partition.tenant_id,
                 bucket_id=partition.bucket_id,
@@ -641,7 +665,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                     with_log=False,
                 ),
             )
-            await asyncio.sleep(0.32)
+            await _wait_for_current_certificate_rotation_window(
+                scheduler._channel,
+                clock=broker.iam._clock,
+            )
             observed = await scheduler.read_delivery(
                 tenant_id=partition.tenant_id,
                 bucket_id=partition.bucket_id,
@@ -649,7 +676,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 delivery_id=delivery_ids[0],
             )
             self.assertIsNotNone(observed.record)
-            await asyncio.sleep(0.32)
+            await _wait_for_current_certificate_rotation_window(
+                scheduler._channel,
+                clock=broker.iam._clock,
+            )
             first_page = await scheduler.read_scheduler_index(
                 tenant_id=partition.tenant_id,
                 bucket_id=partition.bucket_id,
@@ -672,7 +702,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((delivery_ids[1],), tuple(
                 value.member for value in second_page.entries
             ))
-            await asyncio.sleep(0.32)
+            await _wait_for_current_certificate_rotation_window(
+                broker.repositories.audit._channel,
+                clock=broker.iam._clock,
+            )
             audit_position = await PersistenceStrongAuditAuthorityService(
                 persistence=broker.repositories.audit,
             ).append(_audit_record())
@@ -765,6 +798,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                     ),
                     iam_service_credential="i" * 32,
                     state_password="different-secret-input-channel",
+                    startup_timeout_seconds=30.0,
+                    broker_operation_timeout_seconds=30.0,
                 )
             with self.assertRaises(
                 NsRuntimeStateStoreCapabilityUnavailableError,
@@ -804,6 +839,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 ),
                 iam_service_credential="i" * 32,
                 state_password=self._password,
+                startup_timeout_seconds=30.0,
+                broker_operation_timeout_seconds=30.0,
             )
             try:
                 await replacement.state_store.open()
@@ -836,6 +873,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             config=config,
             iam_service_credential="i" * 32,
             state_password=self._password,
+            startup_timeout_seconds=30.0,
+            broker_operation_timeout_seconds=30.0,
         )
         process = broker._channel._custodian.process
         original = broker._channel._connection
@@ -869,6 +908,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             iam_service_credential="i" * 32,
             state_password=self._password,
+            startup_timeout_seconds=30.0,
+            broker_operation_timeout_seconds=30.0,
         )
         try:
             await replacement.state_store.open()
@@ -895,6 +936,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             config=config,
             iam_service_credential="i" * 32,
             state_password=self._password,
+            startup_timeout_seconds=30.0,
+            broker_operation_timeout_seconds=30.0,
         )
         admission_channel = broker.repositories.admission._channel
         process = admission_channel._custodian.process
@@ -925,6 +968,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             iam_service_credential="i" * 32,
             state_password=self._password,
+            startup_timeout_seconds=30.0,
+            broker_operation_timeout_seconds=30.0,
         )
         try:
             await replacement.state_store.open()
@@ -951,6 +996,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             config=config,
             iam_service_credential="i" * 32,
             state_password=self._password,
+            startup_timeout_seconds=30.0,
+            broker_operation_timeout_seconds=30.0,
         )
         channel = broker.repositories.admission._channel
         process = channel._custodian.process
@@ -971,6 +1018,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             iam_service_credential="i" * 32,
             state_password=self._password,
+            startup_timeout_seconds=30.0,
+            broker_operation_timeout_seconds=30.0,
         )
         try:
             await replacement.state_store.open()
@@ -997,8 +1046,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             config=config,
             iam_service_credential="i" * 32,
             state_password=self._password,
-            session_ttl_seconds=0.45,
+            startup_timeout_seconds=30.0,
+            session_ttl_seconds=3.0,
             delegation_ttl_seconds=30.0,
+            broker_operation_timeout_seconds=30.0,
         )
         channel = broker.state_store._channel
         process = channel._custodian.process
@@ -1046,7 +1097,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
 
         corrupt = MissingRotationCertificate()
         object.__setattr__(channel, "_connection", corrupt)
-        await asyncio.sleep(0.32)
+        await _wait_for_current_certificate_rotation_window(
+            channel,
+            clock=broker.iam._clock,
+        )
         with self.assertRaises(NsRuntimeStateStoreUnavailableError):
             await broker.state_store.health()
         self.assertTrue(corrupt.saw_rotation)
@@ -1062,6 +1116,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             iam_service_credential="i" * 32,
             state_password=self._password,
+            startup_timeout_seconds=30.0,
+            broker_operation_timeout_seconds=30.0,
         )
         await replacement.state_store.open()
         replacement_connections = (
@@ -1085,6 +1141,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             iam_service_credential="i" * 32,
             state_password=self._password,
+            startup_timeout_seconds=30.0,
+            broker_operation_timeout_seconds=30.0,
         )
         try:
             await final.state_store.open()
@@ -1613,12 +1671,19 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         unavailable_reservation = self._resource_factory.reserve_tcp_port()
         unavailable_port = unavailable_reservation.port
         unavailable_reservation.release()
-        unavailable = self._provider(port=unavailable_port, timeout=0.05)
+        unavailable = self._provider(port=unavailable_port, timeout=1.0)
         with self.assertRaises(NsRuntimeStateStoreUnavailableError):
             await unavailable.open()
 
-        store = self._provider(timeout=0.03)
+        store = self._provider(timeout=1.0)
         await store.open()
+        # Normal connection setup is not the timeout behavior under test.
+        # Tighten only the operation deadline after the healthy open barrier so
+        # full-suite scheduler load cannot race the initial Redis ping.
+        store._options = dataclasses.replace(
+            store._options,
+            operation_timeout_seconds=0.03,
+        )
         raw = self._raw_client()
         await raw.execute_command("CLIENT", "PAUSE", 150)
         scope = _scope(store)

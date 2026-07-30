@@ -35,6 +35,7 @@ from ns_runtime.main import (
     _run_composed_service,
     main as _runtime_main,
 )
+from ns_runtime.service import RuntimeServiceState
 from ns_runtime.startup import (
     RuntimeStartupDirectories,
     RuntimeStartupPreflight,
@@ -174,9 +175,11 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             def __init__(self) -> None:
                 self.shutdown_coordinator = Coordinator()
                 self.stop_calls = 0
+                self.state = RuntimeServiceState.CREATED
 
             async def start(self) -> None:
                 events.append("service:start")
+                self.state = RuntimeServiceState.RUNNING
 
             async def stop(self) -> None:
                 self.stop_calls += 1
@@ -187,6 +190,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                 await store.close()
                 self.shutdown_coordinator.cleanup_progress = ("complete",)
                 self.shutdown_coordinator.cleanup_pending = False
+                self.state = RuntimeServiceState.STOPPED
 
         resources = _MainCompositionResources()
         resources.transport_manager = object()
@@ -244,12 +248,15 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             def __init__(self, state_store: object) -> None:
                 self.shutdown_coordinator = Coordinator(state_store)
                 self.stop_calls = 0
+                self.state = RuntimeServiceState.CREATED
 
             async def start(self) -> None:
+                self.state = RuntimeServiceState.RUNNING
                 return None
 
             async def stop(self) -> None:
                 self.stop_calls += 1
+                self.state = RuntimeServiceState.FAILED
                 raise RuntimeError("persistent cleanup failure")
 
         resources = _MainCompositionResources()
@@ -271,6 +278,190 @@ class NsRuntimeMainTestCase(unittest.TestCase):
         self.assertIs(operation_failure, raised.exception.__cause__)
         self.assertEqual(3, service.stop_calls)
         self.assertEqual(0, store.close_calls)
+        self.assertIsNotNone(resources.service_lifecycle_owner)
+        self.assertIs(
+            resources.service_lifecycle_owner,
+            raised.exception.cleanup_owner,
+        )
+        self.assertTrue(raised.exception.details["cleanup_pending"])
+        self.assertFalse(raised.exception.details["service_stopped"])
+        self.assertTrue(
+            raised.exception.details["service_lifecycle_owner_active"],
+        )
+        stop_calls_before_outer_close = service.stop_calls
+        resources.close()
+        self.assertEqual(stop_calls_before_outer_close, service.stop_calls)
+        self.assertIsNotNone(resources.service_lifecycle_owner)
+
+    def test_cleanup_owner_resumes_only_pending_phase_on_same_loop(self) -> None:
+        events: list[str] = []
+
+        class Store:
+            async def open(self) -> None:
+                events.append("store:open")
+
+        store = Store()
+
+        class Coordinator:
+            def __init__(self) -> None:
+                self.cleanup_pending = False
+                self.cleanup_progress: object = ("not-started",)
+                self.context = type(
+                    "Context",
+                    (),
+                    {"state_store": store},
+                )()
+
+            def install_signal_handlers(self):
+                return nullcontext()
+
+            def request_shutdown(self, _reason: object) -> None:
+                return None
+
+            async def wait_requested(self) -> None:
+                return None
+
+        class Service:
+            def __init__(self) -> None:
+                self.shutdown_coordinator = Coordinator()
+                self.state = RuntimeServiceState.CREATED
+                self.block_transport_close = True
+                self.tasks_closed = False
+                self.stop_calls = 0
+
+            async def start(self) -> None:
+                self.state = RuntimeServiceState.RUNNING
+
+            async def stop(self) -> None:
+                self.stop_calls += 1
+                if not self.tasks_closed:
+                    events.append("tasks:close")
+                    self.tasks_closed = True
+                if self.block_transport_close:
+                    self.state = RuntimeServiceState.FAILED
+                    self.shutdown_coordinator.cleanup_pending = True
+                    self.shutdown_coordinator.cleanup_progress = (
+                        "tasks-closed",
+                        "transport-pending",
+                    )
+                    raise RuntimeError("transport close remains blocked")
+                events.append("transport:close")
+                self.shutdown_coordinator.cleanup_progress = ("complete",)
+                self.shutdown_coordinator.cleanup_pending = False
+                self.state = RuntimeServiceState.STOPPED
+
+        resources = _MainCompositionResources()
+        resources.transport_manager = object()
+        resources.task_supervisor = object()
+        service = Service()
+
+        async def scenario() -> None:
+            with self.assertRaises(NsStateError) as raised:
+                await _run_composed_service(
+                    resources,
+                    service,  # type: ignore[arg-type]
+                    state_store=store,
+                    self_check=True,
+                )
+            owner = raised.exception.cleanup_owner
+            self.assertIs(owner, resources.service_lifecycle_owner)
+            service.block_transport_close = False
+            await owner.close()
+
+        asyncio.run(scenario())
+
+        self.assertEqual(1, events.count("tasks:close"))
+        self.assertEqual(1, events.count("transport:close"))
+        self.assertEqual(RuntimeServiceState.STOPPED, service.state)
+        self.assertIsNone(resources.service_lifecycle_owner)
+
+    def test_start_failure_does_not_duplicate_service_owned_cleanup(self) -> None:
+        start_failure = RuntimeError("service start identity")
+        events: list[str] = []
+
+        class Store:
+            async def open(self) -> None:
+                events.append("store:open")
+
+            async def close(self) -> None:
+                events.append("store:close")
+                events.append("broker-graph:close")
+
+        store = Store()
+
+        class Manager:
+            async def close(self) -> None:
+                events.append("manager:close")
+
+        class Supervisor:
+            async def shutdown(self) -> None:
+                events.append("supervisor:shutdown")
+
+        class Logger:
+            def close(self) -> None:
+                events.append("logger:close")
+
+        class Broker:
+            def close(self) -> None:
+                events.append("broker-outer:close")
+
+        manager = Manager()
+        supervisor = Supervisor()
+        logger = Logger()
+
+        class Coordinator:
+            def __init__(self) -> None:
+                self.cleanup_pending = False
+                self.cleanup_progress: object = ("not-started",)
+                self.context = type(
+                    "Context",
+                    (),
+                    {"state_store": store},
+                )()
+
+            def install_signal_handlers(self):
+                return nullcontext()
+
+        class Service:
+            def __init__(self) -> None:
+                self.shutdown_coordinator = Coordinator()
+                self.state = RuntimeServiceState.CREATED
+
+            async def start(self) -> None:
+                self.state = RuntimeServiceState.FAILED
+                raise start_failure
+
+            async def stop(self) -> None:
+                await manager.close()
+                await supervisor.shutdown()
+                await store.close()
+                logger.close()
+                self.shutdown_coordinator.cleanup_progress = ("complete",)
+                self.state = RuntimeServiceState.STOPPED
+
+        resources = _MainCompositionResources()
+        resources.transport_manager = manager
+        resources.task_supervisor = supervisor
+        resources.logger = logger
+        resources.authority_broker = Broker()
+        service = Service()
+
+        with self.assertRaises(RuntimeError) as raised:
+            asyncio.run(_run_composed_service(
+                resources,
+                service,  # type: ignore[arg-type]
+                state_store=store,
+                self_check=False,
+            ))
+
+        self.assertIs(start_failure, raised.exception)
+        resources.close()
+        self.assertEqual(1, events.count("manager:close"))
+        self.assertEqual(1, events.count("supervisor:shutdown"))
+        self.assertEqual(1, events.count("store:close"))
+        self.assertEqual(1, events.count("broker-graph:close"))
+        self.assertEqual(0, events.count("broker-outer:close"))
+        self.assertEqual(1, events.count("logger:close"))
         self.assertIsNone(resources.service_lifecycle_owner)
 
     def test_composed_store_open_failure_closes_every_untransferred_resource(

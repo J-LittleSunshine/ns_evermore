@@ -22,6 +22,7 @@ async def _run_service(
     state_store: object | None = None,
     self_check: bool = False,
     service_starting: Callable[[], None] | None = None,
+    service_cleanup_owner: object | None = None,
 ) -> None:
     """Run until signal, critical failure, explicit shutdown, or self-check."""
 
@@ -50,9 +51,9 @@ async def _run_service(
                 )
                 is state_store
             )
-            await service.start()
             if service_starting is not None:
                 service_starting()
+            await service.start()
             if self_check:
                 service.shutdown_coordinator.request_shutdown(
                     RuntimeShutdownReason.SELF_CHECK_COMPLETE,
@@ -63,7 +64,10 @@ async def _run_service(
         finally:
             if service_start_attempted:
                 try:
-                    await _stop_service_until_cleanup_complete(service)
+                    await _stop_service_until_cleanup_complete(
+                        service,
+                        cleanup_owner=service_cleanup_owner,
+                    )
                 except BaseException as cleanup_failure:
                     if (
                         failure is not None
@@ -105,6 +109,8 @@ _MAX_STALLED_SERVICE_CLEANUP_ATTEMPTS = 3
 
 async def _stop_service_until_cleanup_complete(
     service: RuntimeService,
+    *,
+    cleanup_owner: object | None = None,
 ) -> None:
     """Retry incomplete coordinator phases before the current loop is closed."""
 
@@ -152,8 +158,16 @@ async def _stop_service_until_cleanup_complete(
                     "operation": "stop",
                     "reason": "cleanup_pending_no_progress",
                     "attempts": attempt,
+                    **_service_cleanup_pending_facts(service),
                 },
             )
+            owner = (
+                _ServiceLifecycleCleanupLease(service)
+                if cleanup_owner is None
+                else cleanup_owner
+            )
+            incomplete.cleanup_owner = owner  # type: ignore[attr-defined]
+            incomplete.cleanup_incomplete = True  # type: ignore[attr-defined]
             if process_failure is not None:
                 raise process_failure from incomplete
             if last_failure is not None:
@@ -167,6 +181,85 @@ def _service_cleanup_progress(coordinator: object) -> object:
         return getattr(coordinator, "cleanup_progress")
     except BaseException:
         return None
+
+
+def _service_cleanup_pending_facts(service: object) -> dict[str, bool]:
+    coordinator = getattr(service, "shutdown_coordinator", None)
+    return {
+        "cleanup_pending": bool(
+            getattr(coordinator, "cleanup_pending", False),
+        ),
+        "service_stopped": _service_is_stopped(service),
+        "service_lifecycle_owner_active": True,
+    }
+
+
+def _service_is_stopped(service: object) -> bool:
+    from ns_runtime.service import RuntimeServiceState
+
+    return getattr(service, "state", None) is RuntimeServiceState.STOPPED
+
+
+def _service_cleanup_complete(service: object) -> bool:
+    coordinator = getattr(service, "shutdown_coordinator", None)
+    return bool(
+        not getattr(coordinator, "cleanup_pending", False)
+        and _service_is_stopped(service)
+    )
+
+
+class _ServiceLifecycleCleanupLease:
+    """Close-only service custody bound to its original event loop."""
+
+    __slots__ = ("_service", "_loop", "_release")
+
+    def __init__(self, service: object) -> None:
+        import asyncio
+
+        self._service = service
+        self._loop = asyncio.get_running_loop()
+        self._release: Callable[[], None] | None = None
+
+    def bind_release(self, release: Callable[[], None]) -> None:
+        if self._release is not None or not callable(release):
+            raise TypeError("service lifecycle release is invalid")
+        self._release = release
+
+    @property
+    def incomplete(self) -> bool:
+        return not _service_cleanup_complete(self._service)
+
+    @property
+    def cleanup_progress(self) -> object:
+        return _service_cleanup_progress(
+            self._service.shutdown_coordinator,  # type: ignore[attr-defined]
+        )
+
+    def pending_facts(self) -> dict[str, bool]:
+        return _service_cleanup_pending_facts(self._service)
+
+    async def close(self) -> None:
+        import asyncio
+
+        if asyncio.get_running_loop() is not self._loop:
+            from ns_common.exceptions import NsStateError
+
+            raise NsStateError(
+                "Runtime service cleanup requires its original event loop.",
+                details={
+                    "component": "runtime_main",
+                    "operation": "stop",
+                    "reason": "service_cleanup_loop_mismatch",
+                },
+            )
+        await _stop_service_until_cleanup_complete(
+            self._service,  # type: ignore[arg-type]
+            cleanup_owner=self,
+        )
+        if _service_cleanup_complete(self._service):
+            release = self._release
+            if release is not None:
+                release()
 
 
 def _is_cleanup_incomplete_failure(error: BaseException) -> bool:
@@ -237,7 +330,7 @@ class _MainCompositionResources:
         )
 
     def pending_facts(self) -> dict[str, object]:
-        return {
+        facts: dict[str, object] = {
             "pending_adapters": len(self.adapters),
             "transport_manager_owned": self.transport_manager is not None,
             "task_supervisor_owned": self.task_supervisor is not None,
@@ -247,12 +340,27 @@ class _MainCompositionResources:
                 self.service_lifecycle_owner is not None
             ),
         }
+        service_owner = self.service_lifecycle_owner
+        if service_owner is not None:
+            try:
+                pending_facts = service_owner.pending_facts()  # type: ignore[attr-defined]
+            except BaseException:
+                pending_facts = {}
+            if type(pending_facts) is dict:
+                for name in ("cleanup_pending", "service_stopped"):
+                    value = pending_facts.get(name)
+                    if type(value) is bool:
+                        facts[name] = value
+        return facts
 
     def transfer_service_resources(self) -> None:
         self.adapters = ()
         self.transport_manager = None
         self.task_supervisor = None
         self.logger = None
+        # The service context owns StateStore and repository proxies whose
+        # shared channel custodian closes the complete broker graph.
+        self.authority_broker = None
 
     def close(self) -> None:
         import asyncio
@@ -445,6 +553,8 @@ def _outer_cleanup_error(
         "logger_owned",
         "authority_broker_owned",
         "service_lifecycle_owner_active",
+        "cleanup_pending",
+        "service_stopped",
         "process_owned",
         "process_alive",
         "attestor_owned",
@@ -522,17 +632,32 @@ async def _run_composed_service(
     state_store: object,
     self_check: bool,
 ) -> None:
-    resources.service_lifecycle_owner = service
+    lifecycle_owner = _ServiceLifecycleCleanupLease(service)
+
+    def release_service_resources() -> None:
+        if resources.service_lifecycle_owner is lifecycle_owner:
+            resources.service_lifecycle_owner = None
+
+    lifecycle_owner.bind_release(release_service_resources)
+
+    def transfer_service_resources() -> None:
+        resources.service_lifecycle_owner = lifecycle_owner
+        resources.transfer_service_resources()
+
     try:
         await _run_service(
             service,
             state_store=state_store,
             self_check=self_check,
-            service_starting=resources.transfer_service_resources,
+            service_starting=transfer_service_resources,
+            service_cleanup_owner=lifecycle_owner,
         )
     finally:
-        # Cleanup either completed inside this loop or failed explicitly.
-        resources.service_lifecycle_owner = None
+        if (
+            resources.service_lifecycle_owner is lifecycle_owner
+            and _service_cleanup_complete(service)
+        ):
+            release_service_resources()
 
 
 def main(
@@ -1018,8 +1143,8 @@ def _compose_runtime_main(
             self_check=self_check,
         ))
     finally:
-        # The enclosing composition scope retains broker ownership so it can
-        # prioritize operation and cleanup failures consistently.
+        # Ownership remains here only when StateStore.open() failed before
+        # the service accepted the shared broker-backed dependency graph.
         pass
 
     return 0

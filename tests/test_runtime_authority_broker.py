@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import os
 import signal
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -307,6 +308,7 @@ def _test_channel(
     response,
     *,
     role: BrokerRepositoryRole = BrokerRepositoryRole.LIFECYCLE,
+    diagnostics_enabled: bool = False,
 ):
     root = Ed25519PrivateKey.generate()
     root_public_key = root.public_key().public_bytes(
@@ -316,6 +318,7 @@ def _test_channel(
     attestor = start_authority_attestor(
         realm="contract-test",
         expected_test_root_public_key=root_public_key,
+        diagnostics_enabled=diagnostics_enabled,
     )
     delegation_signer = Ed25519PrivateKey.generate()
     delegation_public_key = delegation_signer.public_key().public_bytes(
@@ -413,6 +416,7 @@ def _test_channel(
         role=role,
         handle=handles[role.value],
         timeout_seconds=0.1,
+        diagnostics_enabled=diagnostics_enabled,
     )
     return channel, process, connection, session, certificate
 
@@ -506,14 +510,48 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         broker = start_contract_test_authority_broker(
             config=_config(base_url),
             iam_service_credential="s" * 32,
+            startup_timeout_seconds=30.0,
             session_ttl_seconds=session_ttl_seconds,
             delegation_ttl_seconds=max(
                 30.0, session_ttl_seconds * 10,
             ),
+            broker_operation_timeout_seconds=30.0,
         )
         self.addAsyncCleanup(server.close)
         self.addCleanup(broker.close)
         return broker, server
+
+    def _close_broker_and_assert_reaped(self, broker) -> None:
+        channels = tuple(
+            proxy._channel
+            for proxy in (
+                broker.iam,
+                broker.repositories.admission,
+                broker.repositories.scheduler,
+                broker.repositories.payload,
+                broker.repositories.registry,
+                broker.repositories.audit,
+                broker.state_store,
+            )
+        )
+        custodian = broker._channel._custodian
+        attestor = custodian.attestor
+        broker_process = custodian.process
+        attestor_process = attestor._process
+        broker.close()
+        self.assertFalse(broker_process.is_alive())
+        self.assertIsNotNone(broker_process.exitcode)
+        self.assertFalse(attestor_process.is_alive())
+        self.assertIsNotNone(attestor_process.exitcode)
+        self.assertFalse(attestor.alive)
+        self.assertTrue(custodian._reaped)
+        self.assertTrue(custodian._process_reaped)
+        self.assertTrue(custodian._attestor_closed)
+        self.assertEqual((), custodian._endpoint_close_resources)
+        self.assertTrue(attestor._connection_closed)
+        self.assertTrue(attestor._process_reaped)
+        self.assertTrue(attestor._reaped)
+        self.assertTrue(all(channel._connection.closed for channel in channels))
 
     @staticmethod
     def _admission_transaction(
@@ -551,49 +589,91 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         channel,
         operation,
         expected_exception: type[BaseException] | None = None,
-    ) -> None:
+    ) -> object:
         original = (
             broker_module.AuthorityAttestorClient
             .current_endpoint_identity
         )
-        delayed = False
+        worker_entered = threading.Event()
+        release_worker = threading.Event()
+        worker_entered_async = asyncio.Event()
+        loop = asyncio.get_running_loop()
 
-        def delayed_identity(client, **kwargs):
-            nonlocal delayed
+        def blocked_identity(client, **kwargs):
             if (
-                not delayed
+                not worker_entered.is_set()
                 and kwargs.get("endpoint_id") == channel.endpoint_id
             ):
-                delayed = True
-                time.sleep(0.25)
+                worker_entered.set()
+                loop.call_soon_threadsafe(worker_entered_async.set)
+                if not release_worker.wait(timeout=30.0):
+                    raise RuntimeError("test authority barrier was not released")
             return original(client, **kwargs)
 
         ticks = 0
-        running = True
+        ticker_gate = asyncio.Event()
 
         async def ticker() -> None:
             nonlocal ticks
-            while running:
+            await ticker_gate.wait()
+            for _ in range(3):
                 ticks += 1
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0)
 
         ticker_task = asyncio.create_task(ticker())
+        operation_task = None
+        worker_entry_task = asyncio.create_task(worker_entered_async.wait())
+        result: object = None
         try:
             with mock.patch.object(
                 broker_module.AuthorityAttestorClient,
                 "current_endpoint_identity",
-                delayed_identity,
+                blocked_identity,
             ):
+                operation_task = asyncio.create_task(operation())
+                completed, _ = await asyncio.wait(
+                    {worker_entry_task, operation_task},
+                    timeout=10.0,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not completed:
+                    self.fail("authority worker did not reach test barrier")
+                if (
+                    operation_task in completed
+                    and not worker_entered.is_set()
+                ):
+                    await operation_task
+                    self.fail(
+                        "authority operation completed before test barrier",
+                    )
+                await worker_entry_task
+                ticks_at_barrier = ticks
+                ticker_gate.set()
+                await asyncio.wait_for(ticker_task, timeout=10.0)
+                release_worker.set()
                 if expected_exception is None:
-                    await operation()
+                    result = await operation_task
                 else:
                     with self.assertRaises(expected_exception):
-                        await operation()
+                        await operation_task
         finally:
-            running = False
-            await ticker_task
-        self.assertTrue(delayed)
-        self.assertGreaterEqual(ticks, 8)
+            release_worker.set()
+            if operation_task is not None and not operation_task.done():
+                operation_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await operation_task
+            if not worker_entry_task.done():
+                worker_entry_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await worker_entry_task
+            ticker_gate.set()
+            if not ticker_task.done():
+                await ticker_task
+        self.assertTrue(worker_entered.is_set())
+        self.assertGreaterEqual(ticks, ticks_at_barrier + 3)
+        self.assertTrue(channel._custodian.process.is_alive())
+        self.assertTrue(channel._custodian.attestor.alive)
+        return result
 
     @staticmethod
     async def _wait_for_current_certificate_rotation_window(
@@ -1544,7 +1624,9 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         request = _access_request()
-        broker, _ = await self._broker([_decision(request).to_wire()])
+        broker, _ = await self._broker([
+            _decision(request).to_wire() for _ in range(20)
+        ])
         transaction = self._admission_transaction(
             broker,
             suffix="event-loop",
@@ -1583,13 +1665,113 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 None,
             ),
         )
-        for channel, operation, expected_exception in operations:
-            with self.subTest(role=channel.role.value):
-                await self._assert_ticker_progress(
-                    channel=channel,
-                    operation=operation,
-                    expected_exception=expected_exception,
+        try:
+            for iteration in range(20):
+                for channel, operation, expected_exception in operations:
+                    with self.subTest(
+                        iteration=iteration,
+                        role=channel.role.value,
+                    ):
+                        await self._assert_ticker_progress(
+                            channel=channel,
+                            operation=operation,
+                            expected_exception=expected_exception,
+                        )
+            self.assertTrue(broker._channel._custodian.process.is_alive())
+            self.assertTrue(broker._channel._custodian.attestor.alive)
+        finally:
+            self._close_broker_and_assert_reaped(broker)
+
+    async def test_test_only_diagnostics_distinguish_child_exit_roles(
+        self,
+    ) -> None:
+        for failed_child in ("broker", "attestor"):
+            with self.subTest(failed_child=failed_child):
+                broker, _ = await self._broker([])
+                channel = broker._channel
+                custodian = channel._custodian
+                failed_process = (
+                    custodian.process
+                    if failed_child == "broker"
+                    else custodian.attestor._process
                 )
+                try:
+                    failed_process.terminate()
+                    failed_process.join(timeout=5.0)
+                    with self.assertRaises(
+                        NsRuntimeStateStoreUnavailableError,
+                    ) as raised:
+                        await asyncio.to_thread(
+                            channel.request,
+                            operation="state_health",
+                            payload={},
+                        )
+                    details = raised.exception.details
+                    self.assertEqual("state_health", details["operation"])
+                    self.assertEqual("lifecycle", details["endpoint_role"])
+                    self.assertIs(
+                        int,
+                        type(details["rotation_generation"]),
+                    )
+                    self.assertEqual("none", details["timeout_stage"])
+                    self.assertEqual(
+                        failed_child != "broker",
+                        details["broker_process_alive"],
+                    )
+                    self.assertEqual(
+                        failed_child != "attestor",
+                        details["attestor_process_alive"],
+                    )
+                    self.assertIsNotNone(
+                        details[
+                            f"{failed_child}_exitcode"
+                        ],
+                    )
+                    forbidden_fragments = (
+                        "credential", "payload", "fd", "handle",
+                        "certificate", "endpoint_id",
+                    )
+                    self.assertFalse(any(
+                        fragment in key
+                        for key in details
+                        for fragment in forbidden_fragments
+                    ))
+                finally:
+                    self._close_broker_and_assert_reaped(broker)
+
+    def test_test_only_diagnostics_identify_broker_timeout_stage(self) -> None:
+        channel, process, connection, _, _ = _test_channel(
+            lambda sent: b"",
+            diagnostics_enabled=True,
+        )
+
+        class NeverResponds:
+            def send_bytes(self, value):
+                connection.sent = value
+
+            def poll(self, timeout):
+                del timeout
+                return False
+
+            def close(self):
+                connection.close()
+
+        object.__setattr__(channel, "_connection", NeverResponds())
+        with self.assertRaises(
+            NsRuntimeStateStoreUnavailableError,
+        ) as raised:
+            channel.request(operation="state_health", payload={})
+
+        details = raised.exception.details
+        self.assertEqual("ipc_timeout", details["reason"])
+        self.assertEqual("state_health", details["operation"])
+        self.assertEqual("lifecycle", details["endpoint_role"])
+        self.assertEqual("broker_ipc_wait", details["request_stage"])
+        self.assertEqual("broker_response", details["timeout_stage"])
+        self.assertTrue(details["broker_process_alive"])
+        self.assertTrue(details["attestor_process_alive"])
+        self.assertFalse(process.is_alive())
+        self.assertTrue(connection.closed)
 
     async def test_verified_iam_receipt_is_worker_created_and_local_only(
         self,
@@ -2064,56 +2246,37 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         request = _access_request()
-        broker, _ = await self._broker([_decision(request).to_wire()])
-        service = MessageAuthorizationService.for_broker_contract_tests(
-            iam_client=broker.iam,
-            clock=SystemClock(),
-            mode=AuthorizationMode.STRICT,
-            cache_ttl_seconds=30,
-        )
-        original = (
-            broker_module.AuthorityAttestorClient.verify_iam_result
-        )
-        delayed = False
-
-        def delayed_verification(client, **kwargs):
-            nonlocal delayed
-            if not delayed:
-                delayed = True
-                time.sleep(0.25)
-            return original(client, **kwargs)
-
-        ticks = 0
-        running = True
-
-        async def ticker() -> None:
-            nonlocal ticks
-            while running:
-                ticks += 1
-                await asyncio.sleep(0.01)
-
-        ticker_task = asyncio.create_task(ticker())
+        broker, _ = await self._broker([
+            _decision(request).to_wire() for _ in range(20)
+        ])
         try:
-            with mock.patch.object(
-                broker_module.AuthorityAttestorClient,
-                "verify_iam_result",
-                delayed_verification,
-            ):
-                result = await service.authorize(
-                    snapshot=_authorization_snapshot(),
-                    request=request,
-                    risk=OperationRiskContext(),
+            for iteration in range(20):
+                service = (
+                    MessageAuthorizationService.for_broker_contract_tests(
+                        iam_client=broker.iam,
+                        clock=SystemClock(),
+                        mode=AuthorizationMode.STRICT,
+                        cache_ttl_seconds=30,
+                    )
                 )
+                result = await self._assert_ticker_progress(
+                    channel=broker.iam._channel,
+                    operation=lambda: service.authorize(
+                        snapshot=_authorization_snapshot(),
+                        request=request,
+                        risk=OperationRiskContext(),
+                    ),
+                )
+                with self.subTest(iteration=iteration):
+                    self.assertTrue(result.is_issued_by(service))
+                    self.assertIs(
+                        BrokerIamVerificationReceipt,
+                        type(result._broker_verification),
+                    )
+            self.assertTrue(broker._channel._custodian.process.is_alive())
+            self.assertTrue(broker._channel._custodian.attestor.alive)
         finally:
-            running = False
-            await ticker_task
-        self.assertTrue(delayed)
-        self.assertGreaterEqual(ticks, 8)
-        self.assertTrue(result.is_issued_by(service))
-        self.assertIs(
-            BrokerIamVerificationReceipt,
-            type(result._broker_verification),
-        )
+            self._close_broker_and_assert_reaped(broker)
 
     async def test_processor_authorization_keeps_event_loop_running(
         self,
@@ -2412,115 +2575,137 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         request = _access_request()
         broker, server = await self._broker(
             [_decision(request).to_wire() for _ in range(8)],
-            session_ttl_seconds=0.6,
+            session_ttl_seconds=3.0,
         )
-        service = MessageAuthorizationService.for_broker_contract_tests(
-            iam_client=broker.iam,
-            clock=SystemClock(),
-            mode=AuthorizationMode.CACHE,
-            cache_ttl_seconds=60,
-        )
-        snapshot = _authorization_snapshot()
-        first = await service.authorize(
-            snapshot=snapshot,
-            request=request,
-            risk=OperationRiskContext(),
-        )
-        old_verified = object.__new__(
-            broker_module.VerifiedBrokerIamResult,
-        )
-        object.__setattr__(old_verified, "result", first.decision)
-        object.__setattr__(
-            old_verified, "authority", first._broker_authority,
-        )
-        object.__setattr__(
-            old_verified, "verification", first._broker_verification,
-        )
-        await service.authorize(
-            snapshot=snapshot,
-            request=request,
-            risk=OperationRiskContext(),
-        )
-        self.assertEqual(1, len(server.calls))
-
-        latest = first
-        for expected_generation in range(2, 5):
-            await asyncio.sleep(0.42)
-            await broker.iam.access_check_signed(request)
-            latest = await service.authorize(
+        try:
+            service = MessageAuthorizationService.for_broker_contract_tests(
+                iam_client=broker.iam,
+                clock=SystemClock(),
+                mode=AuthorizationMode.CACHE,
+                cache_ttl_seconds=60,
+            )
+            snapshot = _authorization_snapshot()
+            first = await service.authorize(
                 snapshot=snapshot,
                 request=request,
                 risk=OperationRiskContext(),
             )
-            self.assertEqual(
-                expected_generation,
-                latest._broker_verification.lifecycle_generation,
+            old_verified = object.__new__(
+                broker_module.VerifiedBrokerIamResult,
             )
-            calls_after_source = len(server.calls)
-            cached_results = await asyncio.gather(*(
-                service.authorize(
+            object.__setattr__(old_verified, "result", first.decision)
+            object.__setattr__(
+                old_verified, "authority", first._broker_authority,
+            )
+            object.__setattr__(
+                old_verified, "verification", first._broker_verification,
+            )
+            await service.authorize(
+                snapshot=snapshot,
+                request=request,
+                risk=OperationRiskContext(),
+            )
+            self.assertEqual(1, len(server.calls))
+
+            latest = first
+            generation_history = [
+                first._broker_verification.lifecycle_generation,
+            ]
+            for rotation_index in range(3):
+                previous_generation = generation_history[-1]
+                await self._wait_for_current_certificate_rotation_window(
+                    broker.iam._channel,
+                    clock=broker.iam._clock,
+                )
+                rotated = await broker.iam.access_check_signed(request)
+                actual_generation = (
+                    rotated.verification.lifecycle_generation
+                )
+                self.assertGreater(
+                    actual_generation,
+                    previous_generation,
+                    msg=f"rotation barrier {rotation_index} did not advance",
+                )
+                latest = await service.authorize(
                     snapshot=snapshot,
                     request=request,
                     risk=OperationRiskContext(),
                 )
-                for _ in range(5)
-            ))
-            self.assertTrue(all(
-                result._broker_verification.lifecycle_generation
-                == expected_generation
-                for result in cached_results
-            ))
-            self.assertEqual(calls_after_source, len(server.calls))
-        self.assertEqual(7, len(server.calls))
-        self.assertFalse(
-            broker.iam._verified_broker_iam_result_is_current_local(
-                old_verified,
-                operation="runtime_access_check",
-                request_fingerprint=(
-                    old_verified.authority.request_fingerprint
+                self.assertEqual(
+                    actual_generation,
+                    latest._broker_verification.lifecycle_generation,
+                )
+                generation_history.append(actual_generation)
+                calls_after_source = len(server.calls)
+                cached_results = await asyncio.gather(*(
+                    service.authorize(
+                        snapshot=snapshot,
+                        request=request,
+                        risk=OperationRiskContext(),
+                    )
+                    for _ in range(20)
+                ))
+                self.assertTrue(all(
+                    result._broker_verification.lifecycle_generation
+                    == actual_generation
+                    for result in cached_results
+                ))
+                self.assertEqual(calls_after_source, len(server.calls))
+            self.assertEqual(4, len(set(generation_history)))
+            self.assertEqual(7, len(server.calls))
+            self.assertFalse(
+                broker.iam._verified_broker_iam_result_is_current_local(
+                    old_verified,
+                    operation="runtime_access_check",
+                    request_fingerprint=(
+                        old_verified.authority.request_fingerprint
+                    ),
+                    now=datetime.now(timezone.utc),
                 ),
-                now=datetime.now(timezone.utc),
-            ),
-        )
-        self.assertFalse(first.is_issued_by(service))
-        latest_verified = object.__new__(
-            broker_module.VerifiedBrokerIamResult,
-        )
-        object.__setattr__(latest_verified, "result", latest.decision)
-        object.__setattr__(
-            latest_verified, "authority", latest._broker_authority,
-        )
-        object.__setattr__(
-            latest_verified, "verification",
-            latest._broker_verification,
-        )
-        self.assertTrue(
-            broker.iam._verified_broker_iam_result_is_current_local(
-                latest_verified,
-                operation="runtime_access_check",
-                request_fingerprint=(
-                    latest_verified.authority.request_fingerprint
+            )
+            self.assertFalse(first.is_issued_by(service))
+            latest_verified = object.__new__(
+                broker_module.VerifiedBrokerIamResult,
+            )
+            object.__setattr__(latest_verified, "result", latest.decision)
+            object.__setattr__(
+                latest_verified, "authority", latest._broker_authority,
+            )
+            object.__setattr__(
+                latest_verified, "verification",
+                latest._broker_verification,
+            )
+            self.assertTrue(
+                broker.iam._verified_broker_iam_result_is_current_local(
+                    latest_verified,
+                    operation="runtime_access_check",
+                    request_fingerprint=(
+                        latest_verified.authority.request_fingerprint
+                    ),
+                    now=datetime.now(timezone.utc),
                 ),
-                now=datetime.now(timezone.utc),
-            ),
-        )
-        cache_key = next(iter(service._decisions))
-        service._decisions[cache_key] = dataclasses.replace(
-            service._decisions[cache_key],
-            authority_expires_at=(
-                datetime.now(timezone.utc) - timedelta(seconds=1)
-            ),
-        )
-        refreshed = await service.authorize(
-            snapshot=snapshot,
-            request=request,
-            risk=OperationRiskContext(),
-        )
-        self.assertEqual(8, len(server.calls))
-        self.assertEqual(
-            4, refreshed._broker_verification.lifecycle_generation,
-        )
-        self.assertTrue(broker._channel._custodian.process.is_alive())
+            )
+            cache_key = next(iter(service._decisions))
+            service._decisions[cache_key] = dataclasses.replace(
+                service._decisions[cache_key],
+                authority_expires_at=(
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                ),
+            )
+            refreshed = await service.authorize(
+                snapshot=snapshot,
+                request=request,
+                risk=OperationRiskContext(),
+            )
+            self.assertEqual(8, len(server.calls))
+            self.assertEqual(
+                generation_history[-1],
+                refreshed._broker_verification.lifecycle_generation,
+            )
+            self.assertTrue(broker._channel._custodian.process.is_alive())
+            self.assertTrue(broker._channel._custodian.attestor.alive)
+        finally:
+            self._close_broker_and_assert_reaped(broker)
 
     async def test_endpoint_identity_provenance_failure_reaps_graph(
         self,
