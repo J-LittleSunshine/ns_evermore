@@ -773,6 +773,75 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             self.assertFalse(startup_root.exists())
             self.assertEqual([], installed_policies)
 
+    def test_post_launch_composition_failure_closes_all_authority_resources(
+        self,
+    ) -> None:
+        resource_closed = {
+            "broker": False,
+            "attestor": False,
+            "pipe": False,
+            "physical_domain_lease": False,
+        }
+
+        class FakeRepositories:
+            admission = object()
+            scheduler = object()
+            payload = object()
+            registry = object()
+            audit = object()
+
+        class FakeBroker:
+            state_store = object()
+            iam = object()
+            repositories = FakeRepositories()
+
+            def close(self) -> None:
+                for resource in resource_closed:
+                    resource_closed[resource] = True
+
+        broker = FakeBroker()
+
+        class FakeBootstrap:
+            launch_calls = 0
+
+            def launch(self, *, config) -> FakeBroker:
+                del config
+                self.launch_calls += 1
+                return broker
+
+        bootstrap = FakeBootstrap()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            config_path = _write_config(temporary_root, {})
+            startup_root = temporary_root / "runtime-root"
+            preflight, _ = _controlled_preflight()
+
+            with mock.patch(
+                "ns_runtime.authority_bootstrap."
+                "load_inherited_authority_bootstrap",
+                return_value=bootstrap,
+            ):
+                with self.assertRaises(NsValidationError):
+                    main(
+                        environment="local",
+                        config_path=config_path,
+                        startup_directories=(
+                            RuntimeStartupDirectories.for_root(startup_root)
+                        ),
+                        preflight=preflight,
+                    )
+
+        self.assertEqual(1, bootstrap.launch_calls)
+        self.assertEqual(
+            {
+                "broker": True,
+                "attestor": True,
+                "pipe": True,
+                "physical_domain_lease": True,
+            },
+            resource_closed,
+        )
+
     def test_main_missing_websockets_has_no_directory_or_policy_side_effect(
         self,
     ) -> None:

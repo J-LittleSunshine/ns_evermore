@@ -63,7 +63,10 @@ _ROLE_OPERATIONS: Mapping[str, frozenset[str]] = {
         "read_registry_layout", "read_registry_tenant",
         "transact_registry", "read_registry_index",
     }),
-    "audit": frozenset({"append_audit"}),
+    "audit": frozenset({
+        "append_processor_audit",
+        "append_connection_audit",
+    }),
     "lifecycle": frozenset({"state_health"}),
 }
 _DELEGATION_USAGES = (
@@ -73,6 +76,15 @@ _DELEGATION_USAGES = (
 
 class AuthorityAttestationError(RuntimeError):
     """Stable local failure without reflecting untrusted payload text."""
+
+
+class _AttestorClock:
+    """One explicit wall-clock dependency owned by the attestor child."""
+
+    __slots__ = ()
+
+    def utc_now(self) -> datetime:
+        return datetime.now(timezone.utc)
 
 
 class AuthorityAttestorClient:
@@ -425,6 +437,7 @@ def _authority_attestor_process(
     pending_rotation: dict[str, object] | None = None
     request_sequence = 0
     response_sequence = 0
+    clock = _AttestorClock()
     try:
         connection.send_bytes(_encode_frame({
             "version": ATTESTOR_WIRE_VERSION,
@@ -476,6 +489,7 @@ def _authority_attestor_process(
                     attestor_instance_id=instance_id,
                     approved=approved,
                     pending_rotation=pending_rotation,
+                    now=clock.utc_now(),
                 )
                 ok = True
                 error = None
@@ -518,8 +532,8 @@ def _execute_attestation(
     attestor_instance_id: str,
     approved: dict[str, object] | None,
     pending_rotation: dict[str, object] | None,
+    now: datetime,
 ) -> tuple[dict[str, object], dict[str, object] | None, dict[str, object] | None]:
-    now = datetime.now(timezone.utc)
     if operation == "approve_identity":
         if approved is not None:
             raise ValueError

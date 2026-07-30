@@ -457,6 +457,7 @@ def _signed_response_bytes(
         response_sequence=response_sequence,
         result=({"status": "ok"} if result is None and error is None else result),
         error=error,
+        now=datetime.now(timezone.utc),
     )
     return encode_frame(broker_module._signed_response_envelope(signed))
 
@@ -1133,6 +1134,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     request_id="ipc-attacker",
                     request_sequence=1,
                     request_fingerprint="sha256:" + "a" * 64,
+                    now=datetime.now(timezone.utc),
                 )
         finally:
             approved_attestor.close()
@@ -1893,6 +1895,36 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(evidence.is_contract_test_authority())
         self.assertFalse(evidence.is_production_authority())
 
+    async def test_controlled_clock_offset_honors_receipt_expiry_boundary(
+        self,
+    ) -> None:
+        request = _access_request()
+        broker, _ = await self._broker([_decision(request).to_wire()])
+        clock = ControlledClock(utc_start=PROCESSOR_NOW)
+        service = MessageAuthorizationService.for_broker_contract_tests(
+            iam_client=broker.iam,
+            clock=clock,
+            mode=AuthorizationMode.STRICT,
+            cache_ttl_seconds=60,
+        )
+
+        result = await service.authorize(
+            snapshot=_authorization_snapshot(now=PROCESSOR_NOW),
+            request=request,
+            risk=OperationRiskContext(),
+        )
+        receipt = result._broker_verification
+        assert receipt is not None
+        self.assertGreater(
+            abs((datetime.now(timezone.utc) - clock.utc_now()).total_seconds()),
+            24 * 60 * 60,
+        )
+        lifetime = receipt.authority_expires_at - receipt.verified_at
+        clock.advance(lifetime.total_seconds() - 0.001)
+        self.assertTrue(result.is_issued_by(service))
+        clock.advance(0.001)
+        self.assertFalse(result.is_issued_by(service))
+
     async def test_processor_evidence_stale_receipt_retries_authorization(
         self,
     ) -> None:
@@ -2301,6 +2333,31 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             await broker.repositories.admission._request(
                 "transact_admission",
                 object(),
+            )
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await broker.repositories.audit._request(
+                "read_delivery",
+                {},
+            )
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await broker.repositories.admission._request(
+                "append_processor_audit",
+                {},
+            )
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await broker.repositories.audit.append_processor_audit(
+                document=StateDocument(
+                    schema_name="runtime.connection_lifecycle_audit",
+                    schema_version=1,
+                    state_version=1,
+                    payload=b"{}",
+                ),
             )
         self.assertTrue(process.is_alive())
         health = await broker.state_store.health()

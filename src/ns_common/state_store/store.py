@@ -133,7 +133,13 @@ _STATE_RESOURCE_POLICIES = MappingProxyType({
     ),
     "strong-audit.v1": (
         frozenset(), frozenset(),
-        frozenset({("processor_audit_log", "runtime.processor_audit")}),
+        frozenset({
+            ("processor_audit_log", "runtime.processor_audit"),
+            (
+                "connection_lifecycle_audit_log",
+                "runtime.connection_lifecycle_audit",
+            ),
+        }),
         frozenset(), False,
     ),
 })

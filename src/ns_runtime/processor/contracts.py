@@ -258,7 +258,7 @@ class _ProductionAuthorizationEvidenceIssuer:
                 verified,
                 operation="runtime_access_check",
                 request_fingerprint=authority.request_fingerprint,
-                now=datetime.now(timezone.utc),
+                now=self._service._clock.utc_now(),
             )
             and authority.backend_decision == "allow"
             and authority.request_mapping().get("tenant_id")

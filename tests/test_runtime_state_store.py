@@ -16,7 +16,12 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.observability import InMemoryMetricsSink, InMemoryTraceSink
-from ns_common.state_store import StateNamespace, StateStoreLifecycleState
+from ns_common.state_store import (
+    StateAppendResult,
+    StateNamespace,
+    StateRevision,
+    StateStoreLifecycleState,
+)
 from ns_common.time import ControlledClock
 from ns_runtime.context import RuntimeContext, RuntimeDependencySlots
 from ns_runtime.processor import (
@@ -36,8 +41,16 @@ from ns_runtime.shutdown import (
 )
 from ns_runtime.state_authority import (
     AuthorityRoutingAuditSink,
+    PersistenceStrongAuditAuthorityService,
     StateStoreStrongAuditAuthorityService,
     StrongAuditAuthorityService,
+)
+from ns_runtime.connection import (
+    ConnectionAuditConsistency,
+    ConnectionAuditKind,
+    ConnectionAuditOutcome,
+    ConnectionLifecycleAuditEvent,
+    PersistenceConnectionLifecycleAuditSink,
 )
 
 from tests._state_store_contract_model import DeterministicStateStoreContractModel
@@ -281,6 +294,117 @@ class StrongAuditAuthorityTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("task_supervisor", fields)
         self.assertNotIn("event_loop", fields)
         self.assertNotIn("shutdown_coordinator", fields)
+
+
+class _NarrowAuditPersistence:
+    def __init__(self) -> None:
+        self.processor_documents = []
+        self.connection_documents = []
+        self.failure = None
+
+    async def append_processor_audit(self, *, document):
+        if self.failure is not None:
+            raise self.failure
+        self.processor_documents.append(document)
+        return self._result(len(self.processor_documents))
+
+    async def append_connection_audit(self, *, document):
+        if self.failure is not None:
+            raise self.failure
+        self.connection_documents.append(document)
+        return self._result(len(self.connection_documents))
+
+    @staticmethod
+    def _result(position):
+        return StateAppendResult(
+            revision=StateRevision._issue(f"revision-audit-{position}"),
+            position=position,
+            committed_at=NOW,
+        )
+
+
+class ProductionAuditPersistenceAdapterTestCase(
+    unittest.IsolatedAsyncioTestCase,
+):
+    async def test_processor_and_connection_use_distinct_durable_resources(
+        self,
+    ) -> None:
+        persistence = _NarrowAuditPersistence()
+        ordinary = DeterministicTestAuditSink()
+        processor = AuthorityRoutingAuditSink(
+            strong_authority=PersistenceStrongAuditAuthorityService(
+                persistence=persistence,
+            ),
+            ordinary_sink=ordinary,
+        )
+        outcome = await ProcessorAuditBoundary(sink=processor).write_final(
+            _audit_record(),
+        )
+        self.assertTrue(outcome.succeeded)
+        self.assertEqual(
+            "runtime.processor_audit",
+            persistence.processor_documents[0].schema_name,
+        )
+        self.assertEqual([], persistence.connection_documents)
+        self.assertEqual(0, ordinary.attempted_count)
+
+        connection = PersistenceConnectionLifecycleAuditSink(
+            persistence=persistence,
+        )
+        await connection.emit(ConnectionLifecycleAuditEvent(
+            kind=ConnectionAuditKind.SECURITY_CLOSE,
+            outcome=ConnectionAuditOutcome.ENFORCED,
+            required_consistency=(
+                ConnectionAuditConsistency.STRONG_REQUIRED
+            ),
+            connection_summary="sha256:0123456789abcdef",
+            component_type="worker",
+            connection_epoch=3,
+            close_reason=None,
+            occurred_at=NOW,
+        ))
+        self.assertEqual(
+            "runtime.connection_lifecycle_audit",
+            persistence.connection_documents[0].schema_name,
+        )
+        self.assertNotEqual(
+            persistence.processor_documents[0].schema_name,
+            persistence.connection_documents[0].schema_name,
+        )
+
+    async def test_broker_persistence_failure_is_never_strong_success(
+        self,
+    ) -> None:
+        persistence = _NarrowAuditPersistence()
+        persistence.failure = NsRuntimeStateStoreUnavailableError(details={
+            "component": "audit-test",
+            "reason": "broker_failed",
+        })
+        processor = AuthorityRoutingAuditSink(
+            strong_authority=PersistenceStrongAuditAuthorityService(
+                persistence=persistence,
+            ),
+            ordinary_sink=DeterministicTestAuditSink(),
+        )
+        outcome = await ProcessorAuditBoundary(sink=processor).write_final(
+            _audit_record(),
+        )
+        self.assertFalse(outcome.succeeded)
+        with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+            await PersistenceConnectionLifecycleAuditSink(
+                persistence=persistence,
+            ).emit(ConnectionLifecycleAuditEvent(
+                kind=ConnectionAuditKind.REAUTH_REJECTION,
+                outcome=ConnectionAuditOutcome.REJECTED,
+                required_consistency=(
+                    ConnectionAuditConsistency.STRONG_REQUIRED
+                ),
+                connection_summary="sha256:0123456789abcdef",
+                component_type="worker",
+                connection_epoch=3,
+                close_reason=None,
+                occurred_at=NOW,
+            ))
 
 
 if __name__ == "__main__":

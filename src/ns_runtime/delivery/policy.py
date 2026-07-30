@@ -4,13 +4,19 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from ns_common.exceptions import NsValidationError
-from ns_runtime.routing import ResolvedRoutingPlan, RoutingStrategy
+from ns_runtime.routing import (
+    ResolvedRoutingPlan,
+    RoutingStrategy,
+    validate_resolved_routing_plan,
+)
 
 from .models import (
     AdmissionPolicyDecision, AdmissionPriority, AdmissionReliability,
@@ -79,6 +85,7 @@ class AdmissionPolicyConfig:
 
 
 _ADMISSION_REQUEST_ISSUER = object()
+_ADMISSION_REQUEST_AUTHORITY_KEY = secrets.token_bytes(32)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -96,6 +103,7 @@ class AdmissionRequest:
     requested_expires_at: datetime
     requested_ack_timeout_seconds: int
     requested_target_strategy: RoutingStrategy
+    _authority_signature: bytes = field(init=False, repr=False, compare=False)
 
     def __init__(
         self, *, plan: ResolvedRoutingPlan, message_id: str, tenant_id: str,
@@ -126,6 +134,11 @@ class AdmissionRequest:
             describe_inline_payload(payload) if isinstance(payload, InlinePayload) else None,
         )
         self.__post_init__()
+        object.__setattr__(
+            self,
+            "_authority_signature",
+            _admission_request_authority_signature(self),
+        )
 
     @classmethod
     def from_stage_six(
@@ -156,8 +169,7 @@ class AdmissionRequest:
         )
 
     def __post_init__(self) -> None:
-        if not isinstance(self.plan, ResolvedRoutingPlan):
-            _invalid("request.plan")
+        validate_resolved_routing_plan(self.plan)
         for name in ("message_id", "tenant_id", "source_identity",
                      "authorization_binding_reference"):
             value = getattr(self, name)
@@ -206,6 +218,18 @@ class AdmissionRequest:
             _invalid("request.requested_target_strategy")
         if self.requested_target_strategy is not self.plan.requested_strategy:
             _invalid("request.plan_strategy")
+
+    def validate_authority(self) -> None:
+        self.__post_init__()
+        signature = getattr(self, "_authority_signature", None)
+        if (
+            type(signature) is not bytes
+            or not hmac.compare_digest(
+                signature,
+                _admission_request_authority_signature(self),
+            )
+        ):
+            _invalid("request.authority")
 
     @property
     def fingerprint(self) -> str:
@@ -384,6 +408,20 @@ def _utc(value: object, name: str) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         _invalid(name)
     return value.astimezone(timezone.utc)
+
+
+def _admission_request_authority_signature(
+    request: AdmissionRequest,
+) -> bytes:
+    return hmac.new(
+        _ADMISSION_REQUEST_AUTHORITY_KEY,
+        (
+            f"{id(request)}\0{request.plan.plan_id}\0"
+            f"{request.plan.decision_fingerprint}\0{request.message_id}\0"
+            f"{request.tenant_id}\0{request.authorization_binding_reference}"
+        ).encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
 
 
 def _invalid(field_name: str) -> None:

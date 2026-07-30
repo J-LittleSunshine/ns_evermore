@@ -36,7 +36,7 @@ from ns_runtime.protocol import (
     AuthContextGroup, MessageGroup, ProtocolGroup, SourceGroup, TargetGroup,
     TraceGroup,
 )
-from ns_runtime.routing import ResolvedRoutingPlan
+from ns_runtime.routing import ResolvedRoutingPlan, SelectedRoutingBinding
 from ns_runtime.processor import RoutingPreparationResult
 
 from tests._state_store_contract_model import DeterministicStateStoreContractModel
@@ -697,6 +697,123 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             await self._service(store=malicious_store).admit(
                 self._request(), trace=AdmissionTrace(trace_id="trace-store-malicious")
             )
+
+    async def test_forged_plan_and_request_authority_never_reach_persistence(self):
+        def clone_plan(plan, **changes):
+            forged = object.__new__(ResolvedRoutingPlan)
+            for definition in dataclasses.fields(ResolvedRoutingPlan):
+                if hasattr(plan, definition.name):
+                    object.__setattr__(
+                        forged,
+                        definition.name,
+                        changes.get(definition.name, getattr(plan, definition.name)),
+                    )
+            return forged
+
+        request = self._request()
+        forged_object = clone_plan(self.plan)
+        with self.assertRaises(NsValidationError):
+            StageSixAdmissionInput.from_result(
+                RoutingPreparationResult.resolved(forged_object)
+            )
+
+        replaced = dataclasses.replace(
+            self.plan,
+            created_at=self.plan.created_at + timedelta(seconds=1),
+        )
+        with self.assertRaises(NsValidationError):
+            StageSixAdmissionInput.from_result(
+                RoutingPreparationResult.resolved(replaced)
+            )
+
+        other = await _plan(2)
+        for field_name, value in (
+            ("authorization_evidence", other.authorization_evidence),
+            ("original_target", TargetGroup(
+                kind="tenant",
+                tenant_id="tenant-other",
+                multi_connection_policy="all",
+            )),
+        ):
+            with self.subTest(field=field_name):
+                forged = clone_plan(self.plan, **{field_name: value})
+                with self.assertRaises(NsValidationError):
+                    StageSixAdmissionInput.from_result(
+                        RoutingPreparationResult.resolved(forged)
+                    )
+
+        single_target = TargetGroup(
+            kind="tenant", tenant_id="tenant-a",
+            multi_connection_policy="single",
+        )
+        single = await _router(
+            _SnapshotIndex(_snapshot(tuple(
+                _routing_context(index) for index in range(3)
+            ))),
+            self.clock,
+        ).route(_request(
+            single_target,
+            message_reference=MESSAGE_REFERENCE,
+        ))
+        assert isinstance(single, ResolvedRoutingPlan)
+        unselected = next(
+            candidate
+            for candidate in single.candidates
+            if candidate.connection_id
+            != single.selected_bindings[0].connection_id
+        )
+        forged_binding = SelectedRoutingBinding(
+            runtime_id=unselected.runtime_id,
+            connection_id=unselected.connection_id,
+            session_id=unselected.session_id,
+            connection_epoch=unselected.connection_epoch,
+            tenant_id=unselected.tenant_id,
+            identity_reference=unselected.identity_reference,
+            required_capabilities=unselected.required_capabilities,
+            component_type=unselected.component_type,
+            binding_rebind_policy=single.effective_rebind_policy,
+        )
+        with self.assertRaises(NsValidationError):
+            StageSixAdmissionInput.from_result(
+                RoutingPreparationResult.resolved(clone_plan(
+                    single,
+                    selected_bindings=(forged_binding,),
+                ))
+            )
+
+        forged_request = object.__new__(AdmissionRequest)
+        for definition in dataclasses.fields(AdmissionRequest):
+            if hasattr(request, definition.name):
+                object.__setattr__(
+                    forged_request,
+                    definition.name,
+                    getattr(request, definition.name),
+                )
+        with self.assertRaises(NsValidationError):
+            await self.service.admit(
+                forged_request,
+                trace=AdmissionTrace(trace_id="trace-forged-request"),
+            )
+
+        cross_plan_request = object.__new__(AdmissionRequest)
+        for definition in dataclasses.fields(AdmissionRequest):
+            if hasattr(request, definition.name):
+                object.__setattr__(
+                    cross_plan_request,
+                    definition.name,
+                    (
+                        other
+                        if definition.name == "plan"
+                        else getattr(request, definition.name)
+                    ),
+                )
+        with self.assertRaises(NsValidationError):
+            await self.service.admit(
+                cross_plan_request,
+                trace=AdmissionTrace(trace_id="trace-cross-plan"),
+            )
+        self.assertEqual([], self.store.values)
+        self.assertEqual([], self.payload_client.calls)
 
 
 class _Sender(AdmissionResponseSender):

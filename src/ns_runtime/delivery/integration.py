@@ -12,7 +12,10 @@ from ns_runtime.processor import (
     MessageProcessor, ProcessorContext, RoutingPreparationOutcome,
     RoutingPreparationResult,
 )
-from ns_runtime.routing import ResolvedRoutingPlan
+from ns_runtime.routing import (
+    ResolvedRoutingPlan,
+    validate_resolved_routing_plan,
+)
 from ns_runtime.protocol import TraceGroup
 
 from .models import (
@@ -57,11 +60,11 @@ class StageSixAdmissionInput:
                 or not isinstance(value.plan, ResolvedRoutingPlan)
                 or value.failure is not None):
             _invalid("stage_six.result")
+        validate_resolved_routing_plan(value.plan)
         return cls(plan=value.plan, _issuer=_STAGE_SIX_ISSUER)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.plan, ResolvedRoutingPlan):
-            _invalid("stage_six.plan")
+        validate_resolved_routing_plan(self.plan)
 
 
 class EnvelopeAdmissionRequestFactory(AdmissionRequestFactory):

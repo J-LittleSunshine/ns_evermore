@@ -276,7 +276,7 @@ class MessageAuthorizationResult:
                         "runtime_access_check",
                         self.request,
                     ),
-                    now=datetime.now(timezone.utc),
+                    now=service._clock.utc_now(),
                 )
                 and authority.result_mapping() == self.decision.to_wire()
                 and authority.permission_snapshot_ref
@@ -434,6 +434,8 @@ class MessageAuthorizationService:
             _invalid("snapshot_refresher")
         self._iam = iam_client
         self._clock = clock
+        if broker_verified_iam and hasattr(iam_client, "_clock"):
+            iam_client._clock = clock
         self._mode = mode
         self._ttl = float(cache_ttl_seconds)
         self._refresher = snapshot_refresher
@@ -769,7 +771,7 @@ class MessageAuthorizationService:
             verified_result,
             operation="runtime_access_check",
             request_fingerprint=request_fingerprint,
-            now=datetime.now(timezone.utc),
+            now=self._clock.utc_now(),
         ))
 
     def _verified_result_is_authentic_local(
@@ -785,7 +787,7 @@ class MessageAuthorizationService:
                 verified_result,
                 operation="runtime_access_check",
                 request_fingerprint=request_fingerprint,
-                now=datetime.now(timezone.utc),
+                now=self._clock.utc_now(),
             )
         )
 

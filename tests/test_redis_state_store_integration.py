@@ -98,6 +98,16 @@ from ns_runtime.main import _run_service_once
 from ns_runtime.delivery_persistence import DeliveryPersistenceTransaction
 from ns_runtime.authority_wire import encode_transaction_request
 from ns_runtime.service import RuntimeService
+from ns_runtime.state_authority import (
+    PersistenceStrongAuditAuthorityService,
+)
+from ns_runtime.connection import (
+    ConnectionAuditConsistency,
+    ConnectionAuditKind,
+    ConnectionAuditOutcome,
+    ConnectionLifecycleAuditEvent,
+    PersistenceConnectionLifecycleAuditSink,
+)
 
 from tests.test_runtime_delivery_admission import (
     MESSAGE_ID,
@@ -110,6 +120,7 @@ from tests.test_runtime_delivery_admission import (
 from tests._state_store_contract_model import (
     _ContractTestRepositoryComposition,
 )
+from tests.test_runtime_state_store import _audit_record
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -654,16 +665,23 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 value.member for value in second_page.entries
             ))
             await asyncio.sleep(0.32)
-            audit_position = await broker.repositories.audit.append_audit(
-                namespace=StateNamespace.audit(domain="processor"),
-                object_id="audit-" + uuid.uuid4().hex,
-                document=StateDocument(
-                    schema_name="runtime.processor_audit",
-                    schema_version=1,
-                    state_version=1,
-                    payload=b'{"event":"session-rotation"}',
+            audit_position = await PersistenceStrongAuditAuthorityService(
+                persistence=broker.repositories.audit,
+            ).append(_audit_record())
+            await PersistenceConnectionLifecycleAuditSink(
+                persistence=broker.repositories.audit,
+            ).emit(ConnectionLifecycleAuditEvent(
+                kind=ConnectionAuditKind.SECURITY_CLOSE,
+                outcome=ConnectionAuditOutcome.ENFORCED,
+                required_consistency=(
+                    ConnectionAuditConsistency.STRONG_REQUIRED
                 ),
-            )
+                connection_summary="sha256:0123456789abcdef",
+                component_type="worker",
+                connection_epoch=4,
+                close_reason=None,
+                occurred_at=UTC_START,
+            ))
             self.assertGreater(audit_position.position, 0)
             assert observed.record is not None
             scheduler_transaction = DeliveryPersistenceTransaction(
@@ -761,14 +779,9 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(
                 NsRuntimeStateStoreCapabilityUnavailableError,
             ):
-                await broker.repositories.audit.append_audit(
-                    namespace=StateNamespace.tenant(
-                        tenant_id="tenant-a",
-                        domain="delivery",
-                    ),
-                    object_id="forbidden",
+                await broker.repositories.audit.append_processor_audit(
                     document=StateDocument(
-                        schema_name="runtime.processor_audit",
+                        schema_name="runtime.connection_lifecycle_audit",
                         schema_version=1,
                         state_version=1,
                         payload=b"{}",

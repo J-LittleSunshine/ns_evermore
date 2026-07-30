@@ -7,6 +7,24 @@
 
 本文件按完成时间升序保存历史验收证据，不作为当前执行游标或工作包状态的权威来源。当前状态只在实施计划中维护。原实施计划中的直接验收块与重复交接快照已合并；命令、通过数量、修改文件、隔离边界和仍影响后续工作的限制予以保留。
 
+## 2026-07-30 P01—P11 独立审查修复（当前记录）
+
+- 范围：只记录本次本地工作区实际执行结果；下方历史记录不是本次 PASS 证据。
+- 起始事实：分支 `codex/ns-runtime-implementation`；起始 HEAD `fd8fc2cbd67ae0b374cf032aad096bbed1bc70d0`；开始时 `git status --short --branch` 仅显示该分支跟踪信息，工作树 clean。解释器为 `/usr/bin/python3`、Python `3.10.12`；`python` 命令不存在，未激活 `VIRTUAL_ENV` 或 Conda 环境。
+- 修改范围：routing plan authority continuity、delivery admission/persistence 入口、production processor/connection strong audit broker adapter、startup/cleanup、IAM/receipt/evidence Clock、文档凭据/状态账本及对应测试。未切换或创建分支，未 commit、push 或创建 PR。
+- authority broker/attestor：首次整模块 `Ran 45 tests in 65.168s, FAILED (errors=1)`，错误为一项 payload revalidation 的瞬时 `attestor_unavailable`；该单项随后 `Ran 1 test in 1.249s, OK`，整模块复跑 `Ran 45 tests in 65.230s, OK`。首次失败没有被改写或忽略。
+- IAM strict/cache/rotation：`Ran 27 tests in 13.957s, OK`。
+- processor/routing：`Ran 65 tests in 1.359s, OK`。
+- StateStore contract/provider/真实 Redis integration：`Ran 68 tests in 67.870s, OK`；真实 Redis integration 实际执行，未因环境缺失跳过。
+- delivery admission/scheduling：`Ran 63 tests in 50.030s, OK`。
+- main/shutdown/transport/connection lifecycle：`Ran 152 tests in 12.815s, OK (skipped=6)`；6 项均要求部署侧 production authority private key。
+- import/dependency/documentation boundary：`Ran 23 tests in 4.020s, OK`。
+- 全仓：`PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'`，`Ran 930 tests in 239.442s, OK (skipped=7)`。除上述 6 项 production-key 用例外，另 1 项为当前 Linux 环境不适用的 Windows event-loop policy。
+- 静态门禁：`PYTHONPATH=src python3 -m compileall -q src tests`、文档 secret 扫描测试和 `git diff --check` 均在本次执行中通过；最终状态以本记录后最后一次命令输出为准。
+- 未验证：没有部署 production authority private key，未启动真实 production composition root；未连接真实远端 IAM、未发送 production transport 流量；未运行远端 CI。P12 及后续能力不在本次范围，仍不得从本记录推断已实现。文档中已移除的旧 Redis 凭据必须由人工在服务侧轮换/吊销，该外部动作无法由本仓库测试验证。
+
+以下均为归档历史证据，不是 2026-07-30 本次执行结果。
+
 ## P00
 
 - 工作包：`P00 本地仓库基线与实施账本`。

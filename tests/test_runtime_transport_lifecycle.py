@@ -474,3 +474,49 @@ class TransportLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
             await _run_service_once(FailingService())  # type: ignore[arg-type]
 
         self.assertIs(start_failure, raised.exception)
+
+    async def test_state_store_open_failure_closes_store_without_created_stop(
+        self,
+    ) -> None:
+        open_failure = RuntimeError("state open failed")
+        context = _context(TaskSupervisor(shutdown_timeout_seconds=1))
+
+        class FailingStore:
+            def __init__(self) -> None:
+                self.open_calls = 0
+                self.close_calls = 0
+
+            async def open(self) -> None:
+                self.open_calls += 1
+                raise open_failure
+
+            async def close(self) -> None:
+                self.close_calls += 1
+
+        class CreatedService:
+            def __init__(self) -> None:
+                from ns_runtime.shutdown import RuntimeShutdownCoordinator
+
+                self.shutdown_coordinator = RuntimeShutdownCoordinator(
+                    context=context,
+                )
+                self.start_calls = 0
+                self.stop_calls = 0
+
+            async def start(self) -> None:
+                self.start_calls += 1
+
+            async def stop(self) -> None:
+                self.stop_calls += 1
+                raise AssertionError("CREATED.stop must not be called")
+
+        store = FailingStore()
+        service = CreatedService()
+        with self.assertRaises(RuntimeError) as raised:
+            await _run_service_once(
+                service,  # type: ignore[arg-type]
+                state_store=store,
+            )
+        self.assertIs(open_failure, raised.exception)
+        self.assertEqual((1, 1), (store.open_calls, store.close_calls))
+        self.assertEqual((0, 0), (service.start_calls, service.stop_calls))

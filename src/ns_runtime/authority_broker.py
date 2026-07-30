@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from multiprocessing.connection import Connection, wait as wait_connections
@@ -143,7 +143,10 @@ _ROLE_OPERATIONS: Mapping[str, frozenset[str]] = {
         "read_registry_layout", "read_registry_tenant",
         "transact_registry", "read_registry_index",
     }),
-    "audit": frozenset({"append_audit"}),
+    "audit": frozenset({
+        "append_processor_audit",
+        "append_connection_audit",
+    }),
     "lifecycle": frozenset({"state_health"}),
 }
 _IAM_PATHS: Mapping[str, str] = {
@@ -155,7 +158,7 @@ _IAM_PATHS: Mapping[str, str] = {
 }
 _WRITE_OPERATIONS = frozenset({
     "transact_admission", "transact_scheduler", "transact_registry",
-    "append_audit",
+    "append_processor_audit", "append_connection_audit",
 })
 _SESSION_CERTIFICATE_TTL_SECONDS = 300.0
 _DELEGATION_CERTIFICATE_TTL_SECONDS = 30 * 24 * 60 * 60.0
@@ -541,6 +544,7 @@ class BrokerIamVerificationReceipt:
     authority_expires_at: datetime
     nonce: str
     signature: bytes
+    _observed_at: datetime = field(init=False, repr=False, compare=False)
 
     def signed_values(self) -> Mapping[str, object]:
         return {
@@ -704,6 +708,7 @@ def _verified_iam_result_from_attestation(
     verification: Mapping[str, object],
     attestor_public_key: bytes,
     expected_identity: _LocalIamSessionIdentity,
+    now: datetime,
 ) -> VerifiedBrokerIamResult:
     try:
         fields = require_object(
@@ -799,6 +804,7 @@ def _verified_iam_result_from_attestation(
         receipt = object.__new__(BrokerIamVerificationReceipt)
         for name, value in receipt_values.items():
             object.__setattr__(receipt, name, value)
+        object.__setattr__(receipt, "_observed_at", now)
         if not receipt.verify(
             attestor_public_key=attestor_public_key,
             authority=authority,
@@ -806,7 +812,7 @@ def _verified_iam_result_from_attestation(
             expected_identity=expected_identity,
             operation=operation,
             request_fingerprint=authority.request_fingerprint,
-            now=datetime.now(timezone.utc),
+            now=receipt.verified_at,
         ):
             _invalid("iam_verification_receipt.binding")
         verified = object.__new__(VerifiedBrokerIamResult)
@@ -1870,7 +1876,13 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                 expected_identity=before,
                 operation=operation,
                 request_fingerprint=request_fingerprint,
-                now=now,
+                now=receipt.verified_at,
+            )
+            or type(getattr(receipt, "_observed_at", None)) is not datetime
+            or now < receipt._observed_at
+            or (
+                now - receipt._observed_at
+                >= receipt.authority_expires_at - receipt.verified_at
             )
         ):
             return False
@@ -1988,7 +2000,7 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             and type(handle) is BrokerAuthorityHandle
             and getattr(self, "_handle", None) == handle
             and channel._is_production_certificate_chain_current(
-                datetime.now(timezone.utc),
+                self._clock.utc_now(),
             )
             and handle.role is BrokerRepositoryRole.IAM
             and handle.runtime_id == channel._runtime_id
@@ -2220,6 +2232,7 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                 verification=channel_result.verification,
                 attestor_public_key=material[0],
                 expected_identity=channel_result.identity,
+                now=self._clock.utc_now(),
             )
         except (NsValidationError, KeyError, TypeError, ValueError):
             channel._fail_and_reap()
@@ -2245,7 +2258,7 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             verified,
             operation=operation,
             request_fingerprint=request_fingerprint,
-            now=datetime.now(timezone.utc),
+            now=self._clock.utc_now(),
         )
 
     def _bind_authorization_service(self, service: object) -> None:
@@ -2729,26 +2742,43 @@ class AuditRepositoryProxy(_RepositoryProxy):
     __slots__ = ()
     _ROLE = BrokerRepositoryRole.AUDIT
 
-    async def append_audit(
-        self, *, namespace: StateNamespace, object_id: str,
-        document: StateDocument,
+    async def append_processor_audit(
+        self, *, document: StateDocument,
     ) -> object:
-        raw = await self._request("append_audit", {
-            "namespace": {
-                "kind": namespace.kind.value,
-                "domain": namespace.domain,
-                "tenant_id": namespace.tenant_id,
-                "runtime_id": namespace.runtime_id,
-                "plugin_name": namespace.plugin_name,
-            },
-            "object_id": object_id,
+        return await self._append_exact_audit(
+            operation="append_processor_audit",
+            document=document,
+            expected_schema="runtime.processor_audit",
+        )
+
+    async def append_connection_audit(
+        self, *, document: StateDocument,
+    ) -> object:
+        return await self._append_exact_audit(
+            operation="append_connection_audit",
+            document=document,
+            expected_schema="runtime.connection_lifecycle_audit",
+        )
+
+    async def _append_exact_audit(
+        self, *, operation: str, document: StateDocument,
+        expected_schema: str,
+    ) -> object:
+        if (
+            type(document) is not StateDocument
+            or document.schema_name != expected_schema
+            or document.schema_version != 1
+            or document.state_version != 1
+        ):
+            raise _state_denied("audit_resource_denied")
+        raw = await self._request(operation, {
             "document": encode_document(document),
         })
         try:
             return decode_append_result(raw)
         except (NsValidationError, TypeError, ValueError):
             raise _indeterminate(
-                "append_audit", "ipc_malformed_write_result",
+                operation, "ipc_malformed_write_result",
             ) from None
 
 
@@ -3758,15 +3788,18 @@ class _BrokerStateBackend:
     """Broker-private raw provider and fixed local repository set."""
 
     __slots__ = (
-        "store", "repositories", "lease", "runtime_id", "available",
+        "store", "repositories", "lease", "runtime_id", "available", "_clock",
     )
 
     def __init__(
         self,
         config: AuthorityBrokerConfig,
         secrets: Mapping[str, object],
+        *,
+        clock: Clock | None = None,
     ) -> None:
         _require_isolated_broker_process()
+        self._clock = clock or SystemClock()
         self.store = None
         self.repositories = {}
         self.lease = None
@@ -3820,7 +3853,7 @@ class _BrokerStateBackend:
                 ),
             ),
             capabilities=StateStoreCapabilities.p10_contract(),
-            clock=SystemClock(),
+            clock=self._clock,
             _production_scope_validator=validator,
         )
         specs = (
@@ -3910,7 +3943,7 @@ class _BrokerStateBackend:
                 )
                 return StateStoreHealth(
                     status=StateStoreHealthStatus.READY,
-                    checked_at=SystemClock().utc_now(),
+                    checked_at=self._clock.utc_now(),
                     contract_generation=(
                         StateStoreCapabilities.p10_contract().contract_generation
                     ),
@@ -4105,34 +4138,33 @@ class _BrokerStateBackend:
                 ),
                 limit=limit,
             )
-        if operation == "append_audit":
+        if operation in {
+            "append_processor_audit",
+            "append_connection_audit",
+        }:
             values = require_object(
                 payload,
-                fields={"namespace", "object_id", "document"},
+                fields={"document"},
                 field="broker.audit_request",
             )
-            namespace_values = values["namespace"]
-            if type(namespace_values) is not dict:
-                raise _state_denied("audit_resource_denied")
             try:
-                namespace = StateNamespace(
-                    kind=StateNamespaceKind(
-                        namespace_values["kind"],
-                    ),
-                    domain=namespace_values["domain"],
-                    tenant_id=namespace_values["tenant_id"],
-                    runtime_id=namespace_values["runtime_id"],
-                    plugin_name=namespace_values["plugin_name"],
-                )
                 document = decode_document(values["document"])
-                object_id = _exact_string(
-                    values["object_id"], "broker.audit_object_id",
-                )
-            except (KeyError, ValueError, NsValidationError, TypeError):
+            except (ValueError, NsValidationError, TypeError):
                 raise _state_denied("audit_resource_denied") from None
+            object_type, schema_name = {
+                "append_processor_audit": (
+                    "processor_audit_log",
+                    "runtime.processor_audit",
+                ),
+                "append_connection_audit": (
+                    "connection_lifecycle_audit_log",
+                    "runtime.connection_lifecycle_audit",
+                ),
+            }[operation]
             if (
-                namespace != StateNamespace.audit(domain="processor")
-                or document.schema_name != "runtime.processor_audit"
+                document.schema_name != schema_name
+                or document.schema_version != 1
+                or document.state_version != 1
             ):
                 raise _state_denied("audit_resource_denied")
             scope = repository.audit_scope()
@@ -4140,8 +4172,8 @@ class _BrokerStateBackend:
                 scope=scope,
                 key=StateKey(
                     namespace=scope.namespace,
-                    object_type="processor_audit_log",
-                    object_id=object_id,
+                    object_type=object_type,
+                    object_id="final",
                 ),
                 document=document,
             )
@@ -4158,6 +4190,7 @@ def _new_session_authority(
     generation: int,
     endpoints: Mapping[str, str],
     session_ttl_seconds: float,
+    now: datetime,
 ) -> tuple[
     Ed25519PrivateKey,
     bytes,
@@ -4169,7 +4202,6 @@ def _new_session_authority(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     )
-    now = datetime.now(timezone.utc)
     expires_at = min(
         delegation_certificate.expires_at,
         now + timedelta(seconds=session_ttl_seconds),
@@ -4227,6 +4259,7 @@ def _verify_attestor_ticket(
     request_id: str | None = None,
     request_sequence: int | None = None,
     request_fingerprint: str | None = None,
+    now: datetime,
 ) -> dict[str, object]:
     if type(ticket) is not dict or "signature" not in ticket:
         _invalid("attestor.ticket")
@@ -4244,7 +4277,6 @@ def _verify_attestor_ticket(
         signature,
     ):
         _invalid("attestor.ticket.signature")
-    now = datetime.now(timezone.utc)
     if (
         values.get("attestor_instance_id")
         != delegation_certificate.attestor_instance_id
@@ -4292,6 +4324,7 @@ async def _broker_async_main(
     session_ttl_seconds: float,
     delegation_ttl_seconds: float,
 ) -> None:
+    clock = SystemClock()
     expected_roles = {role.value for role in BrokerRepositoryRole}
     if set(connections) != expected_roles:
         _invalid("broker.endpoint_set")
@@ -4310,12 +4343,12 @@ async def _broker_async_main(
     )
     instance_id = "broker_" + uuid.uuid4().hex
     iam = _BrokerIamBackend(config, secrets)
-    state = _BrokerStateBackend(config, secrets)
+    state = _BrokerStateBackend(config, secrets, clock=clock)
     iam_sequence = 0
     request_sequences = {role: 0 for role in expected_roles}
     response_sequences = {role: 0 for role in expected_roles}
     generation = 1
-    now = datetime.now(timezone.utc)
+    now = clock.utc_now()
     delegation_values = {
         "trust_realm": realm,
         "broker_instance_id": instance_id,
@@ -4358,6 +4391,7 @@ async def _broker_async_main(
         generation=generation,
         endpoints=endpoints,
         session_ttl_seconds=session_ttl_seconds,
+        now=clock.utc_now(),
     )
     identity_id = "identity:" + hashlib.sha256(_canonical({
         "delegation_fingerprint": delegation_certificate.fingerprint,
@@ -4437,6 +4471,7 @@ async def _broker_async_main(
                         session_public_key=session_public_key,
                         endpoint_id=endpoint_id,
                         endpoint_role=endpoint_role,
+                        now=clock.utc_now(),
                     )
                     next_generation = generation + 1
                     (
@@ -4453,6 +4488,7 @@ async def _broker_async_main(
                         generation=next_generation,
                         endpoints=endpoints,
                         session_ttl_seconds=session_ttl_seconds,
+                        now=clock.utc_now(),
                     )
                     rotation_values = {
                         "kind": "session_rotation",
@@ -4535,6 +4571,7 @@ async def _broker_async_main(
                         request_id=request_id,
                         request_sequence=incoming_request_sequence,
                         request_fingerprint=request_fingerprint,
+                        now=clock.utc_now(),
                     )
                 except NsValidationError:
                     stop = True
@@ -4563,6 +4600,7 @@ async def _broker_async_main(
                             error=_error_values(
                                 "state_denied", "endpoint_role_denied",
                             ),
+                            now=clock.utc_now(),
                         )),
                     ))
                     continue
@@ -4588,6 +4626,7 @@ async def _broker_async_main(
                                 config.permission_snapshot_ttl_seconds
                             ),
                             certificate_expires_at=certificate.expires_at,
+                            now=clock.utc_now(),
                         )
                         wire_result = _encode_signed_iam_result(result)
                     else:
@@ -4613,6 +4652,7 @@ async def _broker_async_main(
                         request_fingerprint=request_fingerprint,
                         response_sequence=response_sequences[role_name],
                         error=_exception_values(error),
+                        now=clock.utc_now(),
                     )
                 else:
                     response_sequences[role_name] += 1
@@ -4626,6 +4666,7 @@ async def _broker_async_main(
                         request_fingerprint=request_fingerprint,
                         response_sequence=response_sequences[role_name],
                         result=wire_result,
+                        now=clock.utc_now(),
                     )
                 connection.send_bytes(encode_frame(
                     _signed_response_envelope(signed_response),
@@ -4813,11 +4854,11 @@ def _sign_iam_result(
     sequence: int,
     ttl_seconds: float,
     certificate_expires_at: datetime | None = None,
+    now: datetime,
 ) -> BrokerSignedIamResult:
-    now = datetime.now(timezone.utc)
     result_values = _encode_iam_result(operation, result)
     request_values = _request_claims(operation, request)
-    result_expiry = _result_expiry(result)
+    result_expiry = _result_expiry(result, now=now)
     expires_at = min(
         result_expiry,
         now + timedelta(seconds=float(ttl_seconds)),
@@ -5067,11 +5108,11 @@ def _request_claims(operation: str, request: object) -> Mapping[str, object]:
     _invalid("broker.operation")
 
 
-def _result_expiry(result: object) -> datetime:
+def _result_expiry(result: object, *, now: datetime) -> datetime:
     value = getattr(result, "expires_at", None)
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc)
-    return datetime.now(timezone.utc) + timedelta(seconds=60)
+    return now + timedelta(seconds=60)
 
 
 def _backend_decision(result: object) -> str:
@@ -5731,7 +5772,10 @@ def _encode_state_response(
                 "state_response.registry_index_bucket",
             ),
         )
-    if operation == "append_audit":
+    if operation in {
+        "append_processor_audit",
+        "append_connection_audit",
+    }:
         return encode_append_result(result)
     _invalid("state_response.operation")
 
@@ -5806,10 +5850,10 @@ def _sign_state_response(
     response_sequence: int,
     result: object = None,
     error: object = None,
+    now: datetime,
 ) -> BrokerSignedStateResponse:
     if (result is None) == (error is None):
         _invalid("state_response.outcome")
-    now = datetime.now(timezone.utc)
     values = {
         "broker_instance_id": certificate.broker_instance_id,
         "lifecycle_generation": certificate.lifecycle_generation,

@@ -253,9 +253,12 @@ class DeliveryRegistryPersistence(Protocol):
 
 @runtime_checkable
 class StrongAuditPersistence(Protocol):
-    async def append_audit(
-        self, *, namespace: StateNamespace, object_id: str,
-        document: StateDocument,
+    async def append_processor_audit(
+        self, *, document: StateDocument,
+    ) -> object: ...
+
+    async def append_connection_audit(
+        self, *, document: StateDocument,
     ) -> object: ...
 
 

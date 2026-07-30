@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,6 +16,8 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.time import Clock
+from ns_common.state_store import StateAppendResult, StateDocument
+from ns_runtime.delivery_persistence import StrongAuditPersistence
 
 from .session import SessionContext
 from .state import LogicalConnectionCloseReason
@@ -118,6 +121,43 @@ class UnavailableConnectionLifecycleAuditSink(ConnectionLifecycleAuditSink):
                 "reason": "strong_audit_authority_unavailable",
             },
         )
+
+
+class PersistenceConnectionLifecycleAuditSink(ConnectionLifecycleAuditSink):
+    """Typed production durability adapter over the audit broker proxy only."""
+
+    _SCHEMA_NAME = "runtime.connection_lifecycle_audit"
+    _SCHEMA_VERSION = 1
+
+    def __init__(self, *, persistence: StrongAuditPersistence) -> None:
+        if not isinstance(persistence, StrongAuditPersistence):
+            _invalid("audit.persistence")
+        self._persistence = persistence
+
+    async def emit(self, event: ConnectionLifecycleAuditEvent) -> None:
+        if type(event) is not ConnectionLifecycleAuditEvent:
+            _invalid("audit.event")
+        if (
+            event.required_consistency
+            is not ConnectionAuditConsistency.STRONG_REQUIRED
+        ):
+            _invalid("audit.required_consistency")
+        result = await self._persistence.append_connection_audit(
+            document=StateDocument(
+                schema_name=self._SCHEMA_NAME,
+                schema_version=self._SCHEMA_VERSION,
+                state_version=1,
+                payload=_canonical_connection_audit_bytes(event),
+            ),
+        )
+        if type(result) is not StateAppendResult:
+            raise NsRuntimeStateStoreUnavailableError(
+                details={
+                    "component": "logical_connection_audit",
+                    "operation": "commit",
+                    "reason": "strong_audit_commit_invalid",
+                },
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -245,6 +285,28 @@ def logical_id_summary(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
+def _canonical_connection_audit_bytes(
+    event: ConnectionLifecycleAuditEvent,
+) -> bytes:
+    return json.dumps(
+        {
+            "close_reason": (
+                None if event.close_reason is None else event.close_reason.value
+            ),
+            "component_type": event.component_type,
+            "connection_epoch": event.connection_epoch,
+            "connection_summary": event.connection_summary,
+            "kind": event.kind.value,
+            "occurred_at": event.occurred_at.isoformat().replace("+00:00", "Z"),
+            "outcome": event.outcome.value,
+            "required_consistency": event.required_consistency.value,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
 def _validate_summary(value: object) -> None:
     if (
         not isinstance(value, str)
@@ -283,6 +345,7 @@ __all__ = (
     "ConnectionLifecycleAuditSink",
     "ConnectionLifecycleAuditSnapshot",
     "DeterministicTestConnectionAuditSink",
+    "PersistenceConnectionLifecycleAuditSink",
     "UnavailableConnectionLifecycleAuditSink",
     "logical_id_summary",
 )

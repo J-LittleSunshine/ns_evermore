@@ -157,14 +157,14 @@
 
 | 字段 | 当前值 |
 |---|---|
-| 当前阶段 | `P12 ACK/NACK/Defer/Timeout/Retry` |
-| 当前工作包 | `P12-W01` |
-| 当前工作包状态 | `BLOCKED`（等待独立实施授权） |
-| 当前阶段状态 | `NOT_STARTED / F0` |
+| 当前阶段 | `P01—P11 独立审查问题修复` |
+| 当前工作包 | `P09→P10 authority continuity、production audit/composition/Clock 加固` |
+| 当前工作包状态 | `VERIFIED`（本次本地工作区；详见 acceptance log 当前记录） |
+| 当前阶段状态 | `VERIFIED / local only` |
 | 最近已验证阶段 | `P11 本地可靠投递调度与发送`（`F3 / local only`） |
-| 最近已验证工作包 | `P11-FIX-10` |
-| 下一阶段 | `P12-W01`（等待独立实施授权） |
-| 当前阻塞项 | P12尚未授权；production task.dispatch继续关闭，transport write只允许到ack_waiting，不等于delivery成功 |
+| 最近已验证工作包 | `P08-FIX-09 / P09-FIX-13 / P11-FIX-14` |
+| 下一阶段 | `P12-W01`（本次独立审查修复完成后仍等待独立实施授权） |
+| 当前阻塞项 | P12 尚未授权；production task.dispatch 继续关闭，transport write 只允许到 ack_waiting，不等于 delivery 成功；本次修复的未验证项只以 acceptance log 的当前记录为准 |
 | 设计基线版本 | `0.0.2` |
 | wire codec | `json.v1` |
 | 当前正式 transport | `websocket_tcp` adapter 为 `VERIFIED/F2`；P05 logical connection composition 保持冻结；P06 已把 production `IamClient` 与同一 P01 HTTP owner 显式接入握手、reauth 和 resume，IAM 异常继续 fail-closed |
@@ -269,12 +269,12 @@ P10 及后续可靠状态阶段允许使用当前 WSL Ubuntu 开发环境中的�
 * Port：`6379`
 * Database：`0`
 * Username：empty
-* Password：`Ns981127*`
-* Connection URL：`redis://:Ns981127*@127.0.0.1:6379/0`
+* Password：`环境变量 NS_RUNTIME_REDIS_PASSWORD 或受限权限文件引用`
+* Connection URL：`${NS_RUNTIME_REDIS_URL}`（必须是不含 userinfo 的 credential-free endpoint）
 * Runtime namespace：`ns_runtime`
 * 测试 namespace 前缀：`ns_runtime:test:`
 
-该 Redis 实例仅用于当前开发主机的本地实现和验收，不是生产、共享测试或远程 Redis 实例。该账户和密码不得在其他环境复用。
+该 Redis 实例仅用于当前开发主机的本地实现和验收，不是生产、共享测试或远程 Redis 实例。文档曾包含的旧凭据视为已经泄露，必须由人工在 Redis 侧轮换/吊销；代码和测试不得尝试自动轮换，也不得在日志、测试输出或验收记录中复述旧值。
 
 Codex 可以直接使用上述连接信息完成 Redis StateStore provider 的实现、启动验证和真实集成测试，不需要等待额外的 Redis 环境授权。
 
@@ -420,7 +420,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 | `P00-W02` | `VERIFIED` | 读取本地设计文档与实施文档，确认设计版本、文件路径和实施账本版本 | 本地设计基线确认为 `0.0.2`；无设计冲突 |
 | `P00-W03` | `VERIFIED` | 读取本地项目元数据、依赖、配置、测试入口、`ns_common`、`ns_backend.iam`、`ns_runtime` 和相关测试 | 本地能力登记表已按本地路径、行为、证据和完成度填写 |
 | `P00-W04` | `VERIFIED` | 执行不改变数据的本地基线测试；记录通过、失败、跳过、缺失依赖和环境阻塞 | loader error 可复现且已记录，未触碰真实数据 |
-| `P00-W05` | `VERIFIED` | 把现有本地实现映射到 P01-P22；已完整实现并通过阶段门禁的工作包可标记为 `VERIFIED`，其余按实际状态登记 | P01 为部分 F1；P02-P22 为 F0 |
+| `P00-W05` | `VERIFIED` | 把现有本地实现映射到 P01-P22；已完整实现并通过阶段门禁的工作包可标记为 `VERIFIED`，其余按实际状态登记 | 历史映射已由后续阶段记录取代；当前状态只以第 1 节和第 22.3 节为准 |
 | `P00-W06` | `VERIFIED` | 建立 `ns_common` 公共基础设施登记表和接口冻结登记表；识别重复实现和应迁移能力 | 公共能力归属保持在 `ns_common`；runtime 私有能力未混入 cache |
 | `P00-W07` | `VERIFIED` | 设置唯一当前执行游标和下一工作包 | 唯一游标机制已建立；当前值只以第 1 节为准 |
 
@@ -456,7 +456,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 
 ## P01 ns_common 公共基础设施加固
 
-**阶段状态：`IN_PROGRESS`**
+**阶段状态：`VERIFIED`**
 **目标完成度：`F2`**  
 **前置阶段：P00 `VERIFIED`**
 
@@ -684,7 +684,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 - 内置类型注册完整，但只有协议错误处理功能处于 enabled。
 - 协议模型不依赖具体 transport。
 
-验收记录：`P04-W01` 至 `P04-W10`、`P04-FIX-01` 与阶段出口见 [acceptance log](ns_runtime_acceptance_log_0.0.2.md#p04-w01)；transport 边界登记为 `TC-1`，长期决策见 [ADR-029](ns_runtime_architecture_decisions_0.0.2.md#adr-029)。
+验收记录：`P03-W01` 至 `P03-W11`、`P03-FIX-01`、`P03-FIX-02` 与阶段出口见 [acceptance log / P03](ns_runtime_acceptance_log_0.0.2.md#p03)；协议边界登记为 `ENV-1`，长期决策见 [ADR-028](ns_runtime_architecture_decisions_0.0.2.md#adr-028)。
 
 ---
 

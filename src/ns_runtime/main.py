@@ -27,29 +27,40 @@ async def _run_service(
     from ns_runtime.shutdown import RuntimeShutdownReason
 
     with service.shutdown_coordinator.install_signal_handlers():
+        store_opened = False
+        service_start_attempted = False
         try:
             if state_store is not None:
                 await state_store.open()  # type: ignore[attr-defined]
+                store_opened = True
+            service_start_attempted = True
             await service.start()
         except BaseException as start_failure:
-            try:
-                await service.stop()
-            except BaseException as cleanup_failure:
-                # Ordinary cleanup failure cannot hide the original startup
-                # outcome.  A process-level cleanup failure takes precedence
-                # only when startup itself was an ordinary Exception.
-                if (
-                    isinstance(start_failure, Exception)
-                    and not isinstance(cleanup_failure, Exception)
-                ):
-                    raise
+            if service_start_attempted:
+                try:
+                    await service.stop()
+                except BaseException as cleanup_failure:
+                    if (
+                        isinstance(start_failure, Exception)
+                        and not isinstance(cleanup_failure, Exception)
+                    ):
+                        raise
+            if state_store is not None:
+                try:
+                    await state_store.close()  # type: ignore[attr-defined]
+                except BaseException:
+                    pass
             raise
         if self_check:
             service.shutdown_coordinator.request_shutdown(
                 RuntimeShutdownReason.SELF_CHECK_COMPLETE,
             )
         await service.shutdown_coordinator.wait_requested()
-        await service.stop()
+        try:
+            await service.stop()
+        finally:
+            if state_store is not None and store_opened:
+                await state_store.close()  # type: ignore[attr-defined]
 
 
 async def _run_service_once(
@@ -242,7 +253,7 @@ def main(
         ConnectionLifecyclePolicy,
         ConnectionLifecycleProcessorRegistryFactory,
         LocalConnectionIndex,
-        UnavailableConnectionLifecycleAuditSink,
+        PersistenceConnectionLifecycleAuditSink,
     )
     from ns_runtime.iam import (
         AuthorizationMode,
@@ -257,6 +268,10 @@ def main(
     )
     from ns_runtime.processor.integration import IamProcessorAuthorization
     from ns_runtime.routing import LocalRouter, LocalRoutingPreparation
+    from ns_runtime.state_authority import (
+        AuthorityRoutingAuditSink,
+        PersistenceStrongAuditAuthorityService,
+    )
     from ns_runtime.protocol import ErrorEnvelopeBuilder, JsonV1Codec
     from ns_runtime.roles import RuntimeRole
 
@@ -317,123 +332,130 @@ def main(
             runtime_id=runtime_id,
         ),
     )
-    state_store = authority_broker.state_store
-    iam_client = authority_broker.iam
-    context = RuntimeContext(
-        config=config,
-        clock=context.clock,
-        logger=context.logger,
-        metrics=context.metrics,
-        traces=context.traces,
-        task_supervisor=context.task_supervisor,
-        dependencies=RuntimeDependencySlots(
-            state_store=state_store,
-            delivery_admission_persistence=(
-                authority_broker.repositories.admission
+    try:
+        state_store = authority_broker.state_store
+        iam_client = authority_broker.iam
+        context = RuntimeContext(
+            config=config,
+            clock=context.clock,
+            logger=context.logger,
+            metrics=context.metrics,
+            traces=context.traces,
+            task_supervisor=context.task_supervisor,
+            dependencies=RuntimeDependencySlots(
+                state_store=state_store,
+                delivery_admission_persistence=(
+                    authority_broker.repositories.admission
+                ),
+                delivery_scheduler_persistence=(
+                    authority_broker.repositories.scheduler
+                ),
+                delivery_payload_persistence=(
+                    authority_broker.repositories.payload
+                ),
+                delivery_registry_persistence=(
+                    authority_broker.repositories.registry
+                ),
+                strong_audit_persistence=(
+                    authority_broker.repositories.audit
+                ),
             ),
-            delivery_scheduler_persistence=(
-                authority_broker.repositories.scheduler
+        )
+        message_authorization = MessageAuthorizationService(
+            iam_client=iam_client,
+            clock=context.clock,
+            mode=AuthorizationMode(config.runtime.iam.authorization_mode),
+            cache_ttl_seconds=config.runtime.iam.permission_snapshot_ttl_seconds,
+            snapshot_refresher=iam_client.refresh_permission_snapshot,
+        )
+        processor_event_bus = EventBus(
+            task_supervisor=context.task_supervisor,
+            default_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
+        )
+        connection_index = LocalConnectionIndex()
+        routing_preparation = LocalRoutingPreparation(
+            router=LocalRouter(
+                connection_index=connection_index,
+                clock=context.clock,
+                identifier_factory=identifier_factory,
+                runtime_id=runtime_id,
+                config=config.runtime.routing,
             ),
-            delivery_payload_persistence=(
-                authority_broker.repositories.payload
-            ),
-            delivery_registry_persistence=(
-                authority_broker.repositories.registry
-            ),
-            strong_audit_persistence=(
-                authority_broker.repositories.audit
-            ),
-        ),
-    )
-    message_authorization = MessageAuthorizationService(
-        iam_client=iam_client,
-        clock=context.clock,
-        mode=AuthorizationMode(config.runtime.iam.authorization_mode),
-        cache_ttl_seconds=config.runtime.iam.permission_snapshot_ttl_seconds,
-        snapshot_refresher=iam_client.refresh_permission_snapshot,
-    )
-    processor_event_bus = EventBus(
-        task_supervisor=context.task_supervisor,
-        default_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
-    )
-    connection_index = LocalConnectionIndex()
-    routing_preparation = LocalRoutingPreparation(
-        router=LocalRouter(
+        )
+        logical_connection_manager = ConnectionLifecycleManager(
+            transport_manager=transport_manager,
             connection_index=connection_index,
             clock=context.clock,
+            task_supervisor=context.task_supervisor,
             identifier_factory=identifier_factory,
+            iam_adapter=iam_client,
+            accepted_builder=ConnectionAcceptedEnvelopeBuilder(
+                clock=context.clock,
+                identifier_factory=identifier_factory,
+                runtime_id=runtime_id,
+                role=RuntimeRole(config.runtime.cluster.role),
+                heartbeat_policy=AcceptedHeartbeatPolicy(
+                    interval_seconds=config.runtime.cluster.heartbeat_interval_seconds,
+                    timeout_seconds=max(
+                        config.runtime.cluster.heartbeat_interval_seconds + 1,
+                        config.runtime.protocol.handshake_timeout_seconds,
+                    ),
+                ),
+            ),
+            error_builder=ErrorEnvelopeBuilder(sanitizer=Sanitizer()),
+            logger=logger,
             runtime_id=runtime_id,
-            config=config.runtime.routing,
-        ),
-    )
-    logical_connection_manager = ConnectionLifecycleManager(
-        transport_manager=transport_manager,
-        connection_index=connection_index,
-        clock=context.clock,
-        task_supervisor=context.task_supervisor,
-        identifier_factory=identifier_factory,
-        iam_adapter=iam_client,
-        accepted_builder=ConnectionAcceptedEnvelopeBuilder(
-            clock=context.clock,
-            identifier_factory=identifier_factory,
-            runtime_id=runtime_id,
-            role=RuntimeRole(config.runtime.cluster.role),
-            heartbeat_policy=AcceptedHeartbeatPolicy(
-                interval_seconds=config.runtime.cluster.heartbeat_interval_seconds,
-                timeout_seconds=max(
+            policy=ConnectionLifecyclePolicy(
+                handshake_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
+                rejected_send_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
+                native_heartbeat_interval_seconds=(
+                    config.runtime.cluster.heartbeat_interval_seconds
+                ),
+                envelope_heartbeat_timeout_seconds=max(
                     config.runtime.cluster.heartbeat_interval_seconds + 1,
                     config.runtime.protocol.handshake_timeout_seconds,
                 ),
+                drain_timeout_seconds=config.runtime.worker.shutdown_timeout_seconds,
+                reconnect_grace_seconds=30,
+                reauth_lead_seconds=min(
+                    30,
+                    config.runtime.iam.permission_snapshot_ttl_seconds,
+                ),
             ),
-        ),
-        error_builder=ErrorEnvelopeBuilder(sanitizer=Sanitizer()),
-        logger=logger,
-        runtime_id=runtime_id,
-        policy=ConnectionLifecyclePolicy(
-            handshake_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
-            rejected_send_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
-            native_heartbeat_interval_seconds=(
-                config.runtime.cluster.heartbeat_interval_seconds
+            codec=JsonV1Codec(),
+            processor_registry_factory=ConnectionLifecycleProcessorRegistryFactory(),
+            processor_authorization=IamProcessorAuthorization(
+                service=message_authorization,
             ),
-            envelope_heartbeat_timeout_seconds=max(
-                config.runtime.cluster.heartbeat_interval_seconds + 1,
-                config.runtime.protocol.handshake_timeout_seconds,
+            processor_rate_limit=InterfaceOnlyRateLimitEntry(),
+            processor_idempotency=InterfaceOnlyIdempotencyPrecheck(),
+            processor_routing=routing_preparation,
+            processor_error_mapper=DefaultProcessorErrorMapper(),
+            processor_audit_sink=AuthorityRoutingAuditSink(
+                strong_authority=PersistenceStrongAuditAuthorityService(
+                    persistence=authority_broker.repositories.audit,
+                ),
+                ordinary_sink=LoggingAuditSink(logger=logger),
             ),
-            drain_timeout_seconds=config.runtime.worker.shutdown_timeout_seconds,
-            reconnect_grace_seconds=30,
-            reauth_lead_seconds=min(
-                30,
-                config.runtime.iam.permission_snapshot_ttl_seconds,
+            lifecycle_audit_sink=PersistenceConnectionLifecycleAuditSink(
+                persistence=authority_broker.repositories.audit,
             ),
-        ),
-        codec=JsonV1Codec(),
-        processor_registry_factory=ConnectionLifecycleProcessorRegistryFactory(),
-        processor_authorization=IamProcessorAuthorization(
-            service=message_authorization,
-        ),
-        processor_rate_limit=InterfaceOnlyRateLimitEntry(),
-        processor_idempotency=InterfaceOnlyIdempotencyPrecheck(),
-        processor_routing=routing_preparation,
-        processor_error_mapper=DefaultProcessorErrorMapper(),
-        processor_audit_sink=LoggingAuditSink(logger=logger),
-        lifecycle_audit_sink=UnavailableConnectionLifecycleAuditSink(),
-        event_bus=processor_event_bus,
-        config_version=config.config_version,
-        policy_version=config.policy_version,
-        processor_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
-    )
-    event_loop_monitor = RuntimeEventLoopMonitor(
-        context=context,
-        implementation=startup_result.event_loop.selected,
-    )
-    service = TransportRuntimeService(
-        context=context,
-        transport_manager=transport_manager,
-        logger_close=logger.close,
-        event_loop_monitor=event_loop_monitor,
-        logical_connection_owner=logical_connection_manager,
-    )
-    try:
+            event_bus=processor_event_bus,
+            config_version=config.config_version,
+            policy_version=config.policy_version,
+            processor_timeout_seconds=config.runtime.protocol.handshake_timeout_seconds,
+        )
+        event_loop_monitor = RuntimeEventLoopMonitor(
+            context=context,
+            implementation=startup_result.event_loop.selected,
+        )
+        service = TransportRuntimeService(
+            context=context,
+            transport_manager=transport_manager,
+            logger_close=logger.close,
+            event_loop_monitor=event_loop_monitor,
+            logical_connection_owner=logical_connection_manager,
+        )
         asyncio.run(_run_service(
             service,
             state_store=state_store,

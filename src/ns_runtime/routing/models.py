@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
+import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -34,6 +36,7 @@ from ns_runtime.protocol import (
 _SAFE_REFERENCE = re.compile(r"sha256:[0-9a-f]{16}")
 _DECISION_FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 _PLAN_ID = re.compile(r"plan_[0-9a-f]{32}")
+_ROUTER_PLAN_AUTHORITY_KEY = secrets.token_bytes(32)
 
 
 class RoutingStrategy(str, Enum):
@@ -885,6 +888,11 @@ class ResolvedRoutingPlan:
     local_hit: bool
     used_stale_route: bool
     created_at: datetime
+    _router_authority_signature: bytes = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         for name in (
@@ -1612,6 +1620,146 @@ def compute_routing_decision_fingerprint(
     return _canonical_reference(payload)
 
 
+def validate_resolved_routing_plan(
+    value: object,
+) -> ResolvedRoutingPlan:
+    """Revalidate one exact Router-issued RP-1 object without rerouting."""
+
+    try:
+        _revalidate_resolved_routing_plan_graph(value)
+        assert type(value) is ResolvedRoutingPlan
+        signature = value._router_authority_signature
+        if (
+            type(signature) is not bytes
+            or not hmac.compare_digest(
+                signature,
+                _router_plan_authority_signature(value),
+            )
+        ):
+            _invalid("routing_plan.router_authority")
+    except NsValidationError:
+        raise
+    except (AttributeError, AssertionError, TypeError, ValueError):
+        _invalid("routing_plan.revalidation")
+    return value
+
+
+def _seal_resolved_routing_plan(
+    value: ResolvedRoutingPlan,
+) -> ResolvedRoutingPlan:
+    """Module-private issuance hook used exactly once by ``LocalRouter``."""
+
+    _revalidate_resolved_routing_plan_graph(value)
+    object.__setattr__(
+        value,
+        "_router_authority_signature",
+        _router_plan_authority_signature(value),
+    )
+    return validate_resolved_routing_plan(value)
+
+
+def _revalidate_resolved_routing_plan_graph(value: object) -> None:
+    if type(value) is not ResolvedRoutingPlan:
+        _invalid("routing_plan.exact_type")
+
+    plan = value
+    if type(plan.original_target) is not TargetGroup:
+        _invalid("routing_plan.original_target.exact_type")
+    if plan.original_target.capabilities is not None and type(
+        plan.original_target.capabilities
+    ) is not tuple:
+        _invalid("routing_plan.original_target.capabilities")
+    plan.original_target.__post_init__()
+
+    decision = plan.policy_decision
+    if type(decision) is not RoutingPolicyDecision:
+        _invalid("routing_plan.policy_decision.exact_type")
+    invocation = decision.invocation
+    if type(invocation) is not RoutingPolicyInvocation:
+        _invalid("routing_plan.policy_invocation.exact_type")
+    intent = invocation.requested_intent
+    if type(intent) is not RequestedRoutingIntent:
+        _invalid("routing_plan.requested_intent.exact_type")
+    if type(intent.normalized_target) is not TargetGroup:
+        _invalid("routing_plan.intent_target.exact_type")
+    if intent.normalized_target.capabilities is not None and type(
+        intent.normalized_target.capabilities
+    ) is not tuple:
+        _invalid("routing_plan.intent_target.capabilities")
+    intent.normalized_target.__post_init__()
+    if type(intent.requested_strategy_parameters) is not StrategyParameters:
+        _invalid("routing_plan.intent_parameters.exact_type")
+    intent.requested_strategy_parameters.__post_init__()
+    intent.__post_init__()
+    invocation.__post_init__()
+    if type(decision.requested_strategy_parameters) is not StrategyParameters:
+        _invalid("routing_plan.requested_parameters.exact_type")
+    decision.requested_strategy_parameters.__post_init__()
+    if type(decision.effective_strategy_parameters) is not StrategyParameters:
+        _invalid("routing_plan.effective_parameters.exact_type")
+    decision.effective_strategy_parameters.__post_init__()
+    if type(decision.scoring_decision) is not RoutingScoringDecision:
+        _invalid("routing_plan.scoring_decision.exact_type")
+    decision.scoring_decision.__post_init__()
+    decision.__post_init__()
+
+    authorization = plan.authorization_evidence
+    if type(authorization) is not AuthorizationDecisionEvidence:
+        _invalid("routing_plan.authorization_evidence.exact_type")
+    authorization.__post_init__()
+    if not authorization.has_valid_binding():
+        _invalid("routing_plan.authorization_evidence.binding")
+
+    if type(plan.scorer_identity) is not RoutingScorerIdentity:
+        _invalid("routing_plan.scorer_identity.exact_type")
+    plan.scorer_identity.__post_init__()
+    for name, parameters in (
+        ("requested", plan.requested_strategy_parameters),
+        ("effective", plan.effective_strategy_parameters),
+    ):
+        if type(parameters) is not StrategyParameters:
+            _invalid(f"routing_plan.{name}_parameters.exact_type")
+        parameters.__post_init__()
+
+    if type(plan.candidates) is not tuple:
+        _invalid("routing_plan.candidates.exact_type")
+    for candidate in plan.candidates:
+        if type(candidate) is not CandidateEvidence:
+            _invalid("routing_plan.candidate.exact_type")
+        if type(candidate.identity_reference) is not RoutingIdentityReference:
+            _invalid("routing_plan.candidate.identity.exact_type")
+        candidate.identity_reference.__post_init__()
+        candidate.__post_init__()
+    if type(plan.filtered_evidence) is not tuple or any(
+        type(candidate) is not CandidateEvidence
+        for candidate in plan.filtered_evidence
+    ):
+        _invalid("routing_plan.filtered_evidence.exact_type")
+    if type(plan.selected_bindings) is not tuple:
+        _invalid("routing_plan.selected_bindings.exact_type")
+    for binding in plan.selected_bindings:
+        if type(binding) is not SelectedRoutingBinding:
+            _invalid("routing_plan.selected_binding.exact_type")
+        if type(binding.identity_reference) is not RoutingIdentityReference:
+            _invalid("routing_plan.selected_binding.identity.exact_type")
+        binding.identity_reference.__post_init__()
+        binding.__post_init__()
+    plan.__post_init__()
+
+
+def _router_plan_authority_signature(
+    plan: ResolvedRoutingPlan,
+) -> bytes:
+    return hmac.new(
+        _ROUTER_PLAN_AUTHORITY_KEY,
+        (
+            f"{id(plan)}\0{plan.schema_version}\0{plan.plan_id}\0"
+            f"{plan.message_reference}\0{plan.decision_fingerprint}"
+        ).encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+
+
 def _strategy_parameters_payload(
     value: StrategyParameters | None,
 ) -> dict[str, object] | None:
@@ -1893,4 +2041,5 @@ __all__ = (
     "derive_candidate_filter_reason",
     "select_candidates_from_evidence",
     "validate_candidate_against_routing_target",
+    "validate_resolved_routing_plan",
 )

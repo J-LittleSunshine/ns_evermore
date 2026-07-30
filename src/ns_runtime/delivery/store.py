@@ -33,7 +33,10 @@ from .models import (
     MessageDeliverySummary, cancel_initializing_graph,
     compute_dedup_evidence_fingerprint, validate_initialization_graph,
 )
-from ns_runtime.routing import ResolvedRoutingPlan
+from ns_runtime.routing import (
+    ResolvedRoutingPlan,
+    validate_resolved_routing_plan,
+)
 from .serde import delivery_to_dict, summary_to_dict
 from .authority_layout import (
     DeliveryAuthorityLayout,
@@ -64,6 +67,7 @@ class AdmissionInitialization:
     def __post_init__(self) -> None:
         if self.schema_version != ATOMIC_ADMISSION_VERSION:
             _invalid("initialization.schema_version")
+        validate_resolved_routing_plan(self.plan)
         if (isinstance(self.initialization_batch_size, bool)
                 or not isinstance(self.initialization_batch_size, int)
                 or self.initialization_batch_size <= 0):
@@ -181,8 +185,10 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
         )
 
     async def initialize(self, value: AdmissionInitialization) -> AtomicAdmissionResult:
-        if not isinstance(value, AdmissionInitialization):
+        if type(value) is not AdmissionInitialization:
             _invalid("initialization")
+        value.__post_init__()
+        validate_resolved_routing_plan(value.plan)
         layout = DeliveryAuthorityLayout(
             version=value.root_summary.authority_layout_version,
             generation=value.root_summary.authority_layout_generation,

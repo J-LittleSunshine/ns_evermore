@@ -18,6 +18,7 @@ from ns_common.iam import (
     IamTargetContext, PayloadRefValidationRequest, PayloadRefValidationResult,
 )
 from ns_common.time import Clock
+from ns_runtime.routing import validate_resolved_routing_plan
 
 from .models import (
     ADMISSION_RESPONSE_VERSION, DEDUP_EVIDENCE_VERSION,
@@ -171,13 +172,14 @@ class DeliveryAdmissionService:
     async def admit(
         self, request: AdmissionRequest, *, trace: AdmissionTrace,
     ) -> AdmissionResult:
-        if not isinstance(request, AdmissionRequest):
+        if type(request) is not AdmissionRequest:
             _invalid("admit.request")
+        request.validate_authority()
         if not isinstance(trace, AdmissionTrace):
             _invalid("admit.trace")
         # Revalidate the RP-1 constructor graph by using its typed properties;
         # no dict/wire/JSON path and no Router dependency exists here.
-        plan = request.plan
+        plan = validate_resolved_routing_plan(request.plan)
         evidence = plan.authorization_evidence
         if not (
             evidence.is_contract_test_authority()
@@ -185,8 +187,6 @@ class DeliveryAdmissionService:
             else evidence.is_production_authority()
         ):
             _invalid("admit.authorization_authority")
-        if compute_target_fingerprint(plan) != compute_target_fingerprint(request.plan):
-            _invalid("admit.plan")
         now = self._clock.utc_now()
         inline_raw = (
             request.inline_descriptor.canonical_bytes

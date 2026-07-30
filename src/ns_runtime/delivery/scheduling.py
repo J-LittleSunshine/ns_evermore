@@ -324,7 +324,7 @@ class _PayloadAccessEvidenceIssuer:
         decision = getattr(verified_result, "result", None)
         broker_authority = getattr(verified_result, "authority", None)
         broker_verification = getattr(verified_result, "verification", None)
-        verification_now = datetime.now(timezone.utc)
+        verification_now = self._clock.utc_now()
         request_fingerprint = (
             broker_request_fingerprint("payload_revalidate", request)
             if type(request) is PayloadRefRevalidationRequest
@@ -440,7 +440,7 @@ class _PayloadAccessEvidenceIssuer:
                 verified_result,
                 operation="payload_revalidate",
                 request_fingerprint=request_fingerprint,
-                now=datetime.now(timezone.utc),
+                now=self._clock.utc_now(),
             ):
                 raise _StaleIamSessionReceipt
             _invalid("payload_access_issuer.receipt")
@@ -477,7 +477,7 @@ class _PayloadAccessEvidenceIssuer:
         object.__setattr__(verified, "result", decision)
         object.__setattr__(verified, "authority", authority)
         object.__setattr__(verified, "verification", verification)
-        now = datetime.now(timezone.utc)
+        now = self._clock.utc_now()
         return bool(
             self._iam._is_production_composition_bound_local()
             and now < evidence.expires_at

@@ -22,6 +22,7 @@ from ns_runtime.processor.audit import (
     AuditSink,
     ProcessorAuditRecord,
 )
+from ns_runtime.delivery_persistence import StrongAuditPersistence
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -109,6 +110,35 @@ class StateStoreStrongAuditAuthorityService(StrongAuditAuthorityService):
         return StrongAuditCommit.from_append_result(result)
 
 
+class PersistenceStrongAuditAuthorityService(StrongAuditAuthorityService):
+    """Production adapter over only the fixed-role broker persistence proxy."""
+
+    _SCHEMA_NAME = "runtime.processor_audit"
+    _SCHEMA_VERSION = 1
+
+    def __init__(self, *, persistence: StrongAuditPersistence) -> None:
+        if not isinstance(persistence, StrongAuditPersistence):
+            _invalid("persistence")
+        self._persistence = persistence
+
+    async def append(self, record: ProcessorAuditRecord) -> StrongAuditCommit:
+        if type(record) is not ProcessorAuditRecord:
+            _invalid("record")
+        if record.required_consistency is not AuditConsistency.STRONG_REQUIRED:
+            _invalid("record.required_consistency")
+        result = await self._persistence.append_processor_audit(
+            document=StateDocument(
+                schema_name=self._SCHEMA_NAME,
+                schema_version=self._SCHEMA_VERSION,
+                state_version=1,
+                payload=_canonical_audit_bytes(record),
+            ),
+        )
+        if type(result) is not StateAppendResult:
+            _invalid("append_result")
+        return StrongAuditCommit.from_append_result(result)
+
+
 class AuthorityRoutingAuditSink(AuditSink):
     """Route strong records to authority and ordinary records to a local sink."""
 
@@ -166,6 +196,7 @@ def _invalid(field_name: str) -> None:
 
 __all__ = (
     "AuthorityRoutingAuditSink",
+    "PersistenceStrongAuditAuthorityService",
     "StateStoreStrongAuditAuthorityService",
     "StrongAuditAuthorityService",
     "StrongAuditCommit",

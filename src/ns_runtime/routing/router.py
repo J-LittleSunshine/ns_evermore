@@ -44,6 +44,7 @@ from .models import (
     derive_candidate_filter_reason,
     safe_target_reference,
     select_candidates_from_evidence,
+    _seal_resolved_routing_plan,
 )
 
 
@@ -412,6 +413,7 @@ class LocalRouter:
             used_stale_route=False,
             created_at=self._clock.utc_now(),
         )
+        plan = _seal_resolved_routing_plan(plan)
 
         requirement = self._consistency.requirement_for(request)
         if requirement is RoutingConsistencyRequirement.STRONG_REQUIRED:
