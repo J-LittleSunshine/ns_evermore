@@ -976,6 +976,85 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             replacement="sha256:" + "b" * 64,
         )
 
+    async def test_invalid_inline_replacements_keep_seal_bytes_and_fail_closed(
+        self,
+    ) -> None:
+        class OpaqueNode:
+            __hash__ = object.__hash__
+
+            def __repr__(self) -> str:
+                raise AssertionError("authority seal must not call repr")
+
+            def __str__(self) -> str:
+                raise AssertionError("authority seal must not call str")
+
+        def cycle() -> list[object]:
+            value: list[object] = []
+            value.append(value)
+            return value
+
+        cases = (
+            (
+                "unsupported",
+                {"node": OpaqueNode()},
+                {"node": OpaqueNode()},
+            ),
+            (
+                "nan",
+                {"node": float("nan")},
+                {"node": float("nan")},
+            ),
+            ("cycle", cycle(), cycle()),
+            (
+                "invalid-key",
+                {OpaqueNode(): "value"},
+                {OpaqueNode(): "value"},
+            ),
+        )
+        for label, original, replacement in cases:
+            with self.subTest(case=label):
+                store = _Store()
+                client = _PayloadClient(self.clock)
+                service = self._service(store=store, payload_client=client)
+                request = self._request(payload=InlinePayload(
+                    value=original,
+                    media_type="application/json",
+                    application_limit_bytes=128,
+                    transport_limit_bytes=128,
+                ))
+                assert isinstance(request.payload, InlinePayload)
+                sealed_bytes = request._authority_signature
+                self.assertTrue(request._authority_invalid_nodes)
+                object.__setattr__(request.payload, "value", replacement)
+
+                self.assertEqual(sealed_bytes, request._authority_signature)
+                with self.assertRaises(NsValidationError):
+                    request.validate_authority()
+                with self.assertRaises(NsValidationError):
+                    await service.admit(
+                        request,
+                        trace=AdmissionTrace(
+                            trace_id=f"trace-invalid-replacement-{label}",
+                        ),
+                    )
+                self.assertEqual([], store.values)
+                self.assertEqual([], client.calls)
+
+    def test_inline_authority_seal_graph_budget_fails_closed(self) -> None:
+        with self.assertRaises(NsValidationError) as raised:
+            self._request(payload=InlinePayload(
+                value=[None] * 65_536,
+                media_type="application/json",
+                application_limit_bytes=1_048_576,
+                transport_limit_bytes=1_048_576,
+            ))
+        self.assertEqual(
+            "request.inline_authority_graph",
+            raised.exception.details["field"],
+        )
+        self.assertEqual([], self.store.values)
+        self.assertEqual([], self.payload_client.calls)
+
 
 class _Sender(AdmissionResponseSender):
     async def send(self, response):

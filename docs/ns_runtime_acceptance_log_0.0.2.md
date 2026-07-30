@@ -7,23 +7,22 @@
 
 本文件按完成时间升序保存历史验收证据，不作为当前执行游标或工作包状态的权威来源。当前状态只在实施计划中维护。原实施计划中的直接验收块与重复交接快照已合并；命令、通过数量、修改文件、隔离边界和仍影响后续工作的限制予以保留。
 
-## 2026-07-30 P01—P11 独立审查追加修复（当前记录）
+## 2026-07-30 bootstrap lifecycle、invalid inline seal 与 CI 复核修复（当前记录）
 
 - 范围：只记录本次本地工作区实际执行结果；下方历史记录不是本次 PASS 证据。
-- 起始事实：分支 `codex/ns-runtime-implementation`；起始 HEAD `26a5980de2755c65379c64943d01b8a38a8606fc`；开始时 `git status --short --branch` 仅显示该分支跟踪信息，工作树 clean。解释器为 `/usr/bin/python3`、Python `3.10.12`；`python` 命令不存在，未激活 `VIRTUAL_ENV` 或 Conda 环境。
-- 修改范围：完整 RoutingPlan/AdmissionRequest authority seal、同一实例字段和嵌套图替换拒绝、production broker proxy/child composition Clock、`_run_service()` 的 `BaseException` 清理、Python 3.10 GitHub workflow、文档凭据/游标/状态账本及对应测试。未切换或创建分支，未 commit、push 或创建 PR。
-- 命令修正记录：首次定向 routing 命令漏设 `PYTHONPATH=src`，在收集阶段以 `ModuleNotFoundError: ns_common` 失败；补齐环境后 routing/delivery 定向 46 项通过。另一次 main 定向命令误写不存在的 `RuntimeMainTestCase`，产生 unittest loader `AttributeError`；改为执行完整 `tests.test_runtime_main` 后 `Ran 16 tests in 8.896s, OK (skipped=6)`。两次调用错误均不记为代码 PASS。
-- authority broker/attestor：最终测试代码整模块 `Ran 46 tests in 75.417s, OK`。
-- IAM strict/cache/rotation：`Ran 27 tests in 13.862s, OK`。
-- processor/routing：`Ran 60 tests in 1.823s, OK`。
-- StateStore contract/provider/真实 Redis integration：`Ran 68 tests in 67.935s, OK`；真实 Redis integration 实际执行，未因环境缺失跳过。
-- delivery admission/scheduling：新增 production persistence 首写前重验后，`Ran 66 tests in 57.776s, OK`。
-- main/shutdown/transport/connection lifecycle：`Ran 301 tests in 20.124s, OK (skipped=6)`；6 项均要求部署侧 production authority private key。
-- import/dependency/documentation boundary：`Ran 21 tests in 3.772s, OK`。
-- 全仓首轮：`PYTHONPATH=src python3 -m unittest discover -s tests -t . -p 'test_*.py' -q`，`Ran 935 tests in 242.888s, FAILED (errors=1, skipped=7)`；错误为短 TTL 三会话 rotation 用例的一次瞬时 `attestor_unavailable`。该具体用例随后 `Ran 1 test in 2.000s, OK`。
-- 全仓复跑与 rotation 测试校准：相同 discover 命令先得到 `Ran 935 tests in 244.438s, OK (skipped=7)`。新增 production persistence 入口测试后总数为 936；随后四次全树分别在真实子进程短 TTL 三代 rotation 用例得到 `242.192s / errors=1`、`246.626s / failures=1`、`245.524s / errors=1`、`250.769s / failures=1`。失败原因分别是阈值前请求导致旧证书在负载下过期，或跨 role endpoint 同步使固定 generation 假设不成立；production expiry/attestation 校验未放宽。测试改为按当前证书生命周期触发并验证三次实际 generation 严格前进后，最终全树 `Ran 936 tests in 254.498s, OK (skipped=7)`。除上述 6 项 production-key 用例外，另 1 项为当前 Linux 环境不适用的 Windows event-loop policy；所有失败与重试均保留在本记录。
-- 静态门禁：`python3 -m compileall -q src tests`、文档 secret 扫描测试和 `git diff --check` 均在本次执行中通过。`git diff --check` 仅报告工作树换行符转换提示，没有 whitespace error。
-- 未验证：没有部署 production authority private key，未启动真实 production composition root；未连接真实远端 IAM、未发送 production transport 流量；未运行远端 CI。P12 及后续能力不在本次范围，仍不得从本记录推断已实现。仓库值已移除，但旧 Redis 凭据仍必须由人工在服务侧轮换/吊销；该外部动作无法由本仓库测试验证。
+- 起始事实：分支 `codex/ns-runtime-implementation`；起始 HEAD `ab82687d3c24df1b2acdac4ea6d5d80d1dec440a`；开始时 `git status --short --branch` 仅显示该分支跟踪信息，工作树 clean。`python`命令不存在；使用`/usr/bin/python3`、Python `3.10.12`，未激活`VIRTUAL_ENV`或Conda环境。
+- 修改范围：pre-launch authority bootstrap全域清理、继承FD/Pipe/Process事务回滚、StateStore open失败的composition资源所有权、logger构造回滚、invalid inline process-local bounded seal、CI手动触发/真实Redis/base-SHA whitespace gate、文档校准与对应测试。P12继续`BLOCKED / NOT_STARTED / F0`，没有实现或启用P12。
+- authority broker/attestor：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_authority_bootstrap tests.test_runtime_authority_broker`，`Ran 52 tests in 75.474s, OK`。
+- IAM strict/cache/rotation：`Ran 27 tests in 13.908s, OK`。
+- processor/routing：`Ran 64 tests in 1.836s, OK`。
+- StateStore contract/provider：`Ran 45 tests in 0.810s, OK`。真实Redis standalone由`/usr/bin/redis-server` `6.0.16`启动，`NS_RUNTIME_REQUIRE_REDIS_INTEGRATION=1`下`Ran 23 tests in 67.228s, OK`，环境缺失不会转为静默skip。
+- delivery admission/scheduling：`Ran 68 tests in 57.690s, OK`。
+- main/shutdown/transport：`Ran 120 tests in 12.200s, OK (skipped=6)`；6项均要求仓库外deployment production authority private key。
+- import/dependency/documentation boundary：`Ran 23 tests in 3.774s, OK`，冷导入输出`COLD_IMPORT_BOUNDARIES_OK`。runtime/backend虚拟环境`pip check`均为`No broken requirements found.`；系统`python3 -m pip check`因系统`pygobject`缺少`pycairo`返回非零，该系统包缺口不属于项目虚拟环境。
+- 全仓首轮：`env -u PYTHONASYNCIODEBUG NS_RUNTIME_REQUIRE_REDIS_INTEGRATION=1 PYTHONPATH=src python3 -m unittest discover -s tests -t . -p 'test_*.py' -q`，`Ran 951 tests in 253.130s, FAILED (errors=1, skipped=7)`；错误为既有短TTL cache/session authority用例在全仓负载下瞬时`attestor_unavailable`，不记为PASS。该具体用例随后`Ran 1 test in 2.678s, OK`；相同全仓命令复跑为`Ran 951 tests in 254.198s, OK (skipped=7)`。invalid inline seal最终加固后再次执行相同全仓命令，最终结果为`Ran 951 tests in 253.401s, OK (skipped=7)`。除6项deployment-root skip外，另1项为当前Linux不适用的Windows event-loop policy。
+- 命令修正记录：一次定向命令误写不存在的`AuthorityBrokerBoundaryTestCase`，unittest loader以`AttributeError`失败；改用实际`RuntimeAuthorityBrokerTestCase`后目标用例`Ran 1 test in 0.999s, OK`。该调用错误不记为代码PASS。
+- 静态与CI等价门禁：`python3 -m compileall -q src tests`、文档secret/CI结构测试、`git diff --check`均通过；Git只输出仓库行尾转换提示。CI workflow已显式安装/检查`redis-server`、单独强制真实Redis integration，并对event base SHA至当前SHA执行diff check及当前commit`git show --check`。
+- 未验证：没有deployment production authority private key，未启动真实production composition root；未连接真实远端IAM、未发送production transport流量；远端CI尚未执行。Valkey server、Redis Sentinel/Cluster、replica/failover、真实Windows和uvloop全树仍未验证。仓库值已移除，服务端轮换待人工确认；旧Redis凭据必须由人工在服务侧轮换/吊销，该外部动作无法由仓库测试验证。
 
 以下均为归档历史证据，不是 2026-07-30 本次执行结果。
 

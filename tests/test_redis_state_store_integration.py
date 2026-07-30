@@ -190,9 +190,17 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     def setUpClass(cls) -> None:
         super().setUpClass()
         if redis is None or redis_async is None:
+            if os.environ.get("NS_RUNTIME_REQUIRE_REDIS_INTEGRATION") == "1":
+                raise RuntimeError(
+                    "required runtime Redis driver is unavailable",
+                )
             raise unittest.SkipTest("runtime Redis driver is unavailable")
         server = shutil.which("redis-server")
         if server is None:
+            if os.environ.get("NS_RUNTIME_REQUIRE_REDIS_INTEGRATION") == "1":
+                raise RuntimeError(
+                    "required local redis-server is unavailable",
+                )
             raise unittest.SkipTest("local redis-server is unavailable")
         cls._resource_factory = NsTestResourceFactory(
             prefix="ns-runtime-redis-state-",

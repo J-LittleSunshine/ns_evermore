@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -87,6 +88,9 @@ class AdmissionPolicyConfig:
 
 _ADMISSION_REQUEST_ISSUER = object()
 _ADMISSION_REQUEST_AUTHORITY_KEY = secrets.token_bytes(32)
+_INLINE_AUTHORITY_MAX_NODES = 65_536
+_INLINE_AUTHORITY_MAX_DEPTH = 4_096
+_INLINE_AUTHORITY_MAX_BYTES = 4 * 1_048_576
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -104,6 +108,11 @@ class AdmissionRequest:
     requested_expires_at: datetime
     requested_ack_timeout_seconds: int
     requested_target_strategy: RoutingStrategy
+    _authority_invalid_nodes: tuple[object, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
     _authority_signature: bytes = field(init=False, repr=False, compare=False)
 
     def __init__(
@@ -135,10 +144,23 @@ class AdmissionRequest:
             describe_inline_payload(payload) if isinstance(payload, InlinePayload) else None,
         )
         self.__post_init__()
+        invalid_nodes: list[object] = []
+        authority_digest = _admission_request_authority_digest(
+            self,
+            invalid_nodes=invalid_nodes,
+        )
+        object.__setattr__(
+            self,
+            "_authority_invalid_nodes",
+            tuple(invalid_nodes),
+        )
         object.__setattr__(
             self,
             "_authority_signature",
-            _admission_request_authority_signature(self),
+            _admission_request_authority_signature(
+                self,
+                authority_digest=authority_digest,
+            ),
         )
 
     @classmethod
@@ -235,12 +257,33 @@ class AdmissionRequest:
 
     def validate_authority(self) -> None:
         self.__post_init__()
+        invalid_nodes: list[object] = []
+        authority_digest = _admission_request_authority_digest(
+            self,
+            invalid_nodes=invalid_nodes,
+        )
+        retained_nodes = getattr(self, "_authority_invalid_nodes", None)
+        if (
+            type(retained_nodes) is not tuple
+            or len(retained_nodes) != len(invalid_nodes)
+            or any(
+                retained is not current
+                for retained, current in zip(
+                    retained_nodes,
+                    invalid_nodes,
+                )
+            )
+        ):
+            _invalid("request.authority_invalid_nodes")
         signature = getattr(self, "_authority_signature", None)
         if (
             type(signature) is not bytes
             or not hmac.compare_digest(
                 signature,
-                _admission_request_authority_signature(self),
+                _admission_request_authority_signature(
+                    self,
+                    authority_digest=authority_digest,
+                ),
             )
         ):
             _invalid("request.authority")
@@ -426,13 +469,17 @@ def _utc(value: object, name: str) -> datetime:
 
 def _admission_request_authority_signature(
     request: AdmissionRequest,
+    *,
+    authority_digest: str,
 ) -> bytes:
-    authority_digest = _admission_request_authority_digest(request)
+    retained_nodes = getattr(request, "_authority_invalid_nodes", None)
+    if type(retained_nodes) is not tuple:
+        _invalid("request.authority_invalid_nodes")
     return hmac.new(
         _ADMISSION_REQUEST_AUTHORITY_KEY,
         (
             f"admission-request-authority.v1\0{id(request)}\0"
-            f"{authority_digest}"
+            f"{id(retained_nodes)}\0{authority_digest}"
         ).encode("utf-8"),
         hashlib.sha256,
     ).digest()
@@ -440,6 +487,8 @@ def _admission_request_authority_signature(
 
 def _admission_request_authority_digest(
     request: AdmissionRequest,
+    *,
+    invalid_nodes: list[object],
 ) -> str:
     payload = request.payload
     if type(payload) is InlinePayload:
@@ -449,7 +498,11 @@ def _admission_request_authority_digest(
             "media_type": payload.media_type,
             "application_limit_bytes": payload.application_limit_bytes,
             "transport_limit_bytes": payload.transport_limit_bytes,
-            "value_digest": _inline_payload_value_digest(payload.value),
+            "value_digest": _inline_payload_value_digest(
+                payload.value,
+                json_mode=payload.media_type == "application/json",
+                invalid_nodes=invalid_nodes,
+            ),
             "canonical_bytes": (
                 None
                 if current_descriptor.canonical_bytes is None
@@ -538,69 +591,175 @@ def _admission_request_authority_digest(
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
-def _inline_payload_value_digest(value: object) -> str:
-    """Bound even rejected JSON graphs without recursive serialization."""
+def _inline_payload_value_digest(
+    value: object,
+    *,
+    json_mode: bool,
+    invalid_nodes: list[object],
+) -> str:
+    """Seal canonical values and identity-bind every rejected JSON node."""
 
     digest = hashlib.sha256()
     active_containers: set[int] = set()
-    stack: list[tuple[str, object]] = [("value", value)]
+    # operation, value, depth, exact container position
+    stack: list[tuple[str, object, int, bytes]] = [
+        ("value", value, 1, b"root"),
+    ]
+    observed_nodes = 0
+    observed_bytes = 0
 
-    def add(token: str) -> None:
-        raw = token.encode("utf-8", errors="strict")
+    def add_raw(raw: bytes, *, charged_bytes: int | None = None) -> None:
+        nonlocal observed_bytes
+        charge = len(raw) if charged_bytes is None else charged_bytes
+        if (
+            charge < 0
+            or charge > _INLINE_AUTHORITY_MAX_BYTES
+            or observed_bytes > _INLINE_AUTHORITY_MAX_BYTES - charge
+        ):
+            _invalid("request.inline_authority_bytes")
+        observed_bytes += charge
         digest.update(len(raw).to_bytes(8, "big"))
         digest.update(raw)
 
+    def add_text(token: str) -> None:
+        if len(token) > _INLINE_AUTHORITY_MAX_BYTES:
+            _invalid("request.inline_authority_bytes")
+        try:
+            raw = token.encode("utf-8", errors="strict")
+        except UnicodeError:
+            _invalid("request.inline_authority_text")
+        add_raw(raw)
+
+    def add_integer(item: int) -> None:
+        size = max(1, (item.bit_length() + 8) // 8)
+        if size > _INLINE_AUTHORITY_MAX_BYTES:
+            _invalid("request.inline_authority_bytes")
+        add_raw(item.to_bytes(size, "big", signed=True))
+
+    def add_identity(item: object, role: bytes) -> None:
+        invalid_nodes.append(item)
+        add_raw(role)
+        add_raw(id(type(item)).to_bytes(16, "big"))
+        add_raw(id(item).to_bytes(16, "big"))
+
     while stack:
-        operation, item = stack.pop()
+        operation, item, depth, position = stack.pop()
         if operation == "exit":
             active_containers.remove(id(item))
-            add("container:end")
+            add_raw(b"container:end")
             continue
+        observed_nodes += 1
+        if (
+            observed_nodes > _INLINE_AUTHORITY_MAX_NODES
+            or depth > _INLINE_AUTHORITY_MAX_DEPTH
+        ):
+            _invalid("request.inline_authority_graph")
+        add_raw(b"node")
+        add_integer(depth)
+        add_raw(position)
+
+        if operation == "invalid_key":
+            add_identity(item, b"invalid-dict-key")
+            if item is None:
+                add_raw(b"none")
+            elif type(item) is bool:
+                add_raw(b"bool:1" if item else b"bool:0")
+            elif type(item) is int:
+                add_raw(b"int")
+                add_integer(item)
+            elif type(item) is float:
+                add_raw(b"float")
+                add_text(item.hex())
+            elif type(item) is str:
+                add_raw(b"str")
+                add_text(item)
+            elif type(item) is bytes:
+                if len(item) > _INLINE_AUTHORITY_MAX_BYTES:
+                    _invalid("request.inline_authority_bytes")
+                add_raw(b"bytes")
+                add_raw(hashlib.sha256(item).digest(), charged_bytes=len(item))
+            continue
+
         if item is None:
-            add("none")
+            add_raw(b"none")
         elif type(item) is bool:
-            add("bool:1" if item else "bool:0")
+            add_raw(b"bool:1" if item else b"bool:0")
         elif type(item) is int:
-            add(f"int:{item}")
+            add_raw(b"int")
+            add_integer(item)
         elif type(item) is float:
-            add(f"float:{item.hex()}")
+            if not math.isfinite(item):
+                add_identity(item, b"non-finite-float")
+            add_raw(b"float")
+            add_text(item.hex())
         elif type(item) is str:
-            add("str")
-            add(item)
+            add_raw(b"str")
+            add_text(item)
         elif type(item) is bytes:
-            add("bytes")
-            digest.update(hashlib.sha256(item).digest())
+            if len(item) > _INLINE_AUTHORITY_MAX_BYTES:
+                _invalid("request.inline_authority_bytes")
+            if json_mode:
+                add_identity(item, b"invalid-json-bytes")
+            add_raw(b"bytes")
+            add_raw(hashlib.sha256(item).digest(), charged_bytes=len(item))
         elif type(item) in {list, dict}:
             marker = id(item)
             if marker in active_containers:
-                add("container:cycle")
+                add_identity(item, b"container-cycle")
                 continue
             active_containers.add(marker)
-            stack.append(("exit", item))
+            stack.append(("exit", item, depth, position))
             if type(item) is list:
-                add(f"list:{len(item)}")
-                stack.extend(
-                    ("value", child)
-                    for child in reversed(item)
-                )
+                add_raw(b"list")
+                add_integer(len(item))
+                for index in range(len(item) - 1, -1, -1):
+                    stack.append((
+                        "value",
+                        item[index],
+                        depth + 1,
+                        b"list:" + index.to_bytes(8, "big"),
+                    ))
             else:
-                ordered = sorted(
-                    item.items(),
-                    key=lambda pair: (
-                        type(pair[0]).__module__,
-                        type(pair[0]).__qualname__,
-                        str(pair[0]),
-                    ),
-                )
-                add(f"dict:{len(ordered)}")
-                for key, child in reversed(ordered):
-                    stack.append(("value", child))
-                    stack.append(("value", key))
+                keys = tuple(item)
+                if all(type(key) is str for key in keys):
+                    ordered_keys = sorted(keys)
+                    add_raw(b"dict")
+                    add_integer(len(ordered_keys))
+                    for index in range(len(ordered_keys) - 1, -1, -1):
+                        key = ordered_keys[index]
+                        add_position = b"dict:" + index.to_bytes(8, "big")
+                        stack.append((
+                            "value",
+                            item[key],
+                            depth + 1,
+                            add_position,
+                        ))
+                        stack.append((
+                            "value",
+                            key,
+                            depth + 1,
+                            b"key:" + index.to_bytes(8, "big"),
+                        ))
+                else:
+                    add_identity(item, b"invalid-json-dict")
+                    add_integer(len(keys))
+                    pairs = tuple(item.items())
+                    for index in range(len(pairs) - 1, -1, -1):
+                        key, child = pairs[index]
+                        stack.append((
+                            "value",
+                            child,
+                            depth + 1,
+                            b"dict:" + index.to_bytes(8, "big"),
+                        ))
+                        stack.append((
+                            "invalid_key",
+                            key,
+                            depth + 1,
+                            b"key:" + index.to_bytes(8, "big"),
+                        ))
         else:
-            add(
-                "unsupported:"
-                f"{type(item).__module__}.{type(item).__qualname__}",
-            )
+            add_identity(item, b"unsupported")
     return "sha256:" + digest.hexdigest()
 
 

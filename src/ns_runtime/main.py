@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Callable, Sequence
 
 if TYPE_CHECKING:
     from os import PathLike
@@ -21,6 +21,7 @@ async def _run_service(
     *,
     state_store: object | None = None,
     self_check: bool = False,
+    service_starting: Callable[[], None] | None = None,
 ) -> None:
     """Run until signal, critical failure, explicit shutdown, or self-check."""
 
@@ -34,6 +35,8 @@ async def _run_service(
             if state_store is not None:
                 store_open_attempted = True
                 await state_store.open()  # type: ignore[attr-defined]
+            if service_starting is not None:
+                service_starting()
             service_start_attempted = True
             await service.start()
             if self_check:
@@ -91,6 +94,120 @@ async def _run_service_once(
     )
 
 
+class _MainCompositionResources:
+    """Own resources until the runtime service accepts lifecycle custody."""
+
+    def __init__(self) -> None:
+        self.adapters: tuple[object, ...] = ()
+        self.transport_manager: object | None = None
+        self.task_supervisor: object | None = None
+        self.logger: object | None = None
+        self.authority_broker: object | None = None
+
+    def transfer_service_resources(self) -> None:
+        self.adapters = ()
+        self.transport_manager = None
+        self.task_supervisor = None
+        self.logger = None
+
+    def close(self) -> None:
+        import asyncio
+
+        failure: BaseException | None = None
+        manager = self.transport_manager
+        adapters = self.adapters
+        supervisor = self.task_supervisor
+        broker = self.authority_broker
+        logger = self.logger
+        self.transport_manager = None
+        self.adapters = ()
+        self.task_supervisor = None
+        self.authority_broker = None
+        self.logger = None
+
+        if manager is not None or adapters or supervisor is not None:
+            try:
+                asyncio.run(self._close_async(
+                    manager=manager,
+                    adapters=adapters,
+                    supervisor=supervisor,
+                ))
+            except BaseException as cleanup_failure:
+                failure = _prioritize_lifecycle_failure(
+                    failure,
+                    cleanup_failure,
+                )
+        if broker is not None:
+            try:
+                broker.close()  # type: ignore[attr-defined]
+            except BaseException as cleanup_failure:
+                failure = _prioritize_lifecycle_failure(
+                    failure,
+                    cleanup_failure,
+                )
+        if logger is not None:
+            try:
+                logger.close()  # type: ignore[attr-defined]
+            except BaseException as cleanup_failure:
+                failure = _prioritize_lifecycle_failure(
+                    failure,
+                    cleanup_failure,
+                )
+        if failure is not None:
+            raise failure
+
+    @staticmethod
+    async def _close_async(
+        *,
+        manager: object | None,
+        adapters: tuple[object, ...],
+        supervisor: object | None,
+    ) -> None:
+        failure: BaseException | None = None
+        if manager is not None:
+            try:
+                await manager.close()  # type: ignore[attr-defined]
+            except BaseException as cleanup_failure:
+                failure = _prioritize_lifecycle_failure(
+                    failure,
+                    cleanup_failure,
+                )
+        else:
+            for adapter in reversed(adapters):
+                try:
+                    await adapter.close()  # type: ignore[attr-defined]
+                except BaseException as cleanup_failure:
+                    failure = _prioritize_lifecycle_failure(
+                        failure,
+                        cleanup_failure,
+                    )
+        if supervisor is not None:
+            try:
+                await supervisor.shutdown()  # type: ignore[attr-defined]
+            except BaseException as cleanup_failure:
+                failure = _prioritize_lifecycle_failure(
+                    failure,
+                    cleanup_failure,
+                )
+        if failure is not None:
+            raise failure
+
+
+async def _run_composed_service(
+    resources: _MainCompositionResources,
+    service: RuntimeService,
+    *,
+    state_store: object,
+    self_check: bool,
+) -> None:
+    await _run_service(
+        service,
+        state_store=state_store,
+        self_check=self_check,
+        service_starting=resources.transfer_service_resources,
+    )
+
+
 def main(
     *,
     environment: str | None = None,
@@ -110,13 +227,95 @@ def main(
     coordinator. ``self_check`` is reserved for the explicit module command.
     """
 
-    import logging
-
     from ns_runtime.authority_bootstrap import (
         load_inherited_authority_bootstrap,
     )
 
+    result: int | None = None
+    failure: BaseException | None = None
     authority_bootstrap = load_inherited_authority_bootstrap()
+    try:
+        result = _main_after_authority_bootstrap(
+            authority_bootstrap=authority_bootstrap,
+            environment=environment,
+            config_path=config_path,
+            startup_root=startup_root,
+            startup_directories=startup_directories,
+            preflight=preflight,
+            transport_ssl_context=transport_ssl_context,
+            self_check=self_check,
+        )
+    except BaseException as operation_failure:
+        failure = operation_failure
+    finally:
+        try:
+            authority_bootstrap.close()
+        except BaseException as cleanup_failure:
+            failure = _prioritize_lifecycle_failure(
+                failure,
+                cleanup_failure,
+            )
+    if failure is not None:
+        raise failure
+    assert result is not None
+    return result
+
+
+def _main_after_authority_bootstrap(
+    *,
+    authority_bootstrap: object,
+    environment: str | None,
+    config_path: str | PathLike[str] | None,
+    startup_root: str | PathLike[str] | None,
+    startup_directories: RuntimeStartupDirectories | None,
+    preflight: RuntimeStartupPreflight | None,
+    transport_ssl_context: SSLContext | None,
+    self_check: bool,
+) -> int:
+    resources = _MainCompositionResources()
+    result: int | None = None
+    failure: BaseException | None = None
+    try:
+        result = _compose_runtime_main(
+            authority_bootstrap=authority_bootstrap,
+            resources=resources,
+            environment=environment,
+            config_path=config_path,
+            startup_root=startup_root,
+            startup_directories=startup_directories,
+            preflight=preflight,
+            transport_ssl_context=transport_ssl_context,
+            self_check=self_check,
+        )
+    except BaseException as operation_failure:
+        failure = operation_failure
+    finally:
+        try:
+            resources.close()
+        except BaseException as cleanup_failure:
+            failure = _prioritize_lifecycle_failure(
+                failure,
+                cleanup_failure,
+            )
+    if failure is not None:
+        raise failure
+    assert result is not None
+    return result
+
+
+def _compose_runtime_main(
+    *,
+    authority_bootstrap: object,
+    resources: _MainCompositionResources,
+    environment: str | None,
+    config_path: str | PathLike[str] | None,
+    startup_root: str | PathLike[str] | None,
+    startup_directories: RuntimeStartupDirectories | None,
+    preflight: RuntimeStartupPreflight | None,
+    transport_ssl_context: SSLContext | None,
+    self_check: bool,
+) -> int:
+    import logging
 
     from ns_runtime._bootstrap import get_default_config_path
     from ns_runtime.startup import (
@@ -175,17 +374,19 @@ def main(
 
     bootstrap_logger = logging.Logger("ns_runtime.bootstrap")
     bootstrap_logger.setLevel(config.runtime.logging.level.strip().upper())
+    task_supervisor = TaskSupervisor(
+        shutdown_timeout_seconds=(
+            config.runtime.worker.shutdown_timeout_seconds
+        ),
+    )
+    resources.task_supervisor = task_supervisor
     context = RuntimeContext(
         config=config,
         clock=SystemClock(),
         logger=bootstrap_logger,
         metrics=InMemoryMetricsSink(),
         traces=InMemoryTraceSink(),
-        task_supervisor=TaskSupervisor(
-            shutdown_timeout_seconds=(
-                config.runtime.worker.shutdown_timeout_seconds
-            ),
-        ),
+        task_supervisor=task_supervisor,
     )
 
     startup_result = startup_preflight.prepare(
@@ -233,6 +434,7 @@ def main(
         config=logger_config,
         log_dir=effective_directories.log_dir,
     )
+    resources.logger = logger
     context = RuntimeContext(
         config=config,
         clock=context.clock,
@@ -324,7 +526,9 @@ def main(
         startup_result.enabled_transport_adapters,
         context=build_context,
     )
+    resources.adapters = adapters
     transport_manager = TransportManager(adapters)
+    resources.transport_manager = transport_manager
     identifier_factory = IdentifierFactory()
     runtime_id = identifier_factory.generate(NsIdentifierKind.RUNTIME_ID)
     state_store_config = config.runtime.state_store
@@ -347,6 +551,7 @@ def main(
         ),
         clock=context.clock,
     )
+    resources.authority_broker = authority_broker
     try:
         state_store = authority_broker.state_store
         iam_client = authority_broker.iam
@@ -471,13 +676,16 @@ def main(
             event_loop_monitor=event_loop_monitor,
             logical_connection_owner=logical_connection_manager,
         )
-        asyncio.run(_run_service(
+        asyncio.run(_run_composed_service(
+            resources,
             service,
             state_store=state_store,
             self_check=self_check,
         ))
     finally:
-        authority_broker.close()
+        # The enclosing composition scope retains broker ownership so it can
+        # prioritize operation and cleanup failures consistently.
+        pass
 
     return 0
 

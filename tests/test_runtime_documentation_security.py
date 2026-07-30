@@ -11,6 +11,7 @@ DOCS_DIR = ROOT_DIR / "docs"
 IMPLEMENTATION_PLAN = (
     DOCS_DIR / "ns_runtime_implementation_plan_for_design_0.0.2.md"
 )
+RUNTIME_WORKFLOW = ROOT_DIR / ".github" / "workflows" / "ns-runtime.yml"
 
 _CREDENTIALED_URL = re.compile(
     r"(?i)\b[a-z][a-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@",
@@ -54,6 +55,45 @@ class RuntimeDocumentationSecurityTestCase(unittest.TestCase):
         self.assertNotRegex(text, _CREDENTIALED_URL)
         self.assertNotRegex(text, _LITERAL_PASSWORD_BULLET)
         self.assertNotRegex(text, _PASSWORD_STORAGE_PERMISSION)
+
+    def test_runtime_ci_has_manual_real_redis_and_commit_range_gates(
+        self,
+    ) -> None:
+        text = RUNTIME_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("workflow_dispatch:", text)
+        self.assertIn("fetch-depth: 0", text)
+        self.assertIn("apt-get install --yes redis-server", text)
+        self.assertIn(
+            'NS_RUNTIME_REQUIRE_REDIS_INTEGRATION: "1"',
+            text,
+        )
+        self.assertIn("tests.test_redis_state_store_integration", text)
+        self.assertIn(
+            'git diff --check "${base_sha}" "${GITHUB_SHA}"',
+            text,
+        )
+        self.assertIn(
+            'git show --check --format= "${GITHUB_SHA}"',
+            text,
+        )
+        self.assertNotRegex(text, _CREDENTIALED_URL)
+
+    def test_p12_and_external_redis_rotation_status_remain_frozen(self) -> None:
+        text = IMPLEMENTATION_PLAN.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "| P12 | ACK/NACK/Defer/Timeout/Retry | `NOT_STARTED` | F0 | P11 |",
+            text,
+        )
+        self.assertIn(
+            "| 当前工作包状态 | `BLOCKED`（awaiting explicit authorization） |",
+            text,
+        )
+        self.assertIn(
+            "仓库值已移除，服务端轮换待人工确认",
+            text,
+        )
 
 
 if __name__ == "__main__":

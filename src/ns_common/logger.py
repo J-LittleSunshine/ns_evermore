@@ -560,7 +560,16 @@ class NsLogger(logging.Logger):
             self._sanitizer = next_sanitizer
             self._explicit_config = explicit_config
             self._explicit_log_dir = explicit_log_dir
-            self._configure()
+            try:
+                self._configure()
+            except BaseException:
+                # ``_configure`` may already have installed console or file
+                # handlers before a later constructor fails. Roll them back
+                # here because the caller cannot receive the partial logger.
+                self._reset_handlers()
+                self._initialized = False
+                self._owner_pid = -1
+                raise
 
     @property
     def sanitizer(self) -> Sanitizer:

@@ -3,7 +3,7 @@
 > 实施文档版本：`0.0.2`
 > 设计基线：`ns_runtime 设计边界与功能清单 0.0.2`
 > 仓库基线：Code Agent 当前会话所处的 `ns_evermore` 本地工作区；远程仓库、远程分支和提交历史不作为实现状态依据
-> 当前状态校准时间：`2026-07-30`（最终测试事实见 acceptance log 当前记录）
+> 当前状态校准时间：`2026-07-30T13:19:54+08:00`（最终测试事实见 acceptance log 当前记录）
 > 文档用途：作为人工开发者与 Code Agent 的当前状态、阶段边界和后续执行入口。
 
 文档分工：
@@ -195,8 +195,8 @@ P00 必须记录以下事实：
 | `src/ns_backend/iam` 实际能力 | `VERIFIED` | IAM-R1保持；payload_ref validation result现冻结对象/version/checksum/tenant/size完整性元数据，runtime通过显式IAM HTTP client实时调用既有backend endpoint；backend无对象provider时继续明确invalid/fail-closed。 |
 | `src/ns_runtime` 实际能力 | `VERIFIED` | P02-P09及P10 DR-1冻结边界保持；P11以typed prepared DeliveryRecord和StateStore authority完成本地prepared -> queued -> sending -> ack_waiting，复用既有TaskSupervisor与P05 local connection owner。task.dispatch只提供显式注入的本地实验组合，production contract/默认配置仍关闭；不含P12 ACK/NACK/Defer/timeout/retry。 |
 | 配置示例与依赖清单 | `VERIFIED` | runtime.state_store支持backend、credential-free endpoint、username、env/file/none password source、namespace和timeout；Redis/Valkey driver已移入runtime生产层且动态加载，五层无环清单保持。 |
-| 当前本地测试基线 | `VERIFIED` | 本轮最终标准asyncio全树`Ran 936 tests in 254.498s, OK (skipped=7)`；authority、IAM、routing、真实Redis、delivery、main/transport与边界分组均通过，compileall、文档secret扫描和diff check通过。此前短TTL rotation失败、重试与测试同步校准均保留在acceptance log；均为local verification，无production root或远程CI证据。 |
-| 当前状态校准时间 | `VERIFIED` | `2026-07-23T09:50:00+08:00` |
+| 当前本地测试基线 | `VERIFIED` | 本轮最终standard asyncio全树`Ran 951 tests in 253.401s, OK (skipped=7)`；authority、IAM、routing、真实Redis、delivery、main/transport与边界分组均通过，compileall、文档secret扫描和diff check通过。首轮全树的短TTL attestor时序失败、单项复跑与最终全树复跑均保留在acceptance log；均为local verification，无production root或远程CI证据。 |
+| 当前状态校准时间 | `VERIFIED` | `2026-07-30T13:19:54+08:00` |
 
 ### 2.2 本地代码检查范围
 

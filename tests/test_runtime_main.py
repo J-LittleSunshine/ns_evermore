@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
+from contextlib import nullcontext
 import importlib.util
 import copy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import logging
 import os
 from pathlib import Path
 import signal
@@ -17,7 +20,7 @@ import time
 import unittest
 from unittest import mock
 
-from ns_common.async_runtime import NsEventLoopSelector
+from ns_common.async_runtime import NsEventLoopSelector, TaskSupervisor
 from ns_common.exceptions import (
     NsConfigError,
     NsDependencyError,
@@ -26,7 +29,11 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.logger import NsLogger, close_ns_loggers
-from ns_runtime.main import main as _runtime_main
+from ns_runtime.main import (
+    _MainCompositionResources,
+    _run_composed_service,
+    main as _runtime_main,
+)
 from ns_runtime.startup import (
     RuntimeStartupDirectories,
     RuntimeStartupPreflight,
@@ -128,6 +135,77 @@ def _controlled_preflight(
 
 
 class NsRuntimeMainTestCase(unittest.TestCase):
+
+    def test_composed_store_open_failure_closes_every_untransferred_resource(
+        self,
+    ) -> None:
+        open_failure = RuntimeError("state store open failed")
+        events: list[str] = []
+
+        class Store:
+            async def open(self) -> None:
+                events.append("store:open")
+                raise open_failure
+
+            async def close(self) -> None:
+                events.append("store:close")
+
+        class Manager:
+            async def close(self) -> None:
+                events.append("manager:close")
+
+        class Supervisor:
+            async def shutdown(self) -> None:
+                events.append("supervisor:shutdown")
+
+        class Logger:
+            def close(self) -> None:
+                events.append("logger:close")
+
+        class Broker:
+            def close(self) -> None:
+                events.append("broker:close")
+
+        class Coordinator:
+            def install_signal_handlers(self):
+                return nullcontext()
+
+        class CreatedService:
+            shutdown_coordinator = Coordinator()
+
+            async def start(self) -> None:
+                events.append("service:start")
+
+            async def stop(self) -> None:
+                events.append("service:stop")
+                raise AssertionError("CREATED.stop must not be called")
+
+        resources = _MainCompositionResources()
+        resources.transport_manager = Manager()
+        resources.task_supervisor = Supervisor()
+        resources.logger = Logger()
+        resources.authority_broker = Broker()
+        with self.assertRaises(RuntimeError) as raised:
+            asyncio.run(_run_composed_service(
+                resources,
+                CreatedService(),  # type: ignore[arg-type]
+                state_store=Store(),
+                self_check=True,
+            ))
+        self.assertIs(open_failure, raised.exception)
+        resources.close()
+        resources.close()
+        self.assertEqual(
+            [
+                "store:open",
+                "store:close",
+                "manager:close",
+                "supervisor:shutdown",
+                "broker:close",
+                "logger:close",
+            ],
+            events,
+        )
 
     @unittest.skip(
         "requires the deployment production authority private key",
@@ -773,6 +851,231 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             self.assertFalse(startup_root.exists())
             self.assertEqual([], installed_policies)
 
+    def test_every_prelaunch_failure_closes_pending_bootstrap_and_resources(
+        self,
+    ) -> None:
+        phases = (
+            "config",
+            "preflight",
+            "tls",
+            "logger",
+            "adapter_registry",
+            "transport_manager",
+            "broker_launch",
+        )
+        for phase in phases:
+            with self.subTest(phase=phase):
+                bootstrap_close_calls = 0
+                bootstrap_launch_calls = 0
+                supervisors: list[TaskSupervisor] = []
+                loggers: list[logging.Logger] = []
+                managers: list[object] = []
+                failure = RuntimeError(f"{phase} failure")
+
+                class FakeBootstrap:
+                    def launch(self, *, config, clock):
+                        nonlocal bootstrap_launch_calls
+                        del config, clock
+                        bootstrap_launch_calls += 1
+                        raise failure
+
+                    def close(self) -> None:
+                        nonlocal bootstrap_close_calls
+                        bootstrap_close_calls += 1
+
+                class TrackingSupervisor(TaskSupervisor):
+                    def __init__(self, **values):
+                        super().__init__(**values)
+                        supervisors.append(self)
+
+                class TrackingLogger(logging.Logger):
+                    def __init__(self) -> None:
+                        super().__init__("runtime-test-tracking")
+                        self.close_calls = 0
+                        loggers.append(self)
+
+                    def close(self) -> None:
+                        self.close_calls += 1
+
+                class TrackingManager:
+                    def __init__(self) -> None:
+                        self.close_calls = 0
+                        managers.append(self)
+
+                    async def close(self) -> None:
+                        self.close_calls += 1
+
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    raw_config: dict[str, object] = {}
+                    if phase == "tls":
+                        raw_config = {
+                            "runtime": {
+                                "transport": {
+                                    "websocket_tcp": {
+                                        "tls_enabled": True,
+                                    },
+                                },
+                            },
+                        }
+                    config_path = _write_config(root, raw_config)
+                    startup_directories = RuntimeStartupDirectories.for_root(
+                        root / "runtime-root",
+                    )
+                    controlled, _ = _controlled_preflight()
+                    if phase == "config":
+                        controlled = mock.Mock()
+                        controlled.resolve_environment.return_value = "local"
+                        controlled.load_config_snapshot.side_effect = failure
+                    elif phase == "preflight":
+                        controlled.prepare = mock.Mock(side_effect=failure)
+
+                    fake_logger = TrackingLogger()
+                    fake_manager = TrackingManager()
+                    logger_patch = (
+                        mock.patch(
+                            "ns_common.logger.NsLogger",
+                            side_effect=failure,
+                        )
+                        if phase == "logger"
+                        else mock.patch(
+                            "ns_common.logger.NsLogger",
+                            return_value=fake_logger,
+                        )
+                    )
+                    registry_patch = (
+                        mock.patch(
+                            "ns_runtime.transport.TransportAdapterRegistry.default",
+                            side_effect=failure,
+                        )
+                        if phase == "adapter_registry"
+                        else mock.patch(
+                            "ns_runtime.transport.TransportAdapterRegistry.default",
+                            wraps=__import__(
+                                "ns_runtime.transport",
+                                fromlist=["TransportAdapterRegistry"],
+                            ).TransportAdapterRegistry.default,
+                        )
+                    )
+                    manager_patch = (
+                        mock.patch(
+                            "ns_runtime.transport.TransportManager",
+                            side_effect=failure,
+                        )
+                        if phase == "transport_manager"
+                        else mock.patch(
+                            "ns_runtime.transport.TransportManager",
+                            return_value=fake_manager,
+                        )
+                    )
+                    with (
+                        mock.patch(
+                            "ns_runtime.authority_bootstrap."
+                            "load_inherited_authority_bootstrap",
+                            return_value=FakeBootstrap(),
+                        ),
+                        mock.patch(
+                            "ns_common.async_runtime.TaskSupervisor",
+                            TrackingSupervisor,
+                        ),
+                        logger_patch,
+                        registry_patch,
+                        manager_patch,
+                    ):
+                        with self.assertRaises(BaseException) as raised:
+                            _runtime_main(
+                                environment="local",
+                                config_path=config_path,
+                                startup_directories=startup_directories,
+                                preflight=controlled,
+                                self_check=True,
+                            )
+
+                if phase != "tls":
+                    self.assertIs(failure, raised.exception)
+                else:
+                    self.assertIsInstance(
+                        raised.exception,
+                        NsRuntimeStartupSecurityError,
+                    )
+                self.assertEqual(1, bootstrap_close_calls)
+                self.assertEqual(
+                    1 if phase == "broker_launch" else 0,
+                    bootstrap_launch_calls,
+                )
+                if phase not in {"config"}:
+                    self.assertEqual(1, len(supervisors))
+                    self.assertEqual("closed", supervisors[0].state.value)
+                if phase in {
+                    "adapter_registry",
+                    "transport_manager",
+                    "broker_launch",
+                }:
+                    self.assertEqual(1, fake_logger.close_calls)
+                if phase == "broker_launch":
+                    self.assertEqual(1, fake_manager.close_calls)
+
+    def test_prelaunch_baseexceptions_preserve_identity_and_close_bootstrap(
+        self,
+    ) -> None:
+        failures = (
+            RuntimeError("ordinary"),
+            asyncio.CancelledError("cancelled"),
+            KeyboardInterrupt("interrupt"),
+            SystemExit(19),
+        )
+        for failure in failures:
+            with self.subTest(failure_type=type(failure).__name__):
+                close_calls = 0
+
+                class FakeBootstrap:
+                    def close(self) -> None:
+                        nonlocal close_calls
+                        close_calls += 1
+
+                preflight = mock.Mock()
+                preflight.resolve_environment.return_value = "local"
+                preflight.load_config_snapshot.side_effect = failure
+                with mock.patch(
+                    "ns_runtime.authority_bootstrap."
+                    "load_inherited_authority_bootstrap",
+                    return_value=FakeBootstrap(),
+                ):
+                    with self.assertRaises(BaseException) as raised:
+                        _runtime_main(
+                            environment="local",
+                            config_path="unused.json",
+                            preflight=preflight,
+                        )
+                self.assertIs(failure, raised.exception)
+                self.assertEqual(1, close_calls)
+
+    def test_process_level_bootstrap_cleanup_failure_outranks_ordinary_error(
+        self,
+    ) -> None:
+        operation_failure = RuntimeError("ordinary")
+        cleanup_failure = KeyboardInterrupt("cleanup interrupt")
+
+        class FakeBootstrap:
+            def close(self) -> None:
+                raise cleanup_failure
+
+        preflight = mock.Mock()
+        preflight.resolve_environment.return_value = "local"
+        preflight.load_config_snapshot.side_effect = operation_failure
+        with mock.patch(
+            "ns_runtime.authority_bootstrap."
+            "load_inherited_authority_bootstrap",
+            return_value=FakeBootstrap(),
+        ):
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                _runtime_main(
+                    environment="local",
+                    config_path="unused.json",
+                    preflight=preflight,
+                )
+        self.assertIs(cleanup_failure, raised.exception)
+
     def test_post_launch_composition_failure_closes_all_authority_resources(
         self,
     ) -> None:
@@ -803,11 +1106,15 @@ class NsRuntimeMainTestCase(unittest.TestCase):
 
         class FakeBootstrap:
             launch_calls = 0
+            close_calls = 0
 
             def launch(self, *, config, clock) -> FakeBroker:
                 del config, clock
                 self.launch_calls += 1
                 return broker
+
+            def close(self) -> None:
+                self.close_calls += 1
 
         bootstrap = FakeBootstrap()
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -832,6 +1139,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                     )
 
         self.assertEqual(1, bootstrap.launch_calls)
+        self.assertEqual(1, bootstrap.close_calls)
         self.assertEqual(
             {
                 "broker": True,

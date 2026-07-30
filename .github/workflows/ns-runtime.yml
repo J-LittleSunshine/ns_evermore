@@ -1,6 +1,7 @@
 name: ns-runtime
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - codex/ns-runtime-implementation
@@ -19,6 +20,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -38,6 +41,14 @@ jobs:
             -r requirements-runtime-test.txt
           python -m pip check
 
+      - name: Install real Redis integration dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes redis-server
+          command -v redis-server
+          redis-server --version
+          python -c "import redis, redis.asyncio, shutil; assert shutil.which('redis-server')"
+
       - name: Compile sources and tests
         run: python -m compileall -q src tests
 
@@ -56,8 +67,23 @@ jobs:
           tests.test_runtime_delivery_admission
           tests.test_runtime_transport_lifecycle
 
+      - name: Real Redis integration
+        env:
+          NS_RUNTIME_REQUIRE_REDIS_INTEGRATION: "1"
+        run: >-
+          python -m unittest -q
+          tests.test_redis_state_store_integration
+
       - name: Full unittest suite
         run: python -m unittest discover -s tests -t . -p "test_*.py" -q
 
       - name: Whitespace gate
-        run: git diff --check
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          base_sha="${EVENT_BASE_SHA}"
+          if [ -z "${base_sha}" ] || [ "${base_sha}" = "0000000000000000000000000000000000000000" ]; then
+            base_sha="$(git rev-parse "${GITHUB_SHA}^" 2>/dev/null || git rev-list --max-parents=0 "${GITHUB_SHA}")"
+          fi
+          git diff --check "${base_sha}" "${GITHUB_SHA}"
+          git show --check --format= "${GITHUB_SHA}"
