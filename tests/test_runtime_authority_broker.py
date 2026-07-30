@@ -691,8 +691,30 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         while True:
             delay = (rotation_at - clock.utc_now()).total_seconds()
             if delay <= 0:
-                return
+                break
             await asyncio.sleep(delay)
+        deadline = time.monotonic() + 5.0
+        while True:
+            rotation = await asyncio.to_thread(
+                channel._attestor.verify_identity,
+                identity_id=channel._identity_id,
+                broker_instance_id=channel._instance_id,
+                runtime_id=channel._runtime_id,
+                lifecycle_generation=channel._lifecycle_generation,
+                session_key_fingerprint=(
+                    broker_module._session_key_fingerprint(
+                        channel._public_key,
+                    )
+                ),
+                certificate_fingerprint=(
+                    channel._certificate_fingerprint
+                ),
+            )
+            if rotation.get("rotation_required") is True:
+                return
+            if time.monotonic() >= deadline:
+                raise AssertionError("rotation generation barrier timeout")
+            await asyncio.sleep(0)
 
     def test_custodian_continues_after_endpoint_keyboard_interrupt_and_retries(
         self,
@@ -951,7 +973,11 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 for value in os.environ.values()
             ))
             self.assertEqual(
-                {"_connections", "_process", "_attestor", "_consumed"},
+                {
+                    "_connections", "_process", "_attestor", "_consumed",
+                    "_clock_wall_anchor_seconds",
+                    "_clock_monotonic_anchor_seconds",
+                },
                 set(type(bootstrap).__slots__),
             )
             for slot in type(bootstrap).__slots__:
@@ -1147,6 +1173,43 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             approved,
             rotation_clock.utc_now(),
         ))
+
+    def test_attestor_clock_does_not_move_backwards_with_wall_clock(self) -> None:
+        start = datetime(2026, 7, 31, tzinfo=timezone.utc)
+        wall_times = (
+            start,
+            start - timedelta(seconds=2),
+            start + timedelta(seconds=5),
+            start - timedelta(seconds=1),
+        )
+        monotonic_times = (10.0, 11.0, 12.0, 13.0)
+        with (
+            mock.patch.object(
+                attestor_module.time_module,
+                "time",
+                side_effect=tuple(
+                    value.timestamp() for value in wall_times
+                ),
+            ),
+            mock.patch.object(
+                attestor_module.time_module,
+                "monotonic",
+                side_effect=monotonic_times,
+            ),
+        ):
+            clock = attestor_module._AttestorClock()
+            self.assertEqual(
+                start + timedelta(seconds=1),
+                clock.utc_now(),
+            )
+            self.assertEqual(
+                start + timedelta(seconds=2),
+                clock.utc_now(),
+            )
+            self.assertEqual(
+                start + timedelta(seconds=3),
+                clock.utc_now(),
+            )
 
     def test_wire_never_invokes_reduce_and_rejects_malformed_frames(self) -> None:
         invoked: list[bool] = []
@@ -1896,7 +1959,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             expected_identity=identity,
             operation="runtime_access_check",
             request_fingerprint=verified.authority.request_fingerprint,
-            now=datetime.now(timezone.utc),
+            now=broker.iam._clock.utc_now(),
         ))
 
         def clone(value, **changes):
@@ -2038,7 +2101,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
 
         service = MessageAuthorizationService.for_broker_contract_tests(
             iam_client=broker.iam,
-            clock=SystemClock(),
+            clock=broker.iam._clock,
             mode=AuthorizationMode.STRICT,
             cache_ttl_seconds=30,
         )
@@ -2126,7 +2189,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     MessageAuthorizationService
                     .for_broker_contract_tests(
                         iam_client=broker.iam,
-                        clock=SystemClock(),
+                        clock=broker.iam._clock,
                         mode=mode,
                         cache_ttl_seconds=60,
                     )
@@ -2146,15 +2209,15 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 initial_generation = (
                     broker.iam._channel.certificate.lifecycle_generation
                 )
-                while (
-                    broker.iam._channel.certificate.lifecycle_generation
-                    == initial_generation
-                ):
-                    await self._wait_for_current_certificate_rotation_window(
-                        broker.iam._channel,
-                        clock=broker.iam._clock,
-                    )
-                    await broker.iam.access_check_signed(request)
+                await self._wait_for_current_certificate_rotation_window(
+                    broker.iam._channel,
+                    clock=broker.iam._clock,
+                )
+                await broker.iam.access_check_signed(request)
+                self.assertGreater(
+                    broker.iam._channel.certificate.lifecycle_generation,
+                    initial_generation,
+                )
                 original_backend = service._current_backend_result
                 if warm_cache:
                     cached_calls = 0
@@ -2254,7 +2317,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 service = (
                     MessageAuthorizationService.for_broker_contract_tests(
                         iam_client=broker.iam,
-                        clock=SystemClock(),
+                        clock=broker.iam._clock,
                         mode=AuthorizationMode.STRICT,
                         cache_ttl_seconds=30,
                     )
@@ -2640,7 +2703,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         try:
             service = MessageAuthorizationService.for_broker_contract_tests(
                 iam_client=broker.iam,
-                clock=SystemClock(),
+                clock=broker.iam._clock,
                 mode=AuthorizationMode.CACHE,
                 cache_ttl_seconds=60,
             )
@@ -2720,7 +2783,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     request_fingerprint=(
                         old_verified.authority.request_fingerprint
                     ),
-                    now=datetime.now(timezone.utc),
+                    now=broker.iam._clock.utc_now(),
                 ),
             )
             self.assertFalse(first.is_issued_by(service))
@@ -2742,7 +2805,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     request_fingerprint=(
                         latest_verified.authority.request_fingerprint
                     ),
-                    now=datetime.now(timezone.utc),
+                    now=broker.iam._clock.utc_now(),
                 ),
             )
             cache_key = next(iter(service._decisions))

@@ -17,6 +17,7 @@ import multiprocessing
 import os
 import sys
 import threading
+import time as time_module
 import uuid
 from datetime import datetime, timedelta, timezone
 from multiprocessing.connection import Connection
@@ -118,12 +119,44 @@ def _safe_process_status(
 
 
 class _AttestorClock:
-    """One explicit wall-clock dependency owned by the attestor child."""
+    """Non-decreasing UTC derived from wall and monotonic process clocks."""
 
-    __slots__ = ()
+    __slots__ = ("_lock", "_monotonic_anchor", "_utc_anchor", "_last_utc")
+
+    def __init__(
+        self,
+        *,
+        wall_anchor_seconds: float | None = None,
+        monotonic_anchor_seconds: float | None = None,
+    ) -> None:
+        if wall_anchor_seconds is None and monotonic_anchor_seconds is None:
+            wall_anchor_seconds = time_module.time()
+            monotonic_anchor_seconds = time_module.monotonic()
+        if (
+            type(wall_anchor_seconds) is not float
+            or not math.isfinite(wall_anchor_seconds)
+            or type(monotonic_anchor_seconds) is not float
+            or not math.isfinite(monotonic_anchor_seconds)
+        ):
+            raise ValueError("attestor_clock_anchor")
+        self._utc_anchor = datetime.fromtimestamp(
+            wall_anchor_seconds,
+            tz=timezone.utc,
+        )
+        self._monotonic_anchor = monotonic_anchor_seconds
+        self._last_utc = self._utc_anchor
+        self._lock = threading.Lock()
 
     def utc_now(self) -> datetime:
-        return datetime.now(timezone.utc)
+        monotonic_utc = self._utc_anchor + timedelta(
+            seconds=(
+                time_module.monotonic() - self._monotonic_anchor
+            ),
+        )
+        with self._lock:
+            current = max(self._last_utc, monotonic_utc)
+            self._last_utc = current
+            return current
 
 
 class AuthorityAttestorClient:
@@ -498,12 +531,18 @@ def start_authority_attestor(
     expected_test_root_public_key: bytes | None = None,
     timeout_seconds: float = 5.0,
     diagnostics_enabled: bool = False,
+    _clock_wall_anchor_seconds: float | None = None,
+    _clock_monotonic_anchor_seconds: float | None = None,
 ) -> AuthorityAttestorClient:
     """Start production attestor or an explicitly separate test attestor."""
 
     if (
         realm not in {"production", "contract-test", "integration-test"}
         or type(diagnostics_enabled) is not bool
+        or (
+            (_clock_wall_anchor_seconds is None)
+            != (_clock_monotonic_anchor_seconds is None)
+        )
     ):
         raise AuthorityAttestationError("attestor_realm_invalid")
     if realm == "production":
@@ -535,7 +574,13 @@ def start_authority_attestor(
         connections["child"] = child
         process = context.Process(
             target=_authority_attestor_process,
-            args=(child, realm, test_root),
+            args=(
+                child,
+                realm,
+                test_root,
+                _clock_wall_anchor_seconds,
+                _clock_monotonic_anchor_seconds,
+            ),
             name=f"ns-runtime-authority-attestor-{realm}",
             daemon=False,
         )
@@ -600,6 +645,8 @@ def _authority_attestor_process(
     connection: Connection,
     realm: str,
     expected_test_root_public_key: bytes,
+    clock_wall_anchor_seconds: float | None,
+    clock_monotonic_anchor_seconds: float | None,
 ) -> None:
     """Spawn target with no imports from processor/delivery/routing/plugin."""
 
@@ -618,7 +665,10 @@ def _authority_attestor_process(
     pending_rotation: dict[str, object] | None = None
     request_sequence = 0
     response_sequence = 0
-    clock = _AttestorClock()
+    clock = _AttestorClock(
+        wall_anchor_seconds=clock_wall_anchor_seconds,
+        monotonic_anchor_seconds=clock_monotonic_anchor_seconds,
+    )
     try:
         connection.send_bytes(_encode_frame({
             "version": ATTESTOR_WIRE_VERSION,

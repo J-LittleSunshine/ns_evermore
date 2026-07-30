@@ -150,6 +150,56 @@ _ROLE_OPERATIONS: Mapping[str, frozenset[str]] = {
     }),
     "lifecycle": frozenset({"state_health"}),
 }
+
+
+class _AuthorityProcessClock:
+    """Share one non-decreasing UTC/monotonic anchor across authority children."""
+
+    __slots__ = ("_lock", "_monotonic_anchor", "_utc_anchor", "_last_utc")
+
+    def __init__(
+        self,
+        *,
+        wall_anchor_seconds: float,
+        monotonic_anchor_seconds: float,
+    ) -> None:
+        if (
+            type(wall_anchor_seconds) is not float
+            or not math.isfinite(wall_anchor_seconds)
+            or type(monotonic_anchor_seconds) is not float
+            or not math.isfinite(monotonic_anchor_seconds)
+        ):
+            _invalid("broker.clock_anchor")
+        self._utc_anchor = datetime.fromtimestamp(
+            wall_anchor_seconds,
+            tz=timezone.utc,
+        )
+        self._monotonic_anchor = monotonic_anchor_seconds
+        self._last_utc = self._utc_anchor
+        self._lock = threading.Lock()
+
+    def utc_now(self) -> datetime:
+        monotonic_utc = self._utc_anchor + timedelta(
+            seconds=(time.monotonic() - self._monotonic_anchor),
+        )
+        with self._lock:
+            current = max(self._last_utc, monotonic_utc)
+            self._last_utc = current
+            return current
+
+    def monotonic(self) -> float:
+        return time.monotonic()
+
+    async def sleep(self, delay_seconds: float) -> None:
+        if (
+            type(delay_seconds) not in {int, float}
+            or not math.isfinite(delay_seconds)
+            or delay_seconds < 0
+        ):
+            _invalid("broker.clock_delay")
+        await asyncio.sleep(float(delay_seconds))
+
+
 _IAM_PATHS: Mapping[str, str] = {
     "introspect": "internal/introspect_token/",
     "runtime_access_check": "internal/runtime_access_check/",
@@ -3450,6 +3500,13 @@ def _spawn_authority_broker(
         inherited_fds=inherited_fds,
     )
     try:
+        clock_wall_anchor_seconds = float(time.time())
+        clock_monotonic_anchor_seconds = float(time.monotonic())
+        if type(runtime_clock) is SystemClock:
+            runtime_clock = _AuthorityProcessClock(
+                wall_anchor_seconds=clock_wall_anchor_seconds,
+                monotonic_anchor_seconds=clock_monotonic_anchor_seconds,
+            )
         attestor = start_authority_attestor(
             realm=realm,
             expected_test_root_public_key=(
@@ -3457,6 +3514,10 @@ def _spawn_authority_broker(
             ),
             timeout_seconds=startup_timeout_seconds,
             diagnostics_enabled=realm != "production",
+            _clock_wall_anchor_seconds=clock_wall_anchor_seconds,
+            _clock_monotonic_anchor_seconds=(
+                clock_monotonic_anchor_seconds
+            ),
         )
         cleanup_owner.attestor = attestor
         for role in BrokerRepositoryRole:
@@ -3480,6 +3541,8 @@ def _spawn_authority_broker(
                 attestor.instance_id,
                 float(session_ttl_seconds),
                 float(delegation_ttl_seconds),
+                clock_wall_anchor_seconds,
+                clock_monotonic_anchor_seconds,
             ),
             name="ns-runtime-authority-broker",
             daemon=False,
@@ -3534,6 +3597,8 @@ def _complete_inherited_authority_broker_start(
     attestor: AuthorityAttestorClient,
     config: AuthorityBrokerConfig,
     clock: Clock,
+    clock_wall_anchor_seconds: float,
+    clock_monotonic_anchor_seconds: float,
     startup_timeout_seconds: float = 15.0,
 ) -> ProductionAuthorityBroker:
     """Send only non-secret config to the already isolated broker child."""
@@ -3543,8 +3608,17 @@ def _complete_inherited_authority_broker_start(
         or not process.is_alive()
         or set(parents) != {role.value for role in BrokerRepositoryRole}
         or not isinstance(clock, Clock)
+        or type(clock_wall_anchor_seconds) is not float
+        or not math.isfinite(clock_wall_anchor_seconds)
+        or type(clock_monotonic_anchor_seconds) is not float
+        or not math.isfinite(clock_monotonic_anchor_seconds)
     ):
         _invalid("broker.pending_bootstrap")
+    if type(clock) is SystemClock:
+        clock = _AuthorityProcessClock(
+            wall_anchor_seconds=clock_wall_anchor_seconds,
+            monotonic_anchor_seconds=clock_monotonic_anchor_seconds,
+        )
     lifecycle = parents[BrokerRepositoryRole.LIFECYCLE.value]
     try:
         lifecycle.send_bytes(encode_frame({
@@ -4615,8 +4689,13 @@ async def _broker_async_main(
     attestor_instance_id: str,
     session_ttl_seconds: float,
     delegation_ttl_seconds: float,
+    clock_wall_anchor_seconds: float,
+    clock_monotonic_anchor_seconds: float,
 ) -> None:
-    clock = SystemClock()
+    clock = _AuthorityProcessClock(
+        wall_anchor_seconds=clock_wall_anchor_seconds,
+        monotonic_anchor_seconds=clock_monotonic_anchor_seconds,
+    )
     expected_roles = {role.value for role in BrokerRepositoryRole}
     if set(connections) != expected_roles:
         _invalid("broker.endpoint_set")
@@ -4986,6 +5065,8 @@ def _authority_broker_process(
     attestor_instance_id: str,
     session_ttl_seconds: float,
     delegation_ttl_seconds: float,
+    clock_wall_anchor_seconds: float,
+    clock_monotonic_anchor_seconds: float,
 ) -> None:
     """Top-level spawn target; descriptors are consumed before backends load."""
 
@@ -5009,6 +5090,10 @@ def _authority_broker_process(
             or type(delegation_ttl_seconds) not in {int, float}
             or not math.isfinite(delegation_ttl_seconds)
             or delegation_ttl_seconds <= session_ttl_seconds
+            or type(clock_wall_anchor_seconds) is not float
+            or not math.isfinite(clock_wall_anchor_seconds)
+            or type(clock_monotonic_anchor_seconds) is not float
+            or not math.isfinite(clock_monotonic_anchor_seconds)
         ):
             _invalid("broker.attestor_binding")
         root_fd = root_key_handle.detach()
@@ -5078,6 +5163,8 @@ def _authority_broker_process(
             attestor_instance_id,
             float(session_ttl_seconds),
             float(delegation_ttl_seconds),
+            clock_wall_anchor_seconds,
+            clock_monotonic_anchor_seconds,
         ))
     except BaseException as error:
         try:

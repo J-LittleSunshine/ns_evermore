@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import nullcontext
 import importlib.util
+import inspect
 import copy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -47,6 +48,93 @@ runtime_main_module = importlib.import_module("ns_runtime.main")
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
+
+
+class _LoopFinalizationStore:
+    def __init__(self) -> None:
+        self.open_calls = 0
+        self.close_calls = 0
+
+    async def open(self) -> None:
+        self.open_calls += 1
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+
+class _LoopFinalizationCoordinator:
+    def __init__(
+        self,
+        store: _LoopFinalizationStore,
+        *,
+        run_failure: BaseException | None = None,
+    ) -> None:
+        self.cleanup_pending = False
+        self.cleanup_progress: object = ("not-started",)
+        self.context = type("Context", (), {"state_store": store})()
+        self._run_failure = run_failure
+
+    def install_signal_handlers(self):
+        return nullcontext()
+
+    def request_shutdown(self, _reason: object) -> None:
+        return None
+
+    async def wait_requested(self) -> None:
+        if self._run_failure is not None:
+            raise self._run_failure
+
+
+class _LoopFinalizationService:
+    def __init__(
+        self,
+        store: _LoopFinalizationStore,
+        *,
+        on_start: object | None = None,
+        run_failure: BaseException | None = None,
+    ) -> None:
+        self.shutdown_coordinator = _LoopFinalizationCoordinator(
+            store,
+            run_failure=run_failure,
+        )
+        self.state = RuntimeServiceState.CREATED
+        self.stop_calls = 0
+        self._store = store
+        self._on_start = on_start
+
+    async def start(self) -> None:
+        self.state = RuntimeServiceState.RUNNING
+        if self._on_start is not None:
+            result = self._on_start()  # type: ignore[operator]
+            if inspect.isawaitable(result):
+                await result
+
+    async def stop(self) -> None:
+        self.stop_calls += 1
+        if self.state is RuntimeServiceState.STOPPED:
+            return
+        await self._store.close()
+        self.shutdown_coordinator.cleanup_pending = False
+        self.shutdown_coordinator.cleanup_progress = ("complete",)
+        self.state = RuntimeServiceState.STOPPED
+
+
+def _loop_finalization_fixture(
+    *,
+    on_start: object | None = None,
+    run_failure: BaseException | None = None,
+) -> tuple[
+    _MainCompositionResources,
+    _LoopFinalizationService,
+    _LoopFinalizationStore,
+]:
+    store = _LoopFinalizationStore()
+    service = _LoopFinalizationService(
+        store,
+        on_start=on_start,
+        run_failure=run_failure,
+    )
+    return _MainCompositionResources(), service, store
 
 
 def main(**values: object) -> int:
@@ -553,6 +641,557 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                 owner.close()
                 self.assertEqual(4, service.stop_calls)
                 self.assertEqual(RuntimeServiceState.STOPPED, service.state)
+                self.assertTrue(owner.original_loop.is_closed())
+                self.assertIsNone(owner.service_cleanup_lease)
+                self.assertIsNone(resources.service_lifecycle_owner)
+
+    def test_asyncgens_failure_retains_owner_and_retries_only_that_phase(
+        self,
+    ) -> None:
+        resources, service, store = _loop_finalization_fixture()
+        original = asyncio.BaseEventLoop.shutdown_asyncgens
+        calls = 0
+
+        async def flaky_shutdown_asyncgens(loop) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError(
+                    "sensitive-asyncgen-finalizer-coroutine-repr",
+                )
+            await original(loop)
+
+        with mock.patch.object(
+            asyncio.BaseEventLoop,
+            "shutdown_asyncgens",
+            flaky_shutdown_asyncgens,
+        ):
+            with self.assertRaises(NsStateError) as raised:
+                _run_composed_service_sync(
+                    resources,
+                    service,  # type: ignore[arg-type]
+                    state_store=store,
+                    self_check=True,
+                )
+            owner = raised.exception.cleanup_owner
+            self.assertIs(owner, resources.service_lifecycle_owner)
+            self.assertEqual(
+                "service_loop_asyncgens_incomplete",
+                raised.exception.details["reason"],
+            )
+            self.assertEqual(
+                (True, True, False, False, False),
+                owner.cleanup_progress,
+            )
+            self.assertFalse(owner.original_loop.is_closed())
+            self.assertIsNotNone(owner.service_cleanup_lease)
+            self.assertEqual(1, service.stop_calls)
+            self.assertNotIn(
+                "sensitive-asyncgen-finalizer-coroutine-repr",
+                repr(raised.exception),
+            )
+
+            owner.close()
+
+        self.assertEqual(2, calls)
+        self.assertEqual(1, service.stop_calls)
+        self.assertEqual(
+            (True, True, True, True, True),
+            owner.cleanup_progress,
+        )
+        self.assertTrue(owner.original_loop.is_closed())
+        self.assertIsNone(owner.service_cleanup_lease)
+        self.assertIsNone(resources.service_lifecycle_owner)
+
+    def test_executor_shutdown_failure_retains_observable_runner(
+        self,
+    ) -> None:
+        resources, service, store = _loop_finalization_fixture()
+        runner = runtime_main_module._ServiceLifecycleRunner(
+            resources,
+            service,
+        )
+        original = runner._start_executor_shutdown
+        calls = 0
+
+        def fail_once() -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError(
+                    "sensitive-executor-thread-name-and-error",
+                )
+            original()
+
+        runner._start_executor_shutdown = fail_once
+        with self.assertRaises(NsStateError) as raised:
+            runner.run(state_store=store, self_check=True)
+
+        self.assertIs(runner, raised.exception.cleanup_owner)
+        self.assertIs(runner, resources.service_lifecycle_owner)
+        self.assertEqual(
+            "service_loop_executor_incomplete",
+            raised.exception.details["reason"],
+        )
+        self.assertEqual(
+            (True, True, True, False, False),
+            runner.cleanup_progress,
+        )
+        self.assertFalse(runner.original_loop.is_closed())
+        self.assertIsNotNone(runner.service_cleanup_lease)
+        self.assertNotIn(
+            "sensitive-executor-thread-name-and-error",
+            repr(raised.exception),
+        )
+
+        runner.close()
+
+        self.assertEqual(2, calls)
+        self.assertEqual(
+            (True, True, True, True, True),
+            runner.cleanup_progress,
+        )
+        self.assertTrue(runner.original_loop.is_closed())
+        self.assertIsNone(runner.service_cleanup_lease)
+        self.assertIsNone(resources.service_lifecycle_owner)
+
+    def test_executor_shutdown_timeout_is_bounded_and_retryable(self) -> None:
+        worker_entered = threading.Event()
+        release_worker = threading.Event()
+        worker_exited = threading.Event()
+        holder: dict[str, object] = {}
+
+        def blocked_worker() -> None:
+            worker_entered.set()
+            try:
+                release_worker.wait(timeout=30.0)
+            finally:
+                worker_exited.set()
+
+        async def start_worker() -> None:
+            holder["task"] = asyncio.create_task(
+                asyncio.to_thread(blocked_worker),
+                name="sensitive-executor-task-and-coroutine-name",
+            )
+            deadline = asyncio.get_running_loop().time() + 5.0
+            while not worker_entered.is_set():
+                if asyncio.get_running_loop().time() >= deadline:
+                    self.fail("executor worker did not enter test barrier")
+                await asyncio.sleep(0)
+
+        resources, service, store = _loop_finalization_fixture(
+            on_start=start_worker,
+        )
+        runner = runtime_main_module._ServiceLifecycleRunner(
+            resources,
+            service,
+        )
+        try:
+            with (
+                mock.patch.object(
+                    runtime_main_module,
+                    "_SERVICE_LOOP_TASK_DRAIN_TIMEOUT_SECONDS",
+                    0.05,
+                ),
+                mock.patch.object(
+                    runtime_main_module,
+                    "_SERVICE_LOOP_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS",
+                    0.05,
+                ),
+            ):
+                with self.assertRaises(NsStateError) as raised:
+                    runner.run(state_store=store, self_check=True)
+
+                self.assertEqual(
+                    "service_loop_executor_incomplete",
+                    raised.exception.details["reason"],
+                )
+                self.assertIs(runner, raised.exception.cleanup_owner)
+                self.assertIs(runner, resources.service_lifecycle_owner)
+                self.assertEqual(
+                    (True, True, True, False, False),
+                    runner.cleanup_progress,
+                )
+                self.assertTrue(runner._executor_shutdown_started)
+                self.assertTrue(runner._executor_threads_alive())
+                self.assertTrue(all(
+                    not thread.daemon
+                    for thread in tuple(runner._executor._threads)
+                ))
+                self.assertNotIn(
+                    "sensitive-executor-task-and-coroutine-name",
+                    repr(raised.exception),
+                )
+
+                release_worker.set()
+                self.assertTrue(worker_exited.wait(timeout=5.0))
+                runner.close()
+        finally:
+            release_worker.set()
+
+        task = holder["task"]
+        self.assertTrue(task.done())  # type: ignore[union-attr]
+        self.assertEqual(
+            (True, True, True, True, True),
+            runner.cleanup_progress,
+        )
+        self.assertTrue(runner.original_loop.is_closed())
+        self.assertIsNone(runner.service_cleanup_lease)
+        self.assertIsNone(resources.service_lifecycle_owner)
+
+    def test_pending_task_is_cancelled_and_awaited_before_loop_close(
+        self,
+    ) -> None:
+        task_finalized = threading.Event()
+        holder: dict[str, object] = {}
+
+        async def pending_task() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                task_finalized.set()
+
+        async def start_task() -> None:
+            holder["task"] = asyncio.create_task(
+                pending_task(),
+                name="sensitive-pending-task-name",
+            )
+            await asyncio.sleep(0)
+
+        resources, service, store = _loop_finalization_fixture(
+            on_start=start_task,
+        )
+        runner = runtime_main_module._ServiceLifecycleRunner(
+            resources,
+            service,
+        )
+        runner.run(state_store=store, self_check=True)
+
+        task = holder["task"]
+        self.assertTrue(task.done())  # type: ignore[union-attr]
+        self.assertTrue(task.cancelled())  # type: ignore[union-attr]
+        self.assertTrue(task_finalized.is_set())
+        self.assertEqual(
+            (True, True, True, True, True),
+            runner.cleanup_progress,
+        )
+        self.assertEqual(0, runner.pending_facts()["pending_task_count"])
+        self.assertTrue(runner.original_loop.is_closed())
+        self.assertIsNone(runner.service_cleanup_lease)
+        self.assertIsNone(resources.service_lifecycle_owner)
+
+    def test_pending_task_exception_is_counted_without_sensitive_details(
+        self,
+    ) -> None:
+        original = asyncio.BaseEventLoop.shutdown_asyncgens
+        asyncgen_calls = 0
+
+        async def task_with_cleanup_failure() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise RuntimeError(
+                    "sensitive-task-cleanup-exception-text",
+                )
+
+        async def start_task() -> None:
+            asyncio.create_task(
+                task_with_cleanup_failure(),
+                name="sensitive-task-name-and-coroutine-repr",
+            )
+            await asyncio.sleep(0)
+
+        async def fail_asyncgens_once(loop) -> None:
+            nonlocal asyncgen_calls
+            asyncgen_calls += 1
+            if asyncgen_calls == 1:
+                raise RuntimeError(
+                    "sensitive-asyncgen-cleanup-exception-text",
+                )
+            await original(loop)
+
+        resources, service, store = _loop_finalization_fixture(
+            on_start=start_task,
+        )
+        runner = runtime_main_module._ServiceLifecycleRunner(
+            resources,
+            service,
+        )
+        with mock.patch.object(
+            asyncio.BaseEventLoop,
+            "shutdown_asyncgens",
+            fail_asyncgens_once,
+        ):
+            with self.assertRaises(NsStateError) as raised:
+                runner.run(state_store=store, self_check=True)
+
+            self.assertEqual(
+                "service_loop_asyncgens_incomplete",
+                raised.exception.details["reason"],
+            )
+            self.assertEqual(
+                1,
+                raised.exception.details["task_exception_count"],
+            )
+            self.assertEqual(
+                0,
+                raised.exception.details["pending_task_count"],
+            )
+            self.assertNotIn(
+                "sensitive-task-cleanup-exception-text",
+                repr(raised.exception),
+            )
+            self.assertNotIn(
+                "sensitive-task-name-and-coroutine-repr",
+                repr(raised.exception),
+            )
+            self.assertNotIn(
+                "sensitive-asyncgen-cleanup-exception-text",
+                repr(raised.exception),
+            )
+            runner.close()
+
+        self.assertEqual(2, asyncgen_calls)
+        self.assertEqual(
+            (True, True, True, True, True),
+            runner.cleanup_progress,
+        )
+        self.assertTrue(runner.original_loop.is_closed())
+        self.assertIsNone(runner.service_cleanup_lease)
+        self.assertIsNone(resources.service_lifecycle_owner)
+
+    def test_cancellation_resistant_task_retains_owner_until_retry(
+        self,
+    ) -> None:
+        release_task = threading.Event()
+        task_started = threading.Event()
+        task_finished = threading.Event()
+        holder: dict[str, object] = {}
+
+        async def resistant_task() -> None:
+            task_started.set()
+            try:
+                while True:
+                    try:
+                        await asyncio.sleep(3600)
+                    except asyncio.CancelledError:
+                        if release_task.is_set():
+                            return
+            finally:
+                task_finished.set()
+
+        async def start_task() -> None:
+            holder["task"] = asyncio.create_task(
+                resistant_task(),
+                name="sensitive-resistant-task-coroutine-repr",
+            )
+            await asyncio.sleep(0)
+
+        resources, service, store = _loop_finalization_fixture(
+            on_start=start_task,
+        )
+        runner = runtime_main_module._ServiceLifecycleRunner(
+            resources,
+            service,
+        )
+        try:
+            with mock.patch.object(
+                runtime_main_module,
+                "_SERVICE_LOOP_TASK_DRAIN_TIMEOUT_SECONDS",
+                0.05,
+            ):
+                with self.assertRaises(NsStateError) as raised:
+                    runner.run(state_store=store, self_check=True)
+
+                self.assertTrue(task_started.is_set())
+                self.assertEqual(
+                    "service_loop_tasks_incomplete",
+                    raised.exception.details["reason"],
+                )
+                self.assertIs(runner, raised.exception.cleanup_owner)
+                self.assertIs(runner, resources.service_lifecycle_owner)
+                self.assertEqual(
+                    (True, False, False, False, False),
+                    runner.cleanup_progress,
+                )
+                self.assertEqual(
+                    1,
+                    raised.exception.details["pending_task_count"],
+                )
+                self.assertFalse(runner.original_loop.is_closed())
+                self.assertIsNotNone(runner.service_cleanup_lease)
+                self.assertNotIn(
+                    "sensitive-resistant-task-coroutine-repr",
+                    repr(raised.exception),
+                )
+
+                release_task.set()
+                runner.close()
+        finally:
+            release_task.set()
+
+        task = holder["task"]
+        self.assertTrue(task.done())  # type: ignore[union-attr]
+        self.assertTrue(task_finished.is_set())
+        self.assertEqual(
+            (True, True, True, True, True),
+            runner.cleanup_progress,
+        )
+        self.assertTrue(runner.original_loop.is_closed())
+        self.assertIsNone(runner.service_cleanup_lease)
+        self.assertIsNone(resources.service_lifecycle_owner)
+
+    def test_loop_close_failure_preserves_completed_phases_and_owner(
+        self,
+    ) -> None:
+        resources, service, store = _loop_finalization_fixture()
+        runner = runtime_main_module._ServiceLifecycleRunner(
+            resources,
+            service,
+        )
+        original_close = runner._loop.close
+        close_calls = 0
+        phase_calls = {
+            "tasks": 0,
+            "asyncgens": 0,
+            "executor": 0,
+        }
+        original_tasks = runner._drain_pending_tasks
+        original_asyncgens = runner._shutdown_asyncgens
+        original_executor = runner._shutdown_executor
+
+        def drain_tasks() -> None:
+            phase_calls["tasks"] += 1
+            original_tasks()
+
+        def shutdown_asyncgens() -> None:
+            phase_calls["asyncgens"] += 1
+            original_asyncgens()
+
+        def shutdown_executor() -> None:
+            phase_calls["executor"] += 1
+            original_executor()
+
+        def close_once() -> None:
+            nonlocal close_calls
+            close_calls += 1
+            if close_calls == 1:
+                raise RuntimeError(
+                    "sensitive-loop-close-error-and-task-name",
+                )
+            original_close()
+
+        runner._drain_pending_tasks = drain_tasks
+        runner._shutdown_asyncgens = shutdown_asyncgens
+        runner._shutdown_executor = shutdown_executor
+        runner._loop.close = close_once
+
+        with self.assertRaises(NsStateError) as raised:
+            runner.run(state_store=store, self_check=True)
+
+        self.assertEqual(
+            "service_loop_close_incomplete",
+            raised.exception.details["reason"],
+        )
+        self.assertIs(runner, raised.exception.cleanup_owner)
+        self.assertIs(runner, resources.service_lifecycle_owner)
+        self.assertEqual(
+            (True, True, True, True, False),
+            runner.cleanup_progress,
+        )
+        self.assertEqual(
+            {"tasks": 1, "asyncgens": 1, "executor": 1},
+            phase_calls,
+        )
+        self.assertFalse(runner.original_loop.is_closed())
+        self.assertIsNotNone(runner.service_cleanup_lease)
+        self.assertNotIn(
+            "sensitive-loop-close-error-and-task-name",
+            repr(raised.exception),
+        )
+
+        runner.close()
+
+        self.assertEqual(2, close_calls)
+        self.assertEqual(
+            {"tasks": 1, "asyncgens": 1, "executor": 1},
+            phase_calls,
+        )
+        self.assertEqual(
+            (True, True, True, True, True),
+            runner.cleanup_progress,
+        )
+        self.assertTrue(runner.original_loop.is_closed())
+        self.assertIsNone(runner.service_cleanup_lease)
+        self.assertIsNone(resources.service_lifecycle_owner)
+
+    def test_process_finalizer_failure_keeps_loop_incomplete_cause_chain(
+        self,
+    ) -> None:
+        original = asyncio.BaseEventLoop.shutdown_asyncgens
+        for exception_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(exception_type=exception_type.__name__):
+                operation_failure = RuntimeError(
+                    "sensitive-original-service-run-failure",
+                )
+                process_failure = exception_type()
+                calls = 0
+                resources, service, store = _loop_finalization_fixture(
+                    run_failure=operation_failure,
+                )
+
+                async def fail_once(loop) -> None:
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        raise process_failure
+                    await original(loop)
+
+                with mock.patch.object(
+                    asyncio.BaseEventLoop,
+                    "shutdown_asyncgens",
+                    fail_once,
+                ):
+                    with self.assertRaises(exception_type) as raised:
+                        _run_composed_service_sync(
+                            resources,
+                            service,  # type: ignore[arg-type]
+                            state_store=store,
+                            self_check=False,
+                        )
+
+                    self.assertIs(process_failure, raised.exception)
+                    incomplete = raised.exception.__cause__
+                    self.assertIsInstance(incomplete, NsStateError)
+                    self.assertEqual(
+                        "service_loop_asyncgens_incomplete",
+                        incomplete.details["reason"],
+                    )
+                    self.assertIs(
+                        operation_failure,
+                        incomplete.__cause__,
+                    )
+                    owner = incomplete.cleanup_owner
+                    self.assertIs(owner, resources.service_lifecycle_owner)
+                    self.assertEqual(
+                        (True, True, False, False, False),
+                        owner.cleanup_progress,
+                    )
+                    self.assertFalse(owner.original_loop.is_closed())
+                    self.assertIsNotNone(owner.service_cleanup_lease)
+                    self.assertNotIn(
+                        "sensitive-original-service-run-failure",
+                        repr(incomplete),
+                    )
+
+                    owner.close()
+
+                self.assertEqual(2, calls)
+                self.assertEqual(
+                    (True, True, True, True, True),
+                    owner.cleanup_progress,
+                )
                 self.assertTrue(owner.original_loop.is_closed())
                 self.assertIsNone(owner.service_cleanup_lease)
                 self.assertIsNone(resources.service_lifecycle_owner)

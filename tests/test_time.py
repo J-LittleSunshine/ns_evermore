@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest import mock
 from datetime import (
     datetime,
     timedelta,
     timezone,
 )
 
+import ns_common.time as time_module
 from ns_common.exceptions import (
     NsStateError,
     NsValidationError,
@@ -36,6 +38,45 @@ class ClockTestCase(unittest.TestCase):
         self.assertIs(timezone.utc, now.tzinfo)
         self.assertEqual(timedelta(0), now.utcoffset())
         self.assertLessEqual(before, after)
+
+    def test_system_clock_does_not_move_backwards_with_wall_clock(self) -> None:
+        anchor = datetime(2026, 7, 31, tzinfo=timezone.utc)
+        with (
+            mock.patch.object(
+                time_module,
+                "_SYSTEM_CLOCK_WALL_ANCHOR_SECONDS",
+                anchor.timestamp(),
+            ),
+            mock.patch.object(
+                time_module,
+                "_SYSTEM_CLOCK_MONOTONIC_ANCHOR_SECONDS",
+                100.0,
+            ),
+            mock.patch.object(
+                time_module,
+                "_SYSTEM_CLOCK_LAST_UTC",
+                anchor,
+            ),
+            mock.patch.object(
+                time_module.time_module,
+                "monotonic",
+                side_effect=(101.0, 102.0),
+            ),
+            mock.patch.object(
+                time_module.time_module,
+                "time",
+                side_effect=(
+                    anchor.timestamp() + 1.0,
+                    anchor.timestamp() - 60.0,
+                ),
+            ),
+        ):
+            clock = SystemClock()
+            first = clock.utc_now()
+            second = SystemClock().utc_now()
+
+        self.assertEqual(anchor + timedelta(seconds=1), first)
+        self.assertEqual(anchor + timedelta(seconds=2), second)
 
     def test_controlled_clock_normalizes_utc_and_keeps_wall_clock_separate(self) -> None:
         local_start = datetime(

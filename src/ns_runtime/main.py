@@ -198,19 +198,13 @@ def _service_cleanup_complete(service: object) -> bool:
 class _ServiceLifecycleCleanupLease:
     """Close-only service custody bound to its original event loop."""
 
-    __slots__ = ("_service", "_loop", "_release")
+    __slots__ = ("_service", "_loop")
 
     def __init__(self, service: object) -> None:
         import asyncio
 
         self._service = service
         self._loop = asyncio.get_running_loop()
-        self._release: Callable[[], None] | None = None
-
-    def bind_release(self, release: Callable[[], None]) -> None:
-        if self._release is not None or not callable(release):
-            raise TypeError("service lifecycle release is invalid")
-        self._release = release
 
     @property
     def incomplete(self) -> bool:
@@ -243,15 +237,12 @@ class _ServiceLifecycleCleanupLease:
             self._service,  # type: ignore[arg-type]
             cleanup_owner=self,
         )
-        if _service_cleanup_complete(self._service):
-            release = self._release
-            if release is not None:
-                release()
 
 
 def _is_cleanup_incomplete_failure(error: BaseException) -> bool:
     return bool(
-        getattr(error, "details", {}).get("reason")
+        getattr(error, "cleanup_incomplete", False)
+        or getattr(error, "details", {}).get("reason")
         == "cleanup_pending_no_progress"
     )
 
@@ -381,9 +372,19 @@ class _MainCompositionResources:
             except BaseException:
                 pending_facts = {}
             if type(pending_facts) is dict:
-                for name in ("cleanup_pending", "service_stopped"):
+                for name in (
+                    "cleanup_pending",
+                    "service_stopped",
+                    "service_cleanup_complete",
+                    "pending_tasks_drained",
+                    "asyncgens_shutdown",
+                    "executor_shutdown",
+                    "loop_closed",
+                    "pending_task_count",
+                    "task_exception_count",
+                ):
                     value = pending_facts.get(name)
-                    if type(value) is bool:
+                    if type(value) in {bool, int}:
                         facts[name] = value
         return facts
 
@@ -492,7 +493,7 @@ class _MainCompositionResources:
 
 
 class _ServiceLifecycleRunner:
-    """Synchronously own one service run and its original event loop."""
+    """Own one service run until every event-loop finalization phase succeeds."""
 
     def __init__(
         self,
@@ -500,13 +501,26 @@ class _ServiceLifecycleRunner:
         service: object,
     ) -> None:
         import asyncio
+        from concurrent.futures import ThreadPoolExecutor
 
         self._resources = resources
         self._service = service
         self._loop = asyncio.new_event_loop()
+        self._executor = ThreadPoolExecutor()
+        self._loop.set_default_executor(self._executor)
         self._lease: _ServiceLifecycleCleanupLease | None = None
         self._run_failure: BaseException | None = None
         self._started = False
+        self._service_resources_transferred = False
+        self._service_cleanup_complete = False
+        self._pending_tasks_drained = False
+        self._asyncgens_shutdown = False
+        self._executor_shutdown = False
+        self._loop_closed = False
+        self._asyncgens_task: object | None = None
+        self._executor_shutdown_started = False
+        self._pending_task_count = 0
+        self._task_exception_count = 0
 
     @property
     def original_loop(self) -> object:
@@ -522,26 +536,36 @@ class _ServiceLifecycleRunner:
 
     @property
     def incomplete(self) -> bool:
-        return bool(
-            self._resources.service_lifecycle_owner is self
-            and not _service_cleanup_complete(self._service)
-        )
+        return not self._loop_closed
 
     @property
-    def cleanup_progress(self) -> tuple[object, ...]:
-        lease = self._lease
+    def cleanup_progress(self) -> tuple[bool, bool, bool, bool, bool]:
         return (
-            not self._loop.is_closed(),
-            None if lease is None else lease.cleanup_progress,
-            _service_is_stopped(self._service),
+            self._service_cleanup_complete,
+            self._pending_tasks_drained,
+            self._asyncgens_shutdown,
+            self._executor_shutdown,
+            self._loop_closed,
         )
 
-    def pending_facts(self) -> dict[str, bool]:
-        facts = _service_cleanup_pending_facts(self._service)
-        facts["service_lifecycle_owner_active"] = bool(
-            self._resources.service_lifecycle_owner is self
-        )
-        return facts
+    def pending_facts(self) -> dict[str, bool | int]:
+        coordinator = getattr(self._service, "shutdown_coordinator", None)
+        return {
+            "cleanup_pending": bool(
+                getattr(coordinator, "cleanup_pending", False),
+            ),
+            "service_stopped": _service_is_stopped(self._service),
+            "service_lifecycle_owner_active": bool(
+                self._resources.service_lifecycle_owner is self
+            ),
+            "service_cleanup_complete": self._service_cleanup_complete,
+            "pending_tasks_drained": self._pending_tasks_drained,
+            "asyncgens_shutdown": self._asyncgens_shutdown,
+            "executor_shutdown": self._executor_shutdown,
+            "loop_closed": self._loop_closed,
+            "pending_task_count": self._pending_task_count,
+            "task_exception_count": self._task_exception_count,
+        }
 
     def _bind_lease(self, lease: _ServiceLifecycleCleanupLease) -> None:
         if self._lease is not None or not isinstance(
@@ -551,6 +575,14 @@ class _ServiceLifecycleRunner:
             raise TypeError("service lifecycle lease is invalid")
         self._lease = lease
 
+    def _transfer_service_resources(self) -> None:
+        if self._service_resources_transferred:
+            raise RuntimeError("service resources were already transferred")
+        if self._resources.service_lifecycle_owner is not self:
+            raise RuntimeError("service lifecycle runner lost resource custody")
+        self._service_resources_transferred = True
+        self._resources.transfer_service_resources()
+
     def run(
         self,
         *,
@@ -559,7 +591,10 @@ class _ServiceLifecycleRunner:
     ) -> None:
         if self._started:
             raise RuntimeError("service lifecycle runner is single-use")
+        if self._resources.service_lifecycle_owner is not None:
+            raise RuntimeError("service lifecycle owner is already assigned")
         self._started = True
+        self._resources.service_lifecycle_owner = self
         failure: BaseException | None = None
         try:
             self._loop.run_until_complete(_run_composed_service(
@@ -572,86 +607,325 @@ class _ServiceLifecycleRunner:
         except BaseException as run_failure:
             self._run_failure = run_failure
             failure = run_failure
-        if (
-            self._resources.service_lifecycle_owner is not self
-            or _service_cleanup_complete(self._service)
-        ):
+        self._observe_service_cleanup()
+        if self._service_cleanup_complete:
             try:
-                self._close_loop()
+                self._finalize_loop()
             except BaseException as cleanup_failure:
                 failure = _merge_service_failure(
                     failure,
                     cleanup_failure,
                 )
+        elif failure is None:
+            failure = self._loop_cleanup_error(
+                "service_cleanup_remains_incomplete",
+            )
         if failure is not None:
             raise failure
 
     def close(self) -> None:
         if self._loop.is_closed():
-            if self.incomplete:
-                raise self._unavailable_error(
-                    "service_cleanup_loop_closed",
-                )
+            self._confirm_loop_closed()
             return
         if self._loop.is_running():
-            raise self._unavailable_error(
+            raise self._loop_cleanup_error(
                 "service_cleanup_loop_running",
             )
-        lease = self._lease
-        if lease is None:
-            if self.incomplete:
-                raise self._unavailable_error(
-                    "service_cleanup_lease_unavailable",
-                )
-            self._close_loop()
-            return
 
         failure: BaseException | None = None
-        try:
-            self._loop.run_until_complete(lease.close())
-        except BaseException as cleanup_failure:
-            failure = cleanup_failure
-        if _service_cleanup_complete(self._service):
-            if self._resources.service_lifecycle_owner is self:
-                self._resources.service_lifecycle_owner = None
-            try:
-                self._close_loop()
-            except BaseException as cleanup_failure:
-                failure = _merge_service_failure(
-                    failure,
-                    cleanup_failure,
+        if not self._service_cleanup_complete:
+            lease = self._lease
+            if lease is None:
+                raise self._loop_cleanup_error(
+                    "service_cleanup_lease_unavailable",
                 )
+            try:
+                self._loop.run_until_complete(lease.close())
+            except BaseException as cleanup_failure:
+                failure = cleanup_failure
+            self._observe_service_cleanup()
+        if self._service_cleanup_complete:
+            try:
+                self._finalize_loop()
+            except BaseException as cleanup_failure:
+                failure = _merge_service_failure(failure, cleanup_failure)
         if failure is not None:
             raise failure
         if self.incomplete:
-            raise self._unavailable_error(
+            raise self._loop_cleanup_error(
                 "service_cleanup_remains_incomplete",
             )
 
-    def _close_loop(self) -> None:
-        if self._loop.is_closed():
+    def _observe_service_cleanup(self) -> None:
+        if self._service_cleanup_complete:
             return
-        if self._resources.service_lifecycle_owner is self:
-            if not _service_cleanup_complete(self._service):
-                return
-            self._resources.service_lifecycle_owner = None
-        self._loop.run_until_complete(self._loop.shutdown_asyncgens())
-        self._loop.run_until_complete(self._loop.shutdown_default_executor())
-        self._loop.close()
-        self._lease = None
+        if (
+            not self._service_resources_transferred
+            or _service_cleanup_complete(self._service)
+        ):
+            self._service_cleanup_complete = True
+
+    def _finalize_loop(self) -> None:
+        if not self._service_cleanup_complete:
+            raise self._loop_cleanup_error(
+                "service_cleanup_remains_incomplete",
+            )
+        if not self._pending_tasks_drained:
+            self._drain_pending_tasks()
+        if not self._asyncgens_shutdown:
+            self._shutdown_asyncgens()
+        if not self._executor_shutdown:
+            self._shutdown_executor()
+        if not self._loop_closed:
+            self._close_event_loop()
+
+    def _drain_pending_tasks(self) -> None:
+        try:
+            pending_count, exception_count = self._loop.run_until_complete(
+                self._drain_pending_tasks_bounded(),
+            )
+        except BaseException as error:
+            raise self._phase_failure(
+                "service_loop_tasks_incomplete",
+                error,
+            )
+        self._pending_task_count = pending_count
+        self._task_exception_count += exception_count
+        if pending_count:
+            raise self._loop_cleanup_error(
+                "service_loop_tasks_incomplete",
+            )
+        self._pending_tasks_drained = True
+
+    async def _drain_pending_tasks_bounded(self) -> tuple[int, int]:
+        import asyncio
+
+        current = asyncio.current_task()
+        deadline = (
+            self._loop.time()
+            + _SERVICE_LOOP_TASK_DRAIN_TIMEOUT_SECONDS
+        )
+        exception_count = 0
+        while True:
+            tasks = {
+                task
+                for task in asyncio.all_tasks()
+                if task is not current
+                and task is not self._asyncgens_task
+                and not task.done()
+            }
+            if not tasks:
+                return 0, exception_count
+            for task in tasks:
+                task.cancel()
+            remaining = max(0.0, deadline - self._loop.time())
+            done, pending = await asyncio.wait(
+                tasks,
+                timeout=remaining,
+            )
+            exception_count += self._consume_task_outcomes(done)
+            if pending and self._loop.time() >= deadline:
+                return len(pending), exception_count
+            await asyncio.sleep(0)
 
     @staticmethod
-    def _unavailable_error(reason: str) -> BaseException:
+    def _consume_task_outcomes(tasks: object) -> int:
+        exception_count = 0
+        for task in tasks:  # type: ignore[union-attr]
+            try:
+                if not task.cancelled() and task.exception() is not None:
+                    exception_count += 1
+            except BaseException:
+                exception_count += 1
+        return exception_count
+
+    def _shutdown_asyncgens(self) -> None:
+        import asyncio
+
+        task = self._asyncgens_task
+        if task is None:
+            try:
+                task = self._loop.create_task(
+                    self._loop.shutdown_asyncgens(),
+                )
+            except BaseException as error:
+                raise self._phase_failure(
+                    "service_loop_asyncgens_incomplete",
+                    error,
+                )
+            self._asyncgens_task = task
+        try:
+            completed = self._loop.run_until_complete(
+                self._wait_for_task_bounded(
+                    task,
+                    _SERVICE_LOOP_ASYNCGEN_SHUTDOWN_TIMEOUT_SECONDS,
+                ),
+            )
+        except BaseException as error:
+            if task.done():  # type: ignore[union-attr]
+                self._asyncgens_task = None
+                try:
+                    task.exception()  # type: ignore[union-attr]
+                except BaseException:
+                    pass
+            raise self._phase_failure(
+                "service_loop_asyncgens_incomplete",
+                error,
+            )
+        if not completed:
+            raise self._loop_cleanup_error(
+                "service_loop_asyncgens_incomplete",
+            )
+        self._asyncgens_task = None
+        try:
+            task.result()  # type: ignore[union-attr]
+        except BaseException as error:
+            raise self._phase_failure(
+                "service_loop_asyncgens_incomplete",
+                error,
+            )
+        self._asyncgens_shutdown = True
+
+    async def _wait_for_task_bounded(
+        self,
+        task: object,
+        timeout_seconds: float,
+    ) -> bool:
+        import asyncio
+
+        done, _ = await asyncio.wait(
+            {task},  # type: ignore[arg-type]
+            timeout=timeout_seconds,
+        )
+        return bool(done)
+
+    def _shutdown_executor(self) -> None:
+        if not self._executor_shutdown_started:
+            try:
+                setattr(self._loop, "_executor_shutdown_called", True)
+                self._start_executor_shutdown()
+            except BaseException as error:
+                raise self._phase_failure(
+                    "service_loop_executor_incomplete",
+                    error,
+                )
+            self._executor_shutdown_started = True
+        try:
+            completed = self._loop.run_until_complete(
+                self._wait_for_executor_bounded(),
+            )
+        except BaseException as error:
+            raise self._phase_failure(
+                "service_loop_executor_incomplete",
+                error,
+            )
+        if not completed:
+            raise self._loop_cleanup_error(
+                "service_loop_executor_incomplete",
+            )
+        if getattr(self._loop, "_default_executor", None) is self._executor:
+            setattr(self._loop, "_default_executor", None)
+        self._executor_shutdown = True
+
+    def _start_executor_shutdown(self) -> None:
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+    async def _wait_for_executor_bounded(self) -> bool:
+        import asyncio
+
+        deadline = (
+            self._loop.time()
+            + _SERVICE_LOOP_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS
+        )
+        while self._executor_threads_alive():
+            remaining = deadline - self._loop.time()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(
+                _SERVICE_LOOP_FINALIZER_POLL_SECONDS,
+                remaining,
+            ))
+        return True
+
+    def _executor_threads_alive(self) -> bool:
+        threads = getattr(self._executor, "_threads", ())
+        return any(thread.is_alive() for thread in tuple(threads))
+
+    def _close_event_loop(self) -> None:
+        try:
+            self._loop.close()
+        except BaseException as error:
+            raise self._phase_failure(
+                "service_loop_close_incomplete",
+                error,
+            )
+        if not self._loop.is_closed():
+            raise self._loop_cleanup_error(
+                "service_loop_close_incomplete",
+            )
+        self._confirm_loop_closed()
+
+    def _confirm_loop_closed(self) -> None:
+        if not self._loop.is_closed():
+            raise self._loop_cleanup_error(
+                "service_loop_close_incomplete",
+            )
+        if not (
+            self._service_cleanup_complete
+            and self._pending_tasks_drained
+            and self._asyncgens_shutdown
+            and self._executor_shutdown
+        ):
+            raise self._loop_cleanup_error(
+                "service_loop_closed_before_finalization",
+            )
+        self._loop_closed = True
+        self._lease = None
+        if self._resources.service_lifecycle_owner is self:
+            self._resources.service_lifecycle_owner = None
+
+    def _phase_failure(
+        self,
+        reason: str,
+        error: BaseException,
+    ) -> BaseException:
+        import asyncio
+
+        incomplete = self._loop_cleanup_error(reason)
+        if (
+            not isinstance(error, Exception)
+            and not isinstance(error, asyncio.CancelledError)
+        ):
+            _append_failure_cause(error, incomplete)
+            return error
+        return incomplete
+
+    def _loop_cleanup_error(self, reason: str) -> BaseException:
         from ns_common.exceptions import NsStateError
 
-        return NsStateError(
-            "Runtime service cleanup owner is unavailable.",
+        failure = NsStateError(
+            "Runtime service event-loop cleanup did not complete.",
             details={
                 "component": "runtime_main",
-                "operation": "stop",
+                "operation": "close",
                 "reason": reason,
+                **self.pending_facts(),
             },
         )
+        failure.cleanup_owner = self  # type: ignore[attr-defined]
+        failure.cleanup_incomplete = True  # type: ignore[attr-defined]
+        if (
+            self._run_failure is not None
+            and isinstance(self._run_failure, Exception)
+        ):
+            _append_failure_cause(failure, self._run_failure)
+        return failure
+
+
+_SERVICE_LOOP_TASK_DRAIN_TIMEOUT_SECONDS = 5.0
+_SERVICE_LOOP_ASYNCGEN_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+_SERVICE_LOOP_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+_SERVICE_LOOP_FINALIZER_POLL_SECONDS = 0.01
 
 
 _MAX_OUTER_CLEANUP_ATTEMPTS = 16
@@ -766,6 +1040,13 @@ def _outer_cleanup_error(
         "service_lifecycle_owner_active",
         "cleanup_pending",
         "service_stopped",
+        "service_cleanup_complete",
+        "pending_tasks_drained",
+        "asyncgens_shutdown",
+        "executor_shutdown",
+        "loop_closed",
+        "pending_task_count",
+        "task_exception_count",
         "process_owned",
         "process_alive",
         "attestor_owned",
@@ -849,15 +1130,12 @@ async def _run_composed_service(
     if lifecycle_runner is not None:
         lifecycle_runner._bind_lease(lifecycle_lease)
 
-    def release_service_resources() -> None:
-        if resources.service_lifecycle_owner is lifecycle_owner:
-            resources.service_lifecycle_owner = None
-
-    lifecycle_lease.bind_release(release_service_resources)
-
     def transfer_service_resources() -> None:
-        resources.service_lifecycle_owner = lifecycle_owner
-        resources.transfer_service_resources()
+        if lifecycle_runner is None:
+            resources.service_lifecycle_owner = lifecycle_owner
+            resources.transfer_service_resources()
+        else:
+            lifecycle_runner._transfer_service_resources()
 
     try:
         await _run_service(
@@ -869,10 +1147,11 @@ async def _run_composed_service(
         )
     finally:
         if (
-            resources.service_lifecycle_owner is lifecycle_owner
+            lifecycle_runner is None
+            and resources.service_lifecycle_owner is lifecycle_owner
             and _service_cleanup_complete(service)
         ):
-            release_service_resources()
+            resources.service_lifecycle_owner = None
 
 
 def _run_composed_service_sync(

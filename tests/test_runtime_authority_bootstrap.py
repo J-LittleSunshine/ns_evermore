@@ -367,6 +367,8 @@ class AuthorityBootstrapTransactionTestCase(unittest.TestCase):
             connections=parents,
             process=process,  # type: ignore[arg-type]
             attestor=attestor,
+            clock_wall_anchor_seconds=1.0,
+            clock_monotonic_anchor_seconds=1.0,
         )
         try:
             bootstrap.close()
@@ -412,6 +414,8 @@ class AuthorityBootstrapTransactionTestCase(unittest.TestCase):
             connections=parents,
             process=process,  # type: ignore[arg-type]
             attestor=attestor,
+            clock_wall_anchor_seconds=1.0,
+            clock_monotonic_anchor_seconds=1.0,
         )
         try:
             with self.assertRaises(NsRuntimeStartupSecurityError) as raised:

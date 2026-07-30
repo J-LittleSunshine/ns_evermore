@@ -694,3 +694,16 @@
 - 决策（failure chain）：普通operation failure作为cleanup-incomplete的cause保留；process-level cleanup `BaseException`保持最高优先级。cause只在现有链尾追加，不覆盖cleanup已有cause，稳定链为`process-level failure -> cleanup-incomplete(owner/facts) -> original operation failure`；安全details仍只使用allowlist事实，不复制底层cleanup异常或credential文本。
 - 后果：authority broker/attestor仍保持原有隔离、bounded reap、WRITE_UNCERTAIN和role endpoint边界；service只新增同步runner形式的close-only生命周期所有权，不新增第二RuntimeService、TaskSupervisor或shutdown coordinator。P12继续`BLOCKED / NOT_STARTED / F0`，未实现ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
 - 关联阶段/工作包：`P02`、`P08-FIX-09`、`P09-FIX-13`、`P11-FIX-14`、`P12`、`P17`、`P22`。
+
+## ADR-054
+
+- ADR 编号：`ADR-054`
+- 状态：`ACCEPTED`（完整event-loop finalization owner与non-decreasing authority clock）
+- 背景：ADR-053让同步runner保留service cleanup所需原loop，但service进入`STOPPED`后，旧release callback会在剩余Task、`shutdown_asyncgens()`、default executor和`loop.close()`成功前清空resources owner。任一后续phase失败都会留下没有显式owner的open loop，直接`loop.close()`还可能销毁pending Task。压力执行同时证明独立broker与attestor读取的OS墙钟会短暂回拨，使broker刚签发的响应在attestor处被误判为future-issued，或让rotation ticket两端的严格时间检查失去共同参照。
+- 决策（唯一owner与phase）：runner从进入同步service入口起就是唯一`service_lifecycle_owner`，直至`service_cleanup_complete`、`pending_tasks_drained`、`asyncgens_shutdown`、`executor_shutdown`和`loop_closed`五个单调phase全部成功。service cleanup成功只推进phase，不释放owner；已成功phase不重复。任一失败都返回显式持有runner的稳定cleanup-incomplete异常，保留原loop与lease，后续同步`close()`只续跑未完成phase。仅在`loop.is_closed()`得到确认后清空lease和resources owner。
+- 决策（Task与有界终结）：runner在async generator与executor前枚举原loop剩余Task，排除当前finalizer，统一cancel并在固定deadline内await。已完成Task的异常被消费且只累计安全数量，不保存Task名称、协程repr、线程名、payload或异常文本；拒绝取消返回`service_loop_tasks_incomplete`。`shutdown_asyncgens()`以保留中的单一Task有界观察；显式runner-owned `ThreadPoolExecutor`只启动一次non-daemon shutdown并有界观察worker退出；稳定失败分别为`service_loop_asyncgens_incomplete`和`service_loop_executor_incomplete`。`loop.close()`失败为`service_loop_close_incomplete`。不得使用无限join、daemon finalizer或GC/`__del__`恢复所有权。
+- 决策（failure chain）：process-level finalizer `KeyboardInterrupt`/`SystemExit`继续最高优先级，其cause为携带owner与安全phase facts的loop cleanup-incomplete，后者cause为原service/run failure；cause只追加到既有链尾。普通phase底层文本不进入稳定details/repr。
+- 决策（authority time）：同一进程的`SystemClock`共享线程安全的wall/monotonic锚与last-UTC，只前进不回退。每个authority composition又在spawn前冻结独立wall/monotonic锚，并只以有限float交给父broker proxy、broker child和attestor child；三方锚定后不再各自采样wall clock，只按同一monotonic elapsed推进。inherited-FD bootstrap必须显式持有并移交该锚。该校准不增加clock-skew容忍，不改变exact certificate/ticket/response/IAM receipt字段、签名、generation、request/sequence/fingerprint绑定，也不改变`issued_at <= now < expires_at`。
+- 决策（rotation barrier）：测试不得用不定数量的真实backend请求探测理论rotation时间点。helper先依据certificate计算接近窗口，再在5秒test-only上限内轮询attestor已验证identity的`rotation_required`状态；只有该状态成立才发送单一业务请求，并断言generation严格前进。该barrier不改变production rotation margin、operation timeout、backend调用或fail-closed行为。
+- 后果：outer composition不会重复关闭service已接管的transport、TaskSupervisor、logger、StateStore或broker graph；Python 3.10 default executor没有可靠timeout的问题由显式可观测executor owner关闭。detached/inherited FD单次close、StateStore成功后才closed、bounded inline seal、WRITE_UNCERTAIN及production fail-closed边界保持。P12继续`BLOCKED / NOT_STARTED / F0`，未实现ACK/NACK/Defer、timeout/retry、DLQ、cluster ownership或production `task.dispatch`。
+- 关联阶段/工作包：`P02`、`P08-FIX-09`、`P09-FIX-13`、`P11-FIX-14`、`P12`、`P17`、`P22`。

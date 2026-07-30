@@ -12,6 +12,7 @@ import os
 import multiprocessing
 import json
 import sys
+import time
 from multiprocessing.connection import Connection
 from multiprocessing.reduction import DupFd
 
@@ -29,6 +30,7 @@ _ENDPOINT_ROLES = (
 class InheritedAuthorityBootstrap:
     __slots__ = (
         "_connections", "_process", "_attestor", "_consumed",
+        "_clock_wall_anchor_seconds", "_clock_monotonic_anchor_seconds",
     )
 
     def __init__(
@@ -37,6 +39,8 @@ class InheritedAuthorityBootstrap:
         connections: dict[str, Connection],
         process: multiprocessing.Process,
         attestor: object,
+        clock_wall_anchor_seconds: float,
+        clock_monotonic_anchor_seconds: float,
     ) -> None:
         if (
             type(connections) is not dict
@@ -46,11 +50,17 @@ class InheritedAuthorityBootstrap:
                 for connection in connections.values()
             )
             or not process.is_alive()
+            or type(clock_wall_anchor_seconds) is not float
+            or type(clock_monotonic_anchor_seconds) is not float
         ):
             _security_error("invalid_inherited_authority_material")
         self._connections = dict(connections)
         self._process = process
         self._attestor = attestor
+        self._clock_wall_anchor_seconds = clock_wall_anchor_seconds
+        self._clock_monotonic_anchor_seconds = (
+            clock_monotonic_anchor_seconds
+        )
         self._consumed = False
 
     @property
@@ -119,6 +129,12 @@ class InheritedAuthorityBootstrap:
                 attestor=attestor,
                 config=config,
                 clock=clock,
+                clock_wall_anchor_seconds=(
+                    self._clock_wall_anchor_seconds
+                ),
+                clock_monotonic_anchor_seconds=(
+                    self._clock_monotonic_anchor_seconds
+                ),
             )
         except BaseException as operation_failure:
             cleanup_failure = self._close_owned_resources()
@@ -353,7 +369,15 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
         context = multiprocessing.get_context("spawn")
         from ns_runtime.authority_attestor import start_authority_attestor
 
-        attestor = start_authority_attestor(realm="production")
+        clock_wall_anchor_seconds = float(time.time())
+        clock_monotonic_anchor_seconds = float(time.monotonic())
+        attestor = start_authority_attestor(
+            realm="production",
+            _clock_wall_anchor_seconds=clock_wall_anchor_seconds,
+            _clock_monotonic_anchor_seconds=(
+                clock_monotonic_anchor_seconds
+            ),
+        )
         cleanup_owner.attestor = attestor
         for role in _ENDPOINT_ROLES:
             parent, child = context.Pipe(duplex=True)
@@ -372,6 +396,8 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
                 secrets_handle,
                 attestor.public_key,
                 attestor.instance_id,
+                clock_wall_anchor_seconds,
+                clock_monotonic_anchor_seconds,
             ),
             name="ns-runtime-authority-broker",
             daemon=False,
@@ -412,6 +438,10 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
             connections=parents,
             process=process,
             attestor=attestor,
+            clock_wall_anchor_seconds=clock_wall_anchor_seconds,
+            clock_monotonic_anchor_seconds=(
+                clock_monotonic_anchor_seconds
+            ),
         )
         transferred = True
         cleanup_owner.process = None
@@ -438,6 +468,8 @@ def _isolated_authority_bootstrap_entry(
     secrets_handle: object,
     attestor_public_key: bytes,
     attestor_instance_id: str,
+    clock_wall_anchor_seconds: float,
+    clock_monotonic_anchor_seconds: float,
 ) -> None:
     # This module has no runtime business imports.  The spawn child receives
     # the inherited descriptors first; only then does it import broker code.
@@ -454,6 +486,8 @@ def _isolated_authority_bootstrap_entry(
         attestor_instance_id,
         300.0,
         30 * 24 * 60 * 60.0,
+        clock_wall_anchor_seconds,
+        clock_monotonic_anchor_seconds,
     )
 
 
