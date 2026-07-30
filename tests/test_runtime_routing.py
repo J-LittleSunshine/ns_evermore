@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import copy
 import dataclasses
 import unittest
 from types import MappingProxyType
@@ -24,6 +25,9 @@ from ns_runtime.connection import (
 from ns_runtime.processor import (
     AuthorizationDecisionEvidence,
     AuthorizationDecisionOutcome,
+)
+from ns_runtime.processor.testing import (
+    issue_contract_test_authorization_evidence,
 )
 from ns_runtime.protocol import (
     BUILTIN_MESSAGE_REGISTRY,
@@ -93,6 +97,59 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
         self.snapshot = _snapshot(self.contexts)
         self.index = _SnapshotIndex(self.snapshot)
         self.router = _router(self.index, self.clock)
+
+    async def test_allow_evidence_cannot_be_self_issued_or_used_by_production(
+        self,
+    ) -> None:
+        request = _request(TargetGroup(kind="tenant", tenant_id="tenant-a"))
+        evidence = request.authorization_evidence
+        public_values = {
+            item.name: getattr(evidence, item.name)
+            for item in dataclasses.fields(AuthorizationDecisionEvidence)
+            if not item.name.startswith("_")
+        }
+        with self.assertRaises(NsValidationError):
+            AuthorizationDecisionEvidence(**public_values)
+        with self.assertRaises(NsValidationError):
+            AuthorizationDecisionEvidence.bound(
+                **{
+                    key: value
+                    for key, value in public_values.items()
+                    if key not in {
+                        "message_binding_reference",
+                        "semantic_decision_reference",
+                    }
+                },
+            )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(evidence, decision_reason="forged")
+        with self.assertRaises(NsValidationError):
+            copy.copy(evidence)
+        copied = object.__new__(AuthorizationDecisionEvidence)
+        for field in dataclasses.fields(AuthorizationDecisionEvidence):
+            object.__setattr__(
+                copied,
+                field.name,
+                getattr(evidence, field.name),
+            )
+        object.__setattr__(copied, "decision_reason", "forged")
+        self.assertFalse(copied.is_contract_test_authority())
+
+        class ForgedEvidence(AuthorizationDecisionEvidence):
+            pass
+
+        with self.assertRaises(NsValidationError):
+            ForgedEvidence(**public_values)
+
+        production_router = LocalRouter(
+            connection_index=self.index,
+            clock=self.clock,
+            identifier_factory=_identifier_factory(),
+            runtime_id=RUNTIME_ID,
+            config=NsRuntimeRoutingConfig(),
+        )
+        with self.assertRaises(NsValidationError):
+            await production_router.route(request)
 
     async def test_all_target_kinds_use_one_snapshot(self) -> None:
         targets = (
@@ -1377,7 +1434,7 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(RoutingFailureReason.REMOTE_RUNTIME_REQUIRED, remote.reason)
         self.assertIs(ResolutionHint.REMOTE_RUNTIME_REQUIRED, remote.resolution_hint)
 
-        strong_router = LocalRouter(
+        strong_router = LocalRouter.for_contract_tests(
             connection_index=self.index,
             clock=self.clock,
             identifier_factory=_identifier_factory(),
@@ -1413,7 +1470,7 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_limits_and_5001_selected_bindings_without_truncation(self) -> None:
         contexts = tuple(_routing_context(index) for index in range(5001))
         index = _SnapshotIndex(_snapshot(contexts))
-        router = LocalRouter(
+        router = LocalRouter.for_contract_tests(
             connection_index=index,
             clock=self.clock,
             identifier_factory=_identifier_factory(),
@@ -1433,7 +1490,7 @@ class LocalRouterTestCase(unittest.IsolatedAsyncioTestCase):
         assert isinstance(decision, ResolvedRoutingPlan)
         self.assertEqual(5001, len(decision.selected_bindings))
 
-        limited = LocalRouter(
+        limited = LocalRouter.for_contract_tests(
             connection_index=index,
             clock=self.clock,
             identifier_factory=_identifier_factory(),
@@ -1471,13 +1528,15 @@ def _request(
     )
     target_tenant = target.tenant_id
     crosses = target_tenant is not None and target_tenant != principal_tenant_id
-    evidence = AuthorizationDecisionEvidence.bound(
+    evidence = issue_contract_test_authorization_evidence(
         decision_version="authorization-decision.v1",
         decision_outcome=AuthorizationDecisionOutcome.ALLOW,
         decision_reason=iam_decision_reason,
         semantic_access_check_reference=iam_decision_result_reference,
         message_reference=message_reference,
         message_type="task.dispatch",
+        config_version=decision.config_version,
+        policy_version=decision.policy_version,
         principal_tenant_id=principal_tenant_id,
         effective_tenant_id=target_tenant if crosses else principal_tenant_id,
         cross_tenant_authorized=crosses,
@@ -1578,13 +1637,13 @@ def _bound_authorization(
     values = {
         item.name: getattr(evidence, item.name)
         for item in dataclasses.fields(AuthorizationDecisionEvidence)
-        if item.name not in {
+        if not item.name.startswith("_") and item.name not in {
             "message_binding_reference",
             "semantic_decision_reference",
         }
     }
     values.update(changes)
-    return AuthorizationDecisionEvidence.bound(**values)  # type: ignore[arg-type]
+    return issue_contract_test_authorization_evidence(**values)
 
 
 def _replace_plan_semantics(
@@ -1631,7 +1690,7 @@ def _replace_plan_semantics(
 
 
 def _router(index: LocalConnectionIndex, clock: ControlledClock) -> LocalRouter:
-    return LocalRouter(
+    return LocalRouter.for_contract_tests(
         connection_index=index,
         clock=clock,
         identifier_factory=_identifier_factory(),

@@ -4,19 +4,27 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from ns_common.exceptions import NsValidationError
-from ns_runtime.routing import ResolvedRoutingPlan, RoutingStrategy
+from ns_runtime.routing import (
+    ResolvedRoutingPlan,
+    RoutingStrategy,
+    resolved_routing_plan_authority_digest,
+    validate_resolved_routing_plan,
+)
 
 from .models import (
     AdmissionPolicyDecision, AdmissionPriority, AdmissionReliability,
     DeliveryEnvelopeAuthority, InlinePayload, InlinePayloadDescriptor,
     PayloadDependencyDisposition, PayloadReference, RejectionReason,
-    MAX_ACTIVATION_BATCH_SIZE, describe_inline_payload,
+    MAX_ACTIVATION_BATCH_SIZE, _InlinePayloadInspection,
+    _inspect_inline_payload_authority,
 )
 
 
@@ -79,8 +87,7 @@ class AdmissionPolicyConfig:
 
 
 _ADMISSION_REQUEST_ISSUER = object()
-
-
+_ADMISSION_REQUEST_AUTHORITY_KEY = secrets.token_bytes(32)
 @dataclass(frozen=True, slots=True, init=False)
 class AdmissionRequest:
     plan: ResolvedRoutingPlan = field(repr=False)
@@ -96,6 +103,12 @@ class AdmissionRequest:
     requested_expires_at: datetime
     requested_ack_timeout_seconds: int
     requested_target_strategy: RoutingStrategy
+    _authority_invalid_nodes: tuple[object, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _authority_signature: bytes = field(init=False, repr=False, compare=False)
 
     def __init__(
         self, *, plan: ResolvedRoutingPlan, message_id: str, tenant_id: str,
@@ -121,11 +134,41 @@ class AdmissionRequest:
             ("requested_target_strategy", requested_target_strategy),
         ):
             object.__setattr__(self, name, value)
+        inline_inspection = (
+            _inspect_inline_payload_authority(payload)
+            if type(payload) is InlinePayload
+            else None
+        )
         object.__setattr__(
             self, "inline_descriptor",
-            describe_inline_payload(payload) if isinstance(payload, InlinePayload) else None,
+            (
+                None
+                if inline_inspection is None
+                else inline_inspection.descriptor
+            ),
         )
-        self.__post_init__()
+        self.__post_init__(_inline_inspection=inline_inspection)
+        authority_digest = _admission_request_authority_digest(
+            self,
+            inline_inspection=inline_inspection,
+        )
+        object.__setattr__(
+            self,
+            "_authority_invalid_nodes",
+            (
+                ()
+                if inline_inspection is None
+                else inline_inspection.invalid_nodes
+            ),
+        )
+        object.__setattr__(
+            self,
+            "_authority_signature",
+            _admission_request_authority_signature(
+                self,
+                authority_digest=authority_digest,
+            ),
+        )
 
     @classmethod
     def from_stage_six(
@@ -155,9 +198,12 @@ class AdmissionRequest:
             _issuer=_ADMISSION_REQUEST_ISSUER,
         )
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.plan, ResolvedRoutingPlan):
-            _invalid("request.plan")
+    def __post_init__(
+        self,
+        *,
+        _inline_inspection: _InlinePayloadInspection | None = None,
+    ) -> None:
+        validate_resolved_routing_plan(self.plan)
         for name in ("message_id", "tenant_id", "source_identity",
                      "authorization_binding_reference"):
             value = getattr(self, name)
@@ -172,15 +218,33 @@ class AdmissionRequest:
                 or self.authorization_binding_reference
                 != authorization.message_binding_reference):
             _invalid("request.plan_authority_chain")
-        if not isinstance(self.payload, (InlinePayload, PayloadReference)):
+        if type(self.payload) not in {InlinePayload, PayloadReference}:
             _invalid("request.payload")
-        if isinstance(self.payload, InlinePayload):
-            if not isinstance(self.inline_descriptor, InlinePayloadDescriptor):
+        self.payload.__post_init__()
+        if type(self.payload) is InlinePayload:
+            inspection = (
+                _inspect_inline_payload_authority(self.payload)
+                if _inline_inspection is None
+                else _inline_inspection
+            )
+            if type(self.inline_descriptor) is not InlinePayloadDescriptor:
                 _invalid("request.inline_descriptor")
+            self.inline_descriptor.__post_init__()
+            if self.inline_descriptor != inspection.descriptor:
+                _invalid("request.inline_descriptor_binding")
         elif self.inline_descriptor is not None:
             _invalid("request.inline_descriptor")
         if type(self.envelope_authority) is not DeliveryEnvelopeAuthority:
             _invalid("request.envelope_authority")
+        self.envelope_authority.__post_init__()
+        for group in (
+            self.envelope_authority.protocol,
+            self.envelope_authority.message,
+            self.envelope_authority.source,
+            self.envelope_authority.auth_context,
+            self.envelope_authority.trace,
+        ):
+            group.__post_init__()
         if (
             self.envelope_authority.message.message_id != self.message_id
             or self.envelope_authority.message.type != authorization.message_type
@@ -206,6 +270,48 @@ class AdmissionRequest:
             _invalid("request.requested_target_strategy")
         if self.requested_target_strategy is not self.plan.requested_strategy:
             _invalid("request.plan_strategy")
+
+    def validate_authority(self) -> None:
+        inline_inspection = (
+            _inspect_inline_payload_authority(self.payload)
+            if type(self.payload) is InlinePayload
+            else None
+        )
+        self.__post_init__(_inline_inspection=inline_inspection)
+        authority_digest = _admission_request_authority_digest(
+            self,
+            inline_inspection=inline_inspection,
+        )
+        invalid_nodes = (
+            ()
+            if inline_inspection is None
+            else inline_inspection.invalid_nodes
+        )
+        retained_nodes = getattr(self, "_authority_invalid_nodes", None)
+        if (
+            type(retained_nodes) is not tuple
+            or len(retained_nodes) != len(invalid_nodes)
+            or any(
+                retained is not current
+                for retained, current in zip(
+                    retained_nodes,
+                    invalid_nodes,
+                )
+            )
+        ):
+            _invalid("request.authority_invalid_nodes")
+        signature = getattr(self, "_authority_signature", None)
+        if (
+            type(signature) is not bytes
+            or not hmac.compare_digest(
+                signature,
+                _admission_request_authority_signature(
+                    self,
+                    authority_digest=authority_digest,
+                ),
+            )
+        ):
+            _invalid("request.authority")
 
     @property
     def fingerprint(self) -> str:
@@ -384,6 +490,131 @@ def _utc(value: object, name: str) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         _invalid(name)
     return value.astimezone(timezone.utc)
+
+
+def _admission_request_authority_signature(
+    request: AdmissionRequest,
+    *,
+    authority_digest: str,
+) -> bytes:
+    retained_nodes = getattr(request, "_authority_invalid_nodes", None)
+    if type(retained_nodes) is not tuple:
+        _invalid("request.authority_invalid_nodes")
+    return hmac.new(
+        _ADMISSION_REQUEST_AUTHORITY_KEY,
+        (
+            f"admission-request-authority.v1\0{id(request)}\0"
+            f"{id(retained_nodes)}\0{authority_digest}"
+        ).encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+
+
+def _admission_request_authority_digest(
+    request: AdmissionRequest,
+    *,
+    inline_inspection: _InlinePayloadInspection | None,
+) -> str:
+    payload = request.payload
+    if type(payload) is InlinePayload:
+        inspection = (
+            _inspect_inline_payload_authority(payload)
+            if inline_inspection is None
+            else inline_inspection
+        )
+        current_descriptor = inspection.descriptor
+        payload_authority: dict[str, object] = {
+            "kind": "inline",
+            "media_type": payload.media_type,
+            "application_limit_bytes": payload.application_limit_bytes,
+            "transport_limit_bytes": payload.transport_limit_bytes,
+            "value_digest": inspection.authority_digest,
+            "canonical_bytes": (
+                None
+                if current_descriptor.canonical_bytes is None
+                else current_descriptor.canonical_bytes.hex()
+            ),
+        }
+    elif type(payload) is PayloadReference:
+        payload_authority = {
+            "kind": "payload_reference",
+            "object_id": payload.object_id,
+            "version": payload.version,
+            "checksum": payload.checksum,
+            "owner_identity": payload.owner_identity,
+            "callback_message_type": payload.callback_message_type,
+        }
+    else:
+        _invalid("request.authority_payload")
+
+    descriptor = request.inline_descriptor
+    descriptor_authority = (
+        None
+        if descriptor is None
+        else {
+            "media_type": descriptor.media_type,
+            "size_bytes": descriptor.size_bytes,
+            "digest": descriptor.digest,
+            "observed_depth": descriptor.observed_depth,
+            "application_limit_bytes": descriptor.application_limit_bytes,
+            "transport_limit_bytes": descriptor.transport_limit_bytes,
+            "canonical_bytes": (
+                None
+                if descriptor.canonical_bytes is None
+                else descriptor.canonical_bytes.hex()
+            ),
+            "rejection_reason": (
+                None
+                if descriptor.rejection_reason is None
+                else descriptor.rejection_reason.value
+            ),
+        }
+    )
+    values = {
+        "plan_authority_digest": resolved_routing_plan_authority_digest(
+            request.plan,
+        ),
+        "message_id": request.message_id,
+        "tenant_id": request.tenant_id,
+        "source_identity": request.source_identity,
+        "authorization_binding_reference": (
+            request.authorization_binding_reference
+        ),
+        "envelope_authority": {
+            "protocol": request.envelope_authority.protocol.to_dict(),
+            "message": request.envelope_authority.message.to_dict(),
+            "source": request.envelope_authority.source.to_dict(),
+            "auth_context": request.envelope_authority.auth_context.to_dict(),
+            "trace": request.envelope_authority.trace.to_dict(),
+        },
+        "payload": payload_authority,
+        "inline_descriptor": descriptor_authority,
+        "requested_priority": (
+            None
+            if request.requested_priority is None
+            else request.requested_priority.value
+        ),
+        "requested_reliability": (
+            None
+            if request.requested_reliability is None
+            else request.requested_reliability.value
+        ),
+        "requested_expires_at": request.requested_expires_at.isoformat(
+            timespec="microseconds",
+        ),
+        "requested_ack_timeout_seconds": (
+            request.requested_ack_timeout_seconds
+        ),
+        "requested_target_strategy": request.requested_target_strategy.value,
+    }
+    canonical = json.dumps(
+        values,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
 def _invalid(field_name: str) -> None:

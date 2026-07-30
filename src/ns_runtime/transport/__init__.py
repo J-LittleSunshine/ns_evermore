@@ -20,6 +20,8 @@ from .models import (
     TransportErrorKind,
     TransportMessage,
     TransportSessionState,
+    TransportWriteResult,
+    TransportWriteState,
 )
 from .metrics import TransportMetricsRecorder
 from .lifecycle import (
@@ -68,6 +70,8 @@ __all__ = (
     "TransportPathSnapshot",
     "TransportSession",
     "TransportSessionState",
+    "TransportWriteResult",
+    "TransportWriteState",
     "TransportRuntimeService",
     "TRANSPORT_ADAPTER_NAMES",
     "TRANSPORT_CONFORMANCE_CASES",

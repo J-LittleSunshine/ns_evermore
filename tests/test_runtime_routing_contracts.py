@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import copy
 import unittest
 from pathlib import Path
 
@@ -25,6 +26,9 @@ from ns_runtime.processor import (
     ProcessorTraceReference,
     RoutingPreparationOutcome,
     AuthorizationDecisionEvidence,
+)
+from ns_runtime.processor.testing import (
+    issue_contract_test_authorization_evidence,
 )
 from ns_runtime.processor.integration import (
     DeterministicTestProcessorAuthorization,
@@ -313,6 +317,10 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
         )
         evidence = await authorization.authorize(context)
         self.assertIsInstance(evidence, AuthorizationDecisionEvidence)
+        with self.assertRaises(NsValidationError):
+            copy.copy(evidence)
+        with self.assertRaises(NsValidationError):
+            copy.deepcopy(evidence)
         self.assertTrue(evidence.cross_tenant_authorized)
         resolved = await preparation.prepare(context, evidence)
         self.assertIs(RoutingPreparationOutcome.RESOLVED, resolved.outcome)
@@ -475,6 +483,8 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
             {"effective_permission_snapshot_version": "permission-v9"},
             {"session_permission_snapshot_ref": ""},
             {"session_permission_snapshot_version": ""},
+            {"config_version": "config-forged"},
+            {"policy_version": "policy-forged"},
             {"message_binding_reference": "sha256:" + "0" * 64},
             {"decision_reason": "different_allow_reason"},
         ):
@@ -584,7 +594,7 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         iam = _Iam([True], self.clock)
-        service = MessageAuthorizationService(
+        service = MessageAuthorizationService.for_contract_tests(
             iam_client=iam,
             clock=self.clock,
             mode=AuthorizationMode.CACHE,
@@ -607,7 +617,7 @@ class RoutingPreparationIsolationTestCase(unittest.IsolatedAsyncioTestCase):
             router=_router(index, self.clock),
             protocol_registry=registry,
         )
-        authorization = IamProcessorAuthorization(
+        authorization = IamProcessorAuthorization.for_contract_tests(
             service=service,
             protocol_registry=registry,
         )
@@ -664,13 +674,13 @@ def _bound_replace(
     values = {
         item.name: getattr(evidence, item.name)
         for item in dataclasses.fields(AuthorizationDecisionEvidence)
-        if item.name not in {
+        if not item.name.startswith("_") and item.name not in {
             "message_binding_reference",
             "semantic_decision_reference",
         }
     }
     values.update(changes)
-    return AuthorizationDecisionEvidence.bound(**values)  # type: ignore[arg-type]
+    return issue_contract_test_authorization_evidence(**values)
 
 
 if __name__ == "__main__":

@@ -302,6 +302,38 @@ class TransportLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
             events,
         )
 
+    async def test_close_retries_only_adapter_that_remains_owned(self) -> None:
+        events: list[str] = []
+
+        class RetryAdapter(_RecordingAdapter):
+            def __init__(self, name: str, *, fail_once: bool) -> None:
+                super().__init__(name, events)
+                self.fail_once = fail_once
+                self.close_calls = 0
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                self.events.append(f"close:{self.name}")
+                if self.fail_once and self.close_calls == 1:
+                    raise RuntimeError("close failed once")
+
+        stable = RetryAdapter("websocket_tcp", fail_once=False)
+        flaky = RetryAdapter("websocket_http3", fail_once=True)
+        manager = TransportManager((stable, flaky))
+
+        with self.assertRaises(Exception):
+            await manager.close()
+        self.assertEqual(TransportManagerState.FAILED, manager.state)
+        self.assertEqual(1, stable.close_calls)
+        self.assertEqual(1, flaky.close_calls)
+        self.assertEqual((flaky,), manager.adapters)
+
+        await manager.close()
+        self.assertEqual(TransportManagerState.CLOSED, manager.state)
+        self.assertEqual(1, stable.close_calls)
+        self.assertEqual(2, flaky.close_calls)
+        self.assertEqual((), manager.adapters)
+
     async def test_composition_root_cleans_transport_after_monitor_start_failure(
         self,
     ) -> None:
@@ -445,9 +477,17 @@ class TransportLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
                 await _run_service_once(service)
 
         self.assertIs(start_failure, raised.exception)
-        self.assertEqual(RuntimeServiceState.STOPPED, service.state)
+        self.assertEqual(RuntimeServiceState.FAILED, service.state)
         self.assertEqual(1, len(service.shutdown_report.failures))
         self.assertNotIn("transport cleanup secret", repr(service.shutdown_report))
+        adapter.failures.pop("close")
+
+        await service.stop()
+
+        self.assertEqual(RuntimeServiceState.STOPPED, service.state)
+        self.assertEqual(2, events.count("close:websocket_tcp"))
+        self.assertEqual(1, events.count("stop_admission:websocket_tcp"))
+        self.assertEqual(1, events.count("drain:websocket_tcp"))
 
     async def test_direct_ordinary_stop_error_preserves_start_error_identity(
         self,
@@ -474,3 +514,165 @@ class TransportLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
             await _run_service_once(FailingService())  # type: ignore[arg-type]
 
         self.assertIs(start_failure, raised.exception)
+
+    async def test_state_store_open_failure_closes_store_without_created_stop(
+        self,
+    ) -> None:
+        open_failure = RuntimeError("state open failed")
+        context = _context(TaskSupervisor(shutdown_timeout_seconds=1))
+
+        class FailingStore:
+            def __init__(self) -> None:
+                self.open_calls = 0
+                self.close_calls = 0
+
+            async def open(self) -> None:
+                self.open_calls += 1
+                raise open_failure
+
+            async def close(self) -> None:
+                self.close_calls += 1
+
+        class CreatedService:
+            def __init__(self) -> None:
+                from ns_runtime.shutdown import RuntimeShutdownCoordinator
+
+                self.shutdown_coordinator = RuntimeShutdownCoordinator(
+                    context=context,
+                )
+                self.start_calls = 0
+                self.stop_calls = 0
+
+            async def start(self) -> None:
+                self.start_calls += 1
+
+            async def stop(self) -> None:
+                self.stop_calls += 1
+                raise AssertionError("CREATED.stop must not be called")
+
+        store = FailingStore()
+        service = CreatedService()
+        with self.assertRaises(RuntimeError) as raised:
+            await _run_service_once(
+                service,  # type: ignore[arg-type]
+                state_store=store,
+            )
+        self.assertIs(open_failure, raised.exception)
+        self.assertEqual((1, 1), (store.open_calls, store.close_calls))
+        self.assertEqual((0, 0), (service.start_calls, service.stop_calls))
+
+    async def test_wait_cancellation_still_closes_transport_tasks_and_store(
+        self,
+    ) -> None:
+        cancellation = asyncio.CancelledError("wait cancelled")
+        supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
+        context = _context(supervisor)
+        events: list[str] = []
+        adapter = _OwnedResourceAdapter(
+            "websocket_tcp",
+            events,
+            supervisor=supervisor,
+        )
+        manager = TransportManager((adapter,))
+        service = TransportRuntimeService(
+            context=context,
+            transport_manager=manager,
+        )
+
+        class Store:
+            def __init__(self) -> None:
+                self.open_calls = 0
+                self.close_calls = 0
+                self.closed = False
+
+            async def open(self) -> None:
+                self.open_calls += 1
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                self.closed = True
+
+        store = Store()
+        with mock.patch.object(
+            service.shutdown_coordinator,
+            "wait_requested",
+            new=mock.AsyncMock(side_effect=cancellation),
+        ):
+            with self.assertRaises(asyncio.CancelledError) as raised:
+                await _run_service_once(service, state_store=store)
+
+        self.assertIs(cancellation, raised.exception)
+        self.assertEqual(RuntimeServiceState.STOPPED, service.state)
+        self.assertEqual(TransportManagerState.CLOSED, manager.state)
+        self.assertFalse(adapter.listener_open)
+        self.assertFalse(adapter.session_open)
+        self.assertTrue(adapter.resource_task.done())
+        self.assertEqual((), supervisor.pending_task_names)
+        self.assertEqual("closed", supervisor.state.value)
+        self.assertTrue(store.closed)
+        self.assertEqual((1, 1), (store.open_calls, store.close_calls))
+
+    async def test_wait_keyboard_interrupt_outranks_stop_and_store_failures(
+        self,
+    ) -> None:
+        interrupt = KeyboardInterrupt("wait interrupted")
+        stop_failure = RuntimeError("stop cleanup failed")
+        close_failure = RuntimeError("store cleanup failed")
+        supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
+        context = _context(supervisor)
+        events: list[str] = []
+        adapter = _OwnedResourceAdapter(
+            "websocket_tcp",
+            events,
+            supervisor=supervisor,
+        )
+        manager = TransportManager((adapter,))
+        service = TransportRuntimeService(
+            context=context,
+            transport_manager=manager,
+        )
+        original_stop = service.stop
+        stop_calls = 0
+
+        async def stop_then_fail() -> None:
+            nonlocal stop_calls
+            stop_calls += 1
+            await original_stop()
+            raise stop_failure
+
+        service.stop = stop_then_fail  # type: ignore[method-assign]
+
+        class FailingCloseStore:
+            def __init__(self) -> None:
+                self.open_calls = 0
+                self.close_calls = 0
+                self.closed = False
+
+            async def open(self) -> None:
+                self.open_calls += 1
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                self.closed = True
+                raise close_failure
+
+        store = FailingCloseStore()
+        with mock.patch.object(
+            service.shutdown_coordinator,
+            "wait_requested",
+            new=mock.AsyncMock(side_effect=interrupt),
+        ):
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                await _run_service_once(service, state_store=store)
+
+        self.assertIs(interrupt, raised.exception)
+        self.assertEqual(1, stop_calls)
+        self.assertEqual(RuntimeServiceState.STOPPED, service.state)
+        self.assertEqual(TransportManagerState.CLOSED, manager.state)
+        self.assertFalse(adapter.listener_open)
+        self.assertFalse(adapter.session_open)
+        self.assertTrue(adapter.resource_task.done())
+        self.assertEqual((), supervisor.pending_task_names)
+        self.assertEqual("closed", supervisor.state.value)
+        self.assertTrue(store.closed)
+        self.assertEqual((1, 1), (store.open_calls, store.close_calls))

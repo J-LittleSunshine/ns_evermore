@@ -10,7 +10,6 @@ from ns_common.async_runtime import TaskSupervisor
 from ns_common.exceptions import (
     NsRuntimeTransportFlowControlBlockedError,
     NsRuntimeTransportReceiveFailedError,
-    NsRuntimeTransportSendFailedError,
     NsRuntimeTransportStreamResetError,
     NsStateError,
 )
@@ -20,6 +19,7 @@ from ns_runtime.transport import (
     TransportCloseReason,
     TransportIdentityFactory,
     TransportMetricsRecorder,
+    TransportWriteState,
     WebSocketTcpAdapterOptions,
     WebSocketTcpSession,
 )
@@ -155,7 +155,11 @@ class TransportBackpressureTestCase(unittest.IsolatedAsyncioTestCase):
             await session.send("third")
         self.assertEqual("write_queue_full", raised.exception.details["reason"])
         connection.release_send.set()
-        await asyncio.gather(first, second)
+        results = await asyncio.gather(first, second)
+        self.assertEqual(
+            [TransportWriteState.SUCCEEDED, TransportWriteState.SUCCEEDED],
+            [item.state for item in results],
+        )
         self.assertEqual(["first", "second"], connection.sent)
 
     async def test_cancelled_queued_send_is_not_written(self) -> None:
@@ -184,9 +188,9 @@ class TransportBackpressureTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await abandoned
 
-        with self.assertRaises(NsRuntimeTransportSendFailedError) as raised:
-            await session.send("queued-timeout")
-        self.assertEqual("send_timeout", raised.exception.details["reason"])
+        result = await session.send("queued-timeout")
+        self.assertIs(TransportWriteState.NOT_STARTED, result.state)
+        self.assertEqual("send_timeout", result.failure_reason)
         self.assertEqual("handshaking", session.state.value)
         connection.release_send.set()
         await asyncio.sleep(0)
@@ -196,9 +200,9 @@ class TransportBackpressureTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_send_timeout_is_bounded_and_closes_session(self) -> None:
         connection = _ControlledConnection(slow_send=True)
         session = self._session(connection, send_timeout=0.01)
-        with self.assertRaises(NsRuntimeTransportSendFailedError) as raised:
-            await session.send("slow")
-        self.assertEqual("send_timeout", raised.exception.details["reason"])
+        result = await session.send("slow")
+        self.assertIs(TransportWriteState.UNCERTAIN, result.state)
+        self.assertEqual("send_timeout", result.failure_reason)
         await asyncio.wait_for(session.wait_closed(), timeout=1)
         self.assertEqual(TransportCloseReason.SEND_TIMEOUT, session.close_info.reason)
         self.assertEqual([], connection.sent)
@@ -225,9 +229,9 @@ class TransportBackpressureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(send_task.done())
         connection.release_close.set()
 
-        with self.assertRaises(NsRuntimeTransportSendFailedError) as raised:
-            await send_task
-        self.assertEqual("send_timeout", raised.exception.details["reason"])
+        result = await send_task
+        self.assertIs(TransportWriteState.UNCERTAIN, result.state)
+        self.assertEqual("send_timeout", result.failure_reason)
         self.assertEqual("closed", session.state.value)
         self.assertEqual(TransportCloseReason.SEND_TIMEOUT, session.close_info.reason)
         self.assertEqual([], connection.sent)

@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import re
-from dataclasses import dataclass
+import secrets
+from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 from types import MappingProxyType
 from typing import Mapping
@@ -237,12 +241,196 @@ class StateAtomicScope:
         _validate_name(self.partition, "atomic_scope.partition")
 
 
+class _StateScopeIssuer:
+    """One store-owned capability issuer; never shared through a registry."""
+
+    __slots__ = ("realm", "_key", "_identity")
+
+    def __init__(self, *, realm: str) -> None:
+        if realm != "contract_test":
+            _invalid("issuer.realm")
+        self.realm = realm
+        self._identity = secrets.token_bytes(32)
+        self._key = secrets.token_bytes(32)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
+class _StateResourcePolicy:
+    """Issuer-owned exact resource policy carried by one repository scope."""
+
+    read_resources: frozenset[tuple[str, str]] = frozenset()
+    transact_resources: frozenset[tuple[str, str]] = frozenset()
+    append_resources: frozenset[tuple[str, str]] = frozenset()
+    ordered_indexes: frozenset[tuple[str, str]] = frozenset()
+    allow_delivery_target_index: bool = False
+    allow_contract_test_resources: bool = False
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "read_resources",
+            "transact_resources",
+            "append_resources",
+        ):
+            values = getattr(self, field_name)
+            if not isinstance(values, frozenset) or any(
+                not isinstance(value, tuple)
+                or len(value) != 2
+                or any(
+                    not isinstance(part, str)
+                    or _NAME_PATTERN.fullmatch(part) is None
+                    for part in value
+                )
+                for value in values
+            ):
+                _invalid(f"resource_policy.{field_name}")
+        if not isinstance(self.ordered_indexes, frozenset) or any(
+            not isinstance(value, tuple)
+            or len(value) != 2
+            or any(
+                not isinstance(part, str)
+                or _NAME_PATTERN.fullmatch(part) is None
+                for part in value
+            )
+            for value in self.ordered_indexes
+        ):
+            _invalid("resource_policy.ordered_indexes")
+        if (
+            type(self.allow_delivery_target_index) is not bool
+            or type(self.allow_contract_test_resources) is not bool
+        ):
+            _invalid("resource_policy.flags")
+        if self.allow_contract_test_resources and any((
+            self.read_resources,
+            self.transact_resources,
+            self.append_resources,
+            self.ordered_indexes,
+            self.allow_delivery_target_index,
+        )):
+            _invalid("resource_policy.contract_test")
+
+    def allows_resource(
+        self,
+        *,
+        operation: str,
+        object_type: str,
+        schema_name: str | None,
+    ) -> bool:
+        if self.allow_contract_test_resources:
+            return True
+        resources = {
+            "read": self.read_resources,
+            "compare_and_set": self.transact_resources,
+            "scan": self.read_resources,
+            "transact": self.transact_resources,
+            "append": self.append_resources,
+        }.get(operation)
+        if resources is None:
+            return False
+        if schema_name is None:
+            return any(value[0] == object_type for value in resources)
+        return (object_type, schema_name) in resources
+
+    def allows_index(self, name: str, bucket: str) -> bool:
+        if (
+            self.allow_contract_test_resources
+            or (name, bucket) in self.ordered_indexes
+        ):
+            return True
+        if not self.allow_delivery_target_index:
+            return False
+        return bool(
+            bucket == "delivery"
+            and re.fullmatch(
+                r"delivery\.target\.[0-9a-f]{64}",
+                name,
+            ) is not None
+        )
+
+    def canonical_values(self) -> Mapping[str, object]:
+        return {
+            "read_resources": sorted(
+                [list(value) for value in self.read_resources],
+            ),
+            "transact_resources": sorted(
+                [list(value) for value in self.transact_resources],
+            ),
+            "append_resources": sorted(
+                [list(value) for value in self.append_resources],
+            ),
+            "ordered_indexes": sorted(
+                [list(value) for value in self.ordered_indexes],
+            ),
+            "allow_delivery_target_index": self.allow_delivery_target_index,
+            "allow_contract_test_resources": self.allow_contract_test_resources,
+        }
+
+
+_CONTRACT_TEST_RESOURCE_POLICY = _StateResourcePolicy(
+    allow_contract_test_resources=True,
+)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, init=False)
 class StateAccessScope:
     atomic_scope: StateAtomicScope
     authority: StateAuthorityKind
     caller: str
     capabilities: frozenset[StateCallerCapability]
+    _issuer_realm: str = dataclass_field(
+        init=False, repr=False, compare=False,
+    )
+    _issuer_identity: bytes = dataclass_field(
+        init=False, repr=False, compare=False,
+    )
+    _authority_signature: bytes = dataclass_field(
+        init=False, repr=False, compare=False,
+    )
+    _policy_id: str = dataclass_field(
+        init=False, repr=False, compare=False,
+    )
+    _repository_binding: object | None = dataclass_field(
+        init=False, repr=False, compare=False,
+    )
+
+    def __init__(
+        self,
+        *,
+        atomic_scope: StateAtomicScope,
+        authority: StateAuthorityKind,
+        caller: str,
+        capabilities: frozenset[StateCallerCapability],
+        _issuer: _StateScopeIssuer | None = None,
+        _resource_policy: _StateResourcePolicy | None = None,
+        _repository_binding: object | None = None,
+        _policy_id: str | None = None,
+    ) -> None:
+        if (
+            type(self) is not StateAccessScope
+            or type(_issuer) is not _StateScopeIssuer
+            or _issuer.realm != "contract_test"
+            or _resource_policy is not _CONTRACT_TEST_RESOURCE_POLICY
+            or _repository_binding is not None
+            or _policy_id is not None
+        ):
+            _invalid("access_scope.issuer")
+        for name, value in (
+            ("atomic_scope", atomic_scope),
+            ("authority", authority),
+            ("caller", caller),
+            ("capabilities", capabilities),
+            ("_issuer_realm", _issuer.realm),
+            ("_issuer_identity", _issuer._identity),
+            ("_authority_signature", b""),
+            ("_policy_id", "contract-test.v1"),
+            ("_repository_binding", _repository_binding),
+        ):
+            object.__setattr__(self, name, value)
+        self.__post_init__()
+        object.__setattr__(
+            self,
+            "_authority_signature",
+            _state_scope_signature(self, issuer=_issuer),
+        )
 
     def __post_init__(self) -> None:
         if not isinstance(self.atomic_scope, StateAtomicScope):
@@ -272,6 +460,95 @@ class StateAccessScope:
     @property
     def namespace(self) -> StateNamespace:
         return self.atomic_scope.namespace
+
+    def _issued_by(self, issuer: _StateScopeIssuer) -> bool:
+        if (
+            type(self) is not StateAccessScope
+            or type(issuer) is not _StateScopeIssuer
+            or self._issuer_realm != issuer.realm
+            or not hmac.compare_digest(
+                self._issuer_identity,
+                issuer._identity,
+            )
+        ):
+            return False
+        if issuer.realm == "contract_test":
+            return hmac.compare_digest(
+                self._authority_signature,
+                _state_scope_signature(self, issuer=issuer),
+            )
+        return False
+
+
+def _new_state_scope_issuer(*, contract_test: bool = False) -> _StateScopeIssuer:
+    if not contract_test:
+        _invalid("issuer.production_removed")
+    return _StateScopeIssuer(
+        realm="contract_test",
+    )
+
+
+def _issue_state_access_scope(
+    issuer: _StateScopeIssuer,
+    *,
+    atomic_scope: StateAtomicScope,
+    authority: StateAuthorityKind,
+    caller: str,
+    capabilities: frozenset[StateCallerCapability],
+    resource_policy: _StateResourcePolicy | None = None,
+    repository_binding: object | None = None,
+) -> StateAccessScope:
+    if type(issuer) is not _StateScopeIssuer:
+        _invalid("access_scope.issuer")
+    if issuer.realm == "contract_test":
+        if resource_policy is not None or repository_binding is not None:
+            _invalid("access_scope.contract_test_policy")
+        resource_policy = _CONTRACT_TEST_RESOURCE_POLICY
+    else:
+        _invalid("access_scope.production_issuer_removed")
+    return StateAccessScope(
+        atomic_scope=atomic_scope,
+        authority=authority,
+        caller=caller,
+        capabilities=capabilities,
+        _issuer=issuer,
+        _resource_policy=resource_policy,
+        _repository_binding=repository_binding,
+    )
+
+
+def _state_scope_signature(
+    scope: StateAccessScope,
+    *,
+    issuer: _StateScopeIssuer,
+) -> bytes:
+    if type(issuer) is not _StateScopeIssuer:
+        _invalid("access_scope.issuer")
+    payload = _state_scope_payload(scope)
+    return hmac.new(issuer._key, payload, hashlib.sha256).digest()
+
+
+def _state_scope_payload(scope: StateAccessScope) -> bytes:
+    namespace = scope.atomic_scope.namespace
+    return json.dumps({
+        "issuer_realm": scope._issuer_realm,
+        "issuer_identity": scope._issuer_identity.hex(),
+        "namespace_kind": namespace.kind.value,
+        "domain": namespace.domain,
+        "tenant_id": namespace.tenant_id,
+        "runtime_id": namespace.runtime_id,
+        "plugin_name": namespace.plugin_name,
+        "partition": scope.atomic_scope.partition,
+        "authority": scope.authority.value,
+        "caller": scope.caller,
+        "capabilities": sorted(value.value for value in scope.capabilities),
+        "policy_id": scope._policy_id,
+        "repository_binding": (
+            None
+            if scope._repository_binding is None
+            else id(scope._repository_binding)
+        ),
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _validate_name(value: object, field_name: str) -> None:

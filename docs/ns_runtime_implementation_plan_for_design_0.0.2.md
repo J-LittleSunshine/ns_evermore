@@ -3,7 +3,7 @@
 > 实施文档版本：`0.0.2`
 > 设计基线：`ns_runtime 设计边界与功能清单 0.0.2`
 > 仓库基线：Code Agent 当前会话所处的 `ns_evermore` 本地工作区；远程仓库、远程分支和提交历史不作为实现状态依据
-> 当前状态校准时间：`2026-07-23T09:50:00+08:00`
+> 当前状态校准时间：`2026-07-30T15:42:58+08:00`（最终测试事实见 acceptance log 当前记录）
 > 文档用途：作为人工开发者与 Code Agent 的当前状态、阶段边界和后续执行入口。
 
 文档分工：
@@ -12,6 +12,61 @@
 - 当前状态、阶段计划和唯一执行游标：本实施计划。
 - 历史验收证据、测试命令和完成记录：[ns_runtime_acceptance_log_0.0.2.md](ns_runtime_acceptance_log_0.0.2.md)。
 - 长期架构决策与后续约束：[ns_runtime_architecture_decisions_0.0.2.md](ns_runtime_architecture_decisions_0.0.2.md)。
+
+### Authority cleanup、bounded inline seal 与 CI 状态校准
+
+- 状态：`VERIFIED / F3 (local only)`；当前工作区修复 lifecycle owner 的逐资源完成/可重试清理、child 最终存活证明、broker endpoint/process/attestor 隔离回收，以及 admission inline descriptor/seal 的统一迭代式节点/深度/字节预算。最终命令和数量只写入 acceptance log 当前记录。
+- CI：分支 push 触发、真实 Redis 强制门禁与 base-SHA/commit whitespace gate 保持不变。workflow 文件虽声明 `workflow_dispatch`，但在该文件进入默认分支 `main` 前，GitHub Actions 人工触发入口不可用，禁止声称已可人工运行。
+- 远端事实：起始提交 `af0358bf34f6713d2b029931a1b6575a4a226ab6` 的 branch-push CI 已绿色；当前修复候选在本记录时没有对应远端 run，保持 `UNVERIFIED`，不得把起始提交的绿色结果继承为当前结果。
+- 冻结：P12继续`BLOCKED / NOT_STARTED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
+
+### P08-FIX-03 / P09-FIX-07 / P11-FIX-08 authority closure
+
+- 状态：`VERIFIED / F3 (local only)`；证据见 acceptance log 的“P08/P09/P11 transport provenance 与 repository resource authority 复核修复”。
+- P09-FIX-07：production `IamClient`不再有公共factory或frame/path proof；process bootstrap局部一次性组装exact client与narrow HTTP handle，普通owner无签发API。HTTP provenance覆盖backend/TLS/proxy/timeout/header、主transport、mount/proxy transport与关键handler；请求固定执行绑定transport以关闭await期间TOCTOU。
+- P08-FIX-03：raw Store不保存repository owner/private issuer或creation API；composition一次性建立固定repository set后关闭。production scope改为repository私钥签名、raw Store公钥验证，并按operation/object/schema/index bucket/log/namespace执行exact allowlist。
+- P11-FIX-08：delivery admission、scheduler、payload、registry与audit repository保持最小资源权限；跨role和未知资源fail closed。状态机与WRITE_UNCERTAIN规则未改变。
+- 冻结：P12仍`BLOCKED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
+
+### P08-FIX-05 / P09-FIX-09 / P11-FIX-10 authority broker isolation
+
+- 状态：`VERIFIED / F3 (local only)`；长期边界见ADR-048。
+- P09-FIX-09：production IAM HTTP graph与Ed25519 decision私钥迁入spawn broker；主进程只持有fixed-operation proxy、公钥、instance ID和broker-signed result，authorization evidence直接消费同一签名。
+- P08-FIX-05：production Redis/Valkey provider、repository authority/resource policy和physical-domain OS lease迁入broker；主进程只持有fixed-role repository proxy，不取得raw Store或StateAccessScope。contract-test composition改为deterministic in-memory且拒绝network配置。
+- P11-FIX-10：payload revalidation result由broker签名并绑定request/decision/snapshot/target/expiry；broker/IPC failure fail closed，StateStore write保持indeterminate，WRITE_UNCERTAIN仍不恢复、不重发。
+- 冻结：P12仍`BLOCKED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
+
+### P08-FIX-06 / P09-FIX-10 / P11-FIX-11 broker trust root and wire closure
+
+- 状态：`IMPLEMENTED / F3 (local only)`；本地测试证据见acceptance log的“authority broker fixed trust root 与 pickle-free IPC复核修复”。部署production root私钥不进入仓库，因此production `main`正向启动仍需部署环境集成验证，不标记为新的production VERIFIED证据。
+- P09-FIX-10：production root公钥为预置构建常量，继承`NS_RUNTIME_AUTHORITY_KEY_FD`中的私钥必须在broker child匹配该root；ready certificate由root签名后runtime才接受instance/session key/handles。公开starter永久fail closed，test与Redis integration使用不同test realm。
+- P08-FIX-06：应用IPC仅使用`send_bytes/recv_bytes`和strict canonical JSON；事务、record/index assertions、ordered-index cursor、result与health都有显式codec。broker以内部fixed-role repository scope重建事务，physical-domain lease及raw provider仍只存在child。
+- P11-FIX-11：delivery admission/scheduler/payload/registry/audit改依赖窄Persistence Protocol，production graph注入对应broker proxy；已发送write遇到IPC timeout/EOF/malformed/signature/sequence/broker exit统一indeterminate，关闭路径执行shutdown/join/terminate/kill。
+- 冻结：状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12保持`BLOCKED / F0`，production `task.dispatch`保持disabled。
+
+### P08-FIX-07 / P09-FIX-11 / P11-FIX-12 certificate chain and signed response closure
+
+- 状态：`IMPLEMENTED / F3 (local only)`；本地证据见acceptance log的“Authority broker certificate chain 与 signed StateStore response复核修复”。没有deployment production root私钥，因此production `main`正向启动仍未验证，不能标记为production VERIFIED。
+- P09-FIX-11：production channel与IAM proxy使用exact production类型并永久绑定预置root签发的instance certificate；authorization/payload authority同时验证certificate chain与session-signed request-bound result。contract/integration exact类型不能通过字段、class attribute、subclass或`object.__new__`跨realm伪装。
+- P08-FIX-07：StateStore全部success/error response在DTO decode前验证session签名、request/handle/operation/fingerprint与严格response sequence。channel异常统一reap child；actual password bytes由一次性FD进入broker，physical-domain lease只绑定stable endpoint/database/namespace/principal。
+- P11-FIX-12：delivery transaction fingerprint改为完整canonical结构；result逐mutation/log绑定精确transaction，错序、错误key/document、同shape不同payload/assertion/index/log、copy/replace/tamper/replay均fail closed。
+
+### P08-FIX-08 / P09-FIX-12 / P11-FIX-13 isolated attestor and renewable session closure
+
+- 状态：`IMPLEMENTED / F3 (local only)`；本地证据见acceptance log的“Authority attestor、request snapshot与delegated session rotation复核修复”。deployment production root正向启动仍需部署环境验证，不把test/integration root记为production VERIFIED。
+- P09-FIX-12：production root批准的broker identity与IAM result最终验签迁入bootstrap前启动、且不导入业务模块的spawn attestor。root签发长期有界delegation，broker用delegated key轮换短期session；attestor原子批准新generation并拒绝旧result/handle replay。
+- P08-FIX-08：StateStore response与immutable request authority snapshot一起交给attestor验证，绑定connection generation、broker/session/certificate、handle/role、request/response sequence与fingerprint；connection/certificate/public key/instance swap只能fail closed。真实Redis transaction/read/index/log/audit/scheduler路径跨多次rotation持续成功。
+- P11-FIX-13：`send_bytes()`调用前设置send-attempted；调用开始后的OS/transport失败统一reap broker并将StateStore write映射为indeterminate。没有delivery retry、WRITE_UNCERTAIN恢复或P12状态扩展。
+- 冻结：状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12保持`BLOCKED / F0`，未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
+
+### P08-FIX-09 / P09-FIX-13 / P11-FIX-14 root-bound attestor and role endpoint closure
+
+- 状态：`IMPLEMENTED / F3 (local only)`；本轮威胁模型、root-bound attestor与role-specific endpoint见ADR-052。本地test/integration root、真实Redis standalone及attestor crash/rotation已执行；deployment production root正向启动仍未验证，不标记为production VERIFIED。
+- 威胁模型：P11保证普通runtime模块不能让broker执行超出其固定role endpoint的IAM/StateStore操作；不把主runtime已遭任意代码执行完全攻陷、业务方法/调用栈/本地返回值可被替换列为P11防御声明。最终authority只由broker endpoint映射、broker resource policy和root-bound attestor决定，proxy type与字段只防误配。
+- P09-FIX-13：root delegation新增attestor instance/public key、用途、时效和nonce绑定。broker仅接受delegation指定attestor签发的ticket，attestor也拒绝未绑定自身identity的delegation；攻击者自建exact client/process/Pipe及格式正确ticket不能获得production批准。
+- P08-FIX-09：bootstrap为IAM、五个repository role及lifecycle分别建立独立OS endpoint。请求不发送caller-selected role/handle，broker按实际connection决定role并执行operation/resource allowlist；每个proxy只持有自身endpoint，稳定main图不保存全部role handle/channel collection。与broker单执行队列一致的非authority调度锁串行send/rotation/attestor verification，关闭跨endpoint轮换时的旧generation response竞态，但不保存endpoint或handle集合。
+- P11-FIX-14：attestor或approved identity失效会立即reap broker并释放physical-domain lease；只有send已尝试的write为indeterminate。公开session key/generation/fingerprint动态跟随attestor批准的当前rotation generation；旧endpoint/ticket/response/generation继续拒绝。
+- 冻结：状态机仍为`prepared -> queued -> sending -> ack_waiting`，WRITE_UNCERTAIN不恢复、不重发；P12保持`BLOCKED / F0`，未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
 
 ---
 
@@ -111,12 +166,12 @@
 |---|---|
 | 当前阶段 | `P12 ACK/NACK/Defer/Timeout/Retry` |
 | 当前工作包 | `P12-W01` |
-| 当前工作包状态 | `BLOCKED`（等待独立实施授权） |
-| 当前阶段状态 | `NOT_STARTED / F0` |
+| 当前工作包状态 | `BLOCKED`（awaiting explicit authorization） |
+| 当前阶段状态 | `NOT_STARTED / F0`（入口因未获授权而阻塞） |
 | 最近已验证阶段 | `P11 本地可靠投递调度与发送`（`F3 / local only`） |
-| 最近已验证工作包 | `P11-FIX-05` |
-| 下一阶段 | `P12-W01`（等待独立实施授权） |
-| 当前阻塞项 | P12尚未授权；production task.dispatch继续关闭，transport write只允许到ack_waiting，不等于delivery成功 |
+| 最近完成项 | `P01—P11 独立审查遗留修复`（local-only；实际测试与未验证项见 acceptance log 当前记录） |
+| 下一阶段入口 | `P12-W01`（等待独立实施授权） |
+| 当前阻塞项 | P12 尚未授权；production task.dispatch 继续关闭，transport write 只允许到 ack_waiting，不等于 delivery 成功 |
 | 设计基线版本 | `0.0.2` |
 | wire codec | `json.v1` |
 | 当前正式 transport | `websocket_tcp` adapter 为 `VERIFIED/F2`；P05 logical connection composition 保持冻结；P06 已把 production `IamClient` 与同一 P01 HTTP owner 显式接入握手、reauth 和 resume，IAM 异常继续 fail-closed |
@@ -147,8 +202,8 @@ P00 必须记录以下事实：
 | `src/ns_backend/iam` 实际能力 | `VERIFIED` | IAM-R1保持；payload_ref validation result现冻结对象/version/checksum/tenant/size完整性元数据，runtime通过显式IAM HTTP client实时调用既有backend endpoint；backend无对象provider时继续明确invalid/fail-closed。 |
 | `src/ns_runtime` 实际能力 | `VERIFIED` | P02-P09及P10 DR-1冻结边界保持；P11以typed prepared DeliveryRecord和StateStore authority完成本地prepared -> queued -> sending -> ack_waiting，复用既有TaskSupervisor与P05 local connection owner。task.dispatch只提供显式注入的本地实验组合，production contract/默认配置仍关闭；不含P12 ACK/NACK/Defer/timeout/retry。 |
 | 配置示例与依赖清单 | `VERIFIED` | runtime.state_store支持backend、credential-free endpoint、username、env/file/none password source、namespace和timeout；Redis/Valkey driver已移入runtime生产层且动态加载，五层无环清单保持。 |
-| 当前本地测试基线 | `VERIFIED` | P10/P11定向51项、真实Redis integration 16项；标准asyncio全树`Ran 843 tests in 98.231s, OK (skipped=1)`，runtime uvloop（按DEP-1排除Django-only cache）`Ran 832 tests in 105.462s, OK (skipped=1)`，backend/Django全树`Ran 827 tests in 60.694s, OK (skipped=50)`。compileall、两环境pip check、cold import、diff check与禁止项扫描通过；均为local verification，无远程CI。 |
-| 当前状态校准时间 | `VERIFIED` | `2026-07-23T09:50:00+08:00` |
+| 当前本地测试基线 | `VERIFIED` | 本轮最终standard asyncio全树`Ran 951 tests in 253.401s, OK (skipped=7)`；authority、IAM、routing、真实Redis、delivery、main/transport与边界分组均通过，compileall、文档secret扫描和diff check通过。首轮全树的短TTL attestor时序失败、单项复跑与最终全树复跑均保留在acceptance log；均为local verification，无production root或远程CI证据。 |
+| 当前状态校准时间 | `VERIFIED` | `2026-07-30T13:19:54+08:00` |
 
 ### 2.2 本地代码检查范围
 
@@ -184,7 +239,7 @@ P00 对每项能力使用以下结构登记。未读取源码并执行对应测�
 | Session、握手与恢复 | `src/ns_runtime/connection/`、`src/ns_runtime/iam/` | SC-1 logical lifecycle保持冻结；P05 index以同一mutation原子发布state、active target与ELIGIBLE/RECONNECT_GRACE/DRAINING/AUTHORITY_SUSPENDED/SESSION_EXPIRY_SUSPENDED。resume/reauth/security strong lifecycle audit显式fail-closed；heartbeat不进入strong audit。IAM-R1与principal continuity保持不变，不包含lease/fencing | P05 eligibility、grace/drain/expiry/reauth/resume与lifecycle audit专项；P03-P08联合347项 | `F3` | P05/P06保持`VERIFIED`；P09 Phase A eligibility/audit校准已验证 |
 | Processor 与插件 | `src/ns_runtime/processor/`、`src/ns_runtime/connection/processors.py` | PC-1保持固定八阶段；response finalizer为纯构造边界，final audit成功后才由composition-owned emitter发送。第六阶段消费typed RoutingPreparationResult，resolved plan只传播一次，reject/unavailable立即截断；feature-disabled消息不调用Router。strong final audit失败清空response且send为零 | processor、routing propagation、strong audit/emitter专项及P03-P08联合347项 | `F3` | P07/P08保持`VERIFIED`；P09 Phase A routing propagation与audit-before-send校准已验证 |
 | RoutingPlan 与调度 | `src/ns_runtime/routing/` | RP-1单进程本地routing：ALLOW-only authorization；显式trusted policy invocation；message binding与semantic IAM decision分离；policy/IAM/plan target与message同链；类型化security/scorer；一次index snapshot；Router/plan共用target/filter、fallback score、canonical selection和fingerprint纯函数；deeply immutable plan验证全部candidate intended universe、P05冻结eligibility、effective tenant/target约束、filtered语义、selected binding及single/quorum/subset前N和all/broadcast/all-required全集顺序。ordinary recorder仅接收安全投影；strong authority仅冻结接口且默认unavailable | public construction/`dataclasses.replace`同步fingerprint负向矩阵、deny-like authorization、完整target/message错配、跨tenant/selector/constraint/universe伪造、前N错选/逆序/score伪造、message-ID independence、previous/broadcast/all-required/5001及全矩阵回归；详见acceptance log | `F3`（local only） | P09-W01至W10、post-submit review及P09-FIX-02至FIX-04 `VERIFIED`；remote/master routing与strong persistence未启用 |
-| 可靠投递 | `src/ns_runtime/delivery/` | P10 DR-1/prepared初始化与RP-1 plan保持；P11权威持久游标分页激活/claim/lease恢复、stale投影修复、三层水位、原子claim、持久last_fencing/owner_epoch、lease/risk、发送前source/auth/protocol/payload实时IAM复验、queued -> sending + DeliveryAttempt、完整post-write reconcile、success -> ack_waiting及typed waiting/failure/uncertain已实现。无Router调用、target重选或transport-success成功语义 | P10/P11定向56项、真实Redis16项、asyncio848/uvloop837/backend832项通过 | `F3`（local only） | P11-W01至W11及P11-FIX-04 `VERIFIED`；只到ack_waiting，P12仍`BLOCKED/F0` |
+| 可靠投递 | `src/ns_runtime/delivery/` | P10 DR-1/prepared初始化与RP-1 plan保持；P11权威持久游标分页激活/claim/lease恢复、stale投影修复、三层水位、原子claim、持久last_fencing/owner_epoch、lease/risk、发送前source/auth/protocol/payload实时IAM复验、queued -> sending + DeliveryAttempt、完整post-write reconcile、success -> ack_waiting及typed waiting/failure/uncertain已实现。transport明确区分未开始、已开始但未知和确认成功；无Router调用、target重选或transport-success成功语义 | 本轮定向、真实Redis及全树结果见acceptance log | `F3`（local only） | P11-W01至W11及P11-FIX-06 `VERIFIED`；只到ack_waiting，P12仍`BLOCKED/F0` |
 | ACK/NACK/Defer | 无 | 仅公共异常类与 NACK reason 映射，无 processor 或状态机 | 源码与路径扫描 | `F0` | `NOT_STARTED` |
 | Stream | 无 | 无 stream 模型、窗口或状态机 | 路径扫描 | `F0` | `NOT_STARTED` |
 | 集群与 fencing | 无P17实现 | P11只有单delivery本地worker的持久fencing/owner epoch与Cluster-safe key布局；无cluster role、leader lease、membership、ownership transfer或P17 fencing | 源码、key-slot测试与路径扫描 | `F0`（P17） | `NOT_STARTED` |
@@ -221,12 +276,12 @@ P10 及后续可靠状态阶段允许使用当前 WSL Ubuntu 开发环境中的�
 * Port：`6379`
 * Database：`0`
 * Username：empty
-* Password：`Ns981127*`
-* Connection URL：`redis://:Ns981127*@127.0.0.1:6379/0`
+* Password：`环境变量 NS_RUNTIME_REDIS_PASSWORD 或受限权限文件引用`
+* Connection URL：`${NS_RUNTIME_REDIS_URL}`（必须是不含 userinfo 的 credential-free endpoint）
 * Runtime namespace：`ns_runtime`
 * 测试 namespace 前缀：`ns_runtime:test:`
 
-该 Redis 实例仅用于当前开发主机的本地实现和验收，不是生产、共享测试或远程 Redis 实例。该账户和密码不得在其他环境复用。
+该 Redis 实例仅用于当前开发主机的本地实现和验收，不是生产、共享测试或远程 Redis 实例。仓库值已移除，服务端轮换待人工确认；旧值视为可能已经泄露，必须由人工在 Redis 侧轮换/吊销。代码和测试不得尝试自动轮换，也不得在日志、测试输出或验收记录中复述旧值。
 
 Codex 可以直接使用上述连接信息完成 Redis StateStore provider 的实现、启动验证和真实集成测试，不需要等待额外的 Redis 环境授权。
 
@@ -265,7 +320,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 * 禁止执行 `FLUSHDB`、`FLUSHALL` 的源码扫描和测试证据；
 * 无远程 CI 时明确标记为 local-only evidence。
 
-密码可以保存在 implementation plan 的本地环境段落中，但不得复制到 acceptance log 的命令输出、异常文本、日志或测试失败详情中。
+密码不得保存在 implementation plan、acceptance log、命令输出、异常文本、日志或测试失败详情中；这里只允许环境变量名、受限权限文件引用和无 userinfo 的 endpoint 占位符。
 
 
 ---
@@ -357,7 +412,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 
 ## P00 本地仓库基线与实施账本
 
-**阶段状态：`IN_PROGRESS`**
+**阶段状态：`VERIFIED`**
 **目标完成度：`F1`**
 
 ### 目标
@@ -372,7 +427,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 | `P00-W02` | `VERIFIED` | 读取本地设计文档与实施文档，确认设计版本、文件路径和实施账本版本 | 本地设计基线确认为 `0.0.2`；无设计冲突 |
 | `P00-W03` | `VERIFIED` | 读取本地项目元数据、依赖、配置、测试入口、`ns_common`、`ns_backend.iam`、`ns_runtime` 和相关测试 | 本地能力登记表已按本地路径、行为、证据和完成度填写 |
 | `P00-W04` | `VERIFIED` | 执行不改变数据的本地基线测试；记录通过、失败、跳过、缺失依赖和环境阻塞 | loader error 可复现且已记录，未触碰真实数据 |
-| `P00-W05` | `VERIFIED` | 把现有本地实现映射到 P01-P22；已完整实现并通过阶段门禁的工作包可标记为 `VERIFIED`，其余按实际状态登记 | P01 为部分 F1；P02-P22 为 F0 |
+| `P00-W05` | `VERIFIED` | 把现有本地实现映射到 P01-P22；已完整实现并通过阶段门禁的工作包可标记为 `VERIFIED`，其余按实际状态登记 | 历史映射已由后续阶段记录取代；当前状态只以第 1 节和第 22.3 节为准 |
 | `P00-W06` | `VERIFIED` | 建立 `ns_common` 公共基础设施登记表和接口冻结登记表；识别重复实现和应迁移能力 | 公共能力归属保持在 `ns_common`；runtime 私有能力未混入 cache |
 | `P00-W07` | `VERIFIED` | 设置唯一当前执行游标和下一工作包 | 唯一游标机制已建立；当前值只以第 1 节为准 |
 
@@ -408,7 +463,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 
 ## P01 ns_common 公共基础设施加固
 
-**阶段状态：`IN_PROGRESS`**
+**阶段状态：`VERIFIED`**
 **目标完成度：`F2`**  
 **前置阶段：P00 `VERIFIED`**
 
@@ -550,6 +605,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 | `P02-FIX-04` | `VERIFIED` | 修复 asyncio 与 fallback signal registration 退出时无法精确恢复既有 handler | SIGINT/SIGTERM 原 handler 对象精确恢复；close 幂等 |
 | `P02-W07` | `VERIFIED` | 建立 event loop lag 采样和 implementation 指标 | asyncio/uvloop 指标可读取 |
 | `P02-FIX-05` | `VERIFIED` | 修复 critical event-loop monitor task 异常失败与 RuntimeService 生命周期未联动 | 异常先请求统一 shutdown 并进入 FAILED；stop 成功后 STOPPED，report 保留失败历史 |
+| `P02-FIX-06` | `VERIFIED` | 默认module入口改为真实长期运行服务，self-check/diagnose改为显式命令 | 默认启动唯一StateStore/RuntimeService并等待signal、critical failure或显式shutdown；启动异常原样穿透并best-effort cleanup |
 | `P02-W08` | `VERIFIED` | 建立本地进程诊断命令，只读取启动配置和本地状态，不开 HTTP 管理端口 | 可判断配置是否合法和进程依赖是否齐全 |
 
 ### 测试矩阵
@@ -635,7 +691,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 - 内置类型注册完整，但只有协议错误处理功能处于 enabled。
 - 协议模型不依赖具体 transport。
 
-验收记录：`P04-W01` 至 `P04-W10`、`P04-FIX-01` 与阶段出口见 [acceptance log](ns_runtime_acceptance_log_0.0.2.md#p04-w01)；transport 边界登记为 `TC-1`，长期决策见 [ADR-029](ns_runtime_architecture_decisions_0.0.2.md#adr-029)。
+验收记录：`P03-W01` 至 `P03-W11`、`P03-FIX-01`、`P03-FIX-02` 与阶段出口从 [acceptance log / P03-W01](ns_runtime_acceptance_log_0.0.2.md#p03-w01) 起按工作包连续记录；协议边界登记为 `ENV-1`，长期决策见 [ADR-028](ns_runtime_architecture_decisions_0.0.2.md#adr-028)。
 
 ---
 
@@ -865,6 +921,9 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `P08-W06` | `VERIFIED` | Consistency and Failure Policy：LINEARIZABLE、AT_LEAST_REVISION、STALE_ALLOWED 与稳定失败语义 | unknown write timeout 返回 INDETERMINATE_WRITE，禁止自动 retry |
 | `P08-W07` | `VERIFIED` | Strong Audit Authority Boundary：建立 `AuditSink -> StrongAuditAuthorityService -> StateStore` 窄调用链 | Processor 不直接依赖 StateStore；strong audit 失败阻断 success |
 | `P08-W08` | `VERIFIED` | Contract Verification：确定性 model/harness 覆盖 CAS、transaction、lifecycle、namespace、failure、ownership 和 audit | 不启动真实 Redis/Valkey/SQLite/Sentinel/Cluster |
+| `P08-FIX-01` | `VERIFIED` | issuer-sealed scope/capability、transaction result cardinality与Redis ordered-index原子cursor分页 | public/replace/subclass/cross-store不能扩权；records/log positions精确计数；并发分页无静默跳项/重复 |
+| `P08-FIX-02` | `VERIFIED` | composition-owned固定role repository与transaction-bound provider result | raw store不能签发任意capability；admission/scheduler/payload/registry/audit最小权限隔离；result拒绝direct/replace/copy/错序/cross-transaction replay；见ADR-046 |
+| `P08-FIX-05` | `VERIFIED` | spawn broker独占production provider、repository authority/resource policy与physical-domain OS lease | 主进程无raw production Store/scope issuer；相同物理域不同runtime ID的第二broker拒绝；contract-test composition不连接Redis；见ADR-048 |
 
 ### Contract 测试矩阵
 
@@ -944,6 +1003,24 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 - Policy/IAM/Plan：Plan验证policy invocation完整intent/target、policy与IAM message type、plan message reference以及IAM/plan canonical target同链；target kind/selector/constraint/epoch/broadcast/count任一错配即使重算fingerprint也失败，stage six的错误policy target仍在snapshot前拒绝。
 - Candidate/selection：CandidateEvidence冻结state/active eligibility/typed routing eligibility/rebind结果；Router与Plan共用target/filter validator、fallback.v1 score与canonical selection。Plan验证全部candidate intended universe、effective tenant、target AND约束和filter/score语义，再重算single首位、quorum/subset前N及all/broadcast/all-required全集顺序。
 - 范围：只关闭P09公共Plan selected authority；未实施P10、P14 health scoring、remote/master routing、strong provider、Delivery/Summary/ACK/retry。`P10-W01`保持`BLOCKED`。
+
+### P09-FIX-05 IAM authorization issuer closure
+
+- 状态：`VERIFIED`。production `AuthorizationDecisionEvidence`只由真实`IamProcessorAuthorization -> MessageAuthorizationService`链签发；Router/admission逐次验证production issuer seal与全部message/tenant/target/permission/policy绑定。
+- public direct construction、旧`bound()` factory、`dataclasses.replace()`、字段复制、subclass、fake service/issuer和contract-test evidence进入production均fail closed；SHA-256只作为内容绑定，不再充当ALLOW authority。
+- 范围仍是P09 local-only RoutingPlan authority闭合；没有remote/master routing、P14 scorer、P17 ownership、P12 ACK/retry或production task.dispatch。
+
+### P09-FIX-06 composition-owned authorization authority
+
+- 状态：`VERIFIED`。删除自由production signer；实例issuer绑定精确production MessageAuthorizationService并只消费该service本次sealed typed result与当前ProcessorContext，evidence绑定config/policy版本。
+- production IamClient由process bootstrap在单一局部组装区间绑定精确NsHttpClientOwner、HTTP client、固定backend与底层transport；普通owner/factory不能创建production handle。HTTP关键方法/config/transport替换、copy/subclass、未初始化对象、重复binding和fake service均fail closed。
+- 范围仍是P09 local-only authority closure；P12、P14、P17和production task.dispatch保持未实现/关闭；见ADR-046。
+
+### P09-FIX-09 broker-signed authorization authority
+
+- 状态：`VERIFIED / F3 (local only)`。同解释器内factory/proof/HTTP binding不再承担production authority；production `IamClient`为spawn broker的fixed-operation proxy。
+- broker独占HTTP transport和Ed25519私钥；signed result绑定broker instance、operation、request projection/fingerprint、backend decision、snapshot/version、tenant/target/message type、issued/expiry与nonce/sequence。MessageAuthorizationService与payload issuer直接保留并验证同一个broker result。
+- 范围仍是P09/P11 authority provenance closure；P12、P14、P17和production task.dispatch保持未实现/关闭；见ADR-048。
 
 ### 测试矩阵
 
@@ -1039,8 +1116,8 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `P11-W04` | `VERIFIED` | SendWorker每次从StateStore重读并校验status、owner/lease、config/policy、expires_at、P05 active session/epoch/identity以及payload authority/content evidence | target断连、identity错配、非法payload_ref、过期与恶意dependency均在transport前fail closed；不调用Router |
 | `P11-W05` | `VERIFIED` | queued -> sending、DeliveryAttempt create、root/shard Summary queued/sending计数在同一StateStore事务中提交 | fake transport观测到write前authority已是sending且attempt为writing；不存在sending无attempt |
 | `P11-W06` | `VERIFIED` | 进入sending时记录ack_deadline；transport write使用低于lease TTL的可配置timeout | 本阶段只记录deadline；没有timeout scanner或retry |
-| `P11-W07` | `VERIFIED` | transport write返回None后原子把attempt标记write_succeeded并把DeliveryRecord转ack_waiting | 无sent/sent_success；transport success不等于acked或delivery success |
-| `P11-W08` | `VERIFIED` | write error、timeout和shutdown interruption只形成typed failure outcome并原子进入write_failed | retry_scheduled仅为拒绝构造的reserved enum placeholder；无production transition、retry worker或dead letter |
+| `P11-W07` | `VERIFIED` | transport返回typed `SUCCEEDED`后原子把attempt标记write_succeeded并把DeliveryRecord转ack_waiting | 无sent/sent_success；transport success不等于acked或delivery success |
+| `P11-W08` | `VERIFIED` | 只有typed `NOT_STARTED`进入write_failed；started-write的timeout、cancel、close或异常进入write_uncertain并释放owner | shutdown不伪装确定失败；禁止重发，且无production retry worker或dead letter |
 | `P11-W09` | `VERIFIED` | owner risk窗口默认4s（配置限定正值）只允许既已sending的完成提交；at_risk禁止开始新write并停止同轮放大 | 不形成P17 leader lease或跨runtime转移；旧per-delivery fencing不能写 |
 | `P11-W10` | `VERIFIED` | root/shard Summary与DeliveryRecord同事务维护prepared/queued/sending/ack_waiting/write_failed；额外从authority重算并比对资源计数 | prepared不占active/inflight，queued只占队列名额，sending占active/write，ack_waiting占inflight |
 | `P11-W11` | `VERIFIED` | 提供显式注入的LocalTaskDispatchExperimentalProcessor与bounded coordinator，复用唯一TaskSupervisor和P05 connection owner | 默认config false且protocol production contract仍disabled；P12完成前不得production enable |
@@ -1049,6 +1126,9 @@ P08 不实现任何具体存储 provider，不实现 Redis/Valkey/SQLite adapter
 | `P11-FIX-03` | `VERIFIED` | 可恢复runtime tenant/layout registry、真正runtime-global watermark、跨bucket有界轮转activation/claim/recovery和post-write统一reconcile | 重启恢复、跨tenant水位、跨bucket进展、lease版本冲突与WRITE_UNCERTAIN对账通过；无跨slot事务/system global ZSet或第二lifecycle owner |
 | `P11-FIX-04` | `VERIFIED` | authority-backed ordered-index cursor与stale投影修复、完整post-write reconcile、production payload_ref IAM decision evidence | prepared/ready/lease跨调用与provider A-B继续推进；错状态/缺record/旧lease投影修复带摘要日志；expired lease、已提交ACK及高fencing写后对账和实时IAM证据攻击面通过 |
 | `P11-FIX-05` | `VERIFIED` | ordered-index repair前置断言、统一cursor身份、renew handle生命周期、不可伪造IAM evidence及backend对象级判定 | record/index read assertion在写前原子校验且冲突零落地；cursor v2迁移门禁、renew显式stop/join、backend对象级ACL与三套全量通过；见ADR-044和最终验收记录 |
+| `P11-FIX-06` | `VERIFIED` | production IAM/payload authority seal与typed transport write uncertainty闭合 | fake/replace/subclass/未初始化adapter不能签发；started write只到WRITE_UNCERTAIN，before-start failure才到WRITE_FAILED；见ADR-045 |
+| `P11-FIX-07` | `VERIFIED` | validator-owned payload issuer与composition-owned最小delivery repositories | payload decision一次性绑定真实request/client/clock/delivery/target；admission/scheduler/payload/registry不可跨role调用或共享全能力scope；见ADR-046 |
+| `P11-FIX-10` | `VERIFIED` | payload/IAM broker签名、fixed-role repository IPC与broker failure closure | 跨broker/request/operation replay、handle/role修改和broker crash fail closed；WRITE_UNCERTAIN不恢复、不重发；见ADR-048 |
 
 ### 测试矩阵
 

@@ -3,9 +3,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import copy
 import unittest
 
-from ns_common.exceptions import NsRuntimeIamDeniedError, NsRuntimeIamUnavailableError
+from ns_common.exceptions import (
+    NsRuntimeIamDeniedError,
+    NsRuntimeIamUnavailableError,
+    NsValidationError,
+)
 from ns_common.iam import (
     IamAccessCheckRequest,
     IamAccessDecision,
@@ -19,17 +24,19 @@ from ns_common.time import ControlledClock
 from ns_runtime.iam import (
     AuthorizationMode,
     BackendUnavailablePolicy,
+    ContractTestIamAuthorizationAdapter,
     MessageAuthorizationService,
     OperationRiskContext,
     PermissionSnapshot,
 )
-from ns_runtime.iam.client import IamClient
+from ns_runtime.processor.integration import IamProcessorAuthorization
+import ns_runtime.processor.contracts as processor_contracts_module
 
 
 NOW = datetime(2026, 7, 21, tzinfo=timezone.utc)
 
 
-class _Iam(IamClient):
+class _Iam(ContractTestIamAuthorizationAdapter):
     def __init__(self, outcomes: list[object], clock: ControlledClock) -> None:
         self.outcomes = outcomes
         self.clock = clock
@@ -86,28 +93,86 @@ def _request(**changes: object) -> IamAccessCheckRequest:
 
 
 class RuntimeAuthorizationTestCase(unittest.IsolatedAsyncioTestCase):
+    def test_fake_message_authorization_service_cannot_issue_production_authority(
+        self,
+    ) -> None:
+        with self.assertRaises(ImportError):
+            from ns_runtime.processor.contracts import (  # type: ignore[attr-defined]  # noqa: F401
+                _issue_production_authorization_evidence,
+            )
+        self.assertFalse(hasattr(
+            processor_contracts_module,
+            "_issue_production_authorization_evidence",
+        ))
+        fake = object.__new__(MessageAuthorizationService)
+        fake._production_authority = True
+        fake._authority_issuer = object()
+
+        class ForgedService(MessageAuthorizationService):
+            pass
+
+        for value in (fake, object.__new__(ForgedService), object()):
+            with self.subTest(service_type=type(value).__name__):
+                with self.assertRaises(NsValidationError):
+                    IamProcessorAuthorization(
+                        service=value,  # type: ignore[arg-type]
+                    )
+
+    async def test_authorization_result_is_service_bound_and_not_replayable(
+        self,
+    ) -> None:
+        clock = ControlledClock(utc_start=NOW)
+        service = MessageAuthorizationService.for_contract_tests(
+            iam_client=_Iam([True], clock),
+            clock=clock,
+            mode=AuthorizationMode.STRICT,
+            cache_ttl_seconds=60,
+        )
+        result = await service.authorize(
+            snapshot=_snapshot(),
+            request=_request(),
+            risk=OperationRiskContext(),
+        )
+        other = MessageAuthorizationService.for_contract_tests(
+            iam_client=_Iam([], clock),
+            clock=clock,
+            mode=AuthorizationMode.STRICT,
+            cache_ttl_seconds=60,
+        )
+        self.assertTrue(result.is_issued_by(service))
+        self.assertFalse(result.is_issued_by(other))
+        with self.assertRaises(NsValidationError):
+            copy.copy(result)
+        with self.assertRaises((NsValidationError, TypeError)):
+            replace(result, decision=result.decision)
+        forged = object.__new__(type(result))
+        for field in result.__dataclass_fields__:
+            object.__setattr__(forged, field, getattr(result, field))
+        object.__setattr__(forged, "request", _request(message_type="forged"))
+        self.assertFalse(forged.is_issued_by(service))
+
     async def test_strict_mode_calls_backend_for_every_message(self) -> None:
         clock = ControlledClock(utc_start=NOW)
         iam = _Iam([True, True], clock)
-        service = MessageAuthorizationService(
+        service = MessageAuthorizationService.for_contract_tests(
             iam_client=iam,
             clock=clock,
             mode=AuthorizationMode.STRICT,
             cache_ttl_seconds=60,
         )
         for _ in range(2):
-            _, decision = await service.authorize(
+            result = await service.authorize(
                 snapshot=_snapshot(),
                 request=_request(),
                 risk=OperationRiskContext(),
             )
-            self.assertTrue(decision.allowed)
+            self.assertTrue(result.decision.allowed)
         self.assertEqual(2, len(iam.requests))
 
     async def test_cache_mode_honors_ttl_and_rechecks_after_expiry(self) -> None:
         clock = ControlledClock(utc_start=NOW)
         iam = _Iam([True, True], clock)
-        service = MessageAuthorizationService(
+        service = MessageAuthorizationService.for_contract_tests(
             iam_client=iam,
             clock=clock,
             mode=AuthorizationMode.CACHE,
@@ -143,7 +208,7 @@ class RuntimeAuthorizationTestCase(unittest.IsolatedAsyncioTestCase):
             refresh_calls.append(snapshot)
             return refreshed
 
-        service = MessageAuthorizationService(
+        service = MessageAuthorizationService.for_contract_tests(
             iam_client=iam,
             clock=clock,
             mode=AuthorizationMode.CACHE,
@@ -162,9 +227,10 @@ class RuntimeAuthorizationTestCase(unittest.IsolatedAsyncioTestCase):
             invalidated_at=NOW,
             reason="role_changed",
         ))
-        effective, _ = await service.authorize(
+        result = await service.authorize(
             snapshot=_snapshot(), request=_request(), risk=OperationRiskContext(),
         )
+        effective = result.effective_snapshot
         self.assertEqual("version:2", effective.permission_version)
         self.assertEqual("version:2", iam.requests[-1].permission_version)
         self.assertEqual(1, len(refresh_calls))
@@ -173,7 +239,7 @@ class RuntimeAuthorizationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_stale_snapshot_and_tenant_tampering_are_rejected_before_backend(self) -> None:
         clock = ControlledClock(utc_start=NOW)
         iam = _Iam([True, True], clock)
-        service = MessageAuthorizationService(
+        service = MessageAuthorizationService.for_contract_tests(
             iam_client=iam,
             clock=clock,
             mode=AuthorizationMode.STRICT,
@@ -211,7 +277,7 @@ class RuntimeAuthorizationTestCase(unittest.IsolatedAsyncioTestCase):
             permission_version="version:2",
             decided_at=NOW,
         )], clock)
-        service = MessageAuthorizationService(
+        service = MessageAuthorizationService.for_contract_tests(
             iam_client=iam,
             clock=clock,
             mode=AuthorizationMode.CACHE,
@@ -253,7 +319,7 @@ class RuntimeAuthorizationTestCase(unittest.IsolatedAsyncioTestCase):
         clock = ControlledClock(utc_start=NOW)
         unavailable = NsRuntimeIamUnavailableError(details={"reason": "test"})
         iam = _Iam([True, unavailable], clock)
-        service = MessageAuthorizationService(
+        service = MessageAuthorizationService.for_contract_tests(
             iam_client=iam,
             clock=clock,
             mode=AuthorizationMode.CACHE,

@@ -43,6 +43,8 @@ from .models import (
     derive_candidate_filter_reason,
     select_candidates_from_evidence,
     validate_candidate_against_routing_target,
+    validate_resolved_routing_plan,
+    resolved_routing_plan_authority_digest,
 )
 from .policy import DefaultLocalRoutingPolicy, RoutingPolicy
 from .router import (
@@ -101,4 +103,6 @@ __all__ = (
     "derive_candidate_filter_reason",
     "select_candidates_from_evidence",
     "validate_candidate_against_routing_target",
+    "validate_resolved_routing_plan",
+    "resolved_routing_plan_authority_digest",
 )

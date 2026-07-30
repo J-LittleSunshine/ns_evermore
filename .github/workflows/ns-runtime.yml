@@ -1,0 +1,89 @@
+name: ns-runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/ns-runtime-implementation
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-310:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: src
+      PYTHONASYNCIODEBUG: "0"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            requirements-common.txt
+            requirements-backend.txt
+            requirements-runtime.txt
+            requirements-runtime-test.txt
+
+      - name: Install repository requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            -r requirements-backend.txt \
+            -r requirements-runtime-test.txt
+          python -m pip check
+
+      - name: Install real Redis integration dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes redis-server
+          command -v redis-server
+          redis-server --version
+          python -c "import redis, redis.asyncio, shutil; assert shutil.which('redis-server')"
+
+      - name: Compile sources and tests
+        run: python -m compileall -q src tests
+
+      - name: Documentation secret gate
+        run: >-
+          python -m unittest -q
+          tests.test_runtime_documentation_security
+          tests.test_requirements
+
+      - name: Critical ns_runtime tests
+        run: >-
+          python -m unittest -q
+          tests.test_runtime_authority_broker
+          tests.test_runtime_iam_authorization
+          tests.test_runtime_routing
+          tests.test_runtime_delivery_admission
+          tests.test_runtime_transport_lifecycle
+
+      - name: Real Redis integration
+        env:
+          NS_RUNTIME_REQUIRE_REDIS_INTEGRATION: "1"
+        run: >-
+          python -m unittest -q
+          tests.test_redis_state_store_integration
+
+      - name: Full unittest suite
+        run: python -m unittest discover -s tests -t . -p "test_*.py" -q
+
+      - name: Whitespace gate
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          base_sha="${EVENT_BASE_SHA}"
+          if [ -z "${base_sha}" ] || [ "${base_sha}" = "0000000000000000000000000000000000000000" ]; then
+            base_sha="$(git rev-parse "${GITHUB_SHA}^" 2>/dev/null || git rev-list --max-parents=0 "${GITHUB_SHA}")"
+          fi
+          git diff --check "${base_sha}" "${GITHUB_SHA}"
+          git show --check --format= "${GITHUB_SHA}"

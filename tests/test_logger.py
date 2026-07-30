@@ -73,6 +73,72 @@ class ExitingError(Exception):
 
 class LoggerSanitizerTestCase(unittest.TestCase):
 
+    def test_constructor_failure_closes_partially_installed_handlers(
+        self,
+    ) -> None:
+        logger_name = f"constructor-rollback-{uuid.uuid4().hex}"
+        failure = RuntimeError("file handler construction failed")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with mock.patch.object(
+                NsLogger,
+                "_build_file_handler",
+                side_effect=failure,
+            ):
+                with self.assertRaises(RuntimeError) as raised:
+                    NsLogger(
+                        logger_name,
+                        sanitizer=Sanitizer(),
+                        config={
+                            "console": True,
+                            "level": "INFO",
+                            "file_level": "INFO",
+                            "console_level": "INFO",
+                        },
+                        log_dir=temporary_directory,
+                    )
+        self.assertIs(failure, raised.exception)
+        with logger_module._LOGGER_LOCK:
+            partial = logger_module._LOGGER_MAP.pop(logger_name)
+        self.assertEqual([], partial.handlers)
+        self.assertFalse(partial._initialized)
+        self.assertEqual(-1, partial._owner_pid)
+
+    def test_close_retains_only_handler_that_failed_for_retry(self) -> None:
+        class RetryHandler(logging.Handler):
+            def __init__(self, *, fail_once: bool) -> None:
+                super().__init__()
+                self.fail_once = fail_once
+                self.close_calls = 0
+
+            def emit(self, record: logging.LogRecord) -> None:
+                del record
+
+            def close(self) -> None:
+                self.close_calls += 1
+                if self.fail_once and self.close_calls == 1:
+                    raise RuntimeError("handler close failed once")
+                super().close()
+
+        logger = object.__new__(NsLogger)
+        logging.Logger.__init__(logger, "retry-close")
+        logger._initialized = True
+        logger._owner_pid = os.getpid()
+        stable = RetryHandler(fail_once=False)
+        flaky = RetryHandler(fail_once=True)
+        logger.addHandler(stable)
+        logger.addHandler(flaky)
+
+        with self.assertRaises(RuntimeError):
+            logger.close()
+        self.assertEqual(1, stable.close_calls)
+        self.assertEqual(1, flaky.close_calls)
+        self.assertEqual([flaky], logger.handlers)
+
+        logger.close()
+        self.assertEqual(1, stable.close_calls)
+        self.assertEqual(2, flaky.close_calls)
+        self.assertEqual([], logger.handlers)
+
     def test_explicit_logger_config_avoids_global_config_and_uses_explicit_root(
         self,
     ) -> None:

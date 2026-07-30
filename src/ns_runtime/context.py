@@ -21,6 +21,14 @@ if TYPE_CHECKING:
     )
     from ns_common.state_store import StateStore
     from ns_common.time import Clock
+    from ns_runtime.authority_broker import (
+        AuthorityBrokerStateStoreProxy,
+        AdmissionRepositoryProxy,
+        AuditRepositoryProxy,
+        PayloadRepositoryProxy,
+        RegistryRepositoryProxy,
+        SchedulerRepositoryProxy,
+    )
 
 
 def _require_dependency(
@@ -88,7 +96,12 @@ class RuntimeDependencySlots:
 
     diagnostic_snapshot_sink: DiagnosticSnapshotSink | None = None
     http_client_owner: NsHttpClientOwner | None = None
-    state_store: StateStore | None = None
+    state_store: StateStore | AuthorityBrokerStateStoreProxy | None = None
+    delivery_admission_persistence: AdmissionRepositoryProxy | None = None
+    delivery_scheduler_persistence: SchedulerRepositoryProxy | None = None
+    delivery_payload_persistence: PayloadRepositoryProxy | None = None
+    delivery_registry_persistence: RegistryRepositoryProxy | None = None
+    strong_audit_persistence: AuditRepositoryProxy | None = None
 
     def __post_init__(self) -> None:
         if self.diagnostic_snapshot_sink is not None:
@@ -106,12 +119,87 @@ class RuntimeDependencySlots:
                 expected_type_name="NsHttpClientOwner",
             )
         if self.state_store is not None:
-            _require_loaded_dependency(
-                self.state_store,
-                dependency="dependencies.state_store",
-                module_name="ns_common.state_store",
-                expected_type_name="StateStore",
+            state_module = sys.modules.get("ns_common.state_store")
+            broker_module = sys.modules.get("ns_runtime.authority_broker")
+            state_type = (
+                vars(state_module).get("StateStore")
+                if state_module is not None
+                else None
             )
+            proxy_type = (
+                vars(broker_module).get("AuthorityBrokerStateStoreProxy")
+                if broker_module is not None
+                else None
+            )
+            if not (
+                isinstance(state_type, type)
+                and isinstance(self.state_store, state_type)
+            ) and not (
+                isinstance(proxy_type, type)
+                and type(self.state_store) is proxy_type
+                and self.state_store._binding_is_current()
+            ):
+                raise NsValidationError(
+                    "RuntimeContext dependency is invalid.",
+                    details={
+                        "component": "runtime_context",
+                        "dependency": "dependencies.state_store",
+                        "expected_type": (
+                            "StateStore|AuthorityBrokerStateStoreProxy"
+                        ),
+                        "actual_type": type(self.state_store).__name__,
+                    },
+                )
+        broker_slots = (
+            (
+                "delivery_admission_persistence",
+                self.delivery_admission_persistence,
+                "AdmissionRepositoryProxy",
+            ),
+            (
+                "delivery_scheduler_persistence",
+                self.delivery_scheduler_persistence,
+                "SchedulerRepositoryProxy",
+            ),
+            (
+                "delivery_payload_persistence",
+                self.delivery_payload_persistence,
+                "PayloadRepositoryProxy",
+            ),
+            (
+                "delivery_registry_persistence",
+                self.delivery_registry_persistence,
+                "RegistryRepositoryProxy",
+            ),
+            (
+                "strong_audit_persistence",
+                self.strong_audit_persistence,
+                "AuditRepositoryProxy",
+            ),
+        )
+        broker_module = sys.modules.get("ns_runtime.authority_broker")
+        for dependency, value, expected_name in broker_slots:
+            if value is None:
+                continue
+            expected_type = (
+                vars(broker_module).get(expected_name)
+                if broker_module is not None
+                else None
+            )
+            if (
+                not isinstance(expected_type, type)
+                or type(value) is not expected_type
+                or not value._binding_is_current()
+            ):
+                raise NsValidationError(
+                    "RuntimeContext dependency is invalid.",
+                    details={
+                        "component": "runtime_context",
+                        "dependency": f"dependencies.{dependency}",
+                        "expected_type": expected_name,
+                        "actual_type": type(value).__name__,
+                    },
+                )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -198,7 +286,9 @@ class RuntimeContext:
         return self.dependencies.http_client_owner
 
     @property
-    def state_store(self) -> StateStore | None:
+    def state_store(
+        self,
+    ) -> StateStore | AuthorityBrokerStateStoreProxy | None:
         return self.dependencies.state_store
 
 

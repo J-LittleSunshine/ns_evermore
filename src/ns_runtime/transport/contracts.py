@@ -10,6 +10,7 @@ from .models import (
     TransportClose,
     TransportMessage,
     TransportSessionState,
+    TransportWriteResult,
 )
 from .identity import TransportDiagnosticSummary, TransportIdentity
 
@@ -52,8 +53,8 @@ class TransportSession(ABC):
         """Return exactly one complete text application message."""
 
     @abstractmethod
-    async def send(self, text: str) -> None:
-        """Send exactly one complete text application message."""
+    async def send(self, text: str) -> TransportWriteResult:
+        """Return whether bytes were not started, uncertain, or confirmed."""
 
     @abstractmethod
     async def ping(self) -> None:

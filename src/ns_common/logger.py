@@ -560,7 +560,26 @@ class NsLogger(logging.Logger):
             self._sanitizer = next_sanitizer
             self._explicit_config = explicit_config
             self._explicit_log_dir = explicit_log_dir
-            self._configure()
+            try:
+                self._configure()
+            except BaseException as operation_failure:
+                # ``_configure`` may already have installed console or file
+                # handlers before a later constructor fails. Roll them back
+                # here because the caller cannot receive the partial logger.
+                cleanup_failure: BaseException | None = None
+                try:
+                    self._reset_handlers()
+                except BaseException as error:
+                    cleanup_failure = error
+                self._initialized = False
+                self._owner_pid = -1
+                if (
+                    cleanup_failure is not None
+                    and isinstance(operation_failure, Exception)
+                    and not isinstance(cleanup_failure, Exception)
+                ):
+                    raise cleanup_failure
+                raise
 
     @property
     def sanitizer(self) -> Sanitizer:
@@ -676,18 +695,21 @@ class NsLogger(logging.Logger):
         self._initialized = True
 
     def _reset_handlers(self) -> None:
+        failure: BaseException | None = None
         for handler in list(self.handlers):
-            self.removeHandler(handler)
-
             try:
                 handler.flush()
-            except Exception:  # noqa
-                pass
+            except BaseException as error:
+                failure = _prioritize_logger_failure(failure, error)
 
             try:
                 handler.close()
-            except Exception:  # noqa
-                pass
+            except BaseException as error:
+                failure = _prioritize_logger_failure(failure, error)
+            else:
+                self.removeHandler(handler)
+        if failure is not None:
+            raise failure
 
     def _build_file_handler(
         self,
@@ -804,6 +826,17 @@ def get_ns_logger(
         config=config,
         log_dir=log_dir,
     )
+
+
+def _prioritize_logger_failure(
+    current: BaseException | None,
+    candidate: BaseException,
+) -> BaseException:
+    if current is None:
+        return candidate
+    if isinstance(current, Exception) and not isinstance(candidate, Exception):
+        return candidate
+    return current
 
 
 def close_ns_loggers() -> None:

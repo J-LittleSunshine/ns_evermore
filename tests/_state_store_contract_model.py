@@ -14,6 +14,8 @@ from ns_common.state_store import (
     StateAccessScope,
     StateAppendResult,
     StateAssertion,
+    StateAuthorityKind,
+    StateCallerCapability,
     StateConsistency,
     StateDocument,
     StateKey,
@@ -38,6 +40,106 @@ from ns_common.state_store import (
     StateTransactionResult,
 )
 from ns_common.time import Clock
+from ns_common.state_store.authority import (
+    _issue_state_access_scope,
+    _new_state_scope_issuer,
+)
+from ns_common.state_store.store import (
+    StateStoreDeliveryRepositories,
+    StateStoreRepository,
+    StateStoreRepositoryRole,
+    _bind_state_store_repository,
+)
+
+
+class _ContractTestRepositoryComposition:
+    """Independent test-realm repository builder; never used by production."""
+
+    def __init__(
+        self,
+        *,
+        store: "DeterministicStateStoreContractModel",
+        issuer: object,
+    ) -> None:
+        self._store = store
+        self._issuer = issuer
+        self._delivery: StateStoreDeliveryRepositories | None = None
+        self._runtime_id: str | None = None
+        self._audit: dict[object, StateStoreRepository] = {}
+
+    def _repository(
+        self,
+        *,
+        role: StateStoreRepositoryRole,
+        runtime_id: str | None = None,
+        audit_namespace=None,
+    ) -> StateStoreRepository:
+        repository_ref: StateStoreRepository | None = None
+
+        def issue(atomic_scope):
+            return _issue_state_access_scope(
+                self._issuer,
+                atomic_scope=atomic_scope,
+                authority=(
+                    StateAuthorityKind.STRONG_AUDIT
+                    if role is StateStoreRepositoryRole.STRONG_AUDIT
+                    else StateAuthorityKind.DELIVERY_ADMISSION
+                ),
+                caller="contract-test-repository",
+                capabilities=frozenset(StateCallerCapability),
+            )
+
+        def current(candidate):
+            return repository_ref is candidate
+
+        repository_ref = _bind_state_store_repository(
+            store=self._store,
+            role=role,
+            runtime_id=runtime_id,
+            audit_namespace=audit_namespace,
+            issue_atomic_scope=issue,
+            is_current_repository=current,
+        )
+        return repository_ref
+
+    def delivery_repositories(
+        self,
+        *,
+        runtime_id: str,
+    ) -> StateStoreDeliveryRepositories:
+        if self._delivery is None:
+            self._runtime_id = runtime_id
+            self._delivery = StateStoreDeliveryRepositories(
+                admission=self._repository(
+                    role=StateStoreRepositoryRole.DELIVERY_ADMISSION,
+                    runtime_id=runtime_id,
+                ),
+                scheduler=self._repository(
+                    role=StateStoreRepositoryRole.DELIVERY_SCHEDULER,
+                    runtime_id=runtime_id,
+                ),
+                payload=self._repository(
+                    role=StateStoreRepositoryRole.DELIVERY_PAYLOAD,
+                    runtime_id=runtime_id,
+                ),
+                registry=self._repository(
+                    role=StateStoreRepositoryRole.DELIVERY_REGISTRY,
+                    runtime_id=runtime_id,
+                ),
+            )
+        if runtime_id != self._runtime_id:
+            raise AssertionError("contract-test repository set is already closed")
+        return self._delivery
+
+    def strong_audit_repository(self, *, namespace) -> StateStoreRepository:
+        value = self._audit.get(namespace)
+        if value is None:
+            value = self._repository(
+                role=StateStoreRepositoryRole.STRONG_AUDIT,
+                audit_namespace=namespace,
+            )
+            self._audit[namespace] = value
+        return value
 
 
 class DeterministicStateStoreContractModel(StateStore):
@@ -50,9 +152,20 @@ class DeterministicStateStoreContractModel(StateStore):
         capabilities: StateStoreCapabilities | None = None,
         events: list[str] | None = None,
     ) -> None:
+        self._contract_scope_issuer = _new_state_scope_issuer(
+            contract_test=True,
+        )
         super().__init__(
             capabilities=capabilities or StateStoreCapabilities.p08_contract(),
             clock=clock,
+            _contract_test_authority=True,
+            _scope_issuer=self._contract_scope_issuer,
+        )
+        self._contract_repository_composition = (
+            _ContractTestRepositoryComposition(
+                store=self,
+                issuer=self._contract_scope_issuer,
+            )
         )
         self.clock = clock
         self.events = events
@@ -101,6 +214,25 @@ class DeterministicStateStoreContractModel(StateStore):
         for (_, key), values in self._ordered_indexes.items():
             result.setdefault(key, {}).update(values)
         return result
+
+    def issue_contract_test_scope(
+        self,
+        *,
+        atomic_scope,
+        authority,
+        caller,
+        capabilities,
+    ) -> StateAccessScope:
+        return _issue_state_access_scope(
+            self._contract_scope_issuer,
+            atomic_scope=atomic_scope,
+            authority=authority,
+            caller=caller,
+            capabilities=capabilities,
+        )
+
+    def repository_composition(self) -> _ContractTestRepositoryComposition:
+        return self._contract_repository_composition
 
     async def _open(self) -> None:
         self.open_count += 1
@@ -232,8 +364,10 @@ class DeterministicStateStoreContractModel(StateStore):
                 revision = self._next_revision()
                 entries.append((append.document, revision))
                 positions.append(len(entries))
-            result = StateTransactionResult(
-                records=records, log_positions=tuple(positions),
+            result = StateTransactionResult.for_transaction(
+                transaction,
+                records=records,
+                log_positions=tuple(positions),
             )
             if self.indeterminate_after_transaction:
                 self.indeterminate_after_transaction = False

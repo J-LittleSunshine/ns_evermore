@@ -44,6 +44,8 @@ from .contracts import (
     RoutingPreparation,
     RoutingPreparationOutcome,
     RoutingPreparationResult,
+    _ProductionAuthorizationEvidenceIssuer,
+    _issue_contract_test_authorization_evidence,
 )
 from .event_bus import EventBus
 from .pipeline import ProcessorExecutionResult, ProcessorPipeline, build_standard_stage_processors
@@ -64,12 +66,56 @@ class IamProcessorAuthorization(ProcessorAuthorization):
     ) -> None:
         from ns_runtime.iam import MessageAuthorizationService
 
-        if not isinstance(service, MessageAuthorizationService):
+        if (
+            type(service) is not MessageAuthorizationService
+            or not service.production_authority
+        ):
             _invalid("authorization.service")
+        self._initialize(
+            service=service,
+            protocol_registry=protocol_registry,
+            production_authority=True,
+        )
+
+    @classmethod
+    def for_contract_tests(
+        cls,
+        *,
+        service: MessageAuthorizationService,
+        protocol_registry: MessageTypeRegistry = BUILTIN_MESSAGE_REGISTRY,
+    ) -> "IamProcessorAuthorization":
+        from ns_runtime.iam import MessageAuthorizationService
+
+        if (
+            type(service) is not MessageAuthorizationService
+            or not service.contract_test_authority
+        ):
+            _invalid("test_authorization.service")
+        value = object.__new__(cls)
+        value._initialize(
+            service=service,
+            protocol_registry=protocol_registry,
+            production_authority=False,
+        )
+        return value
+
+    def _initialize(
+        self,
+        *,
+        service: MessageAuthorizationService,
+        protocol_registry: MessageTypeRegistry,
+        production_authority: bool,
+    ) -> None:
         if not isinstance(protocol_registry, MessageTypeRegistry):
             _invalid("authorization.protocol_registry")
         self._service = service
         self._registry = protocol_registry
+        self._production_authority = production_authority
+        self._evidence_issuer = (
+            _ProductionAuthorizationEvidenceIssuer(service)
+            if production_authority
+            else None
+        )
 
     async def authorize(
         self,
@@ -79,6 +125,14 @@ class IamProcessorAuthorization(ProcessorAuthorization):
 
         if not isinstance(context, ProcessorContext):
             _invalid("authorization.context")
+        if (
+            self._production_authority
+            and not self._service.production_authority
+        ) or (
+            not self._production_authority
+            and not self._service.contract_test_authority
+        ):
+            _invalid("authorization.service_authority")
         contract = self._registry.require(context.envelope.message.type)
         session = context.session
         target = _target_context(context)
@@ -120,17 +174,35 @@ class IamProcessorAuthorization(ProcessorAuthorization):
             expires_at=session.session_expires_at,
             resume_eligible=session.resume_eligible,
         )
-        effective, decision = await self._service.authorize(
-            snapshot=snapshot,
-            request=request,
-            risk=_risk_context(contract, crosses_tenant=crosses_tenant),
+        from ns_runtime.iam.authorization import (
+            _StaleIamSessionReceipt,
+            _rotation_race_unavailable,
         )
-        return _authorization_evidence(
-            context=context,
-            request=request,
-            effective_snapshot=effective,
-            decision=decision,
-        )
+
+        for _ in range(3):
+            result = await self._service.authorize(
+                snapshot=snapshot,
+                request=request,
+                risk=_risk_context(
+                    contract, crosses_tenant=crosses_tenant,
+                ),
+            )
+            try:
+                if self._production_authority:
+                    if (
+                        type(self._evidence_issuer)
+                        is not _ProductionAuthorizationEvidenceIssuer
+                    ):
+                        _invalid("authorization.evidence_issuer")
+                    return self._evidence_issuer.issue(result, context)
+                return _authorization_evidence(
+                    context=context,
+                    result=result,
+                    service=self._service,
+                )
+            except _StaleIamSessionReceipt:
+                continue
+        raise _rotation_race_unavailable()
 
 
 class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
@@ -195,7 +267,7 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
             "management": False,
             "task_creation": context.envelope.message.type == "task.dispatch",
         }
-        return AuthorizationDecisionEvidence.bound(
+        return _issue_contract_test_authorization_evidence(
             decision_version="authorization-decision.v1",
             decision_outcome=AuthorizationDecisionOutcome.ALLOW,
             decision_reason="deterministic_allow",
@@ -204,6 +276,8 @@ class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
             ),
             message_reference=message_reference,
             message_type=context.envelope.message.type,
+            config_version=context.config_version,
+            policy_version=context.policy_version,
             principal_tenant_id=context.session.tenant_id,
             effective_tenant_id=(target_tenant if crosses_tenant else context.session.tenant_id),
             cross_tenant_authorized=(
@@ -521,17 +595,28 @@ def _target_context(context: ProcessorContext) -> IamTargetContext:
 def _authorization_evidence(
     *,
     context: ProcessorContext,
-    request: IamAccessCheckRequest,
-    effective_snapshot: object,
-    decision: object,
+    result: object,
+    service: object,
 ) -> AuthorizationDecisionEvidence:
-    from ns_common.iam import IamAccessDecision
-    from ns_runtime.iam import PermissionSnapshot
+    from ns_runtime.iam import (
+        MessageAuthorizationResult,
+        MessageAuthorizationService,
+    )
 
-    if not isinstance(effective_snapshot, PermissionSnapshot):
-        _invalid("authorization.effective_snapshot")
-    if not isinstance(decision, IamAccessDecision) or not decision.allowed:
-        _invalid("authorization.decision")
+    if (
+        type(service) is not MessageAuthorizationService
+        or type(result) is not MessageAuthorizationResult
+    ):
+        _invalid("authorization.result")
+    if not result.is_issued_by(service):
+        from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+        if service._authorization_result_has_stale_session(result):
+            raise _StaleIamSessionReceipt
+        _invalid("authorization.result")
+    request = result.request
+    effective_snapshot = result.effective_snapshot
+    decision = result.decision
     message_reference = ProcessorSafeSummary.from_envelope(
         context.envelope,
     ).object_reference
@@ -551,13 +636,15 @@ def _authorization_evidence(
         effective_snapshot.permission_snapshot_ref
     )
     effective_request["permission_version"] = effective_snapshot.permission_version
-    return AuthorizationDecisionEvidence.bound(
+    return _issue_contract_test_authorization_evidence(
         decision_version="authorization-decision.v1",
         decision_outcome=AuthorizationDecisionOutcome.ALLOW,
         decision_reason=decision.reason,
         semantic_access_check_reference=_decision_digest(effective_request),
         message_reference=message_reference,
         message_type=context.envelope.message.type,
+        config_version=context.config_version,
+        policy_version=context.policy_version,
         principal_tenant_id=context.session.tenant_id,
         effective_tenant_id=effective_tenant_id,
         cross_tenant_authorized=(decision.allowed and request.cross_tenant),

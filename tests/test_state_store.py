@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import dataclasses
 import unittest
 
+from ns_common.config import NsRuntimeStateStoreConfig
 from ns_common.exceptions import (
     NsRuntimeStateStoreCapabilityUnavailableError,
     NsRuntimeStateStoreClosedError,
@@ -43,9 +45,13 @@ from ns_common.state_store import (
     StateStoreCapability,
     StateStoreHealthStatus,
     StateStoreLifecycleState,
+    StateStoreRepository,
+    StateStoreRepositoryRole,
     StateTransaction,
+    StateTransactionResult,
     StateTransitionLogAppend,
     StateRecordReadAssertion,
+    create_contract_test_state_store_composition,
 )
 from ns_common.time import ControlledClock
 
@@ -53,11 +59,12 @@ from tests._state_store_contract_model import DeterministicStateStoreContractMod
 
 
 def _scope(
+    store: DeterministicStateStoreContractModel,
     namespace: StateNamespace | None = None,
     *,
     capabilities: frozenset[StateCallerCapability] | None = None,
 ) -> StateAccessScope:
-    return StateAccessScope(
+    return store.issue_contract_test_scope(
         atomic_scope=StateAtomicScope(
             namespace=namespace or StateNamespace.audit(domain="processor"),
             partition="contract",
@@ -227,8 +234,8 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.clock = ControlledClock()
-        self.scope = _scope()
         self.store = DeterministicStateStoreContractModel(clock=self.clock)
+        self.scope = _scope(self.store)
 
     async def asyncTearDown(self) -> None:
         await self.store.close()
@@ -252,11 +259,296 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
         await self.store.close()
         self.assertEqual(1, self.store.close_count)
         self.assertIs(StateStoreLifecycleState.CLOSED, self.store.state)
-        self.assertIs(StateStoreHealthStatus.CLOSED, (await self.store.health()).status)
+        self.assertIs(
+            StateStoreHealthStatus.CLOSED,
+            (await self.store.health()).status,
+        )
         with self.assertRaises(NsRuntimeStateStoreClosedError):
             await self.store.compare_and_set(
                 scope=self.scope,
                 mutation=_create(key),
+            )
+
+    async def test_scope_authority_cannot_be_constructed_replaced_or_reused(
+        self,
+    ) -> None:
+        self.assertFalse(hasattr(self.store, "_issue_access_scope"))
+        self.assertFalse(hasattr(self.store, "_create_repository"))
+        with self.assertRaises(NsValidationError):
+            StateStoreRepository(
+                store=self.store,
+                role=StateStoreRepositoryRole.DELIVERY_SCHEDULER,
+                runtime_id="runtime-forged",
+                audit_namespace=None,
+                _token=None,
+            )
+        with self.assertRaises(NsValidationError):
+            StateAccessScope(
+                atomic_scope=self.scope.atomic_scope,
+                authority=self.scope.authority,
+                caller=self.scope.caller,
+                capabilities=frozenset(StateCallerCapability),
+            )
+        with self.assertRaises(NsValidationError):
+            dataclasses.replace(
+                self.scope,
+                capabilities=frozenset(StateCallerCapability),
+            )
+        narrow = self.store.issue_contract_test_scope(
+            atomic_scope=self.scope.atomic_scope,
+            authority=self.scope.authority,
+            caller=self.scope.caller,
+            capabilities=frozenset({StateCallerCapability.READ}),
+        )
+        copied = copy.copy(narrow)
+        object.__setattr__(
+            copied,
+            "capabilities",
+            frozenset(StateCallerCapability),
+        )
+
+        class ForgedScope(StateAccessScope):
+            pass
+
+        with self.assertRaises(NsValidationError):
+            ForgedScope(
+                atomic_scope=self.scope.atomic_scope,
+                authority=self.scope.authority,
+                caller=self.scope.caller,
+                capabilities=frozenset(StateCallerCapability),
+            )
+
+        other = DeterministicStateStoreContractModel(clock=self.clock)
+        self.addAsyncCleanup(other.close)
+        await other.open()
+        await self.store.open()
+        with self.assertRaises(NsRuntimeStateStoreCapabilityUnavailableError):
+            await self.store.read(
+                scope=copied,
+                key=_key(copied, "copied-scope"),
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+        with self.assertRaises(NsRuntimeStateStoreCapabilityUnavailableError):
+            await other.read(
+                scope=self.scope,
+                key=_key(self.scope, "cross-store"),
+                consistency=StateConsistency.LINEARIZABLE,
+            )
+
+    async def test_transaction_result_cardinality_and_type_mismatch_fail_closed(
+        self,
+    ) -> None:
+        class WrongResultStore(DeterministicStateStoreContractModel):
+            mode = ""
+
+            async def _transact(self, transaction):
+                result = await super()._transact(transaction)
+                if self.mode == "records_missing":
+                    return StateTransactionResult(
+                        records=(),
+                        log_positions=result.log_positions,
+                    )
+                if self.mode == "records_extra":
+                    return StateTransactionResult(
+                        records=result.records + (None,),
+                        log_positions=result.log_positions,
+                    )
+                if self.mode == "logs_missing":
+                    return StateTransactionResult(
+                        records=result.records,
+                        log_positions=(),
+                    )
+                if self.mode == "logs_extra":
+                    return StateTransactionResult(
+                        records=result.records,
+                        log_positions=result.log_positions + (99,),
+                    )
+                return object()
+
+        for mode in (
+            "records_missing",
+            "records_extra",
+            "logs_missing",
+            "logs_extra",
+            "wrong_type",
+        ):
+            with self.subTest(mode=mode):
+                store = WrongResultStore(clock=self.clock)
+                store.mode = mode
+                self.addAsyncCleanup(store.close)
+                await store.open()
+                scope = _scope(store)
+                key = _key(scope, f"wrong-cardinality-{mode}")
+                transaction = StateTransaction(
+                    scope=scope,
+                    mutations=(_create(key),),
+                    log_appends=(
+                        (StateTransitionLogAppend(
+                            key=_key(scope, f"log-{mode}"),
+                            document=_document(1),
+                        ),)
+                        if mode in {"logs_missing", "logs_extra"}
+                        else ()
+                    ),
+                )
+                with self.assertRaises(
+                    NsRuntimeStateStoreIndeterminateWriteError,
+                ):
+                    await store.transact(transaction)
+
+    async def test_repository_capabilities_are_fixed_and_cross_role_denied(
+        self,
+    ) -> None:
+        repositories = self.store.repository_composition().delivery_repositories(
+            runtime_id="runtime-contract",
+        )
+        self.assertNotEqual(
+            repositories.payload.role,
+            repositories.scheduler.role,
+        )
+        with self.assertRaises(NsValidationError):
+            repositories.payload.registry_scope()
+        with self.assertRaises(NsValidationError):
+            repositories.registry.delivery_scope(
+                tenant_id="tenant-1",
+                bucket_id=0,
+                layout_generation=1,
+            )
+        with self.assertRaises(NsValidationError):
+            copy.copy(repositories.scheduler)
+        await self.store.open()
+        payload_scope = repositories.payload.delivery_scope(
+            tenant_id="tenant-1",
+            bucket_id=0,
+            layout_generation=1,
+        )
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            await self.store.transact(StateTransaction(
+                scope=payload_scope,
+                mutations=(_create(_key(payload_scope, "payload-write")),),
+            ))
+
+    async def test_contract_test_composition_is_network_free_and_test_realm(
+        self,
+    ) -> None:
+        composition = create_contract_test_state_store_composition(
+            config=NsRuntimeStateStoreConfig(),
+            clock=self.clock,
+            runtime_id="runtime-contract-isolated",
+        )
+        assert composition is not None
+        store = composition.store
+        self.assertEqual(
+            "DeterministicContractTestStateStore",
+            type(store).__name__,
+        )
+        self.assertNotIn("redis", type(store).__module__.casefold())
+        self.assertNotIn("valkey", type(store).__module__.casefold())
+        self.assertFalse(hasattr(store, "_create_repository"))
+        self.assertFalse(any(
+            "production_scope_validator" in name
+            and getattr(store, name, None) is not None
+            for name in dir(store)
+        ))
+        with self.assertRaises(
+            NsRuntimeStateStoreCapabilityUnavailableError,
+        ):
+            create_contract_test_state_store_composition(
+                config=NsRuntimeStateStoreConfig(
+                    backend="redis",
+                    endpoint="redis://127.0.0.1:6379/0",
+                    namespace="forbidden-contract-network",
+                ),
+                clock=self.clock,
+                runtime_id="runtime-contract-isolated",
+            )
+
+    def test_production_composition_is_not_public_and_identity_lease_is_unique(
+        self,
+    ) -> None:
+        import ns_common.state_store as public_state_store
+        self.assertFalse(hasattr(
+            public_state_store, "create_state_store_composition",
+        ))
+        import ns_common.state_store.composition as composition_module
+        self.assertFalse(hasattr(
+            composition_module, "_assemble_state_store_composition",
+        ))
+        self.assertFalse(hasattr(
+            composition_module, "_acquire_production_lease",
+        ))
+        self.assertFalse(hasattr(
+            composition_module, "create_state_store_composition",
+        ))
+
+    async def test_transaction_result_is_model_bound_and_replay_safe(
+        self,
+    ) -> None:
+        await self.store.open()
+        first_key = _key(self.scope, "result-binding-1")
+        transaction = StateTransaction(
+            scope=self.scope,
+            mutations=(_create(first_key),),
+        )
+        result = await self.store.transact(transaction)
+        same_shape = StateTransaction(
+            scope=self.scope,
+            mutations=(_create(first_key),),
+        )
+        self.assertTrue(result.is_for_transaction(transaction))
+        self.assertFalse(result.is_for_transaction(same_shape))
+        with self.assertRaises(NsValidationError):
+            copy.copy(transaction)
+        cloned_transaction = object.__new__(StateTransaction)
+        for field in dataclasses.fields(StateTransaction):
+            object.__setattr__(
+                cloned_transaction,
+                field.name,
+                getattr(transaction, field.name),
+            )
+        self.assertFalse(result.is_for_transaction(cloned_transaction))
+        with self.assertRaises(NsValidationError):
+            StateTransactionResult(
+                records=result.records,
+                log_positions=result.log_positions,
+            )
+        with self.assertRaises((NsValidationError, TypeError)):
+            dataclasses.replace(result, records=result.records)
+        with self.assertRaises(NsValidationError):
+            copy.copy(result)
+        with self.assertRaises(NsValidationError):
+            copy.deepcopy(result)
+
+        forged = object.__new__(StateTransactionResult)
+        for field in dataclasses.fields(StateTransactionResult):
+            object.__setattr__(forged, field.name, getattr(result, field.name))
+        object.__setattr__(forged, "_transaction_binding", object())
+        self.assertFalse(forged.is_for_transaction(transaction))
+
+        second_key = _key(self.scope, "result-binding-2")
+        two_mutations = StateTransaction(
+            scope=self.scope,
+            mutations=(
+                _create(second_key),
+                _create(_key(self.scope, "result-binding-3")),
+            ),
+        )
+        second_result = await self.store.transact(two_mutations)
+        with self.assertRaises(NsValidationError):
+            StateTransactionResult.for_transaction(
+                two_mutations,
+                records=tuple(reversed(second_result.records)),
+            )
+
+        class ResultSubclass(StateTransactionResult):
+            pass
+
+        with self.assertRaises(NsValidationError):
+            ResultSubclass.for_transaction(
+                transaction,
+                records=result.records,
             )
 
     async def test_contract_exposes_no_unconditional_put(self) -> None:
@@ -298,7 +590,10 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
             )
         with self.assertRaises(NsValidationError):
             dataclasses.replace(first, next_cursor="0")
-        without_scan = _scope(capabilities=frozenset({StateCallerCapability.READ}))
+        without_scan = _scope(
+            self.store,
+            capabilities=frozenset({StateCallerCapability.READ}),
+        )
         with self.assertRaises(NsRuntimeStateStoreCapabilityUnavailableError):
             await self.store.scan(
                 scope=without_scan,
@@ -347,13 +642,16 @@ class StateStoreContractTestCase(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(restricted.close)
         with self.assertRaises(NsRuntimeStateStoreCapabilityUnavailableError):
             await restricted.compare_and_set(
-                scope=self.scope,
-                mutation=_create(_key(self.scope, "capability")),
+                scope=(restricted_scope := _scope(restricted)),
+                mutation=_create(_key(restricted_scope, "capability")),
             )
         self.assertEqual({}, restricted.records)
 
         await self.store.open()
-        other_scope = _scope(StateNamespace.audit(domain="other"))
+        other_scope = _scope(
+            self.store,
+            StateNamespace.audit(domain="other"),
+        )
         with self.assertRaises(NsRuntimeStateStoreNamespaceViolationError):
             await self.store.read(
                 scope=self.scope,

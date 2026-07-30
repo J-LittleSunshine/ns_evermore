@@ -17,12 +17,13 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.state_store import (
-    StateAccessScope, StateAssertion, StateAtomicScope, StateAuthorityKind,
+    StateAssertion, StateAtomicScope, StateAuthorityKind,
     StateCallerCapability, StateConsistency, StateDocument, StateKey,
     StateMutation, StateMutationKind, StateNamespace, StateStore,
-    StateRecord, StateTransaction, StateTransactionResult,
+    StateRecord,
     StateOrderedIndexKey, StateOrderedIndexMutation,
     StateOrderedIndexMutationKind, StateTransitionLogAppend,
+    StateStoreRepository, StateStoreRepositoryRole,
 )
 
 from .models import (
@@ -32,12 +33,22 @@ from .models import (
     MessageDeliverySummary, cancel_initializing_graph,
     compute_dedup_evidence_fingerprint, validate_initialization_graph,
 )
-from ns_runtime.routing import ResolvedRoutingPlan
+from ns_runtime.routing import (
+    ResolvedRoutingPlan,
+    validate_resolved_routing_plan,
+)
 from .serde import delivery_to_dict, summary_to_dict
 from .authority_layout import (
     DeliveryAuthorityLayout,
     StateStoreDeliveryAuthorityRegistry,
-    delivery_scope,
+)
+from ns_runtime.delivery_persistence import (
+    DeliveryAdmissionPersistence,
+    DeliveryPersistencePartition,
+    DeliveryPersistenceTransaction,
+    DeliveryPersistenceTransactionResult,
+    DeliveryRegistryPersistence,
+    contract_test_persistence,
 )
 
 
@@ -56,6 +67,7 @@ class AdmissionInitialization:
     def __post_init__(self) -> None:
         if self.schema_version != ATOMIC_ADMISSION_VERSION:
             _invalid("initialization.schema_version")
+        validate_resolved_routing_plan(self.plan)
         if (isinstance(self.initialization_batch_size, bool)
                 or not isinstance(self.initialization_batch_size, int)
                 or self.initialization_batch_size <= 0):
@@ -146,17 +158,37 @@ class UnavailableDeliveryAdmissionStore(DeliveryAdmissionStore):
 class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
     """Production adapter. It never falls back to cache or process memory."""
 
-    def __init__(self, store: StateStore, *, authority_runtime_id: str = "runtime-local") -> None:
-        if not isinstance(store, StateStore):
-            _invalid("store")
-        self._store = store
+    def __init__(
+        self,
+        *,
+        repository: DeliveryAdmissionPersistence | StateStoreRepository,
+        registry_repository: DeliveryRegistryPersistence | StateStoreRepository,
+    ) -> None:
+        if type(repository) is StateStoreRepository:
+            repository = contract_test_persistence(
+                repository,
+                StateStoreRepositoryRole.DELIVERY_ADMISSION,
+            )
+        if type(registry_repository) is StateStoreRepository:
+            registry_repository = contract_test_persistence(
+                registry_repository,
+                StateStoreRepositoryRole.DELIVERY_REGISTRY,
+            )
+        if not isinstance(repository, DeliveryAdmissionPersistence):
+            _invalid("repository")
+        if not isinstance(registry_repository, DeliveryRegistryPersistence):
+            _invalid("registry_repository")
+        self._store = repository
+        self._repository = repository
         self._registry = StateStoreDeliveryAuthorityRegistry(
-            store=store, runtime_id=authority_runtime_id,
+            persistence=registry_repository,
         )
 
     async def initialize(self, value: AdmissionInitialization) -> AtomicAdmissionResult:
-        if not isinstance(value, AdmissionInitialization):
+        if type(value) is not AdmissionInitialization:
             _invalid("initialization")
+        value.__post_init__()
+        validate_resolved_routing_plan(value.plan)
         layout = DeliveryAuthorityLayout(
             version=value.root_summary.authority_layout_version,
             generation=value.root_summary.authority_layout_generation,
@@ -166,11 +198,10 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
             tenant_id=value.root_summary.tenant_id,
             layout=layout,
         )
-        scope = delivery_scope(
-            value.root_summary.tenant_id,
-            value.root_summary.authority_bucket_id,
+        scope = self._repository.delivery_scope(
+            tenant_id=value.root_summary.tenant_id,
+            bucket_id=value.root_summary.authority_bucket_id,
             layout_generation=value.root_summary.authority_layout_generation,
-            caller="delivery.admission",
         )
         namespace = scope.namespace
         dedup_key = StateKey(
@@ -414,7 +445,8 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
         )
 
     async def _cancel_after_failure(
-        self, *, scope: StateAccessScope, namespace: StateNamespace,
+        self, *, scope: DeliveryPersistencePartition,
+        namespace: StateNamespace,
         value: AdmissionInitialization, current_root: MessageDeliverySummary,
         current_shards: tuple[MessageDeliverySummary, ...],
         created: tuple[DeliveryRecord, ...],
@@ -474,8 +506,9 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
         )
 
     async def _transact(
-        self, scope: StateAccessScope, mutations: tuple[StateMutation, ...],
-    ) -> StateTransactionResult:
+        self, scope: DeliveryPersistencePartition,
+        mutations: tuple[StateMutation, ...],
+    ) -> DeliveryPersistenceTransactionResult:
         index = StateOrderedIndexKey(
             namespace=scope.namespace, name="delivery.prepared", bucket="delivery",
         )
@@ -530,20 +563,23 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
                     }, sort_keys=True, separators=(",", ":")).encode(),
                 ),
             ),)
-        return await self._store.transact(StateTransaction(
-            scope=scope, mutations=mutations,
+        return await self._store.transact(DeliveryPersistenceTransaction(
+            partition=scope, mutations=mutations,
             ordered_index_mutations=tuple(index_mutations), log_appends=logs,
         ))
 
     @staticmethod
-    def _record_map(result: StateTransactionResult) -> dict[StateKey, StateRecord]:
+    def _record_map(
+        result: DeliveryPersistenceTransactionResult,
+    ) -> dict[StateKey, StateRecord]:
         return {
             record.key: record for record in result.records
             if isinstance(record, StateRecord)
         }
 
     async def _read_dedup(
-        self, scope: StateAccessScope, namespace: StateNamespace,
+        self, scope: DeliveryPersistencePartition,
+        namespace: StateNamespace,
         expected: DedupEvidence,
     ) -> DedupEvidence:
         result = await self._store.read(
@@ -590,7 +626,10 @@ class StateStoreDeliveryAdmissionStore(DeliveryAdmissionStore):
     def _validate_commit(
         result: object, mutations: tuple[StateMutation, ...],
     ) -> None:
-        if not isinstance(result, StateTransactionResult) or len(result.records) != len(mutations):
+        if (
+            not isinstance(result, DeliveryPersistenceTransactionResult)
+            or len(result.records) != len(mutations)
+        ):
             raise NsRuntimeStateStoreUnavailableError(details={
                 "component": "delivery_admission", "operation": "initialize",
                 "reason": "malformed_commit_result",

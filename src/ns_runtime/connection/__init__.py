@@ -19,6 +19,7 @@ from .audit import (
     ConnectionLifecycleAuditSink,
     ConnectionLifecycleAuditSnapshot,
     DeterministicTestConnectionAuditSink,
+    PersistenceConnectionLifecycleAuditSink,
     UnavailableConnectionLifecycleAuditSink,
 )
 from .authentication import (
@@ -196,6 +197,7 @@ __all__ = (
     "ConnectionSecurityAuditSink",
     "DeterministicTestIamAdapter",
     "DeterministicTestConnectionAuditSink",
+    "PersistenceConnectionLifecycleAuditSink",
     "UnavailableConnectionLifecycleAuditSink",
     "DeterministicTestSecurityAuditSink",
     "DRAIN_ALLOWED_MESSAGE_TYPES",

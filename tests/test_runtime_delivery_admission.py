@@ -7,6 +7,7 @@ from datetime import timedelta
 import json
 import math
 import unittest
+from unittest import mock
 
 from ns_common.exceptions import (
     NsRuntimeStateStoreConflictError, NsRuntimeStateStoreUnavailableError,
@@ -32,11 +33,12 @@ from ns_runtime.delivery import (
     delivery_from_dict, delivery_to_dict,
     policy_message_group,
 )
+from ns_runtime.delivery.models import _inspect_inline_payload_authority
 from ns_runtime.protocol import (
     AuthContextGroup, MessageGroup, ProtocolGroup, SourceGroup, TargetGroup,
     TraceGroup,
 )
-from ns_runtime.routing import ResolvedRoutingPlan
+from ns_runtime.routing import ResolvedRoutingPlan, SelectedRoutingBinding
 from ns_runtime.processor import RoutingPreparationResult
 
 from tests._state_store_contract_model import DeterministicStateStoreContractModel
@@ -197,7 +199,7 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
         self.service = self._service()
 
     def _service(self, *, policy=None, store=None, payload_client=None):
-        return DeliveryAdmissionService(
+        return DeliveryAdmissionService.for_contract_tests(
             policy=policy or DefaultAdmissionPolicy(),
             policy_config=self.config, store=store or self.store,
             payload_ref_client=payload_client or self.payload_client,
@@ -523,7 +525,7 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             initialization_batch_size=2, activation_batch_size=1,
         )
         first_store = _Store()
-        first = DeliveryAdmissionService(
+        first = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(), policy_config=config,
             store=first_store, payload_ref_client=self.payload_client,
             clock=self.clock, identifier_factory=_ids,
@@ -544,7 +546,7 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
             graph.root_summary.policy_decision.activation_batch_size,
         ))
         second_store = _Store()
-        second = DeliveryAdmissionService(
+        second = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(), policy_config=config,
             store=second_store, payload_ref_client=self.payload_client,
             clock=self.clock, identifier_factory=_ids,
@@ -698,6 +700,471 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
                 self._request(), trace=AdmissionTrace(trace_id="trace-store-malicious")
             )
 
+    async def test_forged_plan_and_request_authority_never_reach_persistence(self):
+        def clone_plan(plan, **changes):
+            forged = object.__new__(ResolvedRoutingPlan)
+            for definition in dataclasses.fields(ResolvedRoutingPlan):
+                if hasattr(plan, definition.name):
+                    object.__setattr__(
+                        forged,
+                        definition.name,
+                        changes.get(definition.name, getattr(plan, definition.name)),
+                    )
+            return forged
+
+        request = self._request()
+        forged_object = clone_plan(self.plan)
+        with self.assertRaises(NsValidationError):
+            StageSixAdmissionInput.from_result(
+                RoutingPreparationResult.resolved(forged_object)
+            )
+
+        replaced = dataclasses.replace(
+            self.plan,
+            created_at=self.plan.created_at + timedelta(seconds=1),
+        )
+        with self.assertRaises(NsValidationError):
+            StageSixAdmissionInput.from_result(
+                RoutingPreparationResult.resolved(replaced)
+            )
+
+        other = await _plan(2)
+        for field_name, value in (
+            ("authorization_evidence", other.authorization_evidence),
+            ("original_target", TargetGroup(
+                kind="tenant",
+                tenant_id="tenant-other",
+                multi_connection_policy="all",
+            )),
+        ):
+            with self.subTest(field=field_name):
+                forged = clone_plan(self.plan, **{field_name: value})
+                with self.assertRaises(NsValidationError):
+                    StageSixAdmissionInput.from_result(
+                        RoutingPreparationResult.resolved(forged)
+                    )
+
+        single_target = TargetGroup(
+            kind="tenant", tenant_id="tenant-a",
+            multi_connection_policy="single",
+        )
+        single = await _router(
+            _SnapshotIndex(_snapshot(tuple(
+                _routing_context(index) for index in range(3)
+            ))),
+            self.clock,
+        ).route(_request(
+            single_target,
+            message_reference=MESSAGE_REFERENCE,
+        ))
+        assert isinstance(single, ResolvedRoutingPlan)
+        unselected = next(
+            candidate
+            for candidate in single.candidates
+            if candidate.connection_id
+            != single.selected_bindings[0].connection_id
+        )
+        forged_binding = SelectedRoutingBinding(
+            runtime_id=unselected.runtime_id,
+            connection_id=unselected.connection_id,
+            session_id=unselected.session_id,
+            connection_epoch=unselected.connection_epoch,
+            tenant_id=unselected.tenant_id,
+            identity_reference=unselected.identity_reference,
+            required_capabilities=unselected.required_capabilities,
+            component_type=unselected.component_type,
+            binding_rebind_policy=single.effective_rebind_policy,
+        )
+        with self.assertRaises(NsValidationError):
+            StageSixAdmissionInput.from_result(
+                RoutingPreparationResult.resolved(clone_plan(
+                    single,
+                    selected_bindings=(forged_binding,),
+                ))
+            )
+
+        forged_request = object.__new__(AdmissionRequest)
+        for definition in dataclasses.fields(AdmissionRequest):
+            if hasattr(request, definition.name):
+                object.__setattr__(
+                    forged_request,
+                    definition.name,
+                    getattr(request, definition.name),
+                )
+        with self.assertRaises(NsValidationError):
+            await self.service.admit(
+                forged_request,
+                trace=AdmissionTrace(trace_id="trace-forged-request"),
+            )
+
+        cross_plan_request = object.__new__(AdmissionRequest)
+        for definition in dataclasses.fields(AdmissionRequest):
+            if hasattr(request, definition.name):
+                object.__setattr__(
+                    cross_plan_request,
+                    definition.name,
+                    (
+                        other
+                        if definition.name == "plan"
+                        else getattr(request, definition.name)
+                    ),
+                )
+        with self.assertRaises(NsValidationError):
+            await self.service.admit(
+                cross_plan_request,
+                trace=AdmissionTrace(trace_id="trace-cross-plan"),
+            )
+        self.assertEqual([], self.store.values)
+        self.assertEqual([], self.payload_client.calls)
+
+    async def test_same_plan_mutations_keep_old_seal_and_fail_stage_six(self):
+        target = TargetGroup(
+            kind="tenant",
+            tenant_id="tenant-a",
+            multi_connection_policy="all",
+        )
+        router = _router(
+            _SnapshotIndex(_snapshot(tuple(
+                _routing_context(index) for index in range(3)
+            ))),
+            self.clock,
+        )
+        first = await router.route(_request(
+            target,
+            message_reference=MESSAGE_REFERENCE,
+        ))
+        assert isinstance(first, ResolvedRoutingPlan)
+        second = await router.route(
+            _request(target, message_reference=MESSAGE_REFERENCE),
+            previous=first.previous_context(),
+        )
+        assert isinstance(second, ResolvedRoutingPlan)
+
+        mutations = (
+            (first, first, "created_at", first.created_at + timedelta(seconds=1)),
+            (first, first, "local_hit", not first.local_hit),
+            (second, second, "plan_version", second.plan_version + 1),
+            (second, second, "previous_plan_id", "plan_" + "f" * 32),
+            (
+                first,
+                first.candidates[0].identity_reference,
+                "value",
+                "identity-mutated",
+            ),
+        )
+        for plan, owner, field_name, replacement in mutations:
+            with self.subTest(field=field_name):
+                original = getattr(owner, field_name)
+                original_signature = plan._router_authority_signature
+                object.__setattr__(owner, field_name, replacement)
+                try:
+                    self.assertEqual(
+                        original_signature,
+                        plan._router_authority_signature,
+                    )
+                    with self.assertRaises(NsValidationError):
+                        StageSixAdmissionInput.from_result(
+                            RoutingPreparationResult.resolved(plan)
+                        )
+                finally:
+                    object.__setattr__(owner, field_name, original)
+                StageSixAdmissionInput.from_result(
+                    RoutingPreparationResult.resolved(plan)
+                )
+
+        request = self._request()
+        original_local_hit = self.plan.local_hit
+        object.__setattr__(self.plan, "local_hit", not original_local_hit)
+        try:
+            with self.assertRaises(NsValidationError):
+                await self.service.admit(
+                    request,
+                    trace=AdmissionTrace(
+                        trace_id="trace-mutated-plan-before-admission",
+                    ),
+                )
+        finally:
+            object.__setattr__(self.plan, "local_hit", original_local_hit)
+        self.assertEqual([], self.store.values)
+        self.assertEqual([], self.payload_client.calls)
+
+    async def test_same_request_mutations_fail_before_dependencies(self):
+        async def assert_rejected(
+            *,
+            label: str,
+            request: AdmissionRequest,
+            owner: object,
+            field_name: str,
+            replacement: object,
+        ) -> None:
+            with self.subTest(field=label):
+                original_signature = request._authority_signature
+                object.__setattr__(owner, field_name, replacement)
+                self.assertEqual(
+                    original_signature,
+                    request._authority_signature,
+                )
+                with self.assertRaises(NsValidationError):
+                    request.validate_authority()
+                with self.assertRaises(NsValidationError):
+                    await self.service.admit(
+                        request,
+                        trace=AdmissionTrace(
+                            trace_id=f"trace-mutation-{label}",
+                        ),
+                    )
+                self.assertEqual([], self.store.values)
+                self.assertEqual([], self.payload_client.calls)
+
+        request = self._request()
+        assert isinstance(request.payload, InlinePayload)
+        await assert_rejected(
+            label="payload",
+            request=request,
+            owner=request.payload,
+            field_name="value",
+            replacement={"safe": [1, 2, 3]},
+        )
+
+        request = self._request()
+        assert request.inline_descriptor is not None
+        await assert_rejected(
+            label="inline_descriptor",
+            request=request,
+            owner=request.inline_descriptor,
+            field_name="observed_depth",
+            replacement=request.inline_descriptor.observed_depth + 1,
+        )
+
+        top_level_mutations = (
+            ("source_identity", "identity-mutated"),
+            ("envelope_authority", dataclasses.replace(
+                self._request().envelope_authority,
+                trace=TraceGroup(
+                    trace_id="trace-mutated",
+                    request_id="request-mutated",
+                ),
+            )),
+            ("requested_priority", AdmissionPriority.LOW),
+            ("requested_reliability", AdmissionReliability.CRITICAL),
+            (
+                "requested_expires_at",
+                self.clock.utc_now() + timedelta(seconds=31),
+            ),
+            ("requested_ack_timeout_seconds", 91),
+        )
+        for field_name, replacement in top_level_mutations:
+            request = self._request()
+            await assert_rejected(
+                label=field_name,
+                request=request,
+                owner=request,
+                field_name=field_name,
+                replacement=replacement,
+            )
+
+        reference_request = self._request(payload=PayloadReference(
+            object_id="object:sealed",
+            version="version:1",
+            checksum="sha256:" + "a" * 64,
+            owner_identity="identity-source",
+        ))
+        assert isinstance(reference_request.payload, PayloadReference)
+        await assert_rejected(
+            label="payload_reference",
+            request=reference_request,
+            owner=reference_request.payload,
+            field_name="checksum",
+            replacement="sha256:" + "b" * 64,
+        )
+
+    async def test_invalid_inline_replacements_keep_seal_bytes_and_fail_closed(
+        self,
+    ) -> None:
+        class OpaqueNode:
+            __hash__ = object.__hash__
+
+            def __repr__(self) -> str:
+                raise AssertionError("authority seal must not call repr")
+
+            def __str__(self) -> str:
+                raise AssertionError("authority seal must not call str")
+
+        def cycle() -> list[object]:
+            value: list[object] = []
+            value.append(value)
+            return value
+
+        cases = (
+            (
+                "unsupported",
+                {"node": OpaqueNode()},
+                {"node": OpaqueNode()},
+            ),
+            (
+                "nan",
+                {"node": float("nan")},
+                {"node": float("nan")},
+            ),
+            ("cycle", cycle(), cycle()),
+            (
+                "invalid-key",
+                {OpaqueNode(): "value"},
+                {OpaqueNode(): "value"},
+            ),
+        )
+        for label, original, replacement in cases:
+            with self.subTest(case=label):
+                store = _Store()
+                client = _PayloadClient(self.clock)
+                service = self._service(store=store, payload_client=client)
+                request = self._request(payload=InlinePayload(
+                    value=original,
+                    media_type="application/json",
+                    application_limit_bytes=128,
+                    transport_limit_bytes=128,
+                ))
+                assert isinstance(request.payload, InlinePayload)
+                sealed_bytes = request._authority_signature
+                self.assertTrue(request._authority_invalid_nodes)
+                object.__setattr__(request.payload, "value", replacement)
+
+                self.assertEqual(sealed_bytes, request._authority_signature)
+                with self.assertRaises(NsValidationError):
+                    request.validate_authority()
+                with self.assertRaises(NsValidationError):
+                    await service.admit(
+                        request,
+                        trace=AdmissionTrace(
+                            trace_id=f"trace-invalid-replacement-{label}",
+                        ),
+                    )
+                self.assertEqual([], store.values)
+                self.assertEqual([], client.calls)
+
+    def test_inline_authority_seal_graph_budget_fails_closed(self) -> None:
+        with self.assertRaises(NsValidationError) as raised:
+            self._request(payload=InlinePayload(
+                value=[None] * 65_536,
+                media_type="application/json",
+                application_limit_bytes=1_048_576,
+                transport_limit_bytes=1_048_576,
+            ))
+        self.assertEqual(
+            "request.inline_authority_graph",
+            raised.exception.details["field"],
+        )
+        self.assertEqual([], self.store.values)
+        self.assertEqual([], self.payload_client.calls)
+
+    def test_inline_authority_handles_depth_beyond_json_recursion_limit(self) -> None:
+        value: object = 1
+        for _ in range(1_200):
+            value = [value]
+        request = self._request(payload=InlinePayload(
+            value=value,
+            media_type="application/json",
+            application_limit_bytes=16_384,
+            transport_limit_bytes=16_384,
+        ))
+        assert request.inline_descriptor is not None
+        self.assertEqual(1_201, request.inline_descriptor.observed_depth)
+        self.assertIsNone(request.inline_descriptor.rejection_reason)
+        request.validate_authority()
+
+    def test_inline_authority_width_budget_precedes_key_sort_and_suffix_access(
+        self,
+    ) -> None:
+        class MaliciousSuffix:
+            def __repr__(self) -> str:
+                raise AssertionError("budgeted traversal called repr")
+
+            def __str__(self) -> str:
+                raise AssertionError("budgeted traversal called str")
+
+        payload = InlinePayload(
+            value={"a": 1, "b": 2, "c": MaliciousSuffix()},
+            media_type="application/json",
+            application_limit_bytes=128,
+            transport_limit_bytes=128,
+        )
+        with mock.patch(
+            "ns_runtime.delivery.models.sorted",
+            side_effect=AssertionError("keys sorted before node budget"),
+            create=True,
+        ):
+            with self.assertRaises(NsValidationError) as raised:
+                _inspect_inline_payload_authority(
+                    payload,
+                    max_nodes=6,
+                    max_depth=16,
+                    max_bytes=1_024,
+                )
+        self.assertEqual(
+            "request.inline_authority_graph",
+            raised.exception.details["field"],
+        )
+
+    def test_inline_authority_byte_budget_precedes_scalar_json_encoding(
+        self,
+    ) -> None:
+        payload = InlinePayload(
+            value="x" * 65,
+            media_type="application/json",
+            application_limit_bytes=128,
+            transport_limit_bytes=128,
+        )
+        with mock.patch(
+            "ns_runtime.delivery.models.json.dumps",
+            side_effect=AssertionError("encoded before byte budget"),
+        ):
+            with self.assertRaises(NsValidationError) as raised:
+                _inspect_inline_payload_authority(
+                    payload,
+                    max_nodes=8,
+                    max_depth=8,
+                    max_bytes=64,
+                )
+        self.assertEqual(
+            "request.inline_authority_bytes",
+            raised.exception.details["field"],
+        )
+
+        octets = InlinePayload(
+            value=b"x" * 65,
+            media_type="application/octet-stream",
+            application_limit_bytes=128,
+            transport_limit_bytes=128,
+        )
+        with self.assertRaises(NsValidationError) as raised:
+            _inspect_inline_payload_authority(
+                octets,
+                max_nodes=8,
+                max_depth=8,
+                max_bytes=64,
+            )
+        self.assertEqual(
+            "request.inline_authority_bytes",
+            raised.exception.details["field"],
+        )
+
+    def test_inline_authority_rejects_superwide_dict_before_dependencies(
+        self,
+    ) -> None:
+        with self.assertRaises(NsValidationError) as raised:
+            self._request(payload=InlinePayload(
+                value={f"k{index}": None for index in range(32_768)},
+                media_type="application/json",
+                application_limit_bytes=1_048_576,
+                transport_limit_bytes=1_048_576,
+            ))
+        self.assertEqual(
+            "request.inline_authority_graph",
+            raised.exception.details["field"],
+        )
+        self.assertEqual([], self.store.values)
+        self.assertEqual([], self.payload_client.calls)
+
 
 class _Sender(AdmissionResponseSender):
     async def send(self, response):
@@ -713,6 +1180,67 @@ class _Observer(AdmissionEmissionObserver):
 
 
 class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_production_store_revalidates_plan_before_first_write(self):
+        clock = ControlledClock(utc_start=UTC_START)
+        plan = await _plan()
+        capture_store = _Store()
+        service = DeliveryAdmissionService.for_contract_tests(
+            policy=DefaultAdmissionPolicy(),
+            policy_config=AdmissionPolicyConfig(
+                config_version="c1",
+                policy_version="p1",
+            ),
+            store=capture_store,
+            payload_ref_client=_PayloadClient(clock),
+            clock=clock,
+            identifier_factory=_ids,
+        )
+        request = AdmissionRequest.from_stage_six(
+            stage_six=StageSixAdmissionInput.from_result(
+                RoutingPreparationResult.resolved(plan),
+            ),
+            message_id=MESSAGE_ID,
+            tenant_id=plan.authorization_evidence.effective_tenant_id,
+            source_identity="identity-source",
+            authorization_binding_reference=(
+                plan.authorization_evidence.message_binding_reference
+            ),
+            envelope_authority=_envelope_authority(plan),
+            payload=InlinePayload(
+                value={"v": 1},
+                media_type="application/json",
+                application_limit_bytes=4096,
+                transport_limit_bytes=4096,
+            ),
+            requested_priority=None,
+            requested_reliability=None,
+            requested_expires_at=clock.utc_now() + timedelta(seconds=30),
+            requested_ack_timeout_seconds=30,
+            requested_target_strategy=plan.requested_strategy,
+        )
+        result = await service.admit(
+            request,
+            trace=AdmissionTrace(trace_id="trace-capture-initialization"),
+        )
+        self.assertEqual(AdmissionOutcome.ACCEPTED, result.outcome)
+        initialization = capture_store.values[0]
+
+        model = DeterministicStateStoreContractModel(
+            clock=clock,
+            capabilities=StateStoreCapabilities.p10_contract(),
+        )
+        await model.open()
+        production_store = _state_admission_store(model)
+        original_local_hit = plan.local_hit
+        object.__setattr__(plan, "local_hit", not original_local_hit)
+        try:
+            with self.assertRaises(NsValidationError):
+                await production_store.initialize(initialization)
+            self.assertEqual(0, model.write_count)
+        finally:
+            object.__setattr__(plan, "local_hit", original_local_hit)
+            await model.close()
+
     async def test_w09_state_store_atomic_documents_are_evidence_only(self):
         clock = ControlledClock(utc_start=UTC_START)
         plan = await _plan()
@@ -720,8 +1248,8 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             clock=clock, capabilities=StateStoreCapabilities.p10_contract(),
         )
         await model.open()
-        store = StateStoreDeliveryAdmissionStore(model)
-        service = DeliveryAdmissionService(
+        store = _state_admission_store(model)
+        service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",
@@ -763,12 +1291,12 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             clock=clock, capabilities=StateStoreCapabilities.p10_contract(),
         )
         await model.open()
-        service = DeliveryAdmissionService(
+        service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",
             ),
-            store=StateStoreDeliveryAdmissionStore(model),
+            store=_state_admission_store(model),
             payload_ref_client=_PayloadClient(clock), clock=clock,
             identifier_factory=_ids,
         )
@@ -819,12 +1347,12 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
             clock=clock, capabilities=StateStoreCapabilities.p10_contract(),
         )
         await model.open()
-        service = DeliveryAdmissionService(
+        service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",
             ),
-            store=StateStoreDeliveryAdmissionStore(model),
+            store=_state_admission_store(model),
             payload_ref_client=_PayloadClient(clock), clock=clock,
             identifier_factory=_ids,
         )
@@ -861,12 +1389,12 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
         )
         await failing.open()
         failing.write_error = RuntimeError("atomic-failure")
-        failed_service = DeliveryAdmissionService(
+        failed_service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1", policy_version="p1",
             ),
-            store=StateStoreDeliveryAdmissionStore(failing),
+            store=_state_admission_store(failing),
             payload_ref_client=_PayloadClient(clock), clock=clock,
             identifier_factory=_ids,
         )
@@ -900,3 +1428,11 @@ class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+def _state_admission_store(model):
+    repositories = model.repository_composition().delivery_repositories(
+        runtime_id="runtime-local",
+    )
+    return StateStoreDeliveryAdmissionStore(
+        repository=repositories.admission,
+        registry_repository=repositories.registry,
+    )

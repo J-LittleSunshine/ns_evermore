@@ -375,7 +375,7 @@ class ConnectionLifecycleManager:
             ),
         )
 
-    async def write_local_delivery(self, *, target, payload) -> None:
+    async def write_local_delivery(self, *, target, payload):
         """Revalidate the same local owner immediately before transport write."""
         from ns_runtime.delivery.scheduling import (
             LocalDeliveryTarget,
@@ -414,13 +414,13 @@ class ConnectionLifecycleManager:
                  + context.permission_version).encode("utf-8")
             ).hexdigest()
         ):
-            raise NsStateError(
-                "Local delivery target is no longer active.",
-                details={
-                    "component": "connection_lifecycle_manager",
-                    "operation": "write_local_delivery",
-                    "reason": "target_inactive",
-                },
+            from ns_runtime.transport import (
+                TransportWriteResult,
+                TransportWriteState,
+            )
+            return TransportWriteResult(
+                state=TransportWriteState.NOT_STARTED,
+                failure_reason="target_inactive",
             )
         try:
             wire_text = payload.canonical_bytes.decode("utf-8", errors="strict")
@@ -429,7 +429,7 @@ class ConnectionLifecycleManager:
                 "P11 outbound canonical envelope is invalid.",
                 details={"component": "connection_lifecycle", "field": "payload"},
             ) from None
-        await owner.transport.send(wire_text)
+        return await owner.transport.send(wire_text)
 
     async def start(self) -> None:
         async with self._lifecycle_lock:

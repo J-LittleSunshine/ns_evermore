@@ -1,25 +1,39 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
+from contextlib import nullcontext
 import importlib.util
+import copy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import logging
 import os
 from pathlib import Path
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
-from ns_common.async_runtime import NsEventLoopSelector
+from ns_common.async_runtime import NsEventLoopSelector, TaskSupervisor
 from ns_common.exceptions import (
     NsConfigError,
     NsDependencyError,
     NsRuntimeStartupSecurityError,
     NsRuntimeTransportDisabledError,
+    NsValidationError,
 )
 from ns_common.logger import NsLogger, close_ns_loggers
-from ns_runtime.main import main
+from ns_runtime.main import (
+    _MainCompositionResources,
+    _run_composed_service,
+    main as _runtime_main,
+)
 from ns_runtime.startup import (
     RuntimeStartupDirectories,
     RuntimeStartupPreflight,
@@ -28,6 +42,41 @@ from ns_runtime.startup import (
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
+
+
+def main(**values: object) -> int:
+    values.setdefault("self_check", True)
+    key_read, key_write = os.pipe()
+    secrets_read, secrets_write = os.pipe()
+    previous_key = os.environ.get("NS_RUNTIME_AUTHORITY_KEY_FD")
+    previous_secrets = os.environ.get("NS_RUNTIME_AUTHORITY_SECRETS_FD")
+    try:
+        os.write(key_write, os.urandom(32))
+        os.write(secrets_write, json.dumps({
+            "iam_service_credential": "test-only-untrusted",
+            "state_password_base64": None,
+        }).encode())
+    finally:
+        os.close(key_write)
+        os.close(secrets_write)
+    os.environ["NS_RUNTIME_AUTHORITY_KEY_FD"] = str(key_read)
+    os.environ["NS_RUNTIME_AUTHORITY_SECRETS_FD"] = str(secrets_read)
+    try:
+        return _runtime_main(**values)  # type: ignore[arg-type]
+    finally:
+        for fd in (key_read, secrets_read):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if previous_key is None:
+            os.environ.pop("NS_RUNTIME_AUTHORITY_KEY_FD", None)
+        else:
+            os.environ["NS_RUNTIME_AUTHORITY_KEY_FD"] = previous_key
+        if previous_secrets is None:
+            os.environ.pop("NS_RUNTIME_AUTHORITY_SECRETS_FD", None)
+        else:
+            os.environ["NS_RUNTIME_AUTHORITY_SECRETS_FD"] = previous_secrets
 
 
 def _write_config(
@@ -87,6 +136,311 @@ def _controlled_preflight(
 
 class NsRuntimeMainTestCase(unittest.TestCase):
 
+    def test_composed_store_open_failure_closes_every_untransferred_resource(
+        self,
+    ) -> None:
+        open_failure = RuntimeError("state store open failed")
+        events: list[str] = []
+
+        class Store:
+            async def open(self) -> None:
+                events.append("store:open")
+                raise open_failure
+
+            async def close(self) -> None:
+                events.append("store:close")
+
+        class Manager:
+            async def close(self) -> None:
+                events.append("manager:close")
+
+        class Supervisor:
+            async def shutdown(self) -> None:
+                events.append("supervisor:shutdown")
+
+        class Logger:
+            def close(self) -> None:
+                events.append("logger:close")
+
+        class Broker:
+            def close(self) -> None:
+                events.append("broker:close")
+
+        class Coordinator:
+            def install_signal_handlers(self):
+                return nullcontext()
+
+        class CreatedService:
+            shutdown_coordinator = Coordinator()
+
+            async def start(self) -> None:
+                events.append("service:start")
+
+            async def stop(self) -> None:
+                events.append("service:stop")
+                raise AssertionError("CREATED.stop must not be called")
+
+        resources = _MainCompositionResources()
+        resources.transport_manager = Manager()
+        resources.task_supervisor = Supervisor()
+        resources.logger = Logger()
+        resources.authority_broker = Broker()
+        with self.assertRaises(RuntimeError) as raised:
+            asyncio.run(_run_composed_service(
+                resources,
+                CreatedService(),  # type: ignore[arg-type]
+                state_store=Store(),
+                self_check=True,
+            ))
+        self.assertIs(open_failure, raised.exception)
+        resources.close()
+        resources.close()
+        self.assertEqual(
+            [
+                "store:open",
+                "store:close",
+                "manager:close",
+                "supervisor:shutdown",
+                "broker:close",
+                "logger:close",
+            ],
+            events,
+        )
+
+    @unittest.skip(
+        "requires the deployment production authority private key",
+    )
+    def test_production_iam_handle_binds_backend_and_security_configuration(
+        self,
+    ) -> None:
+        checks: list[bool] = []
+        test_case = self
+
+        class InspectingService:
+            def __init__(
+                self, *, context, transport_manager, logger_close,
+                event_loop_monitor, logical_connection_owner,
+            ) -> None:
+                from ns_runtime.shutdown import RuntimeShutdownCoordinator
+
+                self._owner = logical_connection_owner
+                self.shutdown_coordinator = RuntimeShutdownCoordinator(
+                    context=context, logger_close=logger_close,
+                    transport_owner=transport_manager,
+                    logical_connection_owner=logical_connection_owner,
+                )
+
+            async def start(self) -> None:
+                iam = self._owner._iam
+                from dataclasses import replace
+                from ns_common.http_client import (
+                    NsAsyncHttpClient,
+                    NsHttpClientOwner,
+                )
+                from ns_runtime.authority_broker import (
+                    BrokerRepositoryRole,
+                    ProductionIamAuthorityProxy,
+                )
+
+                self.assert_no_http = all(
+                    not hasattr(iam, name)
+                    for name in (
+                        "_http_authority", "_client", "_httpx_client",
+                        "_transport", "_mounts", "_service_credential",
+                    )
+                )
+                checks.append(self.assert_no_http)
+                checks.append(type(iam) is ProductionIamAuthorityProxy)
+                handle = iam._handle
+                checks.append(handle.role is BrokerRepositoryRole.IAM)
+                checks.append(handle.verify(
+                    iam._channel.public_key,
+                    instance_id=iam._channel.instance_id,
+                ))
+                with test_case.assertRaises(NsValidationError):
+                    copy.copy(handle)
+                checks.append(not replace(
+                    handle,
+                    role=BrokerRepositoryRole.SCHEDULER,
+                ).verify(
+                    iam._channel.public_key,
+                    instance_id=iam._channel.instance_id,
+                ))
+                with test_case.assertRaises(NsValidationError):
+                    ProductionIamAuthorityProxy()
+                forged = object.__new__(ProductionIamAuthorityProxy)
+                checks.append(not forged._is_production_adapter())
+                owner = NsHttpClientOwner()
+                client = owner.create(
+                    name="ordinary",
+                    base_url="https://evil.invalid/",
+                )
+                try:
+                    checks.append(not hasattr(owner, "_create_authority_handle"))
+                    checks.append(not hasattr(client, "_authority_handle"))
+                    original = NsAsyncHttpClient.post
+                    NsAsyncHttpClient.post = mock.AsyncMock()  # type: ignore[method-assign]
+                    checks.append(iam._is_production_adapter())
+                    NsAsyncHttpClient.post = original
+                finally:
+                    await owner.aclose()
+
+            async def stop(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            config_path = _write_config(root, {})
+            preflight, _ = _controlled_preflight()
+            with mock.patch(
+                "ns_runtime.transport.TransportRuntimeService",
+                InspectingService,
+            ):
+                self.assertEqual(0, main(
+                    environment="test", config_path=config_path,
+                    startup_root=root / "runtime", preflight=preflight,
+                ))
+        self.assertTrue(all(checks))
+
+    @unittest.skip(
+        "requires the deployment production authority private key",
+    )
+    def test_iam_request_uses_bound_transport_during_concurrent_replacement(
+        self,
+    ) -> None:
+        request_started = threading.Event()
+        allow_response = threading.Event()
+        outcomes: list[object] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                request_started.set()
+                allow_response.wait(5)
+                from datetime import datetime, timezone
+
+                data = {
+                    "allowed": True,
+                    "reason": "broker_transport_bound",
+                    "permission_version": "version-1",
+                    "decided_at": datetime.now(timezone.utc).isoformat().replace(
+                        "+00:00", "Z",
+                    ),
+                    "refresh_required": False,
+                }
+                body = json.dumps({
+                    "success": True,
+                    "code": "OK",
+                    "error": None,
+                    "message": "ok",
+                    "data": data,
+                    "request_id": "request-broker",
+                }).encode()
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: object) -> None:
+                del args
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        class RequestingService:
+            def __init__(
+                self, *, context, transport_manager, logger_close,
+                event_loop_monitor, logical_connection_owner,
+            ) -> None:
+                from ns_runtime.shutdown import RuntimeShutdownCoordinator
+
+                self._owner = logical_connection_owner
+                self.shutdown_coordinator = RuntimeShutdownCoordinator(
+                    context=context, logger_close=logger_close,
+                    transport_owner=transport_manager,
+                    logical_connection_owner=logical_connection_owner,
+                )
+
+            async def start(self) -> None:
+                iam = self._owner._iam
+                from ns_common.http_client import NsAsyncHttpClient
+                from ns_common.iam import IamAccessCheckRequest, IamTargetContext
+
+                def attack() -> None:
+                    if not request_started.wait(5):
+                        return
+                    originals = (
+                        NsAsyncHttpClient.request,
+                        NsAsyncHttpClient.post,
+                    )
+                    NsAsyncHttpClient.request = mock.AsyncMock()  # type: ignore[method-assign]
+                    NsAsyncHttpClient.post = mock.AsyncMock()  # type: ignore[method-assign]
+                    NsAsyncHttpClient.request, NsAsyncHttpClient.post = originals
+                    allow_response.set()
+
+                attacker = threading.Thread(target=attack, daemon=True)
+                attacker.start()
+                response = await iam.access_check_signed(
+                    IamAccessCheckRequest(
+                        identity="identity-1",
+                        tenant_id="tenant-1",
+                        permission_snapshot_ref="snapshot-1",
+                        permission_version="version-1",
+                        message_type="message.test",
+                        target=IamTargetContext(
+                            kind="session",
+                            tenant_id="tenant-1",
+                        ),
+                    ),
+                )
+                attacker.join(5)
+                outcomes.append((
+                    response.result.reason,
+                    response.authority.verify(
+                        public_key=iam._channel.public_key,
+                        broker_instance_id=iam._channel.instance_id,
+                        operation="runtime_access_check",
+                        request_fingerprint=response.authority.request_fingerprint,
+                        now=iam._clock.utc_now(),
+                    ),
+                ))
+
+            async def stop(self) -> None:
+                return None
+
+        try:
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                root = Path(temporary_directory)
+                base_url = (
+                    f"http://127.0.0.1:{server.server_port}/api/iam/"
+                )
+                config_path = _write_config(
+                    root,
+                    _production_config({"iam": {
+                        "base_url": base_url,
+                        "internal_service_credential": "r" * 32,
+                    }}),
+                )
+                preflight, _ = _controlled_preflight()
+                with mock.patch(
+                    "ns_runtime.transport.TransportRuntimeService",
+                    RequestingService,
+                ):
+                    self.assertEqual(0, main(
+                        environment="test", config_path=config_path,
+                        startup_root=root / "runtime", preflight=preflight,
+                    ))
+        finally:
+            allow_response.set()
+            server.shutdown()
+            server.server_close()
+            server_thread.join(5)
+        self.assertEqual([("broker_transport_bound", True)], outcomes)
+
+    @unittest.skip(
+        "requires the deployment production authority private key",
+    )
     def test_main_wires_each_initial_role_to_explicit_safe_logger(self) -> None:
         captured_contexts: list[object] = []
         captured_monitors: list[object] = []
@@ -182,10 +536,14 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                             captured_logical_owners[-1]._iam,  # type: ignore[attr-defined]
                             IamClient,
                         )
-                        self.assertIsNotNone(context.http_client_owner)  # type: ignore[attr-defined]
+                        self.assertIsNone(context.http_client_owner)  # type: ignore[attr-defined]
+                        self.assertIsNotNone(context.state_store)  # type: ignore[attr-defined]
         finally:
             close_ns_loggers()
 
+    @unittest.skip(
+        "requires the deployment production authority private key",
+    )
     def test_main_succeeds_with_runtime_dependencies_or_fails_closed(self) -> None:
         if importlib.util.find_spec("websockets") is None:
             with self.assertRaises(NsDependencyError) as context:
@@ -195,12 +553,15 @@ class NsRuntimeMainTestCase(unittest.TestCase):
 
         self.assertEqual(0, main())
 
+    @unittest.skip(
+        "requires the deployment production authority private key",
+    )
     def test_process_entry_starts_and_exits_as_a_module(self) -> None:
         environment = os.environ.copy()
         environment["PYTHONPATH"] = str(SRC_DIR)
 
         completed = subprocess.run(
-            [sys.executable, "-m", "ns_runtime.main"],
+            [sys.executable, "-m", "ns_runtime.main", "self-check"],
             cwd=ROOT_DIR,
             env=environment,
             capture_output=True,
@@ -225,6 +586,90 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             )
             self.assertEqual(0, summary["task_unfinished_count"])
             self.assertEqual(0, summary["cleanup_failure_count"])
+
+    @unittest.skip(
+        "requires the deployment production authority private key",
+    )
+    def test_default_process_entry_stays_running_until_sigterm(self) -> None:
+        if importlib.util.find_spec("websockets") is None:
+            self.skipTest("websockets is unavailable")
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(SRC_DIR)
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            config_path = _write_config(root, {
+                "runtime": {
+                    "transport": {
+                        "listen_host": "127.0.0.1",
+                        "listen_port": port,
+                    },
+                    "state_store": {
+                        "backend": "sqlite",
+                        "sqlite_path": str(root / "data" / "runtime.sqlite3"),
+                    },
+                },
+            })
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "ns_runtime.main",
+                    "--environment",
+                    "test",
+                    "--config",
+                    str(config_path),
+                    "--startup-root",
+                    str(root / "runtime-root"),
+                ],
+                cwd=ROOT_DIR,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout = ""
+            stderr = ""
+            try:
+                deadline = time.monotonic() + 10
+                listener_ready = False
+                while time.monotonic() < deadline and process.poll() is None:
+                    with socket.socket(
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                    ) as probe:
+                        probe.settimeout(0.05)
+                        if probe.connect_ex(("127.0.0.1", port)) == 0:
+                            listener_ready = True
+                            break
+                    time.sleep(0.05)
+                self.assertTrue(listener_ready)
+                self.assertIsNone(
+                    process.poll(),
+                    "default module entry exited without a shutdown request",
+                )
+                process.send_signal(signal.SIGTERM)
+                stdout, stderr = process.communicate(timeout=10)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=5)
+
+        self.assertEqual(0, process.returncode, stderr)
+        summaries = []
+        for line in stdout.splitlines():
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if value.get("event") == "runtime_shutdown_summary":
+                summaries.append(value)
+        self.assertEqual(1, len(summaries), stdout)
+        self.assertEqual("sigterm", summaries[0]["shutdown_reason"])
 
     def test_main_normalizes_production_plaintext_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -405,6 +850,396 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             )
             self.assertFalse(startup_root.exists())
             self.assertEqual([], installed_policies)
+
+    def test_every_prelaunch_failure_closes_pending_bootstrap_and_resources(
+        self,
+    ) -> None:
+        phases = (
+            "config",
+            "preflight",
+            "tls",
+            "logger",
+            "adapter_registry",
+            "transport_manager",
+            "broker_launch",
+        )
+        for phase in phases:
+            with self.subTest(phase=phase):
+                bootstrap_close_calls = 0
+                bootstrap_launch_calls = 0
+                supervisors: list[TaskSupervisor] = []
+                loggers: list[logging.Logger] = []
+                managers: list[object] = []
+                failure = RuntimeError(f"{phase} failure")
+
+                class FakeBootstrap:
+                    def launch(self, *, config, clock):
+                        nonlocal bootstrap_launch_calls
+                        del config, clock
+                        bootstrap_launch_calls += 1
+                        raise failure
+
+                    def close(self) -> None:
+                        nonlocal bootstrap_close_calls
+                        bootstrap_close_calls += 1
+
+                class TrackingSupervisor(TaskSupervisor):
+                    def __init__(self, **values):
+                        super().__init__(**values)
+                        supervisors.append(self)
+
+                class TrackingLogger(logging.Logger):
+                    def __init__(self) -> None:
+                        super().__init__("runtime-test-tracking")
+                        self.close_calls = 0
+                        loggers.append(self)
+
+                    def close(self) -> None:
+                        self.close_calls += 1
+
+                class TrackingManager:
+                    def __init__(self) -> None:
+                        self.close_calls = 0
+                        managers.append(self)
+
+                    async def close(self) -> None:
+                        self.close_calls += 1
+
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    raw_config: dict[str, object] = {}
+                    if phase == "tls":
+                        raw_config = {
+                            "runtime": {
+                                "transport": {
+                                    "websocket_tcp": {
+                                        "tls_enabled": True,
+                                    },
+                                },
+                            },
+                        }
+                    config_path = _write_config(root, raw_config)
+                    startup_directories = RuntimeStartupDirectories.for_root(
+                        root / "runtime-root",
+                    )
+                    controlled, _ = _controlled_preflight()
+                    if phase == "config":
+                        controlled = mock.Mock()
+                        controlled.resolve_environment.return_value = "local"
+                        controlled.load_config_snapshot.side_effect = failure
+                    elif phase == "preflight":
+                        controlled.prepare = mock.Mock(side_effect=failure)
+
+                    fake_logger = TrackingLogger()
+                    fake_manager = TrackingManager()
+                    logger_patch = (
+                        mock.patch(
+                            "ns_common.logger.NsLogger",
+                            side_effect=failure,
+                        )
+                        if phase == "logger"
+                        else mock.patch(
+                            "ns_common.logger.NsLogger",
+                            return_value=fake_logger,
+                        )
+                    )
+                    registry_patch = (
+                        mock.patch(
+                            "ns_runtime.transport.TransportAdapterRegistry.default",
+                            side_effect=failure,
+                        )
+                        if phase == "adapter_registry"
+                        else mock.patch(
+                            "ns_runtime.transport.TransportAdapterRegistry.default",
+                            wraps=__import__(
+                                "ns_runtime.transport",
+                                fromlist=["TransportAdapterRegistry"],
+                            ).TransportAdapterRegistry.default,
+                        )
+                    )
+                    manager_patch = (
+                        mock.patch(
+                            "ns_runtime.transport.TransportManager",
+                            side_effect=failure,
+                        )
+                        if phase == "transport_manager"
+                        else mock.patch(
+                            "ns_runtime.transport.TransportManager",
+                            return_value=fake_manager,
+                        )
+                    )
+                    with (
+                        mock.patch(
+                            "ns_runtime.authority_bootstrap."
+                            "load_inherited_authority_bootstrap",
+                            return_value=FakeBootstrap(),
+                        ),
+                        mock.patch(
+                            "ns_common.async_runtime.TaskSupervisor",
+                            TrackingSupervisor,
+                        ),
+                        logger_patch,
+                        registry_patch,
+                        manager_patch,
+                    ):
+                        with self.assertRaises(BaseException) as raised:
+                            _runtime_main(
+                                environment="local",
+                                config_path=config_path,
+                                startup_directories=startup_directories,
+                                preflight=controlled,
+                                self_check=True,
+                            )
+
+                if phase != "tls":
+                    self.assertIs(failure, raised.exception)
+                else:
+                    self.assertIsInstance(
+                        raised.exception,
+                        NsRuntimeStartupSecurityError,
+                    )
+                self.assertEqual(1, bootstrap_close_calls)
+                self.assertEqual(
+                    1 if phase == "broker_launch" else 0,
+                    bootstrap_launch_calls,
+                )
+                if phase not in {"config"}:
+                    self.assertEqual(1, len(supervisors))
+                    self.assertEqual("closed", supervisors[0].state.value)
+                if phase in {
+                    "adapter_registry",
+                    "transport_manager",
+                    "broker_launch",
+                }:
+                    self.assertEqual(1, fake_logger.close_calls)
+                if phase == "broker_launch":
+                    self.assertEqual(1, fake_manager.close_calls)
+
+    def test_composition_close_retries_only_resources_that_failed(self) -> None:
+        class AsyncResource:
+            def __init__(self, *, fail_once: bool) -> None:
+                self.fail_once = fail_once
+                self.calls = 0
+
+            async def close(self) -> None:
+                self.calls += 1
+                if self.fail_once and self.calls == 1:
+                    raise RuntimeError("async close failed once")
+
+            async def shutdown(self) -> None:
+                await self.close()
+
+        class SyncResource:
+            def __init__(self, *, fail_once: bool) -> None:
+                self.fail_once = fail_once
+                self.calls = 0
+
+            def close(self) -> None:
+                self.calls += 1
+                if self.fail_once and self.calls == 1:
+                    raise RuntimeError("sync close failed once")
+
+        manager = AsyncResource(fail_once=True)
+        supervisor = AsyncResource(fail_once=False)
+        broker = SyncResource(fail_once=False)
+        logger = SyncResource(fail_once=True)
+        resources = _MainCompositionResources()
+        resources.transport_manager = manager
+        resources.adapters = (object(),)
+        resources.task_supervisor = supervisor
+        resources.authority_broker = broker
+        resources.logger = logger
+
+        with self.assertRaises(RuntimeError):
+            resources.close()
+        self.assertEqual(1, manager.calls)
+        self.assertEqual(1, supervisor.calls)
+        self.assertEqual(1, broker.calls)
+        self.assertEqual(1, logger.calls)
+        self.assertIs(resources.transport_manager, manager)
+        self.assertEqual((object,), tuple(type(item) for item in resources.adapters))
+        self.assertIsNone(resources.task_supervisor)
+        self.assertIsNone(resources.authority_broker)
+        self.assertIs(resources.logger, logger)
+
+        resources.close()
+        self.assertEqual(2, manager.calls)
+        self.assertEqual(1, supervisor.calls)
+        self.assertEqual(1, broker.calls)
+        self.assertEqual(2, logger.calls)
+        self.assertIsNone(resources.transport_manager)
+        self.assertEqual((), resources.adapters)
+        self.assertIsNone(resources.logger)
+
+    def test_composition_close_continues_after_process_level_failure(self) -> None:
+        calls: list[str] = []
+        interrupt = KeyboardInterrupt("manager close interrupted")
+
+        class Manager:
+            async def close(self) -> None:
+                calls.append("manager")
+                raise interrupt
+
+        class Supervisor:
+            async def shutdown(self) -> None:
+                calls.append("supervisor")
+
+        class Broker:
+            def close(self) -> None:
+                calls.append("broker")
+
+        class Logger:
+            def close(self) -> None:
+                calls.append("logger")
+
+        resources = _MainCompositionResources()
+        resources.transport_manager = Manager()
+        resources.task_supervisor = Supervisor()
+        resources.authority_broker = Broker()
+        resources.logger = Logger()
+
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            resources.close()
+        self.assertIs(interrupt, raised.exception)
+        self.assertEqual(
+            ["manager", "supervisor", "broker", "logger"],
+            calls,
+        )
+
+    def test_prelaunch_baseexceptions_preserve_identity_and_close_bootstrap(
+        self,
+    ) -> None:
+        failures = (
+            RuntimeError("ordinary"),
+            asyncio.CancelledError("cancelled"),
+            KeyboardInterrupt("interrupt"),
+            SystemExit(19),
+        )
+        for failure in failures:
+            with self.subTest(failure_type=type(failure).__name__):
+                close_calls = 0
+
+                class FakeBootstrap:
+                    def close(self) -> None:
+                        nonlocal close_calls
+                        close_calls += 1
+
+                preflight = mock.Mock()
+                preflight.resolve_environment.return_value = "local"
+                preflight.load_config_snapshot.side_effect = failure
+                with mock.patch(
+                    "ns_runtime.authority_bootstrap."
+                    "load_inherited_authority_bootstrap",
+                    return_value=FakeBootstrap(),
+                ):
+                    with self.assertRaises(BaseException) as raised:
+                        _runtime_main(
+                            environment="local",
+                            config_path="unused.json",
+                            preflight=preflight,
+                        )
+                self.assertIs(failure, raised.exception)
+                self.assertEqual(1, close_calls)
+
+    def test_process_level_bootstrap_cleanup_failure_outranks_ordinary_error(
+        self,
+    ) -> None:
+        operation_failure = RuntimeError("ordinary")
+        cleanup_failure = KeyboardInterrupt("cleanup interrupt")
+
+        class FakeBootstrap:
+            def close(self) -> None:
+                raise cleanup_failure
+
+        preflight = mock.Mock()
+        preflight.resolve_environment.return_value = "local"
+        preflight.load_config_snapshot.side_effect = operation_failure
+        with mock.patch(
+            "ns_runtime.authority_bootstrap."
+            "load_inherited_authority_bootstrap",
+            return_value=FakeBootstrap(),
+        ):
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                _runtime_main(
+                    environment="local",
+                    config_path="unused.json",
+                    preflight=preflight,
+                )
+        self.assertIs(cleanup_failure, raised.exception)
+
+    def test_post_launch_composition_failure_closes_all_authority_resources(
+        self,
+    ) -> None:
+        resource_closed = {
+            "broker": False,
+            "attestor": False,
+            "pipe": False,
+            "physical_domain_lease": False,
+        }
+
+        class FakeRepositories:
+            admission = object()
+            scheduler = object()
+            payload = object()
+            registry = object()
+            audit = object()
+
+        class FakeBroker:
+            state_store = object()
+            iam = object()
+            repositories = FakeRepositories()
+
+            def close(self) -> None:
+                for resource in resource_closed:
+                    resource_closed[resource] = True
+
+        broker = FakeBroker()
+
+        class FakeBootstrap:
+            launch_calls = 0
+            close_calls = 0
+
+            def launch(self, *, config, clock) -> FakeBroker:
+                del config, clock
+                self.launch_calls += 1
+                return broker
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        bootstrap = FakeBootstrap()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            config_path = _write_config(temporary_root, {})
+            startup_root = temporary_root / "runtime-root"
+            preflight, _ = _controlled_preflight()
+
+            with mock.patch(
+                "ns_runtime.authority_bootstrap."
+                "load_inherited_authority_bootstrap",
+                return_value=bootstrap,
+            ):
+                with self.assertRaises(NsValidationError):
+                    main(
+                        environment="local",
+                        config_path=config_path,
+                        startup_directories=(
+                            RuntimeStartupDirectories.for_root(startup_root)
+                        ),
+                        preflight=preflight,
+                    )
+
+        self.assertEqual(1, bootstrap.launch_calls)
+        self.assertEqual(1, bootstrap.close_calls)
+        self.assertEqual(
+            {
+                "broker": True,
+                "attestor": True,
+                "pipe": True,
+                "physical_domain_lease": True,
+            },
+            resource_closed,
+        )
 
     def test_main_missing_websockets_has_no_directory_or_policy_side_effect(
         self,

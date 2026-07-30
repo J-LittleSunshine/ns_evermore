@@ -8,7 +8,9 @@ RP-1 plan produced by processor stage six and stores only bounded evidence.
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -34,6 +36,9 @@ P11_OWNER_SCHEMA_VERSION = "delivery-owner-1"
 AUTHORITY_LAYOUT_VERSION = "delivery-authority-layout-v2"
 AUTHORITY_LAYOUT_GENERATION = 2
 MAX_ACTIVATION_BATCH_SIZE = 1000
+INLINE_AUTHORITY_MAX_NODES = 65_536
+INLINE_AUTHORITY_MAX_DEPTH = 4_096
+INLINE_AUTHORITY_MAX_BYTES = 4 * 1_048_576
 _TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,511}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
@@ -1125,94 +1130,584 @@ def cancel_initializing_graph(
 
 
 def canonical_inline_payload(payload: InlinePayload, *, max_depth: int) -> bytes:
-    if not isinstance(payload, InlinePayload):
+    if type(payload) is not InlinePayload:
         _invalid("inline_payload")
     _positive(max_depth, "inline.max_depth")
-    if payload.media_type == "application/octet-stream":
-        return bytes(payload.value)  # type: ignore[arg-type]
-    _validate_json(payload.value, max_depth=max_depth)
-    try:
-        return json.dumps(payload.value, sort_keys=True, separators=(",", ":"),
-                          ensure_ascii=False, allow_nan=False).encode("utf-8")
-    except (TypeError, ValueError, UnicodeError):
+    inspection = _inspect_inline_payload(
+        payload,
+        max_depth=max_depth,
+        max_nodes=INLINE_AUTHORITY_MAX_NODES,
+        max_bytes=INLINE_AUTHORITY_MAX_BYTES,
+        fail_on_budget=False,
+    )
+    if inspection.descriptor.rejection_reason is not None:
         _invalid("inline.value")
+    assert inspection.descriptor.canonical_bytes is not None
+    return inspection.descriptor.canonical_bytes
 
 
 def describe_inline_payload(
-    payload: InlinePayload, *, max_depth: int = 4096,
+    payload: InlinePayload, *, max_depth: int = INLINE_AUTHORITY_MAX_DEPTH,
 ) -> InlinePayloadDescriptor:
-    if not isinstance(payload, InlinePayload):
+    return _inspect_inline_payload(
+        payload,
+        max_depth=max_depth,
+        max_nodes=INLINE_AUTHORITY_MAX_NODES,
+        max_bytes=INLINE_AUTHORITY_MAX_BYTES,
+        fail_on_budget=False,
+    ).descriptor
+
+
+@dataclass(frozen=True, slots=True)
+class _InlinePayloadInspection:
+    descriptor: InlinePayloadDescriptor
+    authority_digest: str
+    invalid_nodes: tuple[object, ...]
+
+
+class _InlineTraversalLimit(ValueError):
+    __slots__ = ("kind", "observed_depth")
+
+    def __init__(self, kind: str, observed_depth: int) -> None:
+        self.kind = kind
+        self.observed_depth = observed_depth
+        super().__init__(kind)
+
+
+def _inspect_inline_payload_authority(
+    payload: InlinePayload,
+    *,
+    max_nodes: int = INLINE_AUTHORITY_MAX_NODES,
+    max_depth: int = INLINE_AUTHORITY_MAX_DEPTH,
+    max_bytes: int = INLINE_AUTHORITY_MAX_BYTES,
+) -> _InlinePayloadInspection:
+    return _inspect_inline_payload(
+        payload,
+        max_depth=max_depth,
+        max_nodes=max_nodes,
+        max_bytes=max_bytes,
+        fail_on_budget=True,
+    )
+
+
+def _inspect_inline_payload(
+    payload: InlinePayload,
+    *,
+    max_depth: int,
+    max_nodes: int,
+    max_bytes: int,
+    fail_on_budget: bool,
+) -> _InlinePayloadInspection:
+    """Inspect and canonically encode one inline payload under one hard budget.
+
+    The traversal keeps only one iterator per active container. Container
+    width and child depth are checked before an iterator is advanced or keys
+    are sorted, so an over-budget suffix is never accessed.
+    """
+
+    if type(payload) is not InlinePayload:
         _invalid("inline_descriptor.payload")
+    for value, field_name in (
+        (max_depth, "inline.max_depth"),
+        (max_nodes, "inline.max_nodes"),
+        (max_bytes, "inline.max_bytes"),
+    ):
+        _positive(value, field_name)
+
+    authority = hashlib.sha256()
+    invalid_nodes: list[object] = []
+    canonical_parts: list[bytes] = []
+    canonical_size = 0
+    canonical_possible = True
+    observed_nodes = 0
+    observed_bytes = 0
+    observed_depth = 0
+    active_containers: set[int] = set()
+    rejection_reason: RejectionReason | None = None
+
+    def authority_add(raw: bytes) -> None:
+        authority.update(len(raw).to_bytes(8, "big"))
+        authority.update(raw)
+
+    def authority_integer(value: int) -> None:
+        size = max(1, (value.bit_length() + 8) // 8)
+        authority_add(value.to_bytes(size, "big", signed=True))
+
+    def charge_nodes(count: int, *, depth: int) -> None:
+        nonlocal observed_nodes, observed_depth
+        observed_depth = max(observed_depth, depth)
+        if (
+            count < 0
+            or count > max_nodes
+            or observed_nodes > max_nodes - count
+        ):
+            raise _InlineTraversalLimit("nodes", observed_depth)
+        observed_nodes += count
+
+    def ensure_child_capacity(count: int, *, child_depth: int) -> None:
+        if count == 0:
+            return
+        if child_depth > max_depth:
+            raise _InlineTraversalLimit("depth", child_depth)
+        if count > max_nodes or observed_nodes > max_nodes - count:
+            raise _InlineTraversalLimit("nodes", observed_depth)
+
+    def charge_bytes(count: int) -> None:
+        nonlocal observed_bytes
+        if (
+            count < 0
+            or count > max_bytes
+            or observed_bytes > max_bytes - count
+        ):
+            raise _InlineTraversalLimit("bytes", observed_depth)
+        observed_bytes += count
+
+    def append_canonical(raw: bytes) -> None:
+        nonlocal canonical_size
+        if not canonical_possible:
+            return
+        if len(raw) > max_bytes or canonical_size > max_bytes - len(raw):
+            raise _InlineTraversalLimit("bytes", observed_depth)
+        canonical_size += len(raw)
+        canonical_parts.append(raw)
+
+    def reject(item: object, role: bytes) -> None:
+        nonlocal canonical_possible, rejection_reason
+        invalid_nodes.append(item)
+        authority_add(role)
+        authority_add(id(type(item)).to_bytes(16, "big"))
+        authority_add(id(item).to_bytes(16, "big"))
+        canonical_possible = False
+        canonical_parts.clear()
+        rejection_reason = RejectionReason.INLINE_TYPE_INVALID
+
+    def utf8_size(value: str, *, limit: int) -> int:
+        size = 0
+        for character in value:
+            try:
+                width = len(character.encode("utf-8", errors="strict"))
+            except UnicodeError:
+                reject(value, b"invalid-unicode")
+                return 0
+            if width > limit or size > limit - width:
+                raise _InlineTraversalLimit("bytes", observed_depth)
+            size += width
+        return size
+
+    def json_string(value: str, *, charge: bool) -> bytes:
+        raw_size = utf8_size(
+            value,
+            limit=(
+                max_bytes - observed_bytes
+                if charge
+                else max_bytes
+            ),
+        )
+        if not canonical_possible:
+            return b""
+        if charge:
+            charge_bytes(raw_size)
+
+        chunks: list[bytes] = []
+        chunk = bytearray()
+        encoded_size = 2
+        output_limit = (
+            max_bytes - canonical_size
+            if canonical_possible
+            else max_bytes
+        )
+        if encoded_size > output_limit:
+            raise _InlineTraversalLimit("bytes", observed_depth)
+
+        def append_encoded(raw: bytes) -> None:
+            nonlocal chunk, encoded_size
+            if (
+                len(raw) > output_limit
+                or encoded_size > output_limit - len(raw)
+            ):
+                raise _InlineTraversalLimit("bytes", observed_depth)
+            encoded_size += len(raw)
+            if len(chunk) + len(raw) > 4096:
+                chunks.append(bytes(chunk))
+                chunk = bytearray()
+            chunk.extend(raw)
+
+        for character in value:
+            if character == '"':
+                append_encoded(b'\\"')
+            elif character == "\\":
+                append_encoded(b"\\\\")
+            elif character == "\b":
+                append_encoded(b"\\b")
+            elif character == "\f":
+                append_encoded(b"\\f")
+            elif character == "\n":
+                append_encoded(b"\\n")
+            elif character == "\r":
+                append_encoded(b"\\r")
+            elif character == "\t":
+                append_encoded(b"\\t")
+            elif ord(character) < 0x20:
+                append_encoded(
+                    f"\\u{ord(character):04x}".encode("ascii"),
+                )
+            else:
+                try:
+                    append_encoded(
+                        character.encode("utf-8", errors="strict"),
+                    )
+                except UnicodeError:
+                    reject(value, b"invalid-unicode")
+                    return b""
+        if chunk:
+            chunks.append(bytes(chunk))
+        return b'"' + b"".join(chunks) + b'"'
+
+    def bounded_sorted_keys(value: dict[object, object]):
+        chunks: list[tuple[str, ...]] = []
+        chunk: list[str] = []
+        for key in value:
+            assert type(key) is str
+            chunk.append(key)
+            if len(chunk) == 256:
+                chunk.sort()
+                chunks.append(tuple(chunk))
+                chunk = []
+        if chunk:
+            chunk.sort()
+            chunks.append(tuple(chunk))
+        return heapq.merge(*(iter(item) for item in chunks))
+
+    def scalar_bytes(item: object, *, charge: bool = True) -> bytes | None:
+        if item is None:
+            raw = b"null"
+            if charge:
+                charge_bytes(1)
+        elif type(item) is bool:
+            raw = b"true" if item else b"false"
+            if charge:
+                charge_bytes(1)
+        elif type(item) is int:
+            integer_size = max(1, (item.bit_length() + 8) // 8)
+            if charge:
+                charge_bytes(integer_size)
+            try:
+                raw = json.dumps(
+                    item,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("ascii")
+            except (TypeError, ValueError, OverflowError):
+                raise _InlineTraversalLimit("bytes", observed_depth)
+        elif type(item) is float:
+            if not math.isfinite(item):
+                reject(item, b"non-finite-float")
+                authority_add(item.hex().encode("ascii"))
+                return None
+            if charge:
+                charge_bytes(8)
+            raw = json.dumps(
+                item,
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("ascii")
+        elif type(item) is str:
+            raw = json_string(item, charge=charge)
+            if not canonical_possible:
+                return None
+        else:
+            return None
+        authority_add(b"scalar")
+        authority_add(raw)
+        return raw
+
     try:
         if payload.media_type == "application/octet-stream":
-            raw = bytes(payload.value)  # type: ignore[arg-type]
-            observed_depth = 0
-        else:
-            observed_depth = _validate_json(payload.value, max_depth=max_depth)
-            raw = json.dumps(
-                payload.value, sort_keys=True, separators=(",", ":"),
-                ensure_ascii=False, allow_nan=False,
-            ).encode("utf-8")
-    except _PayloadDepthError:
-        reason = RejectionReason.INLINE_TOO_DEEP
-    except (NsValidationError, TypeError, ValueError, UnicodeError):
-        reason = RejectionReason.INLINE_TYPE_INVALID
-    else:
-        return InlinePayloadDescriptor(
-            media_type=payload.media_type, size_bytes=len(raw),
+            if type(payload.value) is not bytes:
+                _invalid("inline.value")
+            raw = payload.value
+            charge_bytes(len(raw))
+            authority_add(b"octets")
+            authority_add(hashlib.sha256(raw).digest())
+            descriptor = InlinePayloadDescriptor(
+                media_type=payload.media_type,
+                size_bytes=len(raw),
+                digest="sha256:" + hashlib.sha256(raw).hexdigest(),
+                observed_depth=0,
+                application_limit_bytes=payload.application_limit_bytes,
+                transport_limit_bytes=payload.transport_limit_bytes,
+                canonical_bytes=raw,
+            )
+            return _InlinePayloadInspection(
+                descriptor=descriptor,
+                authority_digest="sha256:" + authority.hexdigest(),
+                invalid_nodes=(),
+            )
+        if payload.media_type != "application/json":
+            _invalid("inline.media_type")
+
+        # operation, container/value, iterator/index metadata, depth, position
+        stack: list[tuple[object, ...]] = [
+            ("value", payload.value, 1, b"root"),
+        ]
+        while stack:
+            frame = stack.pop()
+            operation = frame[0]
+            if operation == "value":
+                item, depth, position = frame[1], frame[2], frame[3]
+                assert type(depth) is int and type(position) is bytes
+                charge_nodes(1, depth=depth)
+                authority_add(b"node")
+                authority_integer(depth)
+                authority_add(position)
+                raw = scalar_bytes(item)
+                if raw is not None:
+                    append_canonical(raw)
+                    continue
+                if type(item) is bytes:
+                    charge_bytes(len(item))
+                    reject(item, b"invalid-json-bytes")
+                    authority_add(hashlib.sha256(item).digest())
+                    continue
+                if type(item) not in {list, dict}:
+                    if type(item) is not float or math.isfinite(item):
+                        reject(item, b"unsupported")
+                    continue
+                marker = id(item)
+                if marker in active_containers:
+                    reject(item, b"container-cycle")
+                    continue
+                active_containers.add(marker)
+                length = len(item)
+                if type(item) is list:
+                    ensure_child_capacity(
+                        length,
+                        child_depth=depth + 1,
+                    )
+                    authority_add(b"list")
+                    authority_integer(length)
+                    append_canonical(b"[")
+                    stack.append((
+                        "list",
+                        item,
+                        iter(item),
+                        0,
+                        length,
+                        depth,
+                    ))
+                    continue
+
+                ensure_child_capacity(
+                    length * 2,
+                    child_depth=depth + 1,
+                )
+                all_string_keys = True
+                prospective_key_bytes = 0
+                for key in item:
+                    if type(key) is not str:
+                        all_string_keys = False
+                        break
+                    key_size = utf8_size(
+                        key,
+                        limit=max_bytes - prospective_key_bytes,
+                    )
+                    if not canonical_possible:
+                        all_string_keys = False
+                        break
+                    prospective_key_bytes += key_size
+                if all_string_keys:
+                    charge_bytes(prospective_key_bytes)
+                    authority_add(b"dict")
+                    authority_integer(length)
+                    append_canonical(b"{")
+                    stack.append((
+                        "dict",
+                        item,
+                        bounded_sorted_keys(item),
+                        0,
+                        length,
+                        depth,
+                    ))
+                else:
+                    reject(item, b"invalid-json-dict")
+                    authority_integer(length)
+                    stack.append((
+                        "invalid-dict",
+                        item,
+                        iter(item.items()),
+                        0,
+                        length,
+                        depth,
+                    ))
+                continue
+
+            if operation == "list":
+                container, iterator, index, expected, depth = frame[1:]
+                try:
+                    child = next(iterator)
+                except StopIteration:
+                    if index != expected:
+                        _invalid("inline.concurrent_mutation")
+                    active_containers.remove(id(container))
+                    append_canonical(b"]")
+                    authority_add(b"container:end")
+                    continue
+                if index >= expected:
+                    _invalid("inline.concurrent_mutation")
+                if index:
+                    append_canonical(b",")
+                stack.append((
+                    "list",
+                    container,
+                    iterator,
+                    index + 1,
+                    expected,
+                    depth,
+                ))
+                stack.append((
+                    "value",
+                    child,
+                    depth + 1,
+                    b"list:" + index.to_bytes(8, "big"),
+                ))
+                continue
+
+            if operation == "dict":
+                container, iterator, index, expected, depth = frame[1:]
+                try:
+                    key = next(iterator)
+                except StopIteration:
+                    if index != expected or len(container) != expected:
+                        _invalid("inline.concurrent_mutation")
+                    active_containers.remove(id(container))
+                    append_canonical(b"}")
+                    authority_add(b"container:end")
+                    continue
+                if index >= expected or type(key) is not str:
+                    _invalid("inline.concurrent_mutation")
+                try:
+                    child = container[key]
+                except (KeyError, RuntimeError):
+                    _invalid("inline.concurrent_mutation")
+                if index:
+                    append_canonical(b",")
+                charge_nodes(1, depth=depth + 1)
+                authority_add(b"node")
+                authority_integer(depth + 1)
+                authority_add(b"key:" + index.to_bytes(8, "big"))
+                key_raw = json_string(key, charge=False)
+                authority_add(b"scalar")
+                authority_add(key_raw)
+                append_canonical(key_raw)
+                append_canonical(b":")
+                stack.append((
+                    "dict",
+                    container,
+                    iterator,
+                    index + 1,
+                    expected,
+                    depth,
+                ))
+                stack.append((
+                    "value",
+                    child,
+                    depth + 1,
+                    b"dict:" + index.to_bytes(8, "big"),
+                ))
+                continue
+
+            if operation == "invalid-dict":
+                container, iterator, index, expected, depth = frame[1:]
+                try:
+                    key, child = next(iterator)
+                except StopIteration:
+                    if index != expected or len(container) != expected:
+                        _invalid("inline.concurrent_mutation")
+                    active_containers.remove(id(container))
+                    authority_add(b"container:end")
+                    continue
+                if index >= expected:
+                    _invalid("inline.concurrent_mutation")
+                charge_nodes(1, depth=depth + 1)
+                authority_add(b"node")
+                authority_integer(depth + 1)
+                authority_add(b"key:" + index.to_bytes(8, "big"))
+                key_raw = scalar_bytes(key)
+                if key_raw is None:
+                    reject(key, b"invalid-dict-key")
+                else:
+                    reject(key, b"invalid-dict-key")
+                stack.append((
+                    "invalid-dict",
+                    container,
+                    iterator,
+                    index + 1,
+                    expected,
+                    depth,
+                ))
+                stack.append((
+                    "value",
+                    child,
+                    depth + 1,
+                    b"dict:" + index.to_bytes(8, "big"),
+                ))
+                continue
+            _invalid("inline.traversal")
+    except _InlineTraversalLimit as limit:
+        if fail_on_budget:
+            field_name = (
+                "request.inline_authority_bytes"
+                if limit.kind == "bytes"
+                else "request.inline_authority_graph"
+            )
+            raise NsValidationError(
+                "P10 admission policy value is invalid.",
+                details={
+                    "component": "delivery_admission_policy",
+                    "field": field_name,
+                },
+            ) from None
+        rejection_reason = (
+            RejectionReason.INLINE_TOO_DEEP
+            if limit.kind == "depth"
+            else (
+                RejectionReason.INLINE_TOO_LARGE
+                if limit.kind == "bytes"
+                else RejectionReason.INLINE_TYPE_INVALID
+            )
+        )
+        observed_depth = max(observed_depth, limit.observed_depth)
+
+    if canonical_possible and rejection_reason is None:
+        raw = b"".join(canonical_parts)
+        descriptor = InlinePayloadDescriptor(
+            media_type=payload.media_type,
+            size_bytes=len(raw),
             digest="sha256:" + hashlib.sha256(raw).hexdigest(),
             observed_depth=observed_depth,
             application_limit_bytes=payload.application_limit_bytes,
             transport_limit_bytes=payload.transport_limit_bytes,
             canonical_bytes=raw,
         )
-    digest = "sha256:" + hashlib.sha256(
-        f"{payload.media_type}:{reason.value}".encode("utf-8")
-    ).hexdigest()
-    return InlinePayloadDescriptor(
-        media_type=payload.media_type, size_bytes=0, digest=digest,
-        observed_depth=max_depth + 1,
-        application_limit_bytes=payload.application_limit_bytes,
-        transport_limit_bytes=payload.transport_limit_bytes,
-        rejection_reason=reason,
+    else:
+        reason = rejection_reason or RejectionReason.INLINE_TYPE_INVALID
+        digest = "sha256:" + hashlib.sha256(
+            f"{payload.media_type}:{reason.value}".encode("utf-8"),
+        ).hexdigest()
+        descriptor = InlinePayloadDescriptor(
+            media_type=payload.media_type,
+            size_bytes=0,
+            digest=digest,
+            observed_depth=observed_depth,
+            application_limit_bytes=payload.application_limit_bytes,
+            transport_limit_bytes=payload.transport_limit_bytes,
+            rejection_reason=reason,
+        )
+    return _InlinePayloadInspection(
+        descriptor=descriptor,
+        authority_digest="sha256:" + authority.hexdigest(),
+        invalid_nodes=tuple(invalid_nodes),
     )
-
-
-def _validate_json(value: object, *, max_depth: int) -> int:
-    stack = [(value, 1, False)]
-    active_containers: set[int] = set()
-    observed_depth = 0
-    while stack:
-        item, depth, exiting = stack.pop()
-        if exiting:
-            active_containers.remove(id(item))
-            continue
-        observed_depth = max(observed_depth, depth)
-        if depth > max_depth:
-            raise _PayloadDepthError
-        if item is None or type(item) in {bool, int, float, str}:
-            continue
-        if isinstance(item, (list, dict)):
-            marker = id(item)
-            if marker in active_containers:
-                _invalid("inline.cycle")
-            active_containers.add(marker)
-            stack.append((item, depth, True))
-            if isinstance(item, dict):
-                if any(not isinstance(key, str) for key in item):
-                    _invalid("inline.key_type")
-                stack.extend(
-                    (child, depth + 1, False) for child in item.values()
-                )
-            else:
-                stack.extend((child, depth + 1, False) for child in item)
-            continue
-        _invalid("inline.value_type")
-    return observed_depth
-
-
-class _PayloadDepthError(ValueError):
-    pass
 
 
 def _json_root(value: object) -> bool:

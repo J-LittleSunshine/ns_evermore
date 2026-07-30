@@ -9,7 +9,7 @@ from unittest import mock
 
 from ns_common.async_runtime import TaskSupervisor
 from ns_common.config import NsConfig
-from ns_common.exceptions import NsValidationError
+from ns_common.exceptions import NsStateError, NsValidationError
 from ns_common.http_client import NsHttpClientOwner
 from ns_common.observability import (
     InMemoryMetricsSink,
@@ -97,6 +97,23 @@ class _RecordingTransportLifecycleOwner:
 
     async def close(self) -> None:
         self.events.append("transport:close")
+
+
+class _FailOnceTransportLifecycleOwner(_RecordingTransportLifecycleOwner):
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        failure: BaseException,
+    ) -> None:
+        super().__init__(events)
+        self._failure: BaseException | None = failure
+
+    async def close(self) -> None:
+        self.events.append("transport:close")
+        failure, self._failure = self._failure, None
+        if failure is not None:
+            raise failure
 
 
 class _RecordingLogicalLifecycleOwner:
@@ -298,6 +315,83 @@ class RuntimeShutdownCoordinatorTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("trace-secret", repr(report))
         self.assertNotIn("http-secret", repr(report))
         self.assertNotIn("logger-secret", repr(report))
+
+    async def test_service_stop_retries_only_unfinished_cleanup_owner(
+        self,
+    ) -> None:
+        events: list[str] = []
+        transport = _FailOnceTransportLifecycleOwner(
+            events,
+            failure=RuntimeError("close-once"),
+        )
+        context = _context(
+            logger=logging.Logger("runtime-shutdown-retry"),
+            supervisor=TaskSupervisor(),
+            metrics=_RecordingSink("metrics", events),
+            traces=_RecordingSink("traces", events),
+        )
+        coordinator = RuntimeShutdownCoordinator(
+            context=context,
+            transport_owner=transport,
+            logger_close=lambda: events.append("close:logger"),
+        )
+        service = RuntimeService(
+            context=context,
+            shutdown_coordinator=coordinator,
+        )
+
+        await service.start()
+        with self.assertRaisesRegex(
+            NsStateError,
+            "shutdown cleanup is incomplete",
+        ):
+            await service.stop()
+
+        self.assertIs(RuntimeServiceState.FAILED, service.state)
+        self.assertTrue(coordinator.cleanup_pending)
+        await service.stop()
+
+        self.assertIs(RuntimeServiceState.STOPPED, service.state)
+        self.assertFalse(coordinator.cleanup_pending)
+        self.assertEqual(2, events.count("transport:close"))
+        self.assertEqual(1, events.count("transport:stop"))
+        self.assertEqual(1, events.count("transport:drain"))
+        self.assertEqual(1, events.count("close:metrics"))
+        self.assertEqual(1, events.count("close:traces"))
+        self.assertEqual(1, events.count("close:logger"))
+
+    async def test_keyboard_interrupt_during_close_does_not_skip_later_cleanup(
+        self,
+    ) -> None:
+        events: list[str] = []
+        transport = _FailOnceTransportLifecycleOwner(
+            events,
+            failure=KeyboardInterrupt(),
+        )
+        context = _context(
+            logger=logging.Logger("runtime-shutdown-base-exception"),
+            supervisor=TaskSupervisor(),
+            metrics=_RecordingSink("metrics", events),
+            traces=_RecordingSink("traces", events),
+        )
+        coordinator = RuntimeShutdownCoordinator(
+            context=context,
+            transport_owner=transport,
+            logger_close=lambda: events.append("close:logger"),
+        )
+
+        with self.assertRaises(KeyboardInterrupt):
+            await coordinator.shutdown()
+
+        self.assertEqual(1, events.count("close:metrics"))
+        self.assertEqual(1, events.count("close:traces"))
+        self.assertEqual(1, events.count("close:logger"))
+        report = await coordinator.shutdown()
+        self.assertTrue(report.clean)
+        self.assertEqual(2, events.count("transport:close"))
+        self.assertEqual(1, events.count("close:metrics"))
+        self.assertEqual(1, events.count("close:traces"))
+        self.assertEqual(1, events.count("close:logger"))
 
     async def test_task_timeout_is_observable_without_logging_task_errors(self) -> None:
         events: list[str] = []

@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 import logging
+import os
 import secrets
 import shutil
 import subprocess
@@ -23,15 +25,18 @@ except ModuleNotFoundError:  # backend-only environments intentionally omit runt
     redis_async = None  # type: ignore[assignment]
 
 from ns_common.exceptions import (
+    NsRuntimeStateStoreCapabilityUnavailableError,
     NsRuntimeStateStoreClosedError,
     NsRuntimeStateStoreConflictError,
     NsRuntimeStateStoreIndeterminateWriteError,
+    NsRuntimeStateStoreNamespaceViolationError,
     NsRuntimeStateStoreTimeoutError,
     NsRuntimeStateStoreUnavailableError,
     NsRuntimeStateStoreVersionMismatchError,
+    NsValidationError,
 )
 from ns_common.async_runtime import TaskSupervisor
-from ns_common.config import NsConfig
+from ns_common.config import NsConfig, NsRuntimeStateStoreConfig
 from ns_common.observability import InMemoryMetricsSink, InMemoryTraceSink
 from ns_common.testing import NsTestResourceFactory
 from ns_common.state_store import (
@@ -58,8 +63,13 @@ from ns_common.state_store import (
     StateStorePasswordSource,
     StateTransaction,
     StateTransitionLogAppend,
+    create_contract_test_state_store_composition,
 )
 from ns_common.time import ControlledClock
+from ns_common.state_store.authority import (
+    _issue_state_access_scope,
+    _new_state_scope_issuer,
+)
 from ns_runtime.delivery import (
     AdmissionOutcome,
     AdmissionPolicyConfig,
@@ -79,8 +89,25 @@ from ns_runtime.delivery import (
 )
 from ns_runtime.processor import RoutingPreparationResult
 from ns_runtime.context import RuntimeContext, RuntimeDependencySlots
+from ns_runtime.authority_broker import (
+    AuthorityBrokerConfig,
+    start_integration_test_authority_broker,
+)
+import ns_runtime.authority_broker as broker_module
 from ns_runtime.main import _run_service_once
+from ns_runtime.delivery_persistence import DeliveryPersistenceTransaction
+from ns_runtime.authority_wire import encode_transaction_request
 from ns_runtime.service import RuntimeService
+from ns_runtime.state_authority import (
+    PersistenceStrongAuditAuthorityService,
+)
+from ns_runtime.connection import (
+    ConnectionAuditConsistency,
+    ConnectionAuditKind,
+    ConnectionAuditOutcome,
+    ConnectionLifecycleAuditEvent,
+    PersistenceConnectionLifecycleAuditSink,
+)
 
 from tests.test_runtime_delivery_admission import (
     MESSAGE_ID,
@@ -90,6 +117,10 @@ from tests.test_runtime_delivery_admission import (
     _ids,
     _plan,
 )
+from tests._state_store_contract_model import (
+    _ContractTestRepositoryComposition,
+)
+from tests.test_runtime_state_store import _audit_record
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -100,14 +131,29 @@ class _StaticPasswordSource(StateStorePasswordSource):
         return self.value
 
 
-def _scope() -> StateAccessScope:
+def _scope(store: RedisValkeyStateStore) -> StateAccessScope:
     namespace = StateNamespace.audit(domain="processor")
-    return StateAccessScope(
+    return _issue_test_scope(
+        store,
         atomic_scope=StateAtomicScope(namespace=namespace, partition="contract"),
         authority=StateAuthorityKind.STRONG_AUDIT,
         caller="redis-contract-test",
         capabilities=frozenset(StateCallerCapability),
     )
+
+
+def _issue_test_scope(store: RedisValkeyStateStore, **values) -> StateAccessScope:
+    issuer = getattr(store, "_contract_test_scope_issuer", None)
+    if issuer is None:
+        raise AssertionError("contract-test StateStore issuer is unavailable")
+    return _issue_state_access_scope(issuer, **values)
+
+
+def _repositories(store: RedisValkeyStateStore, *, runtime_id="runtime-local"):
+    composition = getattr(store, "_contract_test_repository_composition", None)
+    if not isinstance(composition, _ContractTestRepositoryComposition):
+        raise AssertionError("contract-test repository composition is unavailable")
+    return composition.delivery_repositories(runtime_id=runtime_id)
 
 
 def _key(scope: StateAccessScope, object_id: str) -> StateKey:
@@ -144,9 +190,17 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     def setUpClass(cls) -> None:
         super().setUpClass()
         if redis is None or redis_async is None:
+            if os.environ.get("NS_RUNTIME_REQUIRE_REDIS_INTEGRATION") == "1":
+                raise RuntimeError(
+                    "required runtime Redis driver is unavailable",
+                )
             raise unittest.SkipTest("runtime Redis driver is unavailable")
         server = shutil.which("redis-server")
         if server is None:
+            if os.environ.get("NS_RUNTIME_REQUIRE_REDIS_INTEGRATION") == "1":
+                raise RuntimeError(
+                    "required local redis-server is unavailable",
+                )
             raise unittest.SkipTest("local redis-server is unavailable")
         cls._resource_factory = NsTestResourceFactory(
             prefix="ns-runtime-redis-state-",
@@ -237,11 +291,17 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.aclose()
 
-    def _bucket_scope(self, *, bucket_id: int = 3) -> StateAccessScope:
+    def _bucket_scope(
+        self,
+        store: RedisValkeyStateStore,
+        *,
+        bucket_id: int = 3,
+    ) -> StateAccessScope:
         namespace = StateNamespace.tenant(
             tenant_id="tenant-a", domain="delivery",
         )
-        return StateAccessScope(
+        return _issue_test_scope(
+            store,
             atomic_scope=StateAtomicScope(
                 namespace=namespace, partition=f"bucket-{bucket_id}",
             ),
@@ -259,7 +319,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_cluster_transaction_keys_share_exact_tenant_bucket_slot(self) -> None:
         store = self._provider()
-        scope = self._bucket_scope(bucket_id=3)
+        scope = self._bucket_scope(store, bucket_id=3)
         key = StateKey(
             namespace=scope.namespace,
             object_type="delivery",
@@ -294,7 +354,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_legacy_physical_record_requires_explicit_migration(self) -> None:
         store = self._provider()
         await store.open()
-        scope = self._bucket_scope(bucket_id=4)
+        scope = self._bucket_scope(store, bucket_id=4)
         key = StateKey(
             namespace=scope.namespace,
             object_type="delivery",
@@ -317,8 +377,9 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_previous_bucket_tag_generation_requires_layout_migration(self) -> None:
         store = self._provider()
         await store.open()
-        base = self._bucket_scope(bucket_id=4)
-        scope = StateAccessScope(
+        base = self._bucket_scope(store, bucket_id=4)
+        scope = _issue_test_scope(
+            store,
             atomic_scope=StateAtomicScope(
                 namespace=base.namespace,
                 partition="layout-2-bucket-4",
@@ -385,7 +446,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         timeout: float = 1.0,
         clock: ControlledClock | None = None,
     ) -> RedisValkeyStateStore:
-        return RedisValkeyStateStore(
+        scope_issuer = _new_state_scope_issuer(contract_test=True)
+        store = RedisValkeyStateStore(
             options=RedisStateStoreOptions(
                 backend=backend,
                 endpoint=f"redis://127.0.0.1:{port or self._port}/0",
@@ -398,7 +460,637 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             ),
             capabilities=StateStoreCapabilities.p10_contract(),
             clock=clock or self.clock,
+            _contract_test_authority=True,
+            _scope_issuer=scope_issuer,
         )
+        store._contract_test_scope_issuer = scope_issuer
+        store._contract_test_repository_composition = (
+            _ContractTestRepositoryComposition(
+            store=store,
+            issuer=scope_issuer,
+        ))
+        return store
+
+    async def test_production_repository_resource_policy_is_enforced_by_redis(
+        self,
+    ) -> None:
+        broker = None
+        try:
+            config = AuthorityBrokerConfig(
+                iam_base_url="http://127.0.0.1:1/",
+                iam_timeout_seconds=0.2,
+                iam_mode="strict",
+                permission_snapshot_ttl_seconds=60.0,
+                state_backend="redis",
+                state_endpoint=f"redis://127.0.0.1:{self._port}/0",
+                state_username="",
+                state_namespace=self.namespace,
+                state_operation_timeout_seconds=1.0,
+                runtime_id="runtime-production-a",
+            )
+            broker = start_integration_test_authority_broker(
+                config=config,
+                iam_service_credential="i" * 32,
+                state_password=self._password,
+                session_ttl_seconds=0.45,
+                delegation_ttl_seconds=30.0,
+            )
+            self.assertIs(
+                broker_module._IntegrationTestRoleBrokerChannel,
+                type(broker._channel),
+            )
+            self.assertIs(
+                broker_module._IntegrationTestAdmissionRepositoryProxy,
+                type(broker.repositories.admission),
+            )
+            with self.assertRaises(NsValidationError):
+                RuntimeDependencySlots(
+                    delivery_admission_persistence=(
+                        broker.repositories.admission
+                    ),
+                )
+            self.assertNotIn(self._password, repr(broker))
+            self.assertFalse(any(
+                self._password in value
+                for value in os.environ.values()
+            ))
+            await broker.state_store.open()
+            self.assertEqual(
+                "ready",
+                (await broker.state_store.health()).status.value,
+            )
+            admission = broker.repositories.admission
+            scheduler = broker.repositories.scheduler
+            partition = admission.delivery_scope(
+                tenant_id="tenant-broker-success",
+                bucket_id=0,
+                layout_generation=1,
+            )
+            delivery_ids = (
+                "delivery-" + uuid.uuid4().hex,
+                "delivery-" + uuid.uuid4().hex,
+            )
+            prepared_index = StateOrderedIndexKey(
+                namespace=partition.namespace,
+                name="delivery.prepared",
+                bucket="delivery",
+            )
+
+            def create_transaction(
+                delivery_id: str,
+                *,
+                score: float,
+                with_log: bool,
+            ) -> DeliveryPersistenceTransaction:
+                key = StateKey(
+                    namespace=partition.namespace,
+                    object_type="delivery",
+                    object_id=delivery_id,
+                )
+                return DeliveryPersistenceTransaction(
+                    partition=partition,
+                    mutations=(StateMutation(
+                        key=key,
+                        assertion=StateAssertion.absent(),
+                        kind=StateMutationKind.CREATE,
+                        document=StateDocument(
+                            schema_name="delivery_delivery",
+                            schema_version=1,
+                            state_version=1,
+                            payload=json.dumps({
+                                "delivery_id": delivery_id,
+                                "status": "prepared",
+                            }).encode(),
+                        ),
+                    ),),
+                    record_assertions=(StateRecordReadAssertion.absent(
+                        StateKey(
+                            namespace=partition.namespace,
+                            object_type="payload_body",
+                            object_id="payload-" + delivery_id,
+                        ),
+                    ),),
+                    ordered_index_mutations=(StateOrderedIndexMutation(
+                        index=prepared_index,
+                        kind=StateOrderedIndexMutationKind.ADD,
+                        member=delivery_id,
+                        score=score,
+                    ),),
+                    ordered_index_assertions=(
+                        StateOrderedIndexReadAssertion.absent(
+                            prepared_index,
+                            delivery_id,
+                        ),
+                    ),
+                    log_appends=((StateTransitionLogAppend(
+                        key=StateKey(
+                            namespace=partition.namespace,
+                            object_type="delivery_transition_log",
+                            object_id="log-" + delivery_id,
+                        ),
+                        document=StateDocument(
+                            schema_name="delivery_transition_event",
+                            schema_version=1,
+                            state_version=1,
+                            payload=b'{"operation":"admit"}',
+                        ),
+                    ),) if with_log else ()),
+                )
+
+            first_transaction = create_transaction(
+                delivery_ids[0],
+                score=1.0,
+                with_log=True,
+            )
+            await asyncio.sleep(0.32)
+            first_result = await admission.transact_admission(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                transaction=first_transaction,
+            )
+            self.assertEqual(
+                len(first_transaction.mutations),
+                len(first_result.records),
+            )
+            self.assertEqual(
+                len(first_transaction.log_appends),
+                len(first_result.log_positions),
+            )
+            injected_scope = encode_transaction_request(
+                first_transaction,
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+            )
+            injected_scope["tenant_id"] = "tenant-attacker"
+            with self.assertRaises(
+                NsRuntimeStateStoreNamespaceViolationError,
+            ):
+                await admission._request(
+                    "transact_admission",
+                    injected_scope,
+                )
+            await admission.transact_admission(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                transaction=create_transaction(
+                    delivery_ids[1],
+                    score=2.0,
+                    with_log=False,
+                ),
+            )
+            await asyncio.sleep(0.32)
+            observed = await scheduler.read_delivery(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                delivery_id=delivery_ids[0],
+            )
+            self.assertIsNotNone(observed.record)
+            await asyncio.sleep(0.32)
+            first_page = await scheduler.read_scheduler_index(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                index_name="delivery.prepared",
+                limit=1,
+            )
+            self.assertEqual((delivery_ids[0],), tuple(
+                value.member for value in first_page.entries
+            ))
+            self.assertIsNotNone(first_page.next_cursor)
+            second_page = await scheduler.read_scheduler_index(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                index_name="delivery.prepared",
+                cursor=first_page.next_cursor,
+                limit=1,
+            )
+            self.assertEqual((delivery_ids[1],), tuple(
+                value.member for value in second_page.entries
+            ))
+            await asyncio.sleep(0.32)
+            audit_position = await PersistenceStrongAuditAuthorityService(
+                persistence=broker.repositories.audit,
+            ).append(_audit_record())
+            await PersistenceConnectionLifecycleAuditSink(
+                persistence=broker.repositories.audit,
+            ).emit(ConnectionLifecycleAuditEvent(
+                kind=ConnectionAuditKind.SECURITY_CLOSE,
+                outcome=ConnectionAuditOutcome.ENFORCED,
+                required_consistency=(
+                    ConnectionAuditConsistency.STRONG_REQUIRED
+                ),
+                connection_summary="sha256:0123456789abcdef",
+                component_type="worker",
+                connection_epoch=4,
+                close_reason=None,
+                occurred_at=UTC_START,
+            ))
+            self.assertGreater(audit_position.position, 0)
+            assert observed.record is not None
+            scheduler_transaction = DeliveryPersistenceTransaction(
+                partition=partition,
+                mutations=(StateMutation(
+                    key=observed.record.key,
+                    assertion=StateAssertion.matches(
+                        observed.record.revision,
+                        state_version=1,
+                    ),
+                    kind=StateMutationKind.REPLACE,
+                    document=StateDocument(
+                        schema_name="delivery_delivery",
+                        schema_version=1,
+                        state_version=2,
+                        payload=json.dumps({
+                            "delivery_id": delivery_ids[0],
+                            "status": "queued",
+                        }).encode(),
+                    ),
+                ),),
+                record_assertions=(StateRecordReadAssertion.present(
+                    observed.record.key,
+                    revision=observed.record.revision,
+                    state_version=1,
+                ),),
+                ordered_index_assertions=(
+                    StateOrderedIndexReadAssertion.present(
+                        prepared_index,
+                        delivery_ids[0],
+                        score=1.0,
+                    ),
+                ),
+                ordered_index_mutations=(StateOrderedIndexMutation(
+                    index=prepared_index,
+                    kind=StateOrderedIndexMutationKind.REMOVE,
+                    member=delivery_ids[0],
+                ),),
+                log_appends=(StateTransitionLogAppend(
+                    key=StateKey(
+                        namespace=partition.namespace,
+                        object_type="delivery_transition_log",
+                        object_id="scheduler-log-" + delivery_ids[0],
+                    ),
+                    document=StateDocument(
+                        schema_name="delivery_transition_event",
+                        schema_version=1,
+                        state_version=1,
+                        payload=b'{"operation":"queue"}',
+                    ),
+                ),),
+            )
+            scheduler_result = await scheduler.transact_scheduler(
+                tenant_id=partition.tenant_id,
+                bucket_id=partition.bucket_id,
+                layout_generation=partition.layout_generation,
+                transaction=scheduler_transaction,
+            )
+            self.assertEqual(1, len(scheduler_result.records))
+            self.assertEqual(1, len(scheduler_result.log_positions))
+            self.assertGreaterEqual(
+                broker.current_session_identity()[
+                    "lifecycle_generation"
+                ], 5,
+            )
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                start_integration_test_authority_broker(
+                    config=dataclasses.replace(
+                        config,
+                        runtime_id="runtime-production-b",
+                    ),
+                    iam_service_credential="i" * 32,
+                    state_password="different-secret-input-channel",
+                )
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await broker.repositories.scheduler._request(
+                    "read_payload_body", object(),
+                )
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await broker.repositories.payload._request(
+                    "read_delivery", object(),
+                )
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await broker.repositories.registry._request(
+                    "read_scheduler_index", object(),
+                )
+            with self.assertRaises(
+                NsRuntimeStateStoreCapabilityUnavailableError,
+            ):
+                await broker.repositories.audit.append_processor_audit(
+                    document=StateDocument(
+                        schema_name="runtime.connection_lifecycle_audit",
+                        schema_version=1,
+                        state_version=1,
+                        payload=b"{}",
+                    ),
+                )
+            broker._channel._custodian.process.terminate()
+            broker._channel._custodian.process.join(timeout=5.0)
+            replacement = start_integration_test_authority_broker(
+                config=dataclasses.replace(
+                    config,
+                    runtime_id="runtime-production-after-crash",
+                ),
+                iam_service_credential="i" * 32,
+                state_password=self._password,
+            )
+            try:
+                await replacement.state_store.open()
+                self.assertEqual(
+                    "ready",
+                    (await replacement.state_store.health()).status.value,
+                )
+            finally:
+                replacement.close()
+        finally:
+            if broker is not None:
+                broker.close()
+
+    async def test_broker_ipc_failure_reaps_child_and_releases_domain(
+        self,
+    ) -> None:
+        config = AuthorityBrokerConfig(
+            iam_base_url="http://127.0.0.1:1/",
+            iam_timeout_seconds=0.2,
+            iam_mode="strict",
+            permission_snapshot_ttl_seconds=60.0,
+            state_backend="redis",
+            state_endpoint=f"redis://127.0.0.1:{self._port}/0",
+            state_username="",
+            state_namespace=self.namespace + ":ipc-reap",
+            state_operation_timeout_seconds=1.0,
+            runtime_id="runtime-ipc-reap-a",
+        )
+        broker = start_integration_test_authority_broker(
+            config=config,
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        process = broker._channel._custodian.process
+        original = broker._channel._connection
+
+        class MalformedAfterSend:
+            def send_bytes(self, value):
+                original.send_bytes(value)
+
+            def poll(self, timeout):
+                return original.poll(timeout)
+
+            def recv_bytes(self, maximum):
+                original.recv_bytes(maximum)
+                return b'{"unsigned":true}'
+
+            def close(self):
+                original.close()
+
+        object.__setattr__(
+            broker._channel, "_connection", MalformedAfterSend(),
+        )
+        with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+            await broker.state_store.health()
+        broker.close()
+        self.assertFalse(process.is_alive())
+
+        replacement = start_integration_test_authority_broker(
+            config=dataclasses.replace(
+                config,
+                runtime_id="runtime-ipc-reap-b",
+            ),
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        try:
+            await replacement.state_store.open()
+            self.assertTrue((await replacement.state_store.health()).ready)
+        finally:
+            replacement.close()
+
+    async def test_write_send_attempt_failure_is_indeterminate_and_releases_lease(
+        self,
+    ) -> None:
+        config = AuthorityBrokerConfig(
+            iam_base_url="http://127.0.0.1:1/",
+            iam_timeout_seconds=0.2,
+            iam_mode="strict",
+            permission_snapshot_ttl_seconds=60.0,
+            state_backend="redis",
+            state_endpoint=f"redis://127.0.0.1:{self._port}/0",
+            state_username="",
+            state_namespace=self.namespace + ":send-attempt",
+            state_operation_timeout_seconds=1.0,
+            runtime_id="runtime-send-attempt-a",
+        )
+        broker = start_integration_test_authority_broker(
+            config=config,
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        admission_channel = broker.repositories.admission._channel
+        process = admission_channel._custodian.process
+        original = admission_channel._connection
+
+        class RaisesAfterSend:
+            def send_bytes(self, value):
+                original.send_bytes(value)
+                raise OSError("simulated partial IPC write")
+
+            def close(self):
+                original.close()
+
+        object.__setattr__(
+            admission_channel, "_connection", RaisesAfterSend(),
+        )
+        with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
+            await broker.repositories.admission._request(
+                "transact_admission", {},
+            )
+        broker.close()
+        self.assertFalse(process.is_alive())
+
+        replacement = start_integration_test_authority_broker(
+            config=dataclasses.replace(
+                config,
+                runtime_id="runtime-send-attempt-b",
+            ),
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        try:
+            await replacement.state_store.open()
+            self.assertTrue((await replacement.state_store.health()).ready)
+        finally:
+            replacement.close()
+
+    async def test_attestor_death_reaps_broker_and_releases_lease(
+        self,
+    ) -> None:
+        config = AuthorityBrokerConfig(
+            iam_base_url="http://127.0.0.1:1/",
+            iam_timeout_seconds=0.2,
+            iam_mode="strict",
+            permission_snapshot_ttl_seconds=60.0,
+            state_backend="redis",
+            state_endpoint=f"redis://127.0.0.1:{self._port}/0",
+            state_username="",
+            state_namespace=self.namespace + ":attestor-death",
+            state_operation_timeout_seconds=1.0,
+            runtime_id="runtime-attestor-death-a",
+        )
+        broker = start_integration_test_authority_broker(
+            config=config,
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        channel = broker.repositories.admission._channel
+        process = channel._custodian.process
+        attestor_process = channel._attestor._process
+        attestor_process.terminate()
+        attestor_process.join(timeout=5.0)
+        with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+            await broker.repositories.admission._request(
+                "transact_admission", {},
+            )
+        self.assertFalse(process.is_alive())
+        broker.close()
+
+        replacement = start_integration_test_authority_broker(
+            config=dataclasses.replace(
+                config,
+                runtime_id="runtime-attestor-death-b",
+            ),
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        try:
+            await replacement.state_store.open()
+            self.assertTrue((await replacement.state_store.health()).ready)
+        finally:
+            replacement.close()
+
+    async def test_rotation_provenance_and_normal_close_release_domain(
+        self,
+    ) -> None:
+        config = AuthorityBrokerConfig(
+            iam_base_url="http://127.0.0.1:1/",
+            iam_timeout_seconds=0.2,
+            iam_mode="strict",
+            permission_snapshot_ttl_seconds=60.0,
+            state_backend="redis",
+            state_endpoint=f"redis://127.0.0.1:{self._port}/0",
+            state_username="",
+            state_namespace=self.namespace + ":rotation-reap",
+            state_operation_timeout_seconds=1.0,
+            runtime_id="runtime-rotation-reap-a",
+        )
+        broker = start_integration_test_authority_broker(
+            config=config,
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+            session_ttl_seconds=0.45,
+            delegation_ttl_seconds=30.0,
+        )
+        channel = broker.state_store._channel
+        process = channel._custodian.process
+        attestor_process = channel._attestor._process
+        original = channel._connection
+        connections = (
+            broker.iam._channel._connection,
+            broker.repositories.admission._channel._connection,
+            broker.repositories.scheduler._channel._connection,
+            broker.repositories.payload._channel._connection,
+            broker.repositories.registry._channel._connection,
+            broker.repositories.audit._channel._connection,
+            original,
+        )
+
+        class MissingRotationCertificate:
+            def __init__(self) -> None:
+                self.rotation_pending = False
+                self.saw_rotation = False
+
+            def send_bytes(self, value):
+                message = broker_module.decode_frame(value)
+                self.rotation_pending = bool(
+                    type(message) is dict
+                    and message.get("kind") == "rotate_session"
+                )
+                original.send_bytes(value)
+
+            def poll(self, timeout):
+                return original.poll(timeout)
+
+            def recv_bytes(self, maximum):
+                raw = original.recv_bytes(maximum)
+                if not self.rotation_pending:
+                    return raw
+                self.rotation_pending = False
+                self.saw_rotation = True
+                message = broker_module.decode_frame(raw)
+                assert type(message) is dict
+                message.pop("session_certificate", None)
+                return broker_module.encode_frame(message)
+
+            def close(self):
+                original.close()
+
+        corrupt = MissingRotationCertificate()
+        object.__setattr__(channel, "_connection", corrupt)
+        await asyncio.sleep(0.32)
+        with self.assertRaises(NsRuntimeStateStoreUnavailableError):
+            await broker.state_store.health()
+        self.assertTrue(corrupt.saw_rotation)
+        self.assertFalse(process.is_alive())
+        self.assertFalse(attestor_process.is_alive())
+        self.assertTrue(all(value.closed for value in connections))
+        broker.close()
+
+        replacement = start_integration_test_authority_broker(
+            config=dataclasses.replace(
+                config,
+                runtime_id="runtime-rotation-reap-b",
+            ),
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        await replacement.state_store.open()
+        replacement_connections = (
+            replacement.iam._channel._connection,
+            replacement.repositories.admission._channel._connection,
+            replacement.repositories.scheduler._channel._connection,
+            replacement.repositories.payload._channel._connection,
+            replacement.repositories.registry._channel._connection,
+            replacement.repositories.audit._channel._connection,
+            replacement.state_store._channel._connection,
+        )
+        replacement.close()
+        self.assertTrue(
+            all(value.closed for value in replacement_connections),
+        )
+
+        final = start_integration_test_authority_broker(
+            config=dataclasses.replace(
+                config,
+                runtime_id="runtime-rotation-reap-c",
+            ),
+            iam_service_credential="i" * 32,
+            state_password=self._password,
+        )
+        try:
+            await final.state_store.open()
+            self.assertTrue((await final.state_store.health()).ready)
+        finally:
+            final.close()
 
     async def test_redis_server_authentication_with_both_protocol_drivers(self) -> None:
         for backend in ("redis", "valkey"):
@@ -420,14 +1112,15 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         second = self._provider(namespace=self.namespace + ":second")
         await first.open()
         await second.open()
-        scope = _scope()
-        key = _key(scope, "same-logical-key")
+        first_scope = _scope(first)
+        second_scope = _scope(second)
+        key = _key(first_scope, "same-logical-key")
         first_record = await first.compare_and_set(
-            scope=scope,
+            scope=first_scope,
             mutation=_create(key, b"first"),
         )
         second_record = await second.compare_and_set(
-            scope=scope,
+            scope=second_scope,
             mutation=_create(key, b"second"),
         )
         assert first_record is not None and second_record is not None
@@ -446,7 +1139,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_create_has_one_winner_and_cas_conflicts(self) -> None:
         store = self._provider()
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         key = _key(scope, "dedup")
         outcomes = await asyncio.gather(
             *(store.compare_and_set(scope=scope, mutation=_create(key))
@@ -496,7 +1189,12 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             trace=AdmissionTrace(trace_id="trace-p11-redis"),
         )
         self.assertIs(AdmissionOutcome.ACCEPTED, admitted.outcome)
-        scheduler = StateStoreDeliveryScheduler(store=store, clock=self.clock)
+        repositories = _repositories(store)
+        scheduler = StateStoreDeliveryScheduler(
+            repository=repositories.scheduler,
+            registry_repository=repositories.registry,
+            clock=self.clock,
+        )
         policy = DeliverySchedulingPolicy(
             config_version="c1",
             policy_version="p1",
@@ -538,7 +1236,12 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         await store.close()
         store_b = self._provider(timeout=5.0)
         await store_b.open()
-        scheduler_b = StateStoreDeliveryScheduler(store=store_b, clock=self.clock)
+        repositories_b = _repositories(store_b)
+        scheduler_b = StateStoreDeliveryScheduler(
+            repository=repositories_b.scheduler,
+            registry_repository=repositories_b.registry,
+            clock=self.clock,
+        )
         recovered = await scheduler_b.load_claimed(claim=claimed.claim)
         self.assertEqual(claimed.claim.fencing, recovered.owner.fencing)
         activated_b = await scheduler_b.activate_prepared(
@@ -566,7 +1269,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_revision_order_and_schema_version_contract(self) -> None:
         store = self._provider()
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         old_key = _key(scope, "revision-old")
         new_key = _key(scope, "revision-new")
         old = await store.compare_and_set(
@@ -611,7 +1314,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_failed_batch_rolls_back_every_create_on_conflict(self) -> None:
         store = self._provider()
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         existing_key = _key(scope, "existing")
         orphan_keys = tuple(
             _key(scope, f"must-not-exist-{index}") for index in range(32)
@@ -640,7 +1343,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_failed_projection_batch_leaves_no_index_or_log_orphan(self) -> None:
         store = self._provider()
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         existing_key = _key(scope, "projection-existing")
         orphan_key = _key(scope, "projection-orphan")
         index = StateOrderedIndexKey(
@@ -682,10 +1385,108 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], transition_keys)
         await store.close()
 
+    async def test_ordered_index_cursor_is_stable_across_between_page_mutations(
+        self,
+    ) -> None:
+        store = self._provider()
+        await store.open()
+        scope = _scope(store)
+        index = StateOrderedIndexKey(
+            namespace=scope.namespace,
+            name="delivery.cursor",
+            bucket="contract",
+        )
+
+        def change(
+            kind: StateOrderedIndexMutationKind,
+            member: str,
+            score: float | None = None,
+        ) -> StateOrderedIndexMutation:
+            return StateOrderedIndexMutation(
+                index=index,
+                kind=kind,
+                member=member,
+                score=score,
+            )
+
+        await store.transact(StateTransaction(
+            scope=scope,
+            mutations=(),
+            ordered_index_mutations=tuple(
+                change(StateOrderedIndexMutationKind.ADD, member, score)
+                for member, score in (
+                    ("delivery:a", 10.0),
+                    ("delivery:b", 20.0),
+                    ("delivery:c", 30.0),
+                    ("delivery:d", 40.0),
+                )
+            ),
+        ))
+        first = await store.read_ordered_index(
+            scope=scope,
+            index=index,
+            limit=2,
+        )
+        self.assertEqual(
+            ("delivery:a", "delivery:b"),
+            tuple(value.member for value in first.entries),
+        )
+        self.assertIsNotNone(first.next_cursor)
+
+        # Mutations occur between pages: one deletion and one insertion before
+        # the cursor, plus an insertion after it. Recomputing the cursor rank
+        # atomically must not duplicate or skip the surviving tail.
+        await store.transact(StateTransaction(
+            scope=scope,
+            mutations=(),
+            ordered_index_mutations=(
+                change(StateOrderedIndexMutationKind.REMOVE, "delivery:a"),
+                change(StateOrderedIndexMutationKind.ADD, "delivery:x", 15.0),
+                change(StateOrderedIndexMutationKind.ADD, "delivery:e", 35.0),
+            ),
+        ))
+        second = await store.read_ordered_index(
+            scope=scope,
+            index=index,
+            limit=2,
+            start_after=first.next_cursor,
+        )
+        third = await store.read_ordered_index(
+            scope=scope,
+            index=index,
+            limit=2,
+            start_after=second.next_cursor,
+        )
+        self.assertEqual(
+            ("delivery:c", "delivery:e", "delivery:d"),
+            tuple(value.member for value in (*second.entries, *third.entries)),
+        )
+        self.assertEqual(
+            len({value.member for value in (*first.entries, *second.entries, *third.entries)}),
+            len((*first.entries, *second.entries, *third.entries)),
+        )
+
+        assert second.next_cursor is not None
+        await store.transact(StateTransaction(
+            scope=scope,
+            mutations=(),
+            ordered_index_mutations=(
+                change(StateOrderedIndexMutationKind.REMOVE, "delivery:e"),
+            ),
+        ))
+        with self.assertRaises(NsRuntimeStateStoreConflictError):
+            await store.read_ordered_index(
+                scope=scope,
+                index=index,
+                limit=2,
+                start_after=second.next_cursor,
+            )
+        await store.close()
+
     async def test_read_precondition_conflict_is_zero_write_in_redis_lua(self) -> None:
         store = self._provider()
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         guarded_key = _key(scope, "assertion-guard")
         seed_key = _key(scope, "assertion-seed")
         orphan_key = _key(scope, "assertion-orphan")
@@ -764,7 +1565,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         store = self._provider()
         self.assertIs(StateStoreHealthStatus.NOT_READY, (await store.health()).status)
         await store.open()
-        scope = _scope()
+        scope = _scope(store)
         key = StateKey(
             namespace=scope.namespace,
             object_type="audit_log",
@@ -820,18 +1621,19 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         await store.open()
         raw = self._raw_client()
         await raw.execute_command("CLIENT", "PAUSE", 150)
+        scope = _scope(store)
         with self.assertRaises(NsRuntimeStateStoreTimeoutError):
             await store.read(
-                scope=_scope(),
-                key=_key(_scope(), "paused-read"),
+                scope=scope,
+                key=_key(scope, "paused-read"),
                 consistency=StateConsistency.LINEARIZABLE,
             )
         await asyncio.sleep(0.18)
         await raw.execute_command("CLIENT", "PAUSE", 150)
         with self.assertRaises(NsRuntimeStateStoreIndeterminateWriteError):
             await store.compare_and_set(
-                scope=_scope(),
-                mutation=_create(_key(_scope(), "paused-write")),
+                scope=scope,
+                mutation=_create(_key(scope, "paused-write")),
             )
         await asyncio.sleep(0.18)
         await raw.aclose()
@@ -876,7 +1678,8 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
             hashlib.sha256(request.message_id.encode("utf-8")).digest()[:8],
             "big",
         ) % 8
-        scope = StateAccessScope(
+        scope = _issue_test_scope(
+            store,
             atomic_scope=StateAtomicScope(
                 namespace=namespace,
                 partition=f"layout-2-bucket-{bucket_id}",
@@ -939,7 +1742,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertIs(AdmissionOutcome.ACCEPTED, accepted.outcome)
                 summary_id = accepted.response.summary_id
-                scope, namespace = self._delivery_scope(request_a.tenant_id)
+                scope, namespace = self._delivery_scope(
+                    store_a,
+                    request_a.tenant_id,
+                )
                 record_keys = {
                     "root": StateKey(
                         namespace=namespace,
@@ -999,6 +1805,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                     clock=clock_b,
                 )
                 scope_b, namespace_b = self._delivery_scope(
+                    store_b,
                     request_b.tenant_id,
                 )
                 recovered_keys = {
@@ -1083,7 +1890,7 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
                 )
                 with self.assertRaises(NsRuntimeStateStoreVersionMismatchError):
                     await StateStoreDeliveryAuthorityRegistry(
-                        store=store_b,
+                        repository=_repositories(store_b).registry,
                     ).ensure_registered(
                         tenant_id=request_b.tenant_id,
                         layout=DeliveryAuthorityLayout(bucket_count=16),
@@ -1095,7 +1902,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         return "sha256:" + hashlib.sha256(identifier.encode()).hexdigest()
 
     @staticmethod
-    def _delivery_scope(tenant_id: str) -> tuple[StateAccessScope, StateNamespace]:
+    def _delivery_scope(
+        store: RedisValkeyStateStore,
+        tenant_id: str,
+    ) -> tuple[StateAccessScope, StateNamespace]:
         namespace = StateNamespace.tenant(
             tenant_id=tenant_id,
             domain="delivery",
@@ -1103,17 +1913,10 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         bucket_id = int.from_bytes(
             hashlib.sha256(MESSAGE_ID.encode("utf-8")).digest()[:8], "big",
         ) % 8
-        return StateAccessScope(
-            atomic_scope=StateAtomicScope(
-                namespace=namespace,
-                partition=f"layout-2-bucket-{bucket_id}",
-            ),
-            authority=StateAuthorityKind.DELIVERY_ADMISSION,
-            caller="delivery.admission",
-            capabilities=frozenset({
-                StateCallerCapability.READ,
-                StateCallerCapability.TRANSACT,
-            }),
+        return _repositories(store).admission.delivery_scope(
+            tenant_id=tenant_id,
+            bucket_id=bucket_id,
+            layout_generation=2,
         ), namespace
 
     def _admission_service(
@@ -1124,13 +1927,17 @@ class RedisStateStoreIntegrationTestCase(unittest.IsolatedAsyncioTestCase):
         clock: ControlledClock | None = None,
     ):
         service_clock = clock or self.clock
-        service = DeliveryAdmissionService(
+        repositories = _repositories(store)
+        service = DeliveryAdmissionService.for_contract_tests(
             policy=DefaultAdmissionPolicy(),
             policy_config=AdmissionPolicyConfig(
                 config_version="c1",
                 policy_version="p1",
             ),
-            store=StateStoreDeliveryAdmissionStore(store),
+            store=StateStoreDeliveryAdmissionStore(
+                repository=repositories.admission,
+                registry_repository=repositories.registry,
+            ),
             payload_ref_client=_PayloadClient(service_clock),
             clock=service_clock,
             identifier_factory=_ids,

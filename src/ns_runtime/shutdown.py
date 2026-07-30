@@ -45,6 +45,28 @@ class RuntimeShutdownPhase(str, Enum):
     CLOSE_LOGGER = "close_logger"
 
 
+_OWNERSHIP_CLEANUP_PHASES = frozenset({
+    RuntimeShutdownPhase.CLOSE_TRANSPORT,
+    RuntimeShutdownPhase.CANCEL_TASKS,
+    RuntimeShutdownPhase.CLOSE_STATE_STORE,
+    RuntimeShutdownPhase.CLOSE_SINKS,
+    RuntimeShutdownPhase.CLOSE_CLIENTS,
+    RuntimeShutdownPhase.CLOSE_LOGGER,
+})
+_PROCESS_LEVEL_FAILURES = (KeyboardInterrupt, SystemExit, GeneratorExit)
+
+
+def _prioritize_shutdown_failure(
+    current: BaseException | None,
+    candidate: BaseException | None,
+) -> BaseException | None:
+    if candidate is None or not isinstance(candidate, _PROCESS_LEVEL_FAILURES):
+        return current
+    if current is None:
+        return candidate
+    return current
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeShutdownFailure:
     phase: RuntimeShutdownPhase
@@ -211,6 +233,11 @@ class RuntimeShutdownCoordinator:
         self._shutdown_lock = asyncio.Lock()
         self._report: RuntimeShutdownReport | None = None
         self._admission_failures: list[RuntimeShutdownFailure] = []
+        self._completed_operations: set[
+            tuple[RuntimeShutdownPhase, str]
+        ] = set()
+        self._task_report: NsTaskShutdownReport | None = None
+        self._cleanup_pending = False
 
     @property
     def admission_open(self) -> bool:
@@ -227,6 +254,10 @@ class RuntimeShutdownCoordinator:
     @property
     def report(self) -> RuntimeShutdownReport | None:
         return self._report
+
+    @property
+    def cleanup_pending(self) -> bool:
+        return self._cleanup_pending
 
     def request_shutdown(self, reason: RuntimeShutdownReason) -> bool:
         if not isinstance(reason, RuntimeShutdownReason):
@@ -277,7 +308,7 @@ class RuntimeShutdownCoordinator:
 
     async def shutdown(self) -> RuntimeShutdownReport:
         async with self._shutdown_lock:
-            if self._report is not None:
+            if self._report is not None and not self._cleanup_pending:
                 return self._report
             if self._reason is None:
                 self.request_shutdown(RuntimeShutdownReason.SERVICE_STOP)
@@ -288,103 +319,146 @@ class RuntimeShutdownCoordinator:
             failures: list[RuntimeShutdownFailure] = list(
                 self._admission_failures,
             )
+            fatal_failure: BaseException | None = None
 
             if self._transport_owner is not None:
-                await self._attempt_async(
+                fatal_failure = _prioritize_shutdown_failure(
+                    fatal_failure,
+                    await self._attempt_async(
                     self._transport_owner.stop_admission,
                     phase=RuntimeShutdownPhase.STOP_ADMISSION,
                     resource="transport_owner",
                     failures=failures,
+                    ),
                 )
 
             phases.append(RuntimeShutdownPhase.STOP_LOGICAL_ADMISSION)
             if self._logical_connection_owner is not None:
-                await self._attempt_async(
+                fatal_failure = _prioritize_shutdown_failure(
+                    fatal_failure,
+                    await self._attempt_async(
                     self._logical_connection_owner.stop_admission,
                     phase=RuntimeShutdownPhase.STOP_LOGICAL_ADMISSION,
                     resource="logical_connection_owner",
                     failures=failures,
+                    ),
                 )
 
             phases.append(RuntimeShutdownPhase.DRAIN_LOGICAL_CONNECTIONS)
             if self._logical_connection_owner is not None:
-                await self._attempt_async(
+                fatal_failure = _prioritize_shutdown_failure(
+                    fatal_failure,
+                    await self._attempt_async(
                     self._logical_connection_owner.drain,
                     phase=RuntimeShutdownPhase.DRAIN_LOGICAL_CONNECTIONS,
                     resource="logical_connection_owner",
                     failures=failures,
+                    ),
                 )
 
             phases.append(RuntimeShutdownPhase.DRAIN_TRANSPORT)
             if self._transport_owner is not None:
-                await self._attempt_async(
+                fatal_failure = _prioritize_shutdown_failure(
+                    fatal_failure,
+                    await self._attempt_async(
                     self._transport_owner.drain,
                     phase=RuntimeShutdownPhase.DRAIN_TRANSPORT,
                     resource="transport_owner",
                     failures=failures,
+                    ),
                 )
 
             phases.append(RuntimeShutdownPhase.CLOSE_TRANSPORT)
             if self._transport_owner is not None:
-                await self._attempt_async(
+                fatal_failure = _prioritize_shutdown_failure(
+                    fatal_failure,
+                    await self._attempt_async(
                     self._transport_owner.close,
                     phase=RuntimeShutdownPhase.CLOSE_TRANSPORT,
                     resource="transport_owner",
                     failures=failures,
+                    ),
                 )
 
             phases.append(RuntimeShutdownPhase.CANCEL_TASKS)
-            task_report = await self._shutdown_tasks(failures)
+            task_report, task_failure = await self._shutdown_tasks(failures)
+            fatal_failure = _prioritize_shutdown_failure(
+                fatal_failure,
+                task_failure,
+            )
 
             phases.append(RuntimeShutdownPhase.CLOSE_STATE_STORE)
             state_store = self._context.state_store
             if state_store is not None:
-                await self._attempt_async(
+                fatal_failure = _prioritize_shutdown_failure(
+                    fatal_failure,
+                    await self._attempt_async(
                     state_store.close,
                     phase=RuntimeShutdownPhase.CLOSE_STATE_STORE,
                     resource="state_store",
                     failures=failures,
+                    ),
                 )
 
             sinks = self._sinks()
             phases.append(RuntimeShutdownPhase.FLUSH_SINKS)
             for resource, sink in sinks:
-                await self._attempt_async(
+                fatal_failure = _prioritize_shutdown_failure(
+                    fatal_failure,
+                    await self._attempt_async(
                     sink.flush,
                     phase=RuntimeShutdownPhase.FLUSH_SINKS,
                     resource=resource,
                     failures=failures,
+                    ),
                 )
 
             phases.append(RuntimeShutdownPhase.CLOSE_SINKS)
             for resource, sink in sinks:
-                await self._attempt_async(
+                fatal_failure = _prioritize_shutdown_failure(
+                    fatal_failure,
+                    await self._attempt_async(
                     sink.aclose,
                     phase=RuntimeShutdownPhase.CLOSE_SINKS,
                     resource=resource,
                     failures=failures,
+                    ),
                 )
 
             phases.append(RuntimeShutdownPhase.CLOSE_CLIENTS)
             owner = self._context.http_client_owner
             if owner is not None:
-                await self._attempt_async(
+                fatal_failure = _prioritize_shutdown_failure(
+                    fatal_failure,
+                    await self._attempt_async(
                     owner.aclose,
                     phase=RuntimeShutdownPhase.CLOSE_CLIENTS,
                     resource="http_client_owner",
                     failures=failures,
+                    ),
                 )
 
             phases.append(RuntimeShutdownPhase.WRITE_SUMMARY)
-            self._write_summary(task_report, failures)
+            fatal_failure = _prioritize_shutdown_failure(
+                fatal_failure,
+                self._attempt_sync(
+                    lambda: self._write_summary(task_report, failures),
+                    phase=RuntimeShutdownPhase.WRITE_SUMMARY,
+                    resource="runtime_summary",
+                    failures=failures,
+                ),
+            )
 
             phases.append(RuntimeShutdownPhase.CLOSE_LOGGER)
             if self._logger_close is not None:
-                self._attempt_sync(
-                    self._logger_close,
-                    phase=RuntimeShutdownPhase.CLOSE_LOGGER,
-                    resource="runtime_logger",
-                    failures=failures,
+                fatal_failure = _prioritize_shutdown_failure(
+                    fatal_failure,
+                    self._attempt_sync(
+                        self._logger_close,
+                        phase=RuntimeShutdownPhase.CLOSE_LOGGER,
+                        resource="runtime_logger",
+                        failures=failures,
+                    ),
                 )
 
             assert self._reason is not None
@@ -409,21 +483,32 @@ class RuntimeShutdownCoordinator:
                 ),
                 failures=tuple(failures),
             )
+            self._cleanup_pending = any(
+                failure.phase in _OWNERSHIP_CLEANUP_PHASES
+                for failure in failures
+            )
+            if fatal_failure is not None:
+                raise fatal_failure
             return self._report
 
     async def _shutdown_tasks(
         self,
         failures: list[RuntimeShutdownFailure],
-    ) -> NsTaskShutdownReport | None:
+    ) -> tuple[NsTaskShutdownReport | None, BaseException | None]:
+        key = (RuntimeShutdownPhase.CANCEL_TASKS, "task_supervisor")
+        if key in self._completed_operations:
+            return self._task_report, None
         try:
-            return await self._context.task_supervisor.shutdown()
-        except Exception as error:
+            self._task_report = await self._context.task_supervisor.shutdown()
+        except BaseException as error:
             failures.append(RuntimeShutdownFailure(
                 phase=RuntimeShutdownPhase.CANCEL_TASKS,
                 resource="task_supervisor",
                 error_type=type(error).__name__,
             ))
-            return None
+            return None, error
+        self._completed_operations.add(key)
+        return self._task_report, None
 
     def _sinks(self) -> tuple[tuple[str, object], ...]:
         sinks: list[tuple[str, object]] = [
@@ -442,35 +527,47 @@ class RuntimeShutdownCoordinator:
         phase: RuntimeShutdownPhase,
         resource: str,
         failures: list[RuntimeShutdownFailure],
-    ) -> None:
+    ) -> BaseException | None:
+        key = (phase, resource)
+        if key in self._completed_operations:
+            return None
         try:
             result = operation()
             if not hasattr(result, "__await__"):
                 raise TypeError("shutdown operation must be awaitable")
             await result
-        except Exception as error:
+        except BaseException as error:
             failures.append(RuntimeShutdownFailure(
                 phase=phase,
                 resource=resource,
                 error_type=type(error).__name__,
             ))
+            return error
+        self._completed_operations.add(key)
+        return None
 
-    @staticmethod
     def _attempt_sync(
+        self,
         operation: Callable[[], None],
         *,
         phase: RuntimeShutdownPhase,
         resource: str,
         failures: list[RuntimeShutdownFailure],
-    ) -> None:
+    ) -> BaseException | None:
+        key = (phase, resource)
+        if key in self._completed_operations:
+            return None
         try:
             operation()
-        except Exception as error:
+        except BaseException as error:
             failures.append(RuntimeShutdownFailure(
                 phase=phase,
                 resource=resource,
                 error_type=type(error).__name__,
             ))
+            return error
+        self._completed_operations.add(key)
+        return None
 
     def _write_summary(
         self,

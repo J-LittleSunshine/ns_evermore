@@ -43,6 +43,18 @@ original_find_spec = importlib.util.find_spec
 original_set_event_loop_policy = asyncio.set_event_loop_policy
 initial_policy = asyncio.get_event_loop_policy()
 
+def is_project_path(value):
+    try:
+        resolved = Path(os.fspath(value)).resolve()
+    except (TypeError, ValueError, OSError):
+        return False
+    return (
+        resolved == Path(project_root).resolve()
+        or Path(project_root).resolve() in resolved.parents
+        or resolved == Path(startup_root).resolve()
+        or Path(startup_root).resolve() in resolved.parents
+    )
+
 def profile_calls(frame, event, arg):
     if (
         event == "call"
@@ -52,20 +64,28 @@ def profile_calls(frame, event, arg):
         ensure_runtime_dirs_calls.append("ns_common.paths.ensure_runtime_dirs")
 
 def watched_path_mkdir(path, *args, **kwargs):
-    mkdir_calls.append(os.fspath(path))
+    if is_project_path(path):
+        mkdir_calls.append(os.fspath(path))
     return original_path_mkdir(path, *args, **kwargs)
 
 def watched_os_mkdir(path, *args, **kwargs):
-    mkdir_calls.append(os.fspath(path))
+    if is_project_path(path):
+        mkdir_calls.append(os.fspath(path))
     return original_os_mkdir(path, *args, **kwargs)
 
 def watched_path_open(path, mode="r", *args, **kwargs):
-    if any(flag in mode for flag in ("w", "a", "x", "+")):
+    if (
+        any(flag in mode for flag in ("w", "a", "x", "+"))
+        and is_project_path(path)
+    ):
         write_calls.append(os.fspath(path))
     return original_path_open(path, mode, *args, **kwargs)
 
 def watched_builtin_open(file, mode="r", *args, **kwargs):
-    if any(flag in mode for flag in ("w", "a", "x", "+")):
+    if (
+        any(flag in mode for flag in ("w", "a", "x", "+"))
+        and is_project_path(file)
+    ):
         write_calls.append(os.fspath(file))
     return original_builtin_open(file, mode, *args, **kwargs)
 
@@ -88,6 +108,21 @@ asyncio.set_event_loop_policy = watched_set_event_loop_policy
 
 import ns_runtime.main as main_module
 main_import_loaded_ns_common = "ns_common" in sys.modules
+
+# The deployment entry requires inherited authority descriptors before it may
+# import business modules.  These deliberately untrusted bytes are sufficient
+# for preflight-failure tests because no broker is launched on either path.
+authority_key_read, authority_key_write = os.pipe()
+authority_secrets_read, authority_secrets_write = os.pipe()
+os.write(authority_key_write, os.urandom(32))
+os.write(authority_secrets_write, json.dumps({
+    "iam_service_credential": "untrusted-bootstrap-probe",
+    "state_password_base64": None,
+}).encode())
+os.close(authority_key_write)
+os.close(authority_secrets_write)
+os.environ["NS_RUNTIME_AUTHORITY_KEY_FD"] = str(authority_key_read)
+os.environ["NS_RUNTIME_AUTHORITY_SECRETS_FD"] = str(authority_secrets_read)
 
 try:
     return_code = main_module.main(
@@ -128,13 +163,28 @@ result = {
     "main_import_loaded_ns_common": main_import_loaded_ns_common,
     "global_config_initialized": global_config_initialized,
     "authoritative_config_identity": (
-        bootstrap_module.NsConfig is config_model.NsConfig
-        is config_facade.NsConfig
+        (
+            bootstrap_module is None
+        )
+        or (
+            config_model is not None
+            and config_facade is not None
+            and
+            bootstrap_module.NsConfig is config_model.NsConfig
+            is config_facade.NsConfig
+        )
     ),
     "authoritative_error_identity": (
-        bootstrap_module.NsDependencyError is exceptions_facade.NsDependencyError
-        and bootstrap_module.NsRuntimeStartupSecurityError
-        is exceptions_facade.NsRuntimeStartupSecurityError
+        (
+            bootstrap_module is None
+        )
+        or (
+            exceptions_facade is not None
+            and
+            bootstrap_module.NsDependencyError is exceptions_facade.NsDependencyError
+            and bootstrap_module.NsRuntimeStartupSecurityError
+            is exceptions_facade.NsRuntimeStartupSecurityError
+        )
     ),
     "repository_directories": repository_directories,
     "startup_root_exists": Path(startup_root).exists(),

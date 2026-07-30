@@ -19,25 +19,26 @@ from ns_common.exceptions import (
     NsValidationError,
 )
 from ns_common.state_store import (
-    StateAccessScope,
     StateAssertion,
-    StateAtomicScope,
-    StateAuthorityKind,
-    StateCallerCapability,
     StateConsistency,
     StateDocument,
     StateKey,
     StateMutation,
     StateMutationKind,
-    StateNamespace,
     StateOrderedIndexKey,
     StateOrderedIndexMutation,
     StateOrderedIndexMutationKind,
-    StateStore,
-    StateTransaction,
+    StateStoreRepository,
+    StateStoreRepositoryRole,
 )
 
 from .models import AUTHORITY_LAYOUT_GENERATION, AUTHORITY_LAYOUT_VERSION
+from ns_runtime.delivery_persistence import (
+    DeliveryPersistencePartition,
+    DeliveryPersistenceTransaction,
+    DeliveryRegistryPersistence,
+    contract_test_persistence,
+)
 
 
 REGISTRY_SCHEMA_VERSION = 1
@@ -59,59 +60,33 @@ class DeliveryAuthorityLayout:
             _invalid("layout.bucket_count")
 
 
-def delivery_scope(
-    tenant_id: str,
-    bucket_id: int,
-    *,
-    layout_generation: int = AUTHORITY_LAYOUT_GENERATION,
-    caller: str = "delivery.scheduling",
-) -> StateAccessScope:
-    if type(tenant_id) is not str or not tenant_id:
-        _invalid("scope.tenant_id")
-    if isinstance(bucket_id, bool) or not isinstance(bucket_id, int) or bucket_id < 0:
-        _invalid("scope.bucket_id")
-    if isinstance(layout_generation, bool) or not isinstance(layout_generation, int) or layout_generation <= 0:
-        _invalid("scope.layout_generation")
-    namespace = StateNamespace.tenant(tenant_id=tenant_id, domain="delivery")
-    return StateAccessScope(
-        atomic_scope=StateAtomicScope(
-            namespace=namespace,
-            partition=f"layout-{layout_generation}-bucket-{bucket_id}",
-        ),
-        authority=StateAuthorityKind.DELIVERY_ADMISSION,
-        caller=caller,
-        capabilities=frozenset({
-            StateCallerCapability.READ,
-            StateCallerCapability.SCAN,
-            StateCallerCapability.COMPARE_AND_SET,
-            StateCallerCapability.TRANSACT,
-            StateCallerCapability.ORDERED_INDEX,
-            StateCallerCapability.APPEND,
-        }),
-    )
-
-
 class StateStoreDeliveryAuthorityRegistry:
     """Durable runtime-wide list of tenants and one immutable layout."""
 
-    def __init__(self, *, store: StateStore, runtime_id: str = "runtime-local") -> None:
-        if not isinstance(store, StateStore):
-            _invalid("registry.store")
-        if type(runtime_id) is not str or not runtime_id:
-            _invalid("registry.runtime_id")
-        self._store = store
-        self._runtime_id = runtime_id
-        synthetic_tenant = "runtime-registry:" + hashlib.sha256(runtime_id.encode()).hexdigest()
-        namespace = StateNamespace.tenant(tenant_id=synthetic_tenant, domain="delivery")
-        self._scope = StateAccessScope(
-            atomic_scope=StateAtomicScope(namespace=namespace, partition="authority-registry"),
-            authority=StateAuthorityKind.DELIVERY_ADMISSION,
-            caller="delivery.authority_registry",
-            capabilities=frozenset({
-                StateCallerCapability.READ,
-                StateCallerCapability.TRANSACT,
-                StateCallerCapability.ORDERED_INDEX,
-            }),
+    def __init__(
+        self,
+        *,
+        persistence: DeliveryRegistryPersistence | StateStoreRepository | None = None,
+        repository: StateStoreRepository | None = None,
+    ) -> None:
+        if persistence is None:
+            persistence = repository
+        elif repository is not None:
+            _invalid("registry.repository")
+        if type(persistence) is StateStoreRepository:
+            persistence = contract_test_persistence(
+                persistence,
+                StateStoreRepositoryRole.DELIVERY_REGISTRY,
+            )
+        if not isinstance(persistence, DeliveryRegistryPersistence):
+            _invalid("registry.repository")
+        self._store = persistence
+        self._runtime_id = persistence.runtime_id
+        self._scope = DeliveryPersistencePartition(
+            tenant_id=persistence.namespace.tenant_id or "runtime-registry",
+            bucket_id=0,
+            layout_generation=1,
+            namespace=persistence.namespace,
         )
 
     async def ensure_registered(
@@ -140,8 +115,8 @@ class StateStoreDeliveryAuthorityRegistry:
             ),
         )
         try:
-            await self._store.transact(StateTransaction(
-                scope=self._scope,
+            await self._store.transact(DeliveryPersistenceTransaction(
+                partition=self._scope,
                 mutations=(mutation,),
                 ordered_index_mutations=(StateOrderedIndexMutation(
                     index=self._tenant_index(),
@@ -163,7 +138,6 @@ class StateStoreDeliveryAuthorityRegistry:
             _invalid("registry.layout")
         await self._require_layout(layout)
         page = await self._store.read_ordered_index(
-            scope=self._scope,
             index=self._tenant_index(),
             limit=MAX_REGISTERED_TENANTS,
         )
@@ -212,7 +186,10 @@ class StateStoreDeliveryAuthorityRegistry:
             ),
         )
         try:
-            await self._store.transact(StateTransaction(scope=self._scope, mutations=(mutation,)))
+            await self._store.transact(DeliveryPersistenceTransaction(
+                partition=self._scope,
+                mutations=(mutation,),
+            ))
         except NsRuntimeStateStoreConflictError:
             existing = await self._read(key)
             if existing is None:
@@ -231,7 +208,6 @@ class StateStoreDeliveryAuthorityRegistry:
 
     async def _read(self, key: StateKey):
         result = await self._store.read(
-            scope=self._scope,
             key=key,
             consistency=StateConsistency.LINEARIZABLE,
         )
@@ -331,5 +307,4 @@ def _invalid(field: str):
 __all__ = (
     "DeliveryAuthorityLayout",
     "StateStoreDeliveryAuthorityRegistry",
-    "delivery_scope",
 )

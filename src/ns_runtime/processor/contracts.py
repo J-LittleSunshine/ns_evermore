@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import math
 import re
+import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Mapping
@@ -118,9 +121,191 @@ class ProcessorSafeSummary:
         )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+_CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER = object()
+_CONTRACT_TEST_AUTHORIZATION_EVIDENCE_KEY = secrets.token_bytes(32)
+
+
+class _ProductionAuthorizationEvidenceIssuer:
+    """Instance capability bound to one real authorization service."""
+
+    __slots__ = ("_service",)
+
+    def __init__(self, service: object) -> None:
+        from ns_runtime.iam import MessageAuthorizationService
+
+        if (
+            type(service) is not MessageAuthorizationService
+            or not service.production_authority
+        ):
+            _invalid("authorization_evidence_issuer.service")
+        self._service = service
+
+    def issue(
+        self,
+        result: object,
+        context: "ProcessorContext",
+    ) -> "AuthorizationDecisionEvidence":
+        from ns_runtime.iam import MessageAuthorizationResult
+
+        if (
+            not self._service.production_authority
+            or type(result) is not MessageAuthorizationResult
+            or not isinstance(context, ProcessorContext)
+        ):
+            _invalid("authorization_evidence_issuer.result")
+        if not result.is_issued_by(self._service):
+            from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+            if self._service._authorization_result_has_stale_session(result):
+                raise _StaleIamSessionReceipt
+            _invalid("authorization_evidence_issuer.result")
+        request = result.request
+        session = context.session
+        if (
+            result.session_snapshot.identity != session.identity
+            or result.session_snapshot.tenant_id != session.tenant_id
+            or result.session_snapshot.permission_snapshot_ref
+            != session.permission_snapshot_ref
+            or result.session_snapshot.permission_version
+            != session.permission_version
+            or request.identity != session.identity
+            or request.tenant_id != session.tenant_id
+            or request.message_type != context.envelope.message.type
+        ):
+            _invalid("authorization_evidence_issuer.context")
+        message_reference = ProcessorSafeSummary.from_envelope(
+            context.envelope,
+        ).object_reference
+        target_reference = AuthorizationDecisionEvidence.target_reference(
+            context.envelope.target,
+            session_tenant_id=session.tenant_id,
+        )
+        if request.target.reference != target_reference:
+            _invalid("authorization_evidence_issuer.target")
+        effective_tenant_id = (
+            request.target.tenant_id
+            if request.cross_tenant
+            else result.effective_snapshot.tenant_id
+        )
+        semantic_request = request.to_wire()
+        semantic_request["permission_snapshot_ref"] = (
+            result.effective_snapshot.permission_snapshot_ref
+        )
+        semantic_request["permission_version"] = (
+            result.effective_snapshot.permission_version
+        )
+        if (
+            result._broker_authority is None
+            or result._broker_verification is None
+        ):
+            _invalid("authorization_evidence_issuer.broker_authority")
+        evidence = AuthorizationDecisionEvidence(
+            message_binding_reference="sha256:" + "0" * 64,
+            semantic_decision_reference="sha256:" + "0" * 64,
+            semantic_access_check_reference=(
+                _authorization_decision_digest(semantic_request)
+            ),
+            decision_version="authorization-decision.v1",
+            decision_outcome=AuthorizationDecisionOutcome.ALLOW,
+            decision_reason=result.decision.reason,
+            message_reference=message_reference,
+            message_type=context.envelope.message.type,
+            config_version=context.config_version,
+            policy_version=context.policy_version,
+            principal_tenant_id=session.tenant_id,
+            effective_tenant_id=effective_tenant_id,
+            cross_tenant_authorized=(
+                result.decision.allowed and request.cross_tenant
+            ),
+            authorized_target_reference=target_reference,
+            session_permission_snapshot_ref=session.permission_snapshot_ref,
+            session_permission_snapshot_version=session.permission_version,
+            effective_permission_snapshot_ref=(
+                result.effective_snapshot.permission_snapshot_ref
+            ),
+            effective_permission_snapshot_version=(
+                result.effective_snapshot.permission_version
+            ),
+            _issuer=self,
+            _broker_authority=result._broker_authority,
+            _broker_verification=result._broker_verification,
+            _derive_references=True,
+        )
+        if not evidence.is_production_authority():
+            from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+            if self._service._authorization_result_has_stale_session(result):
+                raise _StaleIamSessionReceipt
+            _invalid("authorization_evidence_issuer.receipt")
+        return evidence
+
+    def _verify(self, evidence: "AuthorizationDecisionEvidence") -> bool:
+        authority = evidence._broker_authority
+        verification = evidence._broker_verification
+        iam = self._service._iam
+        from ns_runtime.authority_broker import VerifiedBrokerIamResult
+
+        verified = object.__new__(VerifiedBrokerIamResult)
+        object.__setattr__(
+            verified, "result",
+            self._service_result_from_authority(authority),
+        )
+        object.__setattr__(verified, "authority", authority)
+        object.__setattr__(verified, "verification", verification)
+        return bool(
+            self._service.production_authority
+            and iam._verified_iam_result_is_current_local(
+                verified,
+                operation="runtime_access_check",
+                request_fingerprint=authority.request_fingerprint,
+                now=self._service._clock.utc_now(),
+            )
+            and authority.backend_decision == "allow"
+            and authority.request_mapping().get("tenant_id")
+            == evidence.principal_tenant_id
+            and authority.request_mapping().get("message_type")
+            == evidence.message_type
+            and authority.request_mapping().get("permission_snapshot_ref")
+            == evidence.effective_permission_snapshot_ref
+            and authority.request_mapping().get("permission_version")
+            == evidence.effective_permission_snapshot_version
+            and authority.result_mapping().get("allowed") is True
+            and authority.result_mapping().get("reason")
+            == evidence.decision_reason
+            and authority.result_mapping().get("permission_version")
+            == evidence.effective_permission_snapshot_version
+        )
+
+    @staticmethod
+    def _service_result_from_authority(authority: object) -> object:
+        from ns_common.iam import IamAccessDecision
+        from ns_runtime.authority_broker import BrokerSignedIamResult
+
+        if type(authority) is not BrokerSignedIamResult:
+            return None
+        try:
+            return IamAccessDecision.from_wire(authority.result_mapping())
+        except (NsValidationError, KeyError, TypeError, ValueError):
+            return None
+
+    def __copy__(self) -> "_ProductionAuthorizationEvidenceIssuer":
+        _invalid("authorization_evidence_issuer.copy")
+
+    def __deepcopy__(
+        self,
+        memo: dict[int, object],
+    ) -> "_ProductionAuthorizationEvidenceIssuer":
+        del memo
+        _invalid("authorization_evidence_issuer.copy")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, init=False)
 class AuthorizationDecisionEvidence:
-    """Immutable ALLOW evidence bound to one message authorization check."""
+    """Sealed ALLOW evidence bound to one message authorization check.
+
+    The hashes below are content bindings only.  Authority comes from the
+    module-private issuer seal, which is deliberately not an init field.
+    """
 
     message_binding_reference: str = field(repr=False)
     semantic_decision_reference: str = field(repr=False)
@@ -130,6 +315,8 @@ class AuthorizationDecisionEvidence:
     decision_reason: str
     message_reference: str
     message_type: str
+    config_version: str
+    policy_version: str
     principal_tenant_id: str = field(repr=False)
     effective_tenant_id: str = field(repr=False)
     cross_tenant_authorized: bool
@@ -138,6 +325,141 @@ class AuthorizationDecisionEvidence:
     session_permission_snapshot_version: str = field(repr=False)
     effective_permission_snapshot_ref: str = field(repr=False)
     effective_permission_snapshot_version: str = field(repr=False)
+    _issuer: object = field(init=False, repr=False, compare=False)
+    _authority_signature: bytes = field(init=False, repr=False, compare=False)
+    _broker_authority: object = field(init=False, repr=False, compare=False)
+    _broker_verification: object = field(
+        init=False, repr=False, compare=False,
+    )
+
+    def __init__(
+        self,
+        *,
+        message_binding_reference: str,
+        semantic_decision_reference: str,
+        semantic_access_check_reference: str,
+        decision_version: str,
+        decision_outcome: AuthorizationDecisionOutcome,
+        decision_reason: str,
+        message_reference: str,
+        message_type: str,
+        config_version: str,
+        policy_version: str,
+        principal_tenant_id: str,
+        effective_tenant_id: str,
+        cross_tenant_authorized: bool,
+        authorized_target_reference: str,
+        session_permission_snapshot_ref: str,
+        session_permission_snapshot_version: str,
+        effective_permission_snapshot_ref: str,
+        effective_permission_snapshot_version: str,
+        _issuer: object | None = None,
+        _construction_token: object | None = None,
+        _broker_authority: object | None = None,
+        _broker_verification: object | None = None,
+        _derive_references: bool = False,
+    ) -> None:
+        from ns_runtime.authority_broker import (
+            BrokerIamVerificationReceipt,
+            BrokerSignedIamResult,
+        )
+
+        production_issuer = type(_issuer) is _ProductionAuthorizationEvidenceIssuer
+        if (
+            type(self) is not AuthorizationDecisionEvidence
+            or (
+                production_issuer
+                and type(_broker_authority) is not BrokerSignedIamResult
+            )
+            or (
+                production_issuer
+                and type(_broker_verification)
+                is not BrokerIamVerificationReceipt
+            )
+            or (
+                not production_issuer
+                and _issuer is not _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER
+            )
+            or type(_derive_references) is not bool
+            or (_derive_references and not production_issuer)
+        ):
+            _invalid("authorization_evidence.issuer")
+        if _derive_references:
+            semantic_decision_reference = self._reference({
+                "decision_version": decision_version,
+                "decision_outcome": decision_outcome.value,
+                "decision_reason": decision_reason,
+                "semantic_access_check_reference": semantic_access_check_reference,
+                "message_type": message_type,
+                "config_version": config_version,
+                "policy_version": policy_version,
+                "principal_tenant_id": principal_tenant_id,
+                "effective_tenant_id": effective_tenant_id,
+                "cross_tenant_authorized": cross_tenant_authorized,
+                "authorized_target_reference": authorized_target_reference,
+                "effective_permission_snapshot_ref": effective_permission_snapshot_ref,
+                "effective_permission_snapshot_version": (
+                    effective_permission_snapshot_version
+                ),
+            })
+            message_binding_reference = self._reference({
+                "message_reference": message_reference,
+                "message_type": message_type,
+                "config_version": config_version,
+                "policy_version": policy_version,
+                "principal_tenant_id": principal_tenant_id,
+                "effective_tenant_id": effective_tenant_id,
+                "cross_tenant_authorized": cross_tenant_authorized,
+                "authorized_target_reference": authorized_target_reference,
+                "session_permission_snapshot_ref": session_permission_snapshot_ref,
+                "session_permission_snapshot_version": (
+                    session_permission_snapshot_version
+                ),
+                "effective_permission_snapshot_ref": effective_permission_snapshot_ref,
+                "effective_permission_snapshot_version": (
+                    effective_permission_snapshot_version
+                ),
+                "semantic_decision_reference": semantic_decision_reference,
+            })
+        for name, value in (
+            ("message_binding_reference", message_binding_reference),
+            ("semantic_decision_reference", semantic_decision_reference),
+            ("semantic_access_check_reference", semantic_access_check_reference),
+            ("decision_version", decision_version),
+            ("decision_outcome", decision_outcome),
+            ("decision_reason", decision_reason),
+            ("message_reference", message_reference),
+            ("message_type", message_type),
+            ("config_version", config_version),
+            ("policy_version", policy_version),
+            ("principal_tenant_id", principal_tenant_id),
+            ("effective_tenant_id", effective_tenant_id),
+            ("cross_tenant_authorized", cross_tenant_authorized),
+            ("authorized_target_reference", authorized_target_reference),
+            ("session_permission_snapshot_ref", session_permission_snapshot_ref),
+            ("session_permission_snapshot_version", session_permission_snapshot_version),
+            ("effective_permission_snapshot_ref", effective_permission_snapshot_ref),
+            ("effective_permission_snapshot_version", effective_permission_snapshot_version),
+            ("_issuer", _issuer),
+            (
+                "_authority_signature",
+                (
+                    _broker_authority.signature
+                    if production_issuer
+                    else b""
+                ),
+            ),
+            ("_broker_authority", _broker_authority),
+            ("_broker_verification", _broker_verification),
+        ):
+            object.__setattr__(self, name, value)
+        self.__post_init__()
+        if not production_issuer:
+            object.__setattr__(
+                self,
+                "_authority_signature",
+                _authorization_authority_signature(self, issuer=_issuer),
+            )
 
     def __post_init__(self) -> None:
         for name in (
@@ -153,7 +475,8 @@ class AuthorizationDecisionEvidence:
             _invalid("authorization_evidence.authorized_target_reference")
         for name in (
             "decision_version", "decision_reason",
-            "message_type", "principal_tenant_id", "effective_tenant_id",
+            "message_type", "config_version", "policy_version",
+            "principal_tenant_id", "effective_tenant_id",
             "session_permission_snapshot_ref",
             "session_permission_snapshot_version",
             "effective_permission_snapshot_ref",
@@ -186,6 +509,43 @@ class AuthorizationDecisionEvidence:
         semantic_access_check_reference: str,
         message_reference: str,
         message_type: str,
+        config_version: str,
+        policy_version: str,
+        principal_tenant_id: str,
+        effective_tenant_id: str,
+        cross_tenant_authorized: bool,
+        authorized_target_reference: str,
+        session_permission_snapshot_ref: str,
+        session_permission_snapshot_version: str,
+        effective_permission_snapshot_ref: str,
+        effective_permission_snapshot_version: str,
+    ) -> "AuthorizationDecisionEvidence":
+        """Legacy public factory is intentionally no longer an authority."""
+
+        del (
+            decision_version, decision_outcome, decision_reason,
+            semantic_access_check_reference, message_reference, message_type,
+            config_version, policy_version,
+            principal_tenant_id, effective_tenant_id, cross_tenant_authorized,
+            authorized_target_reference, session_permission_snapshot_ref,
+            session_permission_snapshot_version,
+            effective_permission_snapshot_ref,
+            effective_permission_snapshot_version,
+        )
+        _invalid("authorization_evidence.issuer")
+
+    @classmethod
+    def _issued_for_contract_test(
+        cls,
+        *,
+        decision_version: str,
+        decision_outcome: AuthorizationDecisionOutcome,
+        decision_reason: str,
+        semantic_access_check_reference: str,
+        message_reference: str,
+        message_type: str,
+        config_version: str,
+        policy_version: str,
         principal_tenant_id: str,
         effective_tenant_id: str,
         cross_tenant_authorized: bool,
@@ -203,6 +563,8 @@ class AuthorizationDecisionEvidence:
             "decision_reason": decision_reason,
             "semantic_access_check_reference": semantic_access_check_reference,
             "message_type": message_type,
+            "config_version": config_version,
+            "policy_version": policy_version,
             "principal_tenant_id": principal_tenant_id,
             "effective_tenant_id": effective_tenant_id,
             "cross_tenant_authorized": cross_tenant_authorized,
@@ -214,6 +576,8 @@ class AuthorizationDecisionEvidence:
         binding_values = {
             "message_reference": message_reference,
             "message_type": message_type,
+            "config_version": config_version,
+            "policy_version": policy_version,
             "principal_tenant_id": principal_tenant_id,
             "effective_tenant_id": effective_tenant_id,
             "cross_tenant_authorized": cross_tenant_authorized,
@@ -233,6 +597,8 @@ class AuthorizationDecisionEvidence:
             decision_reason=decision_reason,
             message_reference=message_reference,
             message_type=message_type,
+            config_version=config_version,
+            policy_version=policy_version,
             principal_tenant_id=principal_tenant_id,
             effective_tenant_id=effective_tenant_id,
             cross_tenant_authorized=cross_tenant_authorized,
@@ -241,6 +607,39 @@ class AuthorizationDecisionEvidence:
             session_permission_snapshot_version=session_permission_snapshot_version,
             effective_permission_snapshot_ref=effective_permission_snapshot_ref,
             effective_permission_snapshot_version=effective_permission_snapshot_version,
+            _issuer=_CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER,
+        )
+
+    def is_production_authority(self) -> bool:
+        return (
+            type(self) is AuthorizationDecisionEvidence
+            and type(self._issuer) is _ProductionAuthorizationEvidenceIssuer
+            and self.has_valid_binding()
+            and self._issuer._verify(self)
+        )
+
+    def __copy__(self) -> "AuthorizationDecisionEvidence":
+        _invalid("authorization_evidence.copy")
+
+    def __deepcopy__(
+        self,
+        memo: dict[int, object],
+    ) -> "AuthorizationDecisionEvidence":
+        del memo
+        _invalid("authorization_evidence.copy")
+
+    def is_contract_test_authority(self) -> bool:
+        return (
+            type(self) is AuthorizationDecisionEvidence
+            and self._issuer is _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER
+            and self.has_valid_binding()
+            and hmac.compare_digest(
+                self._authority_signature,
+                _authorization_authority_signature(
+                    self,
+                    issuer=_CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER,
+                ),
+            )
         )
 
     def has_valid_semantic_decision(self) -> bool:
@@ -250,6 +649,8 @@ class AuthorizationDecisionEvidence:
             "decision_reason": self.decision_reason,
             "semantic_access_check_reference": self.semantic_access_check_reference,
             "message_type": self.message_type,
+            "config_version": self.config_version,
+            "policy_version": self.policy_version,
             "principal_tenant_id": self.principal_tenant_id,
             "effective_tenant_id": self.effective_tenant_id,
             "cross_tenant_authorized": self.cross_tenant_authorized,
@@ -262,6 +663,8 @@ class AuthorizationDecisionEvidence:
         return self.message_binding_reference == self._reference({
             "message_reference": self.message_reference,
             "message_type": self.message_type,
+            "config_version": self.config_version,
+            "policy_version": self.policy_version,
             "principal_tenant_id": self.principal_tenant_id,
             "effective_tenant_id": self.effective_tenant_id,
             "cross_tenant_authorized": self.cross_tenant_authorized,
@@ -294,6 +697,59 @@ class AuthorizationDecisionEvidence:
         )
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _issue_contract_test_authorization_evidence(
+    **values: object,
+) -> AuthorizationDecisionEvidence:
+    """Explicit non-production issuer for deterministic contract tests."""
+
+    return AuthorizationDecisionEvidence._issued_for_contract_test(
+        **values,  # type: ignore[arg-type]
+    )
+
+
+def _authorization_authority_signature(
+    evidence: AuthorizationDecisionEvidence,
+    *,
+    issuer: object,
+) -> bytes:
+    if issuer is _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_ISSUER:
+        key = _CONTRACT_TEST_AUTHORIZATION_EVIDENCE_KEY
+    else:
+        _invalid("authorization_evidence.issuer")
+    payload = json.dumps({
+        "message_binding_reference": evidence.message_binding_reference,
+        "semantic_decision_reference": evidence.semantic_decision_reference,
+        "semantic_access_check_reference": evidence.semantic_access_check_reference,
+        "decision_version": evidence.decision_version,
+        "decision_outcome": evidence.decision_outcome.value,
+        "decision_reason": evidence.decision_reason,
+        "message_reference": evidence.message_reference,
+        "message_type": evidence.message_type,
+        "config_version": evidence.config_version,
+        "policy_version": evidence.policy_version,
+        "principal_tenant_id": evidence.principal_tenant_id,
+        "effective_tenant_id": evidence.effective_tenant_id,
+        "cross_tenant_authorized": evidence.cross_tenant_authorized,
+        "authorized_target_reference": evidence.authorized_target_reference,
+        "session_permission_snapshot_ref": evidence.session_permission_snapshot_ref,
+        "session_permission_snapshot_version": (
+            evidence.session_permission_snapshot_version
+        ),
+        "effective_permission_snapshot_ref": (
+            evidence.effective_permission_snapshot_ref
+        ),
+        "effective_permission_snapshot_version": (
+            evidence.effective_permission_snapshot_version
+        ),
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hmac.new(key, payload, hashlib.sha256).digest()
+
+
+def _authorization_decision_digest(payload: object) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class ProcessorAuthorization(ABC):
