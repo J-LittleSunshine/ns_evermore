@@ -7,7 +7,11 @@ import base64
 import hashlib
 import json
 
-from ns_common.exceptions import NsRuntimeStateStoreUnavailableError, NsValidationError
+from ns_common.exceptions import (
+    NsRuntimeIamUnavailableError,
+    NsRuntimeStateStoreUnavailableError,
+    NsValidationError,
+)
 from ns_common.iam import (
     PayloadRefRevalidationDecision,
     PayloadRefRevalidationRequest,
@@ -81,16 +85,29 @@ class IamDeliveryPayloadReferenceValidator(DeliveryPayloadValidator):
                 delivery.policy_decision.request_fingerprint
             ),
         )
-        verified = await self._iam.revalidate_payload_ref_signed(request)
-        decision = verified.result
-        if type(decision) is not PayloadRefRevalidationDecision:
-            _invalid("reference_validator.revalidation_result")
-        access_evidence = self._evidence_issuer.issue(
-            request=request,
-            verified_result=verified,
-            delivery=delivery,
-            target=target,
-        )
+        from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+        for _ in range(3):
+            verified = await self._iam.revalidate_payload_ref_signed(request)
+            decision = verified.result
+            if type(decision) is not PayloadRefRevalidationDecision:
+                _invalid("reference_validator.revalidation_result")
+            try:
+                access_evidence = self._evidence_issuer.issue(
+                    request=request,
+                    verified_result=verified,
+                    delivery=delivery,
+                    target=target,
+                )
+                break
+            except _StaleIamSessionReceipt:
+                continue
+        else:
+            raise NsRuntimeIamUnavailableError(details={
+                "component": "delivery_payload_authority",
+                "operation": "payload_revalidate",
+                "reason": "session_rotation_race",
+            })
         return PayloadValidationResult(
             valid=access_evidence is not None,
             evidence_fingerprint=evidence.evidence_fingerprint,

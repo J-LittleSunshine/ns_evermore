@@ -115,6 +115,8 @@ from ns_runtime.authority_wire import (
 from ns_runtime.authority_attestor import (
     AuthorityAttestationError,
     AuthorityAttestorClient,
+    IAM_VERIFICATION_RECEIPT_KIND,
+    IAM_VERIFICATION_RECEIPT_WIRE_VERSION,
     start_authority_attestor,
 )
 
@@ -516,37 +518,71 @@ class BrokerIamVerificationReceipt:
 
     The receipt is not an authority on its own.  It is useful only together
     with the exact broker-signed result whose canonical fingerprints it binds.
-    Normal construction is deliberately unavailable so callers cannot mint a
-    receipt from ordinary values.
+    Its security boundary is the attestor Ed25519 signature; unavailable
+    normal construction is only a misuse guard.
     """
 
+    wire_version: int
+    kind: str
+    attestor_instance_id: str
     attestor_identity_id: str
     broker_instance_id: str
+    runtime_id: str
     lifecycle_generation: int
     session_key_fingerprint: str
+    endpoint_id: str
+    role: str
     operation: str
     request_fingerprint: str
     signed_result_fingerprint: str
     result_fingerprint: str
+    request_json_fingerprint: str
     verified_at: datetime
     authority_expires_at: datetime
+    nonce: str
+    signature: bytes
 
-    def matches(
+    def signed_values(self) -> Mapping[str, object]:
+        return {
+            "version": self.wire_version,
+            "kind": self.kind,
+            "attestor_instance_id": self.attestor_instance_id,
+            "attestor_identity_id": self.attestor_identity_id,
+            "broker_instance_id": self.broker_instance_id,
+            "runtime_id": self.runtime_id,
+            "lifecycle_generation": self.lifecycle_generation,
+            "session_key_fingerprint": self.session_key_fingerprint,
+            "endpoint_id": self.endpoint_id,
+            "role": self.role,
+            "operation": self.operation,
+            "request_fingerprint": self.request_fingerprint,
+            "signed_result_fingerprint": self.signed_result_fingerprint,
+            "result_fingerprint": self.result_fingerprint,
+            "request_json_fingerprint": self.request_json_fingerprint,
+            "verified_at": encode_time(self.verified_at),
+            "authority_expires_at": encode_time(
+                self.authority_expires_at,
+            ),
+            "nonce": self.nonce,
+        }
+
+    def verify(
         self,
         *,
+        attestor_public_key: bytes,
         authority: BrokerSignedIamResult,
         result: object,
+        expected_identity: "_LocalIamSessionIdentity",
         operation: str,
         request_fingerprint: str,
-        attestor_identity_id: str,
-        broker_instance_id: str,
-        lifecycle_generation: int,
-        session_key_fingerprint: str,
         now: datetime,
     ) -> bool:
         if (
             type(self) is not BrokerIamVerificationReceipt
             or type(authority) is not BrokerSignedIamResult
+            or type(expected_identity) is not _LocalIamSessionIdentity
+            or type(attestor_public_key) is not bytes
+            or len(attestor_public_key) != 32
             or type(now) is not datetime
             or now.tzinfo is None
             or now.utcoffset() is None
@@ -558,14 +594,25 @@ class BrokerIamVerificationReceipt:
         except (NsValidationError, KeyError, TypeError, ValueError):
             return False
         return bool(
-            self.attestor_identity_id == attestor_identity_id
-            and self.broker_instance_id == broker_instance_id
+            self.wire_version == IAM_VERIFICATION_RECEIPT_WIRE_VERSION
+            and self.kind == IAM_VERIFICATION_RECEIPT_KIND
+            and self.attestor_instance_id
+            == expected_identity.attestor_instance_id
+            and self.attestor_identity_id
+            == expected_identity.attestor_identity_id
+            and self.broker_instance_id
+            == expected_identity.broker_instance_id
             and self.broker_instance_id == authority.broker_instance_id
-            and self.lifecycle_generation == lifecycle_generation
+            and self.runtime_id == expected_identity.runtime_id
+            and self.lifecycle_generation
+            == expected_identity.lifecycle_generation
             and self.lifecycle_generation == authority.lifecycle_generation
-            and self.session_key_fingerprint == session_key_fingerprint
+            and self.session_key_fingerprint
+            == expected_identity.session_key_fingerprint
             and self.session_key_fingerprint
             == authority.session_key_fingerprint
+            and self.endpoint_id == expected_identity.endpoint_id
+            and self.role == expected_identity.role == "iam"
             and self.operation == operation
             and self.operation == authority.operation
             and self.request_fingerprint == request_fingerprint
@@ -575,9 +622,19 @@ class BrokerIamVerificationReceipt:
             and authority_result == result_values
             and self.result_fingerprint
             == _iam_result_fingerprint(result_values)
+            and self.request_json_fingerprint
+            == _iam_result_fingerprint(authority.request_mapping())
             and self.verified_at <= now < self.authority_expires_at
             and self.authority_expires_at == authority.expires_at
             and authority.issued_at <= self.verified_at
+            and type(self.nonce) is str
+            and bool(self.nonce)
+            and type(self.signature) is bytes
+            and _verify(
+                attestor_public_key,
+                _canonical(self.signed_values()),
+                self.signature,
+            )
         )
 
     def __copy__(self) -> "BrokerIamVerificationReceipt":
@@ -612,21 +669,27 @@ class VerifiedBrokerIamResult:
 class _AttestedIamChannelResponse:
     raw_result: object
     verification: Mapping[str, object]
+    identity: "_LocalIamSessionIdentity"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _LocalIamSessionIdentity:
+    attestor_instance_id: str
     attestor_identity_id: str
     broker_instance_id: str
+    runtime_id: str
     lifecycle_generation: int
     session_key_fingerprint: str
     endpoint_id: str
+    role: str
     connection_generation: int
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, init=False)
 class _ProductionIamCompositionBinding:
     channel: object
+    attestor_instance_id: str
+    attestor_public_key: bytes
     attestor_identity_id: str
     broker_instance_id: str
     runtime_id: str
@@ -639,28 +702,50 @@ def _verified_iam_result_from_attestation(
     result: object,
     authority: BrokerSignedIamResult,
     verification: Mapping[str, object],
+    attestor_public_key: bytes,
+    expected_identity: _LocalIamSessionIdentity,
 ) -> VerifiedBrokerIamResult:
     try:
         fields = require_object(
             verification,
             fields={
-                "verified", "identity_id", "broker_instance_id",
+                "version", "kind", "attestor_instance_id",
+                "attestor_identity_id", "broker_instance_id", "runtime_id",
                 "lifecycle_generation", "session_key_fingerprint",
+                "endpoint_id", "role",
                 "operation", "request_fingerprint",
                 "signed_result_fingerprint", "result_fingerprint",
+                "request_json_fingerprint",
                 "verified_at", "authority_expires_at",
-                "result_json", "request_json",
+                "nonce", "signature",
             },
             field="iam_verification_receipt",
         )
         receipt_values = {
+            "wire_version": _exact_int(
+                fields["version"],
+                "iam_verification_receipt.version",
+                minimum=1,
+            ),
+            "kind": _exact_string(
+                fields["kind"],
+                "iam_verification_receipt.kind",
+            ),
+            "attestor_instance_id": _exact_string(
+                fields["attestor_instance_id"],
+                "iam_verification_receipt.attestor_instance_id",
+            ),
             "attestor_identity_id": _exact_string(
-                fields["identity_id"],
-                "iam_verification_receipt.identity_id",
+                fields["attestor_identity_id"],
+                "iam_verification_receipt.attestor_identity_id",
             ),
             "broker_instance_id": _exact_string(
                 fields["broker_instance_id"],
                 "iam_verification_receipt.broker_instance_id",
+            ),
+            "runtime_id": _exact_string(
+                fields["runtime_id"],
+                "iam_verification_receipt.runtime_id",
             ),
             "lifecycle_generation": _exact_int(
                 fields["lifecycle_generation"],
@@ -670,6 +755,14 @@ def _verified_iam_result_from_attestation(
             "session_key_fingerprint": _exact_string(
                 fields["session_key_fingerprint"],
                 "iam_verification_receipt.session_key_fingerprint",
+            ),
+            "endpoint_id": _exact_string(
+                fields["endpoint_id"],
+                "iam_verification_receipt.endpoint_id",
+            ),
+            "role": _exact_string(
+                fields["role"],
+                "iam_verification_receipt.role",
             ),
             "operation": _exact_string(
                 fields["operation"],
@@ -687,35 +780,35 @@ def _verified_iam_result_from_attestation(
                 fields["result_fingerprint"],
                 "iam_verification_receipt.result_fingerprint",
             ),
+            "request_json_fingerprint": _exact_string(
+                fields["request_json_fingerprint"],
+                "iam_verification_receipt.request_json_fingerprint",
+            ),
             "verified_at": _parse_time(fields["verified_at"]),
             "authority_expires_at": _parse_time(
                 fields["authority_expires_at"],
             ),
+            "nonce": _exact_string(
+                fields["nonce"], "iam_verification_receipt.nonce",
+            ),
+            "signature": decode_bytes(
+                fields["signature"],
+                field="iam_verification_receipt.signature",
+            ),
         }
-        if (
-            fields["verified"] is not True
-            or receipt_values["operation"] != operation
-            or receipt_values["broker_instance_id"]
-            != authority.broker_instance_id
-            or receipt_values["lifecycle_generation"]
-            != authority.lifecycle_generation
-            or receipt_values["session_key_fingerprint"]
-            != authority.session_key_fingerprint
-            or receipt_values["request_fingerprint"]
-            != authority.request_fingerprint
-            or receipt_values["signed_result_fingerprint"]
-            != _signed_iam_result_fingerprint(authority)
-            or receipt_values["result_fingerprint"]
-            != _iam_result_fingerprint(_encode_iam_result(operation, result))
-            or fields["result_json"] != authority.result_json
-            or fields["request_json"] != authority.request_json
-            or receipt_values["authority_expires_at"]
-            != authority.expires_at
-        ):
-            _invalid("iam_verification_receipt.binding")
         receipt = object.__new__(BrokerIamVerificationReceipt)
         for name, value in receipt_values.items():
             object.__setattr__(receipt, name, value)
+        if not receipt.verify(
+            attestor_public_key=attestor_public_key,
+            authority=authority,
+            result=result,
+            expected_identity=expected_identity,
+            operation=operation,
+            request_fingerprint=authority.request_fingerprint,
+            now=datetime.now(timezone.utc),
+        ):
+            _invalid("iam_verification_receipt.binding")
         verified = object.__new__(VerifiedBrokerIamResult)
         object.__setattr__(verified, "result", result)
         object.__setattr__(verified, "authority", authority)
@@ -1309,17 +1402,27 @@ class _RoleBrokerChannel:
                             ),
                         )
                         if (
-                            inner_verified.get("verified") is not True
-                            or inner_verified.get("identity_id")
+                            inner_verified.get("version")
+                            != IAM_VERIFICATION_RECEIPT_WIRE_VERSION
+                            or inner_verified.get("kind")
+                            != IAM_VERIFICATION_RECEIPT_KIND
+                            or inner_verified.get("attestor_instance_id")
+                            != attestor.instance_id
+                            or inner_verified.get("attestor_identity_id")
                             != snapshot["identity_id"]
                             or inner_verified.get("broker_instance_id")
                             != snapshot["broker_instance_id"]
+                            or inner_verified.get("runtime_id")
+                            != snapshot["runtime_id"]
                             or inner_verified.get(
                                 "lifecycle_generation",
                             ) != snapshot["lifecycle_generation"]
                             or inner_verified.get(
                                 "session_key_fingerprint",
                             ) != snapshot["session_key_fingerprint"]
+                            or inner_verified.get("endpoint_id")
+                            != snapshot["endpoint_id"]
+                            or inner_verified.get("role") != "iam"
                             or inner_verified.get("operation") != operation
                             or inner_verified.get("request_fingerprint")
                             != signed_iam.request_fingerprint
@@ -1330,11 +1433,37 @@ class _RoleBrokerChannel:
                             != _iam_result_fingerprint(
                                 signed_iam.result_mapping(),
                             )
+                            or inner_verified.get(
+                                "request_json_fingerprint",
+                            ) != _iam_result_fingerprint(
+                                signed_iam.request_mapping(),
+                            )
+                            or type(inner_verified.get("signature"))
+                            is not str
                         ):
                             _invalid("response.iam_authority")
                         return _AttestedIamChannelResponse(
                             raw_result=decoded_result,
                             verification=dict(inner_verified),
+                            identity=_LocalIamSessionIdentity(
+                                attestor_instance_id=attestor.instance_id,
+                                attestor_identity_id=snapshot["identity_id"],
+                                broker_instance_id=snapshot[
+                                    "broker_instance_id"
+                                ],
+                                runtime_id=snapshot["runtime_id"],
+                                lifecycle_generation=snapshot[
+                                    "lifecycle_generation"
+                                ],
+                                session_key_fingerprint=snapshot[
+                                    "session_key_fingerprint"
+                                ],
+                                endpoint_id=snapshot["endpoint_id"],
+                                role=snapshot["role"],
+                                connection_generation=snapshot[
+                                    "connection_generation"
+                                ],
+                            ),
                         )
                     return decoded_result
                 error_value = _decode_canonical_json(
@@ -1614,17 +1743,22 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             connection_generation_before = channel._connection_generation
             public_key = channel._public_key
             handle = channel._handle
+            attestor = channel._attestor
             identity = _LocalIamSessionIdentity(
+                attestor_instance_id=attestor.instance_id,
                 attestor_identity_id=channel._identity_id,
                 broker_instance_id=channel._instance_id,
+                runtime_id=channel._runtime_id,
                 lifecycle_generation=generation_before,
                 session_key_fingerprint=_session_key_fingerprint(public_key),
                 endpoint_id=channel._endpoint_id,
+                role=channel._role.value,
                 connection_generation=connection_generation_before,
             )
             if (
                 channel._closed
                 or channel._role is not BrokerRepositoryRole.IAM
+                or channel._attestor is not attestor
                 or type(handle) is not BrokerAuthorityHandle
                 or handle.role is not BrokerRepositoryRole.IAM
                 or handle.broker_instance_id != identity.broker_instance_id
@@ -1666,10 +1800,14 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             and type(channel) is _ProductionRoleBrokerChannel
             and type(binding) is _ProductionIamCompositionBinding
             and binding.channel is channel
+            and binding.attestor_instance_id
+            == identity.attestor_instance_id
+            and binding.attestor_public_key
+            == channel._attestor.public_key
             and binding.attestor_identity_id
             == identity.attestor_identity_id
             and binding.broker_instance_id == identity.broker_instance_id
-            and binding.runtime_id == channel._runtime_id
+            and binding.runtime_id == identity.runtime_id
             and binding.endpoint_id == identity.endpoint_id
             and type(stored_handle) is BrokerAuthorityHandle
             and stored_handle.broker_instance_id
@@ -1719,20 +1857,106 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             return False
         authority = verified.authority
         receipt = verified.verification
-        if not receipt.matches(
-            authority=authority,
-            result=verified.result,
-            operation=operation,
-            request_fingerprint=request_fingerprint,
-            attestor_identity_id=before.attestor_identity_id,
-            broker_instance_id=before.broker_instance_id,
-            lifecycle_generation=before.lifecycle_generation,
-            session_key_fingerprint=before.session_key_fingerprint,
-            now=now,
+        material = self._iam_receipt_verification_material_local()
+        if material is None:
+            return False
+        attestor_public_key, attestor_instance_id = material
+        if (
+            before.attestor_instance_id != attestor_instance_id
+            or not receipt.verify(
+                attestor_public_key=attestor_public_key,
+                authority=authority,
+                result=verified.result,
+                expected_identity=before,
+                operation=operation,
+                request_fingerprint=request_fingerprint,
+                now=now,
+            )
         ):
             return False
         after = self._broker_session_identity_snapshot_local()
         return before == after
+
+    def _iam_receipt_verification_material_local(
+        self,
+    ) -> tuple[bytes, str] | None:
+        channel = getattr(self, "_channel", None)
+        if type(self) is ProductionIamAuthorityProxy:
+            binding = getattr(self, "_composition_binding", None)
+            if (
+                type(binding) is not _ProductionIamCompositionBinding
+                or binding.channel is not channel
+            ):
+                return None
+            return (
+                bytes(binding.attestor_public_key),
+                binding.attestor_instance_id,
+            )
+        if type(self) in {
+            ContractTestIamAuthorityProxy,
+            IntegrationTestIamAuthorityProxy,
+        }:
+            try:
+                return (
+                    channel._attestor.public_key,
+                    channel._attestor.instance_id,
+                )
+            except AttributeError:
+                return None
+        return None
+
+    def _verified_broker_iam_result_is_authentic_local(
+        self,
+        verified: object,
+        *,
+        operation: str,
+        request_fingerprint: str,
+        now: datetime,
+    ) -> bool:
+        """Verify the sealed receipt while allowing an older session generation."""
+
+        if type(verified) is not VerifiedBrokerIamResult:
+            return False
+        current = self._broker_session_identity_snapshot_local()
+        material = self._iam_receipt_verification_material_local()
+        if current is None or material is None:
+            return False
+        receipt = verified.verification
+        authority = verified.authority
+        attestor_public_key, attestor_instance_id = material
+        if (
+            receipt.attestor_instance_id != attestor_instance_id
+            or receipt.attestor_identity_id != current.attestor_identity_id
+            or receipt.broker_instance_id != current.broker_instance_id
+            or receipt.runtime_id != current.runtime_id
+            or receipt.endpoint_id != current.endpoint_id
+            or receipt.role != current.role
+        ):
+            return False
+        receipt_identity = _LocalIamSessionIdentity(
+            attestor_instance_id=attestor_instance_id,
+            attestor_identity_id=current.attestor_identity_id,
+            broker_instance_id=current.broker_instance_id,
+            runtime_id=current.runtime_id,
+            lifecycle_generation=receipt.lifecycle_generation,
+            session_key_fingerprint=receipt.session_key_fingerprint,
+            endpoint_id=current.endpoint_id,
+            role=current.role,
+            connection_generation=current.connection_generation,
+        )
+        return receipt.verify(
+            attestor_public_key=attestor_public_key,
+            authority=authority,
+            result=verified.result,
+            expected_identity=receipt_identity,
+            operation=operation,
+            request_fingerprint=request_fingerprint,
+            # This helper classifies an already verified receipt as stale; it
+            # never grants current authority.  Validate the sealed receipt at
+            # its attested verification instant so a rotated/expired session
+            # remains distinguishable from a forged receipt.
+            now=receipt.verified_at,
+        )
 
     def _verify_production_chain(self, now: datetime) -> bool:
         channel = getattr(self, "_channel", None)
@@ -1982,11 +2206,20 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
             typed = _decode_iam_result(
                 operation, result.result_mapping(),
             )
+            material = self._iam_receipt_verification_material_local()
+            if (
+                material is None
+                or channel_result.identity.attestor_instance_id
+                != material[1]
+            ):
+                _invalid("iam_proxy.attestor_binding")
             verified = _verified_iam_result_from_attestation(
                 operation=operation,
                 result=typed,
                 authority=result,
                 verification=channel_result.verification,
+                attestor_public_key=material[0],
+                expected_identity=channel_result.identity,
             )
         except (NsValidationError, KeyError, TypeError, ValueError):
             channel._fail_and_reap()
@@ -3185,6 +3418,8 @@ def _accept_started_authority_broker(
         )
         for name, value in (
             ("channel", iam._channel),
+            ("attestor_instance_id", attestor.instance_id),
+            ("attestor_public_key", attestor.public_key),
             ("attestor_identity_id", identity_id),
             ("broker_instance_id", instance_id),
             ("runtime_id", config.runtime_id),

@@ -174,20 +174,35 @@ class IamProcessorAuthorization(ProcessorAuthorization):
             expires_at=session.session_expires_at,
             resume_eligible=session.resume_eligible,
         )
-        result = await self._service.authorize(
-            snapshot=snapshot,
-            request=request,
-            risk=_risk_context(contract, crosses_tenant=crosses_tenant),
+        from ns_runtime.iam.authorization import (
+            _StaleIamSessionReceipt,
+            _rotation_race_unavailable,
         )
-        if self._production_authority:
-            if type(self._evidence_issuer) is not _ProductionAuthorizationEvidenceIssuer:
-                _invalid("authorization.evidence_issuer")
-            return self._evidence_issuer.issue(result, context)
-        return _authorization_evidence(
-            context=context,
-            result=result,
-            service=self._service,
-        )
+
+        for _ in range(3):
+            result = await self._service.authorize(
+                snapshot=snapshot,
+                request=request,
+                risk=_risk_context(
+                    contract, crosses_tenant=crosses_tenant,
+                ),
+            )
+            try:
+                if self._production_authority:
+                    if (
+                        type(self._evidence_issuer)
+                        is not _ProductionAuthorizationEvidenceIssuer
+                    ):
+                        _invalid("authorization.evidence_issuer")
+                    return self._evidence_issuer.issue(result, context)
+                return _authorization_evidence(
+                    context=context,
+                    result=result,
+                    service=self._service,
+                )
+            except _StaleIamSessionReceipt:
+                continue
+        raise _rotation_race_unavailable()
 
 
 class DeterministicTestProcessorAuthorization(ProcessorAuthorization):
@@ -591,8 +606,13 @@ def _authorization_evidence(
     if (
         type(service) is not MessageAuthorizationService
         or type(result) is not MessageAuthorizationResult
-        or not result.is_issued_by(service)
     ):
+        _invalid("authorization.result")
+    if not result.is_issued_by(service):
+        from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+        if service._authorization_result_has_stale_session(result):
+            raise _StaleIamSessionReceipt
         _invalid("authorization.result")
     request = result.request
     effective_snapshot = result.effective_snapshot

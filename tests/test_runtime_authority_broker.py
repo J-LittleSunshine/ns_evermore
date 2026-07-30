@@ -63,11 +63,21 @@ from ns_runtime.authority_broker import (
     start_contract_test_authority_broker,
     start_production_authority_broker,
 )
+from ns_runtime.delivery.scheduling import (
+    LocalDeliveryTarget,
+    PayloadAccessDecisionEvidence,
+    _PayloadAccessEvidenceIssuer,
+)
+from ns_runtime.delivery.models import DeliveryRecord, PayloadEvidence, PayloadKind
+from ns_runtime.delivery.payload_authority import (
+    IamDeliveryPayloadReferenceValidator,
+)
 from ns_runtime.authority_attestor import (
     AuthorityAttestationError,
     start_authority_attestor,
 )
 import ns_runtime.authority_attestor as attestor_module
+import ns_runtime.processor.integration as processor_integration_module
 from ns_runtime.authority_wire import (
     MAX_FRAME_BYTES,
     decode_frame,
@@ -88,7 +98,9 @@ from ns_runtime.iam import (
     OperationRiskContext,
     PermissionSnapshot,
 )
+from ns_runtime.iam.authorization import MessageAuthorizationResult
 from ns_runtime.processor import (
+    AuthorizationDecisionEvidence,
     DefaultProcessorErrorMapper,
     DeterministicTestAuditSink,
     EventBus,
@@ -99,6 +111,10 @@ from ns_runtime.processor import (
     ProcessorContext,
     ProcessorDependencies,
     ProcessorTraceReference,
+)
+from ns_runtime.processor.contracts import (
+    AuthorizationDecisionOutcome,
+    _ProductionAuthorizationEvidenceIssuer,
 )
 from ns_runtime.processor.integration import IamProcessorAuthorization
 
@@ -1282,6 +1298,9 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         )
         assert identity is not None
         self.assertIs(BrokerIamVerificationReceipt, type(receipt))
+        self.assertEqual("iam_verification_receipt", receipt.kind)
+        self.assertEqual("iam", receipt.role)
+        self.assertEqual(64, len(receipt.signature))
         self.assertEqual(
             identity.attestor_identity_id,
             receipt.attestor_identity_id,
@@ -1355,12 +1374,8 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         )
         with mock.patch.object(
             broker_module.AuthorityAttestorClient,
-            "verify_iam_result",
+            "_rpc",
             side_effect=AssertionError("synchronous attestor IPC"),
-        ), mock.patch.object(
-            broker_module.AuthorityAttestorClient,
-            "current_endpoint_identity",
-            side_effect=AssertionError("synchronous identity IPC"),
         ):
             self.assertTrue(
                 broker.iam
@@ -1373,6 +1388,359 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     now=datetime.now(timezone.utc),
                 ),
             )
+
+    async def test_signed_iam_receipt_rejects_complete_forgery_and_replay(
+        self,
+    ) -> None:
+        request = _access_request()
+        broker, _ = await self._broker(
+            [_decision(request).to_wire() for _ in range(2)],
+        )
+        other, _ = await self._broker([_decision(request).to_wire()])
+        verified = await broker.iam.access_check_signed(request)
+        receipt = verified.verification
+        identity = broker.iam._broker_session_identity_snapshot_local()
+        assert identity is not None
+        attestor_key = broker.iam._channel._attestor.public_key
+        self.assertTrue(receipt.verify(
+            attestor_public_key=attestor_key,
+            authority=verified.authority,
+            result=verified.result,
+            expected_identity=identity,
+            operation="runtime_access_check",
+            request_fingerprint=verified.authority.request_fingerprint,
+            now=datetime.now(timezone.utc),
+        ))
+
+        def clone(value, **changes):
+            copied = object.__new__(type(value))
+            for field in value.__dataclass_fields__:
+                object.__setattr__(
+                    copied,
+                    field,
+                    changes.get(field, getattr(value, field)),
+                )
+            return copied
+
+        mutations = (
+            {"signature": b"\x00" * 64},
+            {"broker_instance_id": "broker_forged"},
+            {"runtime_id": "runtime:forged"},
+            {"endpoint_id": "endpoint_forged"},
+            {"role": "scheduler"},
+            {"operation": "payload_revalidate"},
+            {"request_fingerprint": "sha256:" + "1" * 64},
+            {"result_fingerprint": "sha256:" + "2" * 64},
+            {"request_json_fingerprint": "sha256:" + "3" * 64},
+            {
+                "verified_at":
+                    receipt.verified_at + timedelta(seconds=1),
+            },
+            {
+                "authority_expires_at":
+                    receipt.authority_expires_at + timedelta(seconds=1),
+            },
+            {"lifecycle_generation": receipt.lifecycle_generation + 1},
+        )
+        for changes in mutations:
+            with self.subTest(changes=tuple(changes)):
+                forged_receipt = clone(receipt, **changes)
+                forged = object.__new__(
+                    broker_module.VerifiedBrokerIamResult,
+                )
+                object.__setattr__(forged, "result", verified.result)
+                object.__setattr__(
+                    forged, "authority", verified.authority,
+                )
+                object.__setattr__(
+                    forged, "verification", forged_receipt,
+                )
+                self.assertFalse(
+                    broker.iam
+                    ._verified_broker_iam_result_is_authentic_local(
+                        forged,
+                        operation="runtime_access_check",
+                        request_fingerprint=(
+                            verified.authority.request_fingerprint
+                        ),
+                        now=datetime.now(timezone.utc),
+                    ),
+                )
+
+        attacker_key = Ed25519PrivateKey.generate()
+        other_key_receipt = clone(receipt, signature=b"")
+        object.__setattr__(
+            other_key_receipt,
+            "signature",
+            attacker_key.sign(
+                broker_module._canonical(
+                    other_key_receipt.signed_values(),
+                ),
+            ),
+        )
+        attacker_verified = object.__new__(
+            broker_module.VerifiedBrokerIamResult,
+        )
+        object.__setattr__(
+            attacker_verified, "result", verified.result,
+        )
+        object.__setattr__(
+            attacker_verified, "authority", verified.authority,
+        )
+        object.__setattr__(
+            attacker_verified, "verification", other_key_receipt,
+        )
+        self.assertFalse(
+            broker.iam._verified_broker_iam_result_is_authentic_local(
+                attacker_verified,
+                operation="runtime_access_check",
+                request_fingerprint=verified.authority.request_fingerprint,
+                now=datetime.now(timezone.utc),
+            ),
+        )
+        self.assertFalse(
+            other.iam._verified_broker_iam_result_is_authentic_local(
+                verified,
+                operation="runtime_access_check",
+                request_fingerprint=verified.authority.request_fingerprint,
+                now=datetime.now(timezone.utc),
+            ),
+        )
+
+        forged_authority = clone(
+            verified.authority,
+            signature=b"\x00" * 64,
+            result_json=broker_module._canonical_json({
+                **verified.result.to_wire(),
+                "reason": "forged_allow",
+            }),
+        )
+        forged_receipt = clone(
+            receipt,
+            signed_result_fingerprint=(
+                broker_module._signed_iam_result_fingerprint(
+                    forged_authority,
+                )
+            ),
+            result_fingerprint=broker_module._iam_result_fingerprint(
+                forged_authority.result_mapping(),
+            ),
+            signature=b"\x00" * 64,
+        )
+        forged_verified = object.__new__(
+            broker_module.VerifiedBrokerIamResult,
+        )
+        object.__setattr__(
+            forged_verified, "result",
+            IamAccessDecision.from_wire(forged_authority.result_mapping()),
+        )
+        object.__setattr__(
+            forged_verified, "authority", forged_authority,
+        )
+        object.__setattr__(
+            forged_verified, "verification", forged_receipt,
+        )
+        self.assertFalse(
+            broker.iam._verified_broker_iam_result_is_authentic_local(
+                forged_verified,
+                operation="runtime_access_check",
+                request_fingerprint=forged_authority.request_fingerprint,
+                now=datetime.now(timezone.utc),
+            ),
+        )
+
+        service = MessageAuthorizationService.for_broker_contract_tests(
+            iam_client=broker.iam,
+            clock=SystemClock(),
+            mode=AuthorizationMode.STRICT,
+            cache_ttl_seconds=30,
+        )
+        issued = await service.authorize(
+            snapshot=_authorization_snapshot(),
+            request=request,
+            risk=OperationRiskContext(),
+        )
+        forged_result = clone(
+            issued,
+            _broker_authority=forged_authority,
+            _broker_verification=forged_receipt,
+        )
+        self.assertIs(MessageAuthorizationResult, type(forged_result))
+        self.assertFalse(forged_result.is_issued_by(service))
+        with mock.patch.object(
+            broker_module.AuthorityAttestorClient,
+            "_rpc",
+            side_effect=AssertionError("synchronous attestor IPC"),
+        ):
+            self.assertTrue(issued.is_issued_by(service))
+
+        contract_evidence = (
+            AuthorizationDecisionEvidence._issued_for_contract_test(
+                decision_version="authorization-decision.v1",
+                decision_outcome=AuthorizationDecisionOutcome.ALLOW,
+                decision_reason="allow",
+                semantic_access_check_reference="sha256:" + "1" * 64,
+                message_reference="sha256:" + "2" * 16,
+                message_type="connection.heartbeat",
+                config_version="config-v1",
+                policy_version="policy-v1",
+                principal_tenant_id="tenant:1",
+                effective_tenant_id="tenant:1",
+                cross_tenant_authorized=False,
+                authorized_target_reference="sha256:" + "3" * 16,
+                session_permission_snapshot_ref="permission:1",
+                session_permission_snapshot_version="version:1",
+                effective_permission_snapshot_ref="permission:1",
+                effective_permission_snapshot_version="version:1",
+            )
+        )
+        production_issuer = object.__new__(
+            _ProductionAuthorizationEvidenceIssuer,
+        )
+        object.__setattr__(production_issuer, "_service", service)
+        forged_evidence = clone(
+            contract_evidence,
+            _issuer=production_issuer,
+            _broker_authority=forged_authority,
+            _broker_verification=forged_receipt,
+        )
+        self.assertFalse(forged_evidence.is_production_authority())
+
+        payload_issuer = object.__new__(_PayloadAccessEvidenceIssuer)
+        object.__setattr__(payload_issuer, "_iam", broker.iam)
+        object.__setattr__(payload_issuer, "_clock", SystemClock())
+        forged_payload = object.__new__(PayloadAccessDecisionEvidence)
+        object.__setattr__(
+            forged_payload, "_authority_seal", payload_issuer,
+        )
+        object.__setattr__(
+            forged_payload, "_broker_authority", forged_authority,
+        )
+        object.__setattr__(
+            forged_payload, "_broker_verification", forged_receipt,
+        )
+        self.assertFalse(forged_payload.is_production_authority())
+        self.assertTrue(broker._channel._custodian.process.is_alive())
+
+    async def test_cache_and_backend_rotation_barriers_refetch_current(
+        self,
+    ) -> None:
+        request = _access_request()
+        for mode, warm_cache in (
+            (AuthorizationMode.STRICT, False),
+            (AuthorizationMode.CACHE, True),
+        ):
+            with self.subTest(mode=mode.value):
+                broker, server = await self._broker(
+                    [_decision(request).to_wire() for _ in range(5)],
+                    session_ttl_seconds=0.3,
+                )
+                service = (
+                    MessageAuthorizationService
+                    .for_broker_contract_tests(
+                        iam_client=broker.iam,
+                        clock=SystemClock(),
+                        mode=mode,
+                        cache_ttl_seconds=60,
+                    )
+                )
+                snapshot = _authorization_snapshot()
+                if warm_cache:
+                    await service.authorize(
+                        snapshot=snapshot,
+                        request=request,
+                        risk=OperationRiskContext(),
+                    )
+                    old_item = next(iter(service._decisions.values()))
+                else:
+                    old_verified = (
+                        await broker.iam.access_check_signed(request)
+                    )
+                await asyncio.sleep(0.22)
+                await broker.iam.access_check_signed(request)
+                original_backend = service._current_backend_result
+                if warm_cache:
+                    cached_calls = 0
+
+                    async def stale_cache_then_miss(*args, **kwargs):
+                        nonlocal cached_calls
+                        del args, kwargs
+                        cached_calls += 1
+                        return old_item if cached_calls == 1 else None
+
+                    patcher = mock.patch.object(
+                        service,
+                        "_current_cached",
+                        side_effect=stale_cache_then_miss,
+                    )
+                else:
+                    backend_calls = 0
+
+                    async def stale_backend_then_current(_request):
+                        nonlocal backend_calls
+                        backend_calls += 1
+                        if backend_calls == 1:
+                            return old_verified
+                        return await original_backend(_request)
+
+                    patcher = mock.patch.object(
+                        service,
+                        "_current_backend_result",
+                        side_effect=stale_backend_then_current,
+                    )
+                with patcher:
+                    result = await service.authorize(
+                        snapshot=snapshot,
+                        request=request,
+                        risk=OperationRiskContext(),
+                    )
+                identity = (
+                    broker.iam._broker_session_identity_snapshot_local()
+                )
+                assert identity is not None
+                self.assertEqual(
+                    identity.lifecycle_generation,
+                    result._broker_verification.lifecycle_generation,
+                )
+                self.assertEqual(
+                    identity.session_key_fingerprint,
+                    result._broker_verification.session_key_fingerprint,
+                )
+                self.assertTrue(result.is_issued_by(service))
+                self.assertTrue(
+                    broker._channel._custodian.process.is_alive(),
+                )
+                self.assertEqual(3, len(server.calls))
+                if warm_cache:
+                    cached = next(iter(service._decisions.values()))
+                    self.assertEqual(
+                        identity.lifecycle_generation,
+                        cached.lifecycle_generation,
+                    )
+
+    async def test_unsigned_attestor_receipt_reaps_broker_graph(
+        self,
+    ) -> None:
+        request = _access_request()
+        broker, _ = await self._broker([_decision(request).to_wire()])
+        original = (
+            broker_module.AuthorityAttestorClient.verify_iam_result
+        )
+
+        def remove_receipt_signature(client, **kwargs):
+            receipt = original(client, **kwargs)
+            receipt.pop("signature")
+            return receipt
+
+        with mock.patch.object(
+            broker_module.AuthorityAttestorClient,
+            "verify_iam_result",
+            remove_receipt_signature,
+        ):
+            with self.assertRaises(NsRuntimeIamUnavailableError):
+                await broker.iam.access_check_signed(request)
+        self.assertFalse(broker._channel._custodian.process.is_alive())
+        self.assertFalse(broker._channel._custodian.attestor.alive)
 
     async def test_full_message_authorization_keeps_event_loop_running(
         self,
@@ -1525,6 +1893,171 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(evidence.is_contract_test_authority())
         self.assertFalse(evidence.is_production_authority())
 
+    async def test_processor_evidence_stale_receipt_retries_authorization(
+        self,
+    ) -> None:
+        from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+        decision = IamAccessDecision(
+            allowed=True,
+            reason="backend_allow",
+            permission_version="version:test",
+            decided_at=datetime.now(timezone.utc),
+        )
+        broker, server = await self._broker(
+            [decision.to_wire(), decision.to_wire()],
+        )
+        clock = ControlledClock(utc_start=PROCESSOR_NOW)
+        service = MessageAuthorizationService.for_broker_contract_tests(
+            iam_client=broker.iam,
+            clock=clock,
+            mode=AuthorizationMode.STRICT,
+            cache_ttl_seconds=30,
+        )
+        authorization = IamProcessorAuthorization.for_contract_tests(
+            service=service,
+        )
+        supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
+        self.addAsyncCleanup(supervisor.shutdown, timeout_seconds=1)
+        session = _processor_session()
+        envelope = _processor_envelope()
+        envelope = dataclasses.replace(
+            envelope,
+            source=dataclasses.replace(
+                envelope.source,
+                connection_id=session.connection_id,
+                tenant_id=session.tenant_id,
+            ),
+            auth_context=dataclasses.replace(
+                envelope.auth_context,
+                permission_snapshot_ref=session.permission_snapshot_ref,
+            ),
+        )
+        context = ProcessorContext(
+            normalized_envelope=envelope,
+            session=session,
+            trace=ProcessorTraceReference(value="trace:p11-fix-17"),
+            config_version="config-v1",
+            policy_version="policy-v1",
+            clock=clock,
+            dependencies=ProcessorDependencies(
+                authorization=authorization,
+                rate_limit=InterfaceOnlyRateLimitEntry(),
+                idempotency=InterfaceOnlyIdempotencyPrecheck(),
+                routing=InterfaceOnlyRoutingPreparation(),
+                response_finalizer=PassthroughResponseFinalizer(),
+                error_mapper=DefaultProcessorErrorMapper(),
+                principal_type=IamPrincipalType.CLIENT,
+                audit_sink=DeterministicTestAuditSink(),
+                event_bus=EventBus(
+                    task_supervisor=supervisor,
+                    default_timeout_seconds=1,
+                ),
+                task_supervisor=supervisor,
+            ),
+        )
+        original = processor_integration_module._authorization_evidence
+        attempts = 0
+
+        def stale_once(**kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise _StaleIamSessionReceipt
+            return original(**kwargs)
+
+        with mock.patch.object(
+            processor_integration_module,
+            "_authorization_evidence",
+            side_effect=stale_once,
+        ):
+            evidence = await authorization.authorize(context)
+        self.assertEqual(2, attempts)
+        self.assertEqual(2, len(server.calls))
+        self.assertTrue(evidence.is_contract_test_authority())
+        self.assertTrue(broker._channel._custodian.process.is_alive())
+
+    async def test_payload_evidence_stale_receipt_retries_revalidation(
+        self,
+    ) -> None:
+        from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+        now = datetime.now(timezone.utc)
+        decision = PayloadRefRevalidationDecision(
+            valid=True,
+            allowed=True,
+            reason="backend_allow",
+            object_id="payload:rotation",
+            version="version:1",
+            checksum="sha256:" + "1" * 64,
+            size_bytes=32,
+            tenant_id="tenant:1",
+            target_principal="identity:1",
+            target_fingerprint="sha256:" + "2" * 64,
+            permission_snapshot_ref="permission:1",
+            permission_version="version:1",
+            decision_reference="decision:rotation",
+            decided_at=now,
+            expires_at=now + timedelta(minutes=5),
+        )
+
+        class RetryBoundaryIam:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def _is_production_composition_bound_local(self) -> bool:
+                return True
+
+            async def revalidate_payload_ref_signed(self, request):
+                del request
+                self.calls += 1
+                return mock.Mock(result=decision)
+
+        iam = RetryBoundaryIam()
+        issuer = mock.Mock()
+        issuer.issue.side_effect = (_StaleIamSessionReceipt(), None)
+        validator = object.__new__(IamDeliveryPayloadReferenceValidator)
+        object.__setattr__(validator, "_iam", iam)
+        object.__setattr__(validator, "_clock", SystemClock())
+        object.__setattr__(validator, "_evidence_issuer", issuer)
+
+        evidence = object.__new__(PayloadEvidence)
+        for name, value in {
+            "kind": PayloadKind.REFERENCE,
+            "object_id": decision.object_id,
+            "object_version": decision.version,
+            "checksum": decision.checksum,
+            "size_bytes": decision.size_bytes,
+            "evidence_fingerprint": "sha256:" + "3" * 64,
+        }.items():
+            object.__setattr__(evidence, name, value)
+        delivery = object.__new__(DeliveryRecord)
+        for name, value in {
+            "payload_evidence": evidence,
+            "tenant_id": decision.tenant_id,
+            "target_fingerprint": decision.target_fingerprint,
+            "policy_decision": mock.Mock(
+                request_fingerprint="sha256:" + "4" * 64,
+            ),
+        }.items():
+            object.__setattr__(delivery, name, value)
+        target = object.__new__(LocalDeliveryTarget)
+        for name, value in {
+            "identity": decision.target_principal,
+            "tenant_id": decision.tenant_id,
+            "permission_snapshot_reference": (
+                decision.permission_snapshot_ref
+            ),
+            "permission_version": decision.permission_version,
+            "access_decision_reference": "sha256:" + "5" * 64,
+        }.items():
+            object.__setattr__(target, name, value)
+
+        result = await validator.validate(delivery, target=target)
+        self.assertFalse(result.valid)
+        self.assertEqual(2, iam.calls)
+        self.assertEqual(2, issuer.issue.call_count)
+
     async def test_cache_tracks_session_generation_and_expires_authority(
         self,
     ) -> None:
@@ -1601,6 +2134,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                 now=datetime.now(timezone.utc),
             ),
         )
+        self.assertFalse(first.is_issued_by(service))
         latest_verified = object.__new__(
             broker_module.VerifiedBrokerIamResult,
         )

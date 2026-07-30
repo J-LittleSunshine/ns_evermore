@@ -30,6 +30,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 
 ATTESTOR_WIRE_VERSION = 1
+IAM_VERIFICATION_RECEIPT_WIRE_VERSION = 1
+IAM_VERIFICATION_RECEIPT_KIND = "iam_verification_receipt"
 ATTESTOR_MAX_FRAME_BYTES = 8 * 1024 * 1024
 _MAX_STRING_CHARS = 2 * 1024 * 1024
 _MAX_CONTAINER_ITEMS = 20_000
@@ -715,6 +717,8 @@ def _execute_attestation(
             signed_result=_require_object_value(
                 fields["signed_result"],
             ),
+            attestor_private_key=attestor_private_key,
+            attestor_instance_id=attestor_instance_id,
             now=now,
         )
         return result, approved, pending_rotation
@@ -967,6 +971,8 @@ def _verify_iam_result(
     operation: str,
     request_fingerprint: str,
     signed_result: dict[str, object],
+    attestor_private_key: Ed25519PrivateKey,
+    attestor_instance_id: str,
     now: datetime,
 ) -> dict[str, object]:
     values = _without_signature(signed_result, {
@@ -999,24 +1005,39 @@ def _verify_iam_result(
         _canonical(values),
         _decode_bytes(signed_result["signature"]),
     )
-    return {
-        "verified": True,
-        "identity_id": approved["identity_id"],
+    result_json = _canonical_json_string(values["result_json"])
+    request_json = _canonical_json_string(values["request_json"])
+    receipt_values = {
+        "version": IAM_VERIFICATION_RECEIPT_WIRE_VERSION,
+        "kind": IAM_VERIFICATION_RECEIPT_KIND,
+        "attestor_instance_id": attestor_instance_id,
+        "attestor_identity_id": approved["identity_id"],
         "broker_instance_id": approved["broker_instance_id"],
+        "runtime_id": approved["runtime_id"],
         "lifecycle_generation": approved["lifecycle_generation"],
         "session_key_fingerprint": approved["session_key_fingerprint"],
+        "endpoint_id": _string(
+            _require_object_value(approved["endpoints"])["iam"],
+        ),
+        "role": "iam",
         "operation": operation,
         "request_fingerprint": request_fingerprint,
         "signed_result_fingerprint": _fingerprint(signed_result),
         "result_fingerprint": _fingerprint(
-            _decode_frame(
-                _canonical_json_string(values["result_json"]).encode("utf-8"),
-            ),
+            _decode_frame(result_json.encode("utf-8")),
+        ),
+        "request_json_fingerprint": _fingerprint(
+            _decode_frame(request_json.encode("utf-8")),
         ),
         "verified_at": _encode_time(now),
         "authority_expires_at": _encode_time(expires_at),
-        "result_json": _canonical_json_string(values["result_json"]),
-        "request_json": _canonical_json_string(values["request_json"]),
+        "nonce": uuid.uuid4().hex,
+    }
+    return {
+        **receipt_values,
+        "signature": _encode_bytes(
+            attestor_private_key.sign(_canonical(receipt_values)),
+        ),
     }
 
 
@@ -1402,6 +1423,8 @@ def _decode_time(value: object) -> datetime:
 
 __all__ = (
     "ATTESTOR_MAX_FRAME_BYTES",
+    "IAM_VERIFICATION_RECEIPT_KIND",
+    "IAM_VERIFICATION_RECEIPT_WIRE_VERSION",
     "AuthorityAttestationError",
     "AuthorityAttestorClient",
     "start_authority_attestor",

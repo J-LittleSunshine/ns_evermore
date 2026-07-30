@@ -325,6 +325,11 @@ class _PayloadAccessEvidenceIssuer:
         broker_authority = getattr(verified_result, "authority", None)
         broker_verification = getattr(verified_result, "verification", None)
         verification_now = datetime.now(timezone.utc)
+        request_fingerprint = (
+            broker_request_fingerprint("payload_revalidate", request)
+            if type(request) is PayloadRefRevalidationRequest
+            else ""
+        )
         if (
             not self._iam._is_production_composition_bound_local()
             or type(request) is not PayloadRefRevalidationRequest
@@ -333,19 +338,27 @@ class _PayloadAccessEvidenceIssuer:
             or type(broker_authority) is not BrokerSignedIamResult
             or type(broker_verification)
             is not BrokerIamVerificationReceipt
-            or not self._iam._verified_iam_result_is_current_local(
-                verified_result,
-                operation="payload_revalidate",
-                request_fingerprint=broker_request_fingerprint(
-                    "payload_revalidate", request,
-                ),
-                now=verification_now,
-            )
             or broker_authority.result_mapping() != decision.to_wire()
             or broker_authority.request_mapping() != request.to_wire()
             or not isinstance(delivery, DeliveryRecord)
             or type(target) is not LocalDeliveryTarget
         ):
+            _invalid("payload_access_issuer.result")
+        if not self._iam._verified_iam_result_is_current_local(
+            verified_result,
+            operation="payload_revalidate",
+            request_fingerprint=request_fingerprint,
+            now=verification_now,
+        ):
+            from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+            if self._iam._verified_broker_iam_result_is_authentic_local(
+                verified_result,
+                operation="payload_revalidate",
+                request_fingerprint=request_fingerprint,
+                now=verification_now,
+            ):
+                raise _StaleIamSessionReceipt
             _invalid("payload_access_issuer.result")
         evidence = delivery.payload_evidence
         now = verification_now
@@ -413,13 +426,25 @@ class _PayloadAccessEvidenceIssuer:
         evidence_fingerprint = payload_access_evidence_fingerprint(
             **values,
         )
-        return PayloadAccessDecisionEvidence(
+        access_evidence = PayloadAccessDecisionEvidence(
             evidence_fingerprint=evidence_fingerprint,
             **values,
             _issuer=self,
             _broker_authority=broker_authority,
             _broker_verification=broker_verification,
         )
+        if not access_evidence.is_production_authority():
+            from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+            if self._iam._verified_broker_iam_result_is_authentic_local(
+                verified_result,
+                operation="payload_revalidate",
+                request_fingerprint=request_fingerprint,
+                now=datetime.now(timezone.utc),
+            ):
+                raise _StaleIamSessionReceipt
+            _invalid("payload_access_issuer.receipt")
+        return access_evidence
 
     def _verify(self, evidence: "PayloadAccessDecisionEvidence") -> bool:
         from ns_runtime.authority_broker import (

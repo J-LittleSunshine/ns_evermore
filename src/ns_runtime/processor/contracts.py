@@ -150,9 +150,14 @@ class _ProductionAuthorizationEvidenceIssuer:
         if (
             not self._service.production_authority
             or type(result) is not MessageAuthorizationResult
-            or not result.is_issued_by(self._service)
             or not isinstance(context, ProcessorContext)
         ):
+            _invalid("authorization_evidence_issuer.result")
+        if not result.is_issued_by(self._service):
+            from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+            if self._service._authorization_result_has_stale_session(result):
+                raise _StaleIamSessionReceipt
             _invalid("authorization_evidence_issuer.result")
         request = result.request
         session = context.session
@@ -194,38 +199,45 @@ class _ProductionAuthorizationEvidenceIssuer:
             or result._broker_verification is None
         ):
             _invalid("authorization_evidence_issuer.broker_authority")
-        return AuthorizationDecisionEvidence(
-                message_binding_reference="sha256:" + "0" * 64,
-                semantic_decision_reference="sha256:" + "0" * 64,
-                semantic_access_check_reference=(
-                    _authorization_decision_digest(semantic_request)
-                ),
-                decision_version="authorization-decision.v1",
-                decision_outcome=AuthorizationDecisionOutcome.ALLOW,
-                decision_reason=result.decision.reason,
-                message_reference=message_reference,
-                message_type=context.envelope.message.type,
-                config_version=context.config_version,
-                policy_version=context.policy_version,
-                principal_tenant_id=session.tenant_id,
-                effective_tenant_id=effective_tenant_id,
-                cross_tenant_authorized=(
-                    result.decision.allowed and request.cross_tenant
-                ),
-                authorized_target_reference=target_reference,
-                session_permission_snapshot_ref=session.permission_snapshot_ref,
-                session_permission_snapshot_version=session.permission_version,
-                effective_permission_snapshot_ref=(
-                    result.effective_snapshot.permission_snapshot_ref
-                ),
-                effective_permission_snapshot_version=(
-                    result.effective_snapshot.permission_version
-                ),
-                _issuer=self,
-                _broker_authority=result._broker_authority,
-                _broker_verification=result._broker_verification,
-                _derive_references=True,
-            )
+        evidence = AuthorizationDecisionEvidence(
+            message_binding_reference="sha256:" + "0" * 64,
+            semantic_decision_reference="sha256:" + "0" * 64,
+            semantic_access_check_reference=(
+                _authorization_decision_digest(semantic_request)
+            ),
+            decision_version="authorization-decision.v1",
+            decision_outcome=AuthorizationDecisionOutcome.ALLOW,
+            decision_reason=result.decision.reason,
+            message_reference=message_reference,
+            message_type=context.envelope.message.type,
+            config_version=context.config_version,
+            policy_version=context.policy_version,
+            principal_tenant_id=session.tenant_id,
+            effective_tenant_id=effective_tenant_id,
+            cross_tenant_authorized=(
+                result.decision.allowed and request.cross_tenant
+            ),
+            authorized_target_reference=target_reference,
+            session_permission_snapshot_ref=session.permission_snapshot_ref,
+            session_permission_snapshot_version=session.permission_version,
+            effective_permission_snapshot_ref=(
+                result.effective_snapshot.permission_snapshot_ref
+            ),
+            effective_permission_snapshot_version=(
+                result.effective_snapshot.permission_version
+            ),
+            _issuer=self,
+            _broker_authority=result._broker_authority,
+            _broker_verification=result._broker_verification,
+            _derive_references=True,
+        )
+        if not evidence.is_production_authority():
+            from ns_runtime.iam.authorization import _StaleIamSessionReceipt
+
+            if self._service._authorization_result_has_stale_session(result):
+                raise _StaleIamSessionReceipt
+            _invalid("authorization_evidence_issuer.receipt")
+        return evidence
 
     def _verify(self, evidence: "AuthorizationDecisionEvidence") -> bool:
         authority = evidence._broker_authority
