@@ -40,6 +40,8 @@ from ns_runtime.startup import (
     RuntimeStartupPreflight,
 )
 
+runtime_main_module = importlib.import_module("ns_runtime.main")
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
@@ -1206,6 +1208,130 @@ class NsRuntimeMainTestCase(unittest.TestCase):
         self.assertEqual((), resources.adapters)
         self.assertIsNone(resources.logger)
 
+    def test_main_retries_only_incomplete_composition_resources(
+        self,
+    ) -> None:
+        operation_failure = RuntimeError("runtime operation failed")
+        resources_seen: list[_MainCompositionResources] = []
+
+        class AsyncResource:
+            def __init__(self, *, fail_once: bool) -> None:
+                self.fail_once = fail_once
+                self.calls = 0
+
+            async def close(self) -> None:
+                self.calls += 1
+                if self.fail_once and self.calls == 1:
+                    raise RuntimeError("async cleanup failed")
+
+            async def shutdown(self) -> None:
+                await self.close()
+
+        class SyncResource:
+            def __init__(self, *, fail_once: bool) -> None:
+                self.fail_once = fail_once
+                self.calls = 0
+
+            def close(self) -> None:
+                self.calls += 1
+                if self.fail_once and self.calls == 1:
+                    raise RuntimeError("sync cleanup failed")
+
+        manager = AsyncResource(fail_once=True)
+        supervisor = AsyncResource(fail_once=False)
+        broker = SyncResource(fail_once=True)
+        logger = SyncResource(fail_once=True)
+
+        def fail_after_composition(**values: object) -> int:
+            resources = values["resources"]
+            self.assertIsInstance(resources, _MainCompositionResources)
+            resources_seen.append(resources)
+            resources.transport_manager = manager
+            resources.adapters = (object(),)
+            resources.task_supervisor = supervisor
+            resources.authority_broker = broker
+            resources.logger = logger
+            raise operation_failure
+
+        with mock.patch(
+            "ns_runtime.main._compose_runtime_main",
+            side_effect=fail_after_composition,
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                self._main_after_bootstrap_for_test()
+
+        self.assertIs(operation_failure, raised.exception)
+        self.assertEqual(2, manager.calls)
+        self.assertEqual(1, supervisor.calls)
+        self.assertEqual(2, broker.calls)
+        self.assertEqual(2, logger.calls)
+        self.assertEqual(1, len(resources_seen))
+        self.assertFalse(resources_seen[0].incomplete)
+
+    def test_main_composition_no_progress_overrides_operation_failure(
+        self,
+    ) -> None:
+        operation_failure = RuntimeError("operation identity")
+        resources_seen: list[_MainCompositionResources] = []
+
+        class StubbornManager:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def close(self) -> None:
+                self.calls += 1
+                raise RuntimeError("sensitive manager cleanup text")
+
+        class SyncResource:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def close(self) -> None:
+                self.calls += 1
+
+        manager = StubbornManager()
+        broker = SyncResource()
+        logger = SyncResource()
+
+        def fail_after_composition(**values: object) -> int:
+            resources = values["resources"]
+            self.assertIsInstance(resources, _MainCompositionResources)
+            resources_seen.append(resources)
+            resources.transport_manager = manager
+            resources.authority_broker = broker
+            resources.logger = logger
+            raise operation_failure
+
+        with mock.patch(
+            "ns_runtime.main._compose_runtime_main",
+            side_effect=fail_after_composition,
+        ):
+            with self.assertRaises(NsStateError) as raised:
+                self._main_after_bootstrap_for_test()
+
+        failure = raised.exception
+        self.assertEqual(
+            "runtime_composition_cleanup_incomplete",
+            failure.details["reason"],
+        )
+        self.assertIs(operation_failure, failure.__cause__)
+        self.assertIs(resources_seen[0], failure.cleanup_owner)
+        self.assertEqual(4, manager.calls)
+        self.assertEqual(1, broker.calls)
+        self.assertEqual(1, logger.calls)
+        self.assertNotIn("sensitive manager cleanup text", repr(failure))
+        self.assertEqual(
+            {
+                "pending_adapters": 0,
+                "transport_manager_owned": True,
+                "task_supervisor_owned": False,
+                "logger_owned": False,
+                "authority_broker_owned": False,
+                "service_lifecycle_owner_active": False,
+            },
+            failure.cleanup_owner.pending_facts(),
+        )
+
     def test_composition_close_continues_after_process_level_failure(self) -> None:
         calls: list[str] = []
         interrupt = KeyboardInterrupt("manager close interrupted")
@@ -1240,6 +1366,53 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             ["manager", "supervisor", "broker", "logger"],
             calls,
         )
+        self.assertIsNotNone(resources.transport_manager)
+        self.assertIsNone(resources.task_supervisor)
+        self.assertIsNone(resources.authority_broker)
+        self.assertIsNone(resources.logger)
+
+    def test_main_retries_authority_bootstrap_after_first_close_failure(
+        self,
+    ) -> None:
+        operation_failure = RuntimeError("ordinary operation")
+
+        class FakeBootstrap:
+            def __init__(self) -> None:
+                self.close_calls = 0
+                self.incomplete = True
+
+            @property
+            def cleanup_progress(self) -> tuple[bool]:
+                return (self.incomplete,)
+
+            def pending_facts(self) -> dict[str, object]:
+                return {"process_owned": self.incomplete}
+
+            def close(self) -> None:
+                self.close_calls += 1
+                if self.close_calls == 1:
+                    raise RuntimeError("stubborn process")
+                self.incomplete = False
+
+        bootstrap = FakeBootstrap()
+        preflight = mock.Mock()
+        preflight.resolve_environment.return_value = "local"
+        preflight.load_config_snapshot.side_effect = operation_failure
+        with mock.patch(
+            "ns_runtime.authority_bootstrap."
+            "load_inherited_authority_bootstrap",
+            return_value=bootstrap,
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                _runtime_main(
+                    environment="local",
+                    config_path="unused.json",
+                    preflight=preflight,
+                )
+
+        self.assertIs(operation_failure, raised.exception)
+        self.assertEqual(2, bootstrap.close_calls)
+        self.assertFalse(bootstrap.incomplete)
 
     def test_prelaunch_baseexceptions_preserve_identity_and_close_bootstrap(
         self,
@@ -1281,9 +1454,12 @@ class NsRuntimeMainTestCase(unittest.TestCase):
     ) -> None:
         operation_failure = RuntimeError("ordinary")
         cleanup_failure = KeyboardInterrupt("cleanup interrupt")
+        close_calls = 0
 
         class FakeBootstrap:
             def close(self) -> None:
+                nonlocal close_calls
+                close_calls += 1
                 raise cleanup_failure
 
         preflight = mock.Mock()
@@ -1301,6 +1477,65 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                     preflight=preflight,
                 )
         self.assertIs(cleanup_failure, raised.exception)
+        self.assertEqual(3, close_calls)
+        incomplete = raised.exception.__cause__
+        self.assertIsInstance(incomplete, NsStateError)
+        self.assertEqual(
+            "authority_bootstrap_cleanup_incomplete",
+            incomplete.details["reason"],
+        )
+        self.assertIs(operation_failure, incomplete.__cause__)
+        self.assertIsInstance(incomplete.cleanup_owner, FakeBootstrap)
+
+    def test_authority_cleanup_no_progress_overrides_operation_failure(
+        self,
+    ) -> None:
+        operation_failure = RuntimeError("ordinary operation")
+
+        class FakeBootstrap:
+            incomplete = True
+            cleanup_progress = ("stubborn-process",)
+
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            def pending_facts(self) -> dict[str, object]:
+                return {
+                    "process_owned": True,
+                    "process_alive": True,
+                }
+
+            def close(self) -> None:
+                self.close_calls += 1
+                raise RuntimeError("private process cleanup failure")
+
+        bootstrap = FakeBootstrap()
+        preflight = mock.Mock()
+        preflight.resolve_environment.return_value = "local"
+        preflight.load_config_snapshot.side_effect = operation_failure
+        with mock.patch(
+            "ns_runtime.authority_bootstrap."
+            "load_inherited_authority_bootstrap",
+            return_value=bootstrap,
+        ):
+            with self.assertRaises(NsStateError) as raised:
+                _runtime_main(
+                    environment="local",
+                    config_path="unused.json",
+                    preflight=preflight,
+                )
+
+        failure = raised.exception
+        self.assertEqual(
+            "authority_bootstrap_cleanup_incomplete",
+            failure.details["reason"],
+        )
+        self.assertIs(operation_failure, failure.__cause__)
+        self.assertIs(bootstrap, failure.cleanup_owner)
+        self.assertEqual(3, bootstrap.close_calls)
+        self.assertEqual(True, failure.details["process_owned"])
+        self.assertEqual(True, failure.details["process_alive"])
+        self.assertNotIn("private process cleanup failure", repr(failure))
 
     def test_post_launch_composition_failure_closes_all_authority_resources(
         self,
@@ -1374,6 +1609,18 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                 "physical_domain_lease": True,
             },
             resource_closed,
+        )
+
+    def _main_after_bootstrap_for_test(self) -> int:
+        return runtime_main_module._main_after_authority_bootstrap(
+            authority_bootstrap=object(),
+            environment=None,
+            config_path=None,
+            startup_root=None,
+            startup_directories=None,
+            preflight=None,
+            transport_ssl_context=None,
+            self_check=False,
         )
 
     def test_main_missing_websockets_has_no_directory_or_policy_side_effect(

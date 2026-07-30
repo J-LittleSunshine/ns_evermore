@@ -7,7 +7,27 @@
 
 本文件按完成时间升序保存历史验收证据，不作为当前执行游标或工作包状态的权威来源。当前状态只在实施计划中维护。原实施计划中的直接验收块与重复交接快照已合并；命令、通过数量、修改文件、隔离边界和仍影响后续工作的限制予以保留。
 
-## 2026-07-30 retryable cleanup、bounded inline seal 与 TTL 稳定性修复（当前记录）
+## 2026-07-30 detached FD 单次 close 与 main 外层 owner 有界消费（当前记录）
+
+### P01—P11 剩余 cleanup 审查关闭
+
+- 起始事实：分支`codex/ns-runtime-implementation`；基准及起始HEAD均为`d522d0712b365a4878fe4e747fa27b9303c0c8ec`；起始`git status --short --branch`仅显示`## codex/ns-runtime-implementation...origin/codex/ns-runtime-implementation`，工作树clean。本轮未切换/创建分支，未commit、push或创建PR。
+- detached raw FD：删除`_PendingRawFdOwner`。duplicate handle在detach成功后、`os.close()`开始前即从owner集合消费；无论close成功、`OSError`或`BaseException`均不保留或重试同一整数。异常只留下稳定布尔事实`fd_close_outcome_uncertain`，owner details不包含FD整数或异常文本；事实无法在当前进程内安全消除时依赖确定性进程退出，不以精确重试同一FD解决。`_close_inherited_fds()`同样先消费整数集合、每个唯一整数只尝试一次，并使用同一uncertain事实语义。
+- main外层owner：`InheritedAuthorityBootstrap`和`_MainCompositionResources`均公开非敏感`incomplete`、`cleanup_progress`与`pending_facts`。main以最多16次、连续3次无进展即终止的同步循环消费owner；成功资源立即移除且不重复，失败资源才进入下一次。稳定终止原因分别为`authority_bootstrap_cleanup_incomplete`和`runtime_composition_cleanup_incomplete`，异常显式持有`cleanup_owner`。普通cleanup-incomplete覆盖普通operation failure并以cause保留原异常；进程级`BaseException`保持最高优先级，cleanup-incomplete owner/facts保留在cause链。
+- 回归边界：service仍在同一event loop内消费cleanup；StateStore proxy仍只在channel close成功后标记closed；bounded inline seal与generation驱动TTL测试未回退。production certificate、attestation、IAM receipt及StateStore response验证未放宽。P12继续`BLOCKED / NOT_STARTED / F0`，未实现或启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
+- 新增/更新测试：覆盖`KeyboardInterrupt`与`OSError`后的raw FD单次close、相同FD数字被新资源复用后不会误关、pending facts不暴露/保留可重试整数、manager/logger/broker首次失败后main自动第二次成功、composition及bootstrap连续无进展稳定错误与显式owner、bootstrap首次失败第二次成功、cleanup `BaseException`继续处理其余资源，以及成功资源不被双owner或重复关闭。
+- 定向authority：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_authority_bootstrap tests.test_runtime_authority_broker`，`Ran 65 tests in 96.031s, OK`。新增路径小组合`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_authority_bootstrap tests.test_runtime_main`最终`Ran 43 tests in 9.577s, OK (skipped=6)`。
+- 定向main/service/shutdown/transport：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_main tests.test_runtime_service tests.test_runtime_shutdown tests.test_runtime_transport_backpressure tests.test_runtime_transport_conformance tests.test_runtime_transport_contracts tests.test_runtime_transport_errors tests.test_runtime_transport_identity tests.test_runtime_transport_lifecycle tests.test_runtime_transport_metrics tests.test_runtime_transport_registry tests.test_runtime_transport_websocket_tcp`，`Ran 124 tests in 12.588s, OK (skipped=6)`。
+- 定向StateStore与真实Redis：`PYTHONPATH=src python3 -m unittest -q tests.test_state_store tests.test_runtime_state_store tests.test_redis_state_store_provider`为`Ran 45 tests in 0.831s, OK`；强制真实Redis命令`NS_RUNTIME_REQUIRE_REDIS_INTEGRATION=1 PYTHONPATH=src python3 -m unittest -q tests.test_redis_state_store_integration`为`Ran 23 tests in 71.783s, OK`，无skip。
+- 定向IAM/routing/delivery：`PYTHONPATH=src python3 -m unittest -q tests.test_backend_runtime_iam tests.test_runtime_iam_authorization tests.test_runtime_iam_client tests.test_runtime_iam_credential_recovery tests.test_runtime_routing tests.test_runtime_routing_contracts tests.test_runtime_delivery_admission tests.test_runtime_delivery_scheduling`，`Ran 132 tests in 77.285s, OK`。
+- docs与静态结果：`PYTHONPATH=src python3 -m unittest -q tests.test_runtime_documentation_security tests.test_requirements tests.test_runtime_bootstrap tests.test_runtime_processor_boundaries`阶段执行为`Ran 23 tests in 4.035s, OK`，文档最终落盘后为`Ran 23 tests in 3.992s, OK`；最终`PYTHONPATH=src python3 -m compileall -q src tests`及`git diff --check`通过。
+- 全仓首次失败及复跑：完全相同命令`env -u PYTHONASYNCIODEBUG NS_RUNTIME_REQUIRE_REDIS_INTEGRATION=1 PYTHONPATH=src python3 -m unittest discover -s tests -t . -p 'test_*.py' -q`首次为`Ran 981 tests in 282.584s, FAILED (errors=1, skipped=7)`，`test_cache_tracks_session_generation_and_expires_authority`偶发`attestor_unavailable`；原样单项复跑`Ran 1 test in 2.800s, OK`。重新计数首轮又为`Ran 981 tests in 281.455s, FAILED (errors=1, skipped=7)`，`test_full_message_authorization_keeps_event_loop_running`同样偶发`attestor_unavailable`；原样单项复跑`Ran 1 test in 1.607s, OK`。两项均未修改生产或测试验证语义。
+- 最终连续三轮实际结果：从下一次完整命令重新计数，依次为`Ran 981 tests in 280.926s, OK (skipped=7)`、`Ran 981 tests in 282.076s, OK (skipped=7)`、`Ran 981 tests in 282.977s, FAILED (errors=2, skipped=7)`。第3轮唯一测试方法`test_async_authority_operations_do_not_block_event_loop`的lifecycle/IAM子项偶发`broker_unavailable`；原样单项复跑`Ran 1 test in 2.380s, OK`。因此本轮如实记录为两轮绿色、第三轮2 errors，未声称连续三轮全绿。7项skip中6项需要仓库外deployment production authority private key，1项为当前Linux不适用的Windows event-loop policy。
+- 修改文件：`src/ns_runtime/authority_bootstrap.py`、`src/ns_runtime/authority_broker.py`、`src/ns_runtime/main.py`；`tests/test_runtime_authority_bootstrap.py`、`tests/test_runtime_main.py`；实施计划与本验收日志，共7个代码、测试及相关文档文件。
+- 未验证：当前commit`d522d0712b365a4878fe4e747fa27b9303c0c8ec`及本次候选没有可归属的远端绿色CI，保持`UNVERIFIED`。没有deployment production authority private key，production正向main/真实IAM/transport仍未验证；Valkey server、Redis Sentinel/Cluster、replica/failover、真实Windows及uvloop全树未验证。旧Redis凭据继续记录为“仓库值已移除，服务端轮换待人工确认”。
+- 结束事实：HEAD仍为`d522d0712b365a4878fe4e747fa27b9303c0c8ec`；`git status --short --branch`显示原分支跟踪行及上述7个modified文件。未切换/创建分支，未commit、push或创建PR。
+
+## 2026-07-30 retryable cleanup、bounded inline seal 与 TTL 稳定性修复（前一记录）
 
 ### P01—P11 剩余 cleanup owner 审查修复
 

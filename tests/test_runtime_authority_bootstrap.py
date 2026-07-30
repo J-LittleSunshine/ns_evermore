@@ -535,43 +535,79 @@ class AuthorityBootstrapTransactionTestCase(unittest.TestCase):
         owner.close()
         self.assertFalse(owner.incomplete)
 
-    def test_detached_fd_close_failure_retains_raw_fd_for_exact_retry(
+    def test_detached_fd_close_failure_is_never_retried(
         self,
     ) -> None:
-        descriptor = 73
+        for close_failure in (
+            KeyboardInterrupt("close interrupted"),
+            OSError("close outcome unknown"),
+        ):
+            with self.subTest(failure_type=type(close_failure).__name__):
+                descriptor = 73
+
+                class Handle:
+                    def __init__(self) -> None:
+                        self.detach_calls = 0
+
+                    def detach(self) -> int:
+                        self.detach_calls += 1
+                        return descriptor
+
+                handle = Handle()
+                owner = bootstrap_module._AuthorityStartupCleanupOwner(
+                    duplicate_handles=[handle],
+                )
+                with mock.patch.object(
+                    bootstrap_module.os,
+                    "close",
+                    side_effect=close_failure,
+                ) as close:
+                    with self.assertRaises(type(close_failure)) as raised:
+                        owner.close()
+                    self.assertIs(close_failure, raised.exception)
+                    owner.close()
+
+                self.assertEqual(1, handle.detach_calls)
+                self.assertEqual([mock.call(descriptor)], close.call_args_list)
+                self.assertEqual([], owner.duplicate_handles)
+                self.assertTrue(owner.fd_close_outcome_uncertain)
+                self.assertTrue(owner.incomplete)
+
+    def test_detached_fd_cleanup_does_not_close_reused_descriptor(
+        self,
+    ) -> None:
+        descriptor = 81
+        reused_resource_closed = False
+        close_attempts = 0
 
         class Handle:
-            def __init__(self) -> None:
-                self.detach_calls = 0
-
             def detach(self) -> int:
-                self.detach_calls += 1
                 return descriptor
 
-        handle = Handle()
-        handles: list[object] = [handle]
-        close_failure = KeyboardInterrupt("close interrupted")
+        def close_once(value: int) -> None:
+            nonlocal close_attempts, reused_resource_closed
+            self.assertEqual(descriptor, value)
+            close_attempts += 1
+            if close_attempts == 1:
+                raise OSError("uncertain close result")
+            reused_resource_closed = True
+
+        owner = bootstrap_module._AuthorityStartupCleanupOwner(
+            duplicate_handles=[Handle()],
+        )
         with mock.patch.object(
             bootstrap_module.os,
             "close",
-            side_effect=(close_failure, None),
-        ) as close:
-            self.assertIs(
-                close_failure,
-                bootstrap_module._close_duplicate_handles(handles),
-            )
-            self.assertEqual(1, len(handles))
-            self.assertIsInstance(
-                handles[0],
-                bootstrap_module._PendingRawFdOwner,
-            )
-            self.assertIsNone(
-                bootstrap_module._close_duplicate_handles(handles),
-            )
+            side_effect=close_once,
+        ):
+            with self.assertRaises(OSError):
+                owner.close()
+            # The numeric descriptor is now treated as belonging to an
+            # unrelated replacement resource.
+            owner.close()
 
-        self.assertEqual(1, handle.detach_calls)
-        self.assertEqual([mock.call(descriptor), mock.call(descriptor)], close.call_args_list)
-        self.assertEqual([], handles)
+        self.assertEqual(1, close_attempts)
+        self.assertFalse(reused_resource_closed)
 
     def test_combined_cleanup_failure_retains_every_pending_owner(
         self,
@@ -580,10 +616,14 @@ class AuthorityBootstrapTransactionTestCase(unittest.TestCase):
         process = _StubbornProcess()
         process.alive = True
         attestor = _RetryClose(failure=RuntimeError("attestor close"))
-        raw_fd = bootstrap_module._PendingRawFdOwner(91)
+
+        class Handle:
+            def detach(self) -> int:
+                return 91
+
         owner = bootstrap_module._AuthorityStartupCleanupOwner(
             connections=({"lifecycle": connection},),
-            duplicate_handles=[raw_fd],
+            duplicate_handles=[Handle()],
             inherited_fds=[92],
         )
         owner.process = process
@@ -600,14 +640,18 @@ class AuthorityBootstrapTransactionTestCase(unittest.TestCase):
 
         facts = owner.pending_facts()
         self.assertEqual(1, facts["pending_connections"])
-        self.assertEqual(1, facts["pending_duplicate_handles"])
-        self.assertEqual(1, facts["pending_inherited_fds"])
+        self.assertEqual(0, facts["pending_duplicate_handles"])
+        self.assertEqual(0, facts["pending_inherited_fds"])
         self.assertTrue(facts["process_owned"])
         self.assertTrue(facts["attestor_owned"])
+        self.assertTrue(facts["fd_close_outcome_uncertain"])
+        self.assertNotIn("descriptor", facts)
         process.alive = False
         with mock.patch.object(bootstrap_module.os, "close"):
             owner.close()
-        self.assertFalse(owner.incomplete)
+        self.assertTrue(owner.incomplete)
+        self.assertEqual([], owner.duplicate_handles)
+        self.assertEqual([], owner.inherited_fds)
 
     def test_cleanup_base_exception_outranks_operation_and_keeps_safe_cause(
         self,

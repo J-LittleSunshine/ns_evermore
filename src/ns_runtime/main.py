@@ -214,6 +214,40 @@ class _MainCompositionResources:
         self.authority_broker: object | None = None
         self.service_lifecycle_owner: object | None = None
 
+    @property
+    def incomplete(self) -> bool:
+        return bool(
+            self.adapters
+            or self.transport_manager is not None
+            or self.task_supervisor is not None
+            or self.logger is not None
+            or self.authority_broker is not None
+            or self.service_lifecycle_owner is not None
+        )
+
+    @property
+    def cleanup_progress(self) -> tuple[object, ...]:
+        return (
+            len(self.adapters),
+            self.transport_manager is not None,
+            self.task_supervisor is not None,
+            self.logger is not None,
+            self.authority_broker is not None,
+            self.service_lifecycle_owner is not None,
+        )
+
+    def pending_facts(self) -> dict[str, object]:
+        return {
+            "pending_adapters": len(self.adapters),
+            "transport_manager_owned": self.transport_manager is not None,
+            "task_supervisor_owned": self.task_supervisor is not None,
+            "logger_owned": self.logger is not None,
+            "authority_broker_owned": self.authority_broker is not None,
+            "service_lifecycle_owner_active": (
+                self.service_lifecycle_owner is not None
+            ),
+        }
+
     def transfer_service_resources(self) -> None:
         self.adapters = ()
         self.transport_manager = None
@@ -302,6 +336,185 @@ class _MainCompositionResources:
             raise failure
 
 
+_MAX_OUTER_CLEANUP_ATTEMPTS = 16
+_MAX_STALLED_OUTER_CLEANUP_ATTEMPTS = 3
+
+
+def _close_owner_until_cleanup_complete(
+    owner: object,
+    *,
+    reason: str,
+    message: str,
+) -> None:
+    """Consume a synchronous cleanup owner with bounded progress checks."""
+
+    previous_progress = _outer_cleanup_progress(owner)
+    stalled_attempts = 0
+    process_failure: BaseException | None = None
+    last_failure: BaseException | None = None
+    for attempt in range(1, _MAX_OUTER_CLEANUP_ATTEMPTS + 1):
+        last_failure = None
+        try:
+            owner.close()  # type: ignore[attr-defined]
+        except BaseException as error:
+            last_failure = error
+            if not isinstance(error, Exception) and process_failure is None:
+                process_failure = error
+        if not _outer_cleanup_incomplete(
+            owner,
+            close_failed=last_failure is not None,
+        ):
+            if process_failure is not None:
+                if (
+                    last_failure is not None
+                    and last_failure is not process_failure
+                ):
+                    raise process_failure from last_failure
+                raise process_failure
+            if last_failure is not None:
+                raise last_failure
+            return
+
+        current_progress = _outer_cleanup_progress(owner)
+        if current_progress == previous_progress:
+            stalled_attempts += 1
+        else:
+            stalled_attempts = 0
+        if (
+            attempt >= _MAX_OUTER_CLEANUP_ATTEMPTS
+            or stalled_attempts >= _MAX_STALLED_OUTER_CLEANUP_ATTEMPTS
+        ):
+            incomplete = _outer_cleanup_error(
+                owner,
+                reason=reason,
+                message=message,
+                attempts=attempt,
+            )
+            if process_failure is not None:
+                raise process_failure from incomplete
+            if last_failure is not None:
+                raise incomplete from last_failure
+            raise incomplete
+        previous_progress = current_progress
+
+
+def _outer_cleanup_incomplete(
+    owner: object,
+    *,
+    close_failed: bool,
+) -> bool:
+    try:
+        incomplete = getattr(owner, "incomplete")
+    except AttributeError:
+        return close_failed
+    except BaseException:
+        return True
+    try:
+        return bool(incomplete)
+    except BaseException:
+        return True
+
+
+def _outer_cleanup_progress(owner: object) -> object:
+    try:
+        progress = getattr(owner, "cleanup_progress")
+        if callable(progress):
+            return progress()
+        return progress
+    except AttributeError:
+        return ("owned",)
+    except BaseException:
+        return ("unavailable",)
+
+
+def _outer_cleanup_error(
+    owner: object,
+    *,
+    reason: str,
+    message: str,
+    attempts: int,
+) -> BaseException:
+    from ns_common.exceptions import NsStateError
+
+    facts: dict[str, object] = {}
+    allowed_fact_names = {
+        "pending_adapters",
+        "pending_connections",
+        "transport_manager_owned",
+        "task_supervisor_owned",
+        "logger_owned",
+        "authority_broker_owned",
+        "service_lifecycle_owner_active",
+        "process_owned",
+        "process_alive",
+        "attestor_owned",
+    }
+    try:
+        pending_facts = getattr(owner, "pending_facts")
+        candidate = pending_facts() if callable(pending_facts) else pending_facts
+        if type(candidate) is dict:
+            facts = {
+                key: candidate[key]
+                for key, value in candidate.items()
+                if type(key) is str
+                and key in allowed_fact_names
+                and type(value) in {bool, int}
+            }
+    except BaseException:
+        facts = {}
+    failure = NsStateError(
+        message,
+        details={
+            "component": "runtime_main",
+            "operation": "close",
+            "reason": reason,
+            "attempts": attempts,
+            **facts,
+        },
+    )
+    failure.cleanup_owner = owner  # type: ignore[attr-defined]
+    failure.cleanup_incomplete = True  # type: ignore[attr-defined]
+    return failure
+
+
+def _merge_main_failure(
+    operation_failure: BaseException | None,
+    cleanup_failure: BaseException,
+) -> BaseException:
+    if operation_failure is None:
+        return cleanup_failure
+    cleanup_is_incomplete = _is_outer_cleanup_incomplete_failure(
+        cleanup_failure,
+    )
+    if not isinstance(operation_failure, Exception):
+        if cleanup_is_incomplete:
+            operation_failure.__cause__ = cleanup_failure
+        return operation_failure
+    if not isinstance(cleanup_failure, Exception):
+        cause = cleanup_failure.__cause__
+        if _is_outer_cleanup_incomplete_failure(cause):
+            cause.__cause__ = operation_failure
+        else:
+            cleanup_failure.__cause__ = operation_failure
+        return cleanup_failure
+    if cleanup_is_incomplete:
+        cleanup_failure.__cause__ = operation_failure
+        return cleanup_failure
+    return operation_failure
+
+
+def _is_outer_cleanup_incomplete_failure(
+    error: BaseException | None,
+) -> bool:
+    return bool(
+        error is not None
+        and getattr(error, "details", {}).get("reason") in {
+            "runtime_composition_cleanup_incomplete",
+            "authority_bootstrap_cleanup_incomplete",
+        }
+    )
+
+
 async def _run_composed_service(
     resources: _MainCompositionResources,
     service: RuntimeService,
@@ -363,9 +576,13 @@ def main(
         failure = operation_failure
     finally:
         try:
-            authority_bootstrap.close()
+            _close_owner_until_cleanup_complete(
+                authority_bootstrap,
+                reason="authority_bootstrap_cleanup_incomplete",
+                message="Runtime authority bootstrap cleanup did not complete.",
+            )
         except BaseException as cleanup_failure:
-            failure = _prioritize_lifecycle_failure(
+            failure = _merge_main_failure(
                 failure,
                 cleanup_failure,
             )
@@ -405,9 +622,13 @@ def _main_after_authority_bootstrap(
         failure = operation_failure
     finally:
         try:
-            resources.close()
+            _close_owner_until_cleanup_complete(
+                resources,
+                reason="runtime_composition_cleanup_incomplete",
+                message="Runtime composition cleanup did not complete.",
+            )
         except BaseException as cleanup_failure:
-            failure = _prioritize_lifecycle_failure(
+            failure = _merge_main_failure(
                 failure,
                 cleanup_failure,
             )

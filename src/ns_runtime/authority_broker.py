@@ -3341,7 +3341,10 @@ def _spawn_authority_broker(
         process.start()
         duplicate_handles.clear()
         child_close_failure = _close_connections(children)
-        fd_close_failure = _close_inherited_fds(inherited_fds)
+        fd_close_failure = _close_inherited_fds(
+            inherited_fds,
+            outcome_owner=cleanup_owner,
+        )
         if child_close_failure is not None:
             raise child_close_failure
         if fd_close_failure is not None:

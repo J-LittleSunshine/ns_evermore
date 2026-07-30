@@ -3,7 +3,7 @@
 > 实施文档版本：`0.0.2`
 > 设计基线：`ns_runtime 设计边界与功能清单 0.0.2`
 > 仓库基线：Code Agent 当前会话所处的 `ns_evermore` 本地工作区；远程仓库、远程分支和提交历史不作为实现状态依据
-> 当前状态校准时间：`2026-07-30T17:24:23+08:00`（最终测试事实见 acceptance log 当前记录）
+> 当前状态校准时间：`2026-07-30T18:32:00+08:00`（最终测试事实见 acceptance log 当前记录）
 > 文档用途：作为人工开发者与 Code Agent 的当前状态、阶段边界和后续执行入口。
 
 文档分工：
@@ -15,9 +15,9 @@
 
 ### Authority cleanup、bounded inline seal 与 CI 状态校准
 
-- 状态：`VERIFIED / F3 (local only)`；当前工作区修复 lifecycle owner 的逐资源完成/可重试清理、child 最终存活证明、broker endpoint/process/attestor 隔离回收，以及 admission inline descriptor/seal 的统一迭代式节点/深度/字节预算。最终命令和数量只写入 acceptance log 当前记录。
+- 状态：`IMPLEMENTED / F3 (local targeted verified; full-tree stability UNVERIFIED)`；当前提交候选在既有 lifecycle owner、child 最终存活证明、broker 隔离回收和 bounded inline seal 边界上，进一步关闭 detached raw FD 重复 close，并为 main composition/authority bootstrap owner 增加有界、进展感知消费。定向测试均通过；连续三轮全仓的第3轮出现可单项复现为绿色的隔离broker偶发退出，因此不标记全仓稳定性VERIFIED。最终命令和数量只写入 acceptance log 当前记录。
 - CI：分支 push 触发、真实 Redis 强制门禁与 base-SHA/commit whitespace gate 保持不变。workflow 文件虽声明 `workflow_dispatch`，但在该文件进入默认分支 `main` 前，GitHub Actions 人工触发入口不可用，禁止声称已可人工运行。
-- 远端事实：本轮基准提交为`a8e1c4b3044cbaad537bceabbe76420efcada4d4`；当前修复候选在本记录时没有对应远端 run，保持 `UNVERIFIED`。基准及当前未提交修复均未获得可归属于当前代码的远端绿色证据，不得继承任何前一提交的CI结果。
+- 远端事实：本轮基准 commit 与当前提交候选基线为`d522d0712b365a4878fe4e747fa27b9303c0c8ec`；当前修复候选在本记录时没有对应远端 run，保持 `UNVERIFIED`。当前 commit 及本次候选均未获得可归属于当前代码的远端绿色证据，不得继承任何前一提交的CI结果。
 - 冻结：P12继续`BLOCKED / NOT_STARTED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
 
 ### P08-FIX-03 / P09-FIX-07 / P11-FIX-08 authority closure

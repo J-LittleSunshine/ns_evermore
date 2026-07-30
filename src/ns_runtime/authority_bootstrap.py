@@ -53,6 +53,45 @@ class InheritedAuthorityBootstrap:
         self._attestor = attestor
         self._consumed = False
 
+    @property
+    def incomplete(self) -> bool:
+        return bool(
+            self._connections
+            or self._process is not None
+            or self._attestor is not None
+        )
+
+    @property
+    def cleanup_progress(self) -> tuple[object, ...]:
+        connections = self._connections
+        return (
+            0 if connections is None else len(connections),
+            self._process is not None,
+            self.process_alive,
+            self._attestor is not None,
+        )
+
+    @property
+    def process_alive(self) -> bool:
+        process = self._process
+        if process is None:
+            return False
+        try:
+            return bool(process.is_alive())
+        except BaseException:
+            return True
+
+    def pending_facts(self) -> dict[str, object]:
+        connections = self._connections
+        return {
+            "pending_connections": (
+                0 if connections is None else len(connections)
+            ),
+            "process_owned": self._process is not None,
+            "process_alive": self.process_alive,
+            "attestor_owned": self._attestor is not None,
+        }
+
     def launch(self, *, config: object, clock: object) -> object:
         if self._consumed:
             _security_error("authority_material_already_consumed")
@@ -129,15 +168,6 @@ class InheritedAuthorityBootstrap:
         return failure
 
 
-class _PendingRawFdOwner:
-    """Retain a detached descriptor until ``os.close`` actually completes."""
-
-    __slots__ = ("descriptor",)
-
-    def __init__(self, descriptor: int) -> None:
-        self.descriptor = descriptor
-
-
 class _AuthorityStartupCleanupOwner:
     """Retryable owner for resources acquired by an authority start factory."""
 
@@ -148,6 +178,7 @@ class _AuthorityStartupCleanupOwner:
         "process",
         "process_start_attempted",
         "attestor",
+        "fd_close_outcome_uncertain",
     )
 
     def __init__(
@@ -165,6 +196,7 @@ class _AuthorityStartupCleanupOwner:
         self.process: multiprocessing.Process | None = None
         self.process_start_attempted = False
         self.attestor: object | None = None
+        self.fd_close_outcome_uncertain = False
 
     @property
     def incomplete(self) -> bool:
@@ -174,6 +206,7 @@ class _AuthorityStartupCleanupOwner:
             or self.inherited_fds
             or self.process is not None
             or self.attestor is not None
+            or self.fd_close_outcome_uncertain
         )
 
     @property
@@ -196,6 +229,9 @@ class _AuthorityStartupCleanupOwner:
             "process_owned": self.process is not None,
             "process_alive": self.process_alive,
             "attestor_owned": self.attestor is not None,
+            "fd_close_outcome_uncertain": (
+                self.fd_close_outcome_uncertain
+            ),
         }
 
     def close(self) -> None:
@@ -223,11 +259,17 @@ class _AuthorityStartupCleanupOwner:
                 self.process = None
         failure = _prioritize_failure(
             failure,
-            _close_duplicate_handles(self.duplicate_handles),
+            _close_duplicate_handles(
+                self.duplicate_handles,
+                outcome_owner=self,
+            ),
         )
         failure = _prioritize_failure(
             failure,
-            _close_inherited_fds(self.inherited_fds),
+            _close_inherited_fds(
+                self.inherited_fds,
+                outcome_owner=self,
+            ),
         )
         attestor = self.attestor
         if attestor is not None:
@@ -342,7 +384,10 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
         # spawn reduction protocol. They must not be detached in this parent.
         duplicate_handles.clear()
         child_close_failure = _close_connections(children)
-        fd_close_failure = _close_inherited_fds(inherited_fds)
+        fd_close_failure = _close_inherited_fds(
+            inherited_fds,
+            outcome_owner=cleanup_owner,
+        )
         if child_close_failure is not None:
             raise child_close_failure
         if fd_close_failure is not None:
@@ -460,47 +505,56 @@ def _close_connections(
 
 def _close_inherited_fds(
     descriptors: list[int],
+    *,
+    outcome_owner: _AuthorityStartupCleanupOwner | None = None,
 ) -> BaseException | None:
+    """Attempt each inherited raw descriptor exactly once.
+
+    As with detached duplicate handles, an integer is consumed before
+    ``os.close`` starts and is never retried.  A close exception leaves an
+    outcome fact rather than a reusable descriptor number.
+    """
+
     failure: BaseException | None = None
     seen: set[int] = set()
-    pending: list[int] = []
-    for descriptor in descriptors:
+    pending = tuple(descriptors)
+    descriptors.clear()
+    for descriptor in pending:
         if descriptor in seen:
             continue
         seen.add(descriptor)
         try:
             os.close(descriptor)
-        except OSError:
-            # A parsed but invalid descriptor still receives exactly one close
-            # attempt; its EBADF is not allowed to hide the startup rejection.
-            pass
         except BaseException as error:
             failure = _prioritize_failure(failure, error)
-            pending.append(descriptor)
-    descriptors[:] = pending
+            if outcome_owner is not None:
+                outcome_owner.fd_close_outcome_uncertain = True
     return failure
 
 
-def _close_duplicate_handles(handles: list[object]) -> BaseException | None:
+def _close_duplicate_handles(
+    handles: list[object],
+    *,
+    outcome_owner: _AuthorityStartupCleanupOwner | None = None,
+) -> BaseException | None:
+    """Detach and close each raw descriptor with one irreversible attempt."""
+
     failure: BaseException | None = None
-    pending: list[object] = []
-    for handle in handles:
-        if type(handle) is _PendingRawFdOwner:
-            descriptor_owner = handle
-        else:
-            try:
-                descriptor = handle.detach()
-            except BaseException as error:
-                failure = _prioritize_failure(failure, error)
-                pending.append(handle)
-                continue
-            descriptor_owner = _PendingRawFdOwner(descriptor)
+    pending = tuple(handles)
+    handles.clear()
+    for handle in pending:
         try:
-            os.close(descriptor_owner.descriptor)
+            descriptor = handle.detach()
         except BaseException as error:
             failure = _prioritize_failure(failure, error)
-            pending.append(descriptor_owner)
-    handles[:] = pending
+            handles.append(handle)
+            continue
+        try:
+            os.close(descriptor)
+        except BaseException as error:
+            failure = _prioritize_failure(failure, error)
+            if outcome_owner is not None:
+                outcome_owner.fd_close_outcome_uncertain = True
     return failure
 
 
