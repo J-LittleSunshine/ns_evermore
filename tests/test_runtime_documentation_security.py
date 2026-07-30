@@ -19,6 +19,9 @@ _LITERAL_PASSWORD_BULLET = re.compile(
     r"(?im)^\* Password："
     r"(?!`(?:环境变量|文件引用|<|\$\{))",
 )
+_PASSWORD_STORAGE_PERMISSION = re.compile(
+    r"密码可以保存在\s+implementation plan",
+)
 
 
 class RuntimeDocumentationSecurityTestCase(unittest.TestCase):
@@ -31,6 +34,8 @@ class RuntimeDocumentationSecurityTestCase(unittest.TestCase):
                 findings.append(f"{path.name}:credentialed_url")
             if _LITERAL_PASSWORD_BULLET.search(text):
                 findings.append(f"{path.name}:literal_password")
+            if _PASSWORD_STORAGE_PERMISSION.search(text):
+                findings.append(f"{path.name}:password_storage_permission")
 
         self.assertEqual([], findings)
 
@@ -42,8 +47,13 @@ class RuntimeDocumentationSecurityTestCase(unittest.TestCase):
         self.assertIn("NS_RUNTIME_REDIS_PASSWORD", text)
         self.assertIn("${NS_RUNTIME_REDIS_URL}", text)
         self.assertIn("必须由人工在 Redis 侧轮换/吊销", text)
+        self.assertIn(
+            "仓库值已移除，服务端轮换待人工确认",
+            text,
+        )
         self.assertNotRegex(text, _CREDENTIALED_URL)
         self.assertNotRegex(text, _LITERAL_PASSWORD_BULLET)
+        self.assertNotRegex(text, _PASSWORD_STORAGE_PERMISSION)
 
 
 if __name__ == "__main__":

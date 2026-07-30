@@ -804,8 +804,8 @@ class NsRuntimeMainTestCase(unittest.TestCase):
         class FakeBootstrap:
             launch_calls = 0
 
-            def launch(self, *, config) -> FakeBroker:
-                del config
+            def launch(self, *, config, clock) -> FakeBroker:
+                del config, clock
                 self.launch_calls += 1
                 return broker
 

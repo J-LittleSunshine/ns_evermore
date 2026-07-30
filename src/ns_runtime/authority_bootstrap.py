@@ -52,15 +52,19 @@ class InheritedAuthorityBootstrap:
         self._attestor = attestor
         self._consumed = False
 
-    def launch(self, *, config: object) -> object:
+    def launch(self, *, config: object, clock: object) -> object:
         if self._consumed:
             _security_error("authority_material_already_consumed")
         from ns_runtime.authority_broker import (
             AuthorityBrokerConfig,
             _complete_inherited_authority_broker_start,
         )
+        from ns_common.time import Clock
 
-        if type(config) is not AuthorityBrokerConfig:
+        if type(config) is not AuthorityBrokerConfig or not isinstance(
+            clock,
+            Clock,
+        ):
             _security_error("invalid_authority_broker_config")
         self._consumed = True
         connections = self._connections
@@ -75,6 +79,7 @@ class InheritedAuthorityBootstrap:
                 process=process,
                 attestor=attestor,
                 config=config,
+                clock=clock,
             )
         except BaseException:
             _close_pending(connections, process)

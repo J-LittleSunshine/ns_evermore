@@ -27,40 +27,54 @@ async def _run_service(
     from ns_runtime.shutdown import RuntimeShutdownReason
 
     with service.shutdown_coordinator.install_signal_handlers():
-        store_opened = False
+        failure: BaseException | None = None
+        store_open_attempted = False
         service_start_attempted = False
         try:
             if state_store is not None:
+                store_open_attempted = True
                 await state_store.open()  # type: ignore[attr-defined]
-                store_opened = True
             service_start_attempted = True
             await service.start()
-        except BaseException as start_failure:
+            if self_check:
+                service.shutdown_coordinator.request_shutdown(
+                    RuntimeShutdownReason.SELF_CHECK_COMPLETE,
+                )
+            await service.shutdown_coordinator.wait_requested()
+        except BaseException as operation_failure:
+            failure = operation_failure
+        finally:
             if service_start_attempted:
                 try:
                     await service.stop()
                 except BaseException as cleanup_failure:
-                    if (
-                        isinstance(start_failure, Exception)
-                        and not isinstance(cleanup_failure, Exception)
-                    ):
-                        raise
-            if state_store is not None:
+                    failure = _prioritize_lifecycle_failure(
+                        failure,
+                        cleanup_failure,
+                    )
+            if state_store is not None and store_open_attempted:
                 try:
                     await state_store.close()  # type: ignore[attr-defined]
-                except BaseException:
-                    pass
-            raise
-        if self_check:
-            service.shutdown_coordinator.request_shutdown(
-                RuntimeShutdownReason.SELF_CHECK_COMPLETE,
-            )
-        await service.shutdown_coordinator.wait_requested()
-        try:
-            await service.stop()
-        finally:
-            if state_store is not None and store_opened:
-                await state_store.close()  # type: ignore[attr-defined]
+                except BaseException as cleanup_failure:
+                    failure = _prioritize_lifecycle_failure(
+                        failure,
+                        cleanup_failure,
+                    )
+        if failure is not None:
+            raise failure
+
+
+def _prioritize_lifecycle_failure(
+    current: BaseException | None,
+    candidate: BaseException,
+) -> BaseException:
+    """Keep the first failure unless a process-level cleanup failure outranks it."""
+
+    if current is None:
+        return candidate
+    if isinstance(current, Exception) and not isinstance(candidate, Exception):
+        return candidate
+    return current
 
 
 async def _run_service_once(
@@ -331,6 +345,7 @@ def main(
             ),
             runtime_id=runtime_id,
         ),
+        clock=context.clock,
     )
     try:
         state_store = authority_broker.state_store

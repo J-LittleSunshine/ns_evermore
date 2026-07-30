@@ -815,6 +815,167 @@ class DeliveryAdmissionTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], self.store.values)
         self.assertEqual([], self.payload_client.calls)
 
+    async def test_same_plan_mutations_keep_old_seal_and_fail_stage_six(self):
+        target = TargetGroup(
+            kind="tenant",
+            tenant_id="tenant-a",
+            multi_connection_policy="all",
+        )
+        router = _router(
+            _SnapshotIndex(_snapshot(tuple(
+                _routing_context(index) for index in range(3)
+            ))),
+            self.clock,
+        )
+        first = await router.route(_request(
+            target,
+            message_reference=MESSAGE_REFERENCE,
+        ))
+        assert isinstance(first, ResolvedRoutingPlan)
+        second = await router.route(
+            _request(target, message_reference=MESSAGE_REFERENCE),
+            previous=first.previous_context(),
+        )
+        assert isinstance(second, ResolvedRoutingPlan)
+
+        mutations = (
+            (first, first, "created_at", first.created_at + timedelta(seconds=1)),
+            (first, first, "local_hit", not first.local_hit),
+            (second, second, "plan_version", second.plan_version + 1),
+            (second, second, "previous_plan_id", "plan_" + "f" * 32),
+            (
+                first,
+                first.candidates[0].identity_reference,
+                "value",
+                "identity-mutated",
+            ),
+        )
+        for plan, owner, field_name, replacement in mutations:
+            with self.subTest(field=field_name):
+                original = getattr(owner, field_name)
+                original_signature = plan._router_authority_signature
+                object.__setattr__(owner, field_name, replacement)
+                try:
+                    self.assertEqual(
+                        original_signature,
+                        plan._router_authority_signature,
+                    )
+                    with self.assertRaises(NsValidationError):
+                        StageSixAdmissionInput.from_result(
+                            RoutingPreparationResult.resolved(plan)
+                        )
+                finally:
+                    object.__setattr__(owner, field_name, original)
+                StageSixAdmissionInput.from_result(
+                    RoutingPreparationResult.resolved(plan)
+                )
+
+        request = self._request()
+        original_local_hit = self.plan.local_hit
+        object.__setattr__(self.plan, "local_hit", not original_local_hit)
+        try:
+            with self.assertRaises(NsValidationError):
+                await self.service.admit(
+                    request,
+                    trace=AdmissionTrace(
+                        trace_id="trace-mutated-plan-before-admission",
+                    ),
+                )
+        finally:
+            object.__setattr__(self.plan, "local_hit", original_local_hit)
+        self.assertEqual([], self.store.values)
+        self.assertEqual([], self.payload_client.calls)
+
+    async def test_same_request_mutations_fail_before_dependencies(self):
+        async def assert_rejected(
+            *,
+            label: str,
+            request: AdmissionRequest,
+            owner: object,
+            field_name: str,
+            replacement: object,
+        ) -> None:
+            with self.subTest(field=label):
+                original_signature = request._authority_signature
+                object.__setattr__(owner, field_name, replacement)
+                self.assertEqual(
+                    original_signature,
+                    request._authority_signature,
+                )
+                with self.assertRaises(NsValidationError):
+                    request.validate_authority()
+                with self.assertRaises(NsValidationError):
+                    await self.service.admit(
+                        request,
+                        trace=AdmissionTrace(
+                            trace_id=f"trace-mutation-{label}",
+                        ),
+                    )
+                self.assertEqual([], self.store.values)
+                self.assertEqual([], self.payload_client.calls)
+
+        request = self._request()
+        assert isinstance(request.payload, InlinePayload)
+        await assert_rejected(
+            label="payload",
+            request=request,
+            owner=request.payload,
+            field_name="value",
+            replacement={"safe": [1, 2, 3]},
+        )
+
+        request = self._request()
+        assert request.inline_descriptor is not None
+        await assert_rejected(
+            label="inline_descriptor",
+            request=request,
+            owner=request.inline_descriptor,
+            field_name="observed_depth",
+            replacement=request.inline_descriptor.observed_depth + 1,
+        )
+
+        top_level_mutations = (
+            ("source_identity", "identity-mutated"),
+            ("envelope_authority", dataclasses.replace(
+                self._request().envelope_authority,
+                trace=TraceGroup(
+                    trace_id="trace-mutated",
+                    request_id="request-mutated",
+                ),
+            )),
+            ("requested_priority", AdmissionPriority.LOW),
+            ("requested_reliability", AdmissionReliability.CRITICAL),
+            (
+                "requested_expires_at",
+                self.clock.utc_now() + timedelta(seconds=31),
+            ),
+            ("requested_ack_timeout_seconds", 91),
+        )
+        for field_name, replacement in top_level_mutations:
+            request = self._request()
+            await assert_rejected(
+                label=field_name,
+                request=request,
+                owner=request,
+                field_name=field_name,
+                replacement=replacement,
+            )
+
+        reference_request = self._request(payload=PayloadReference(
+            object_id="object:sealed",
+            version="version:1",
+            checksum="sha256:" + "a" * 64,
+            owner_identity="identity-source",
+        ))
+        assert isinstance(reference_request.payload, PayloadReference)
+        await assert_rejected(
+            label="payload_reference",
+            request=reference_request,
+            owner=reference_request.payload,
+            field_name="checksum",
+            replacement="sha256:" + "b" * 64,
+        )
+
 
 class _Sender(AdmissionResponseSender):
     async def send(self, response):
@@ -830,6 +991,67 @@ class _Observer(AdmissionEmissionObserver):
 
 
 class DeliveryAdmissionInfrastructureTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_production_store_revalidates_plan_before_first_write(self):
+        clock = ControlledClock(utc_start=UTC_START)
+        plan = await _plan()
+        capture_store = _Store()
+        service = DeliveryAdmissionService.for_contract_tests(
+            policy=DefaultAdmissionPolicy(),
+            policy_config=AdmissionPolicyConfig(
+                config_version="c1",
+                policy_version="p1",
+            ),
+            store=capture_store,
+            payload_ref_client=_PayloadClient(clock),
+            clock=clock,
+            identifier_factory=_ids,
+        )
+        request = AdmissionRequest.from_stage_six(
+            stage_six=StageSixAdmissionInput.from_result(
+                RoutingPreparationResult.resolved(plan),
+            ),
+            message_id=MESSAGE_ID,
+            tenant_id=plan.authorization_evidence.effective_tenant_id,
+            source_identity="identity-source",
+            authorization_binding_reference=(
+                plan.authorization_evidence.message_binding_reference
+            ),
+            envelope_authority=_envelope_authority(plan),
+            payload=InlinePayload(
+                value={"v": 1},
+                media_type="application/json",
+                application_limit_bytes=4096,
+                transport_limit_bytes=4096,
+            ),
+            requested_priority=None,
+            requested_reliability=None,
+            requested_expires_at=clock.utc_now() + timedelta(seconds=30),
+            requested_ack_timeout_seconds=30,
+            requested_target_strategy=plan.requested_strategy,
+        )
+        result = await service.admit(
+            request,
+            trace=AdmissionTrace(trace_id="trace-capture-initialization"),
+        )
+        self.assertEqual(AdmissionOutcome.ACCEPTED, result.outcome)
+        initialization = capture_store.values[0]
+
+        model = DeterministicStateStoreContractModel(
+            clock=clock,
+            capabilities=StateStoreCapabilities.p10_contract(),
+        )
+        await model.open()
+        production_store = _state_admission_store(model)
+        original_local_hit = plan.local_hit
+        object.__setattr__(plan, "local_hit", not original_local_hit)
+        try:
+            with self.assertRaises(NsValidationError):
+                await production_store.initialize(initialization)
+            self.assertEqual(0, model.write_count)
+        finally:
+            object.__setattr__(plan, "local_hit", original_local_hit)
+            await model.close()
+
     async def test_w09_state_store_atomic_documents_are_evidence_only(self):
         clock = ControlledClock(utc_start=UTC_START)
         plan = await _plan()

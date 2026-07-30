@@ -3,7 +3,7 @@
 > 实施文档版本：`0.0.2`
 > 设计基线：`ns_runtime 设计边界与功能清单 0.0.2`
 > 仓库基线：Code Agent 当前会话所处的 `ns_evermore` 本地工作区；远程仓库、远程分支和提交历史不作为实现状态依据
-> 当前状态校准时间：`2026-07-23T09:50:00+08:00`
+> 当前状态校准时间：`2026-07-30`（最终测试事实见 acceptance log 当前记录）
 > 文档用途：作为人工开发者与 Code Agent 的当前状态、阶段边界和后续执行入口。
 
 文档分工：
@@ -157,14 +157,14 @@
 
 | 字段 | 当前值 |
 |---|---|
-| 当前阶段 | `P01—P11 独立审查问题修复` |
-| 当前工作包 | `P09→P10 authority continuity、production audit/composition/Clock 加固` |
-| 当前工作包状态 | `VERIFIED`（本次本地工作区；详见 acceptance log 当前记录） |
-| 当前阶段状态 | `VERIFIED / local only` |
+| 当前阶段 | `P12 ACK/NACK/Defer/Timeout/Retry` |
+| 当前工作包 | `P12-W01` |
+| 当前工作包状态 | `BLOCKED`（awaiting explicit authorization） |
+| 当前阶段状态 | `NOT_STARTED / F0`（入口因未获授权而阻塞） |
 | 最近已验证阶段 | `P11 本地可靠投递调度与发送`（`F3 / local only`） |
-| 最近已验证工作包 | `P08-FIX-09 / P09-FIX-13 / P11-FIX-14` |
-| 下一阶段 | `P12-W01`（本次独立审查修复完成后仍等待独立实施授权） |
-| 当前阻塞项 | P12 尚未授权；production task.dispatch 继续关闭，transport write 只允许到 ack_waiting，不等于 delivery 成功；本次修复的未验证项只以 acceptance log 的当前记录为准 |
+| 最近完成项 | `P01—P11 独立审查遗留修复`（local-only；实际测试与未验证项见 acceptance log 当前记录） |
+| 下一阶段入口 | `P12-W01`（等待独立实施授权） |
+| 当前阻塞项 | P12 尚未授权；production task.dispatch 继续关闭，transport write 只允许到 ack_waiting，不等于 delivery 成功 |
 | 设计基线版本 | `0.0.2` |
 | wire codec | `json.v1` |
 | 当前正式 transport | `websocket_tcp` adapter 为 `VERIFIED/F2`；P05 logical connection composition 保持冻结；P06 已把 production `IamClient` 与同一 P01 HTTP owner 显式接入握手、reauth 和 resume，IAM 异常继续 fail-closed |
@@ -195,7 +195,7 @@ P00 必须记录以下事实：
 | `src/ns_backend/iam` 实际能力 | `VERIFIED` | IAM-R1保持；payload_ref validation result现冻结对象/version/checksum/tenant/size完整性元数据，runtime通过显式IAM HTTP client实时调用既有backend endpoint；backend无对象provider时继续明确invalid/fail-closed。 |
 | `src/ns_runtime` 实际能力 | `VERIFIED` | P02-P09及P10 DR-1冻结边界保持；P11以typed prepared DeliveryRecord和StateStore authority完成本地prepared -> queued -> sending -> ack_waiting，复用既有TaskSupervisor与P05 local connection owner。task.dispatch只提供显式注入的本地实验组合，production contract/默认配置仍关闭；不含P12 ACK/NACK/Defer/timeout/retry。 |
 | 配置示例与依赖清单 | `VERIFIED` | runtime.state_store支持backend、credential-free endpoint、username、env/file/none password source、namespace和timeout；Redis/Valkey driver已移入runtime生产层且动态加载，五层无环清单保持。 |
-| 当前本地测试基线 | `VERIFIED` | P10/P11定向51项、真实Redis integration 16项；标准asyncio全树`Ran 843 tests in 98.231s, OK (skipped=1)`，runtime uvloop（按DEP-1排除Django-only cache）`Ran 832 tests in 105.462s, OK (skipped=1)`，backend/Django全树`Ran 827 tests in 60.694s, OK (skipped=50)`。compileall、两环境pip check、cold import、diff check与禁止项扫描通过；均为local verification，无远程CI。 |
+| 当前本地测试基线 | `VERIFIED` | 本轮最终标准asyncio全树`Ran 936 tests in 254.498s, OK (skipped=7)`；authority、IAM、routing、真实Redis、delivery、main/transport与边界分组均通过，compileall、文档secret扫描和diff check通过。此前短TTL rotation失败、重试与测试同步校准均保留在acceptance log；均为local verification，无production root或远程CI证据。 |
 | 当前状态校准时间 | `VERIFIED` | `2026-07-23T09:50:00+08:00` |
 
 ### 2.2 本地代码检查范围
@@ -274,7 +274,7 @@ P10 及后续可靠状态阶段允许使用当前 WSL Ubuntu 开发环境中的�
 * Runtime namespace：`ns_runtime`
 * 测试 namespace 前缀：`ns_runtime:test:`
 
-该 Redis 实例仅用于当前开发主机的本地实现和验收，不是生产、共享测试或远程 Redis 实例。文档曾包含的旧凭据视为已经泄露，必须由人工在 Redis 侧轮换/吊销；代码和测试不得尝试自动轮换，也不得在日志、测试输出或验收记录中复述旧值。
+该 Redis 实例仅用于当前开发主机的本地实现和验收，不是生产、共享测试或远程 Redis 实例。仓库值已移除，服务端轮换待人工确认；旧值视为可能已经泄露，必须由人工在 Redis 侧轮换/吊销。代码和测试不得尝试自动轮换，也不得在日志、测试输出或验收记录中复述旧值。
 
 Codex 可以直接使用上述连接信息完成 Redis StateStore provider 的实现、启动验证和真实集成测试，不需要等待额外的 Redis 环境授权。
 
@@ -313,7 +313,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 * 禁止执行 `FLUSHDB`、`FLUSHALL` 的源码扫描和测试证据；
 * 无远程 CI 时明确标记为 local-only evidence。
 
-密码可以保存在 implementation plan 的本地环境段落中，但不得复制到 acceptance log 的命令输出、异常文本、日志或测试失败详情中。
+密码不得保存在 implementation plan、acceptance log、命令输出、异常文本、日志或测试失败详情中；这里只允许环境变量名、受限权限文件引用和无 userinfo 的 endpoint 占位符。
 
 
 ---
@@ -405,7 +405,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 
 ## P00 本地仓库基线与实施账本
 
-**阶段状态：`IN_PROGRESS`**
+**阶段状态：`VERIFIED`**
 **目标完成度：`F1`**
 
 ### 目标
@@ -684,7 +684,7 @@ P10 Redis 修复完成后，acceptance log 必须分别记录：
 - 内置类型注册完整，但只有协议错误处理功能处于 enabled。
 - 协议模型不依赖具体 transport。
 
-验收记录：`P03-W01` 至 `P03-W11`、`P03-FIX-01`、`P03-FIX-02` 与阶段出口见 [acceptance log / P03](ns_runtime_acceptance_log_0.0.2.md#p03)；协议边界登记为 `ENV-1`，长期决策见 [ADR-028](ns_runtime_architecture_decisions_0.0.2.md#adr-028)。
+验收记录：`P03-W01` 至 `P03-W11`、`P03-FIX-01`、`P03-FIX-02` 与阶段出口从 [acceptance log / P03-W01](ns_runtime_acceptance_log_0.0.2.md#p03-w01) 起按工作包连续记录；协议边界登记为 `ENV-1`，长期决策见 [ADR-028](ns_runtime_architecture_decisions_0.0.2.md#adr-028)。
 
 ---
 

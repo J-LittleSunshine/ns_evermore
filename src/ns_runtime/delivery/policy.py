@@ -15,6 +15,7 @@ from ns_common.exceptions import NsValidationError
 from ns_runtime.routing import (
     ResolvedRoutingPlan,
     RoutingStrategy,
+    resolved_routing_plan_authority_digest,
     validate_resolved_routing_plan,
 )
 
@@ -184,15 +185,28 @@ class AdmissionRequest:
                 or self.authorization_binding_reference
                 != authorization.message_binding_reference):
             _invalid("request.plan_authority_chain")
-        if not isinstance(self.payload, (InlinePayload, PayloadReference)):
+        if type(self.payload) not in {InlinePayload, PayloadReference}:
             _invalid("request.payload")
-        if isinstance(self.payload, InlinePayload):
-            if not isinstance(self.inline_descriptor, InlinePayloadDescriptor):
+        self.payload.__post_init__()
+        if type(self.payload) is InlinePayload:
+            if type(self.inline_descriptor) is not InlinePayloadDescriptor:
                 _invalid("request.inline_descriptor")
+            self.inline_descriptor.__post_init__()
+            if self.inline_descriptor != describe_inline_payload(self.payload):
+                _invalid("request.inline_descriptor_binding")
         elif self.inline_descriptor is not None:
             _invalid("request.inline_descriptor")
         if type(self.envelope_authority) is not DeliveryEnvelopeAuthority:
             _invalid("request.envelope_authority")
+        self.envelope_authority.__post_init__()
+        for group in (
+            self.envelope_authority.protocol,
+            self.envelope_authority.message,
+            self.envelope_authority.source,
+            self.envelope_authority.auth_context,
+            self.envelope_authority.trace,
+        ):
+            group.__post_init__()
         if (
             self.envelope_authority.message.message_id != self.message_id
             or self.envelope_authority.message.type != authorization.message_type
@@ -413,15 +427,181 @@ def _utc(value: object, name: str) -> datetime:
 def _admission_request_authority_signature(
     request: AdmissionRequest,
 ) -> bytes:
+    authority_digest = _admission_request_authority_digest(request)
     return hmac.new(
         _ADMISSION_REQUEST_AUTHORITY_KEY,
         (
-            f"{id(request)}\0{request.plan.plan_id}\0"
-            f"{request.plan.decision_fingerprint}\0{request.message_id}\0"
-            f"{request.tenant_id}\0{request.authorization_binding_reference}"
+            f"admission-request-authority.v1\0{id(request)}\0"
+            f"{authority_digest}"
         ).encode("utf-8"),
         hashlib.sha256,
     ).digest()
+
+
+def _admission_request_authority_digest(
+    request: AdmissionRequest,
+) -> str:
+    payload = request.payload
+    if type(payload) is InlinePayload:
+        current_descriptor = describe_inline_payload(payload)
+        payload_authority: dict[str, object] = {
+            "kind": "inline",
+            "media_type": payload.media_type,
+            "application_limit_bytes": payload.application_limit_bytes,
+            "transport_limit_bytes": payload.transport_limit_bytes,
+            "value_digest": _inline_payload_value_digest(payload.value),
+            "canonical_bytes": (
+                None
+                if current_descriptor.canonical_bytes is None
+                else current_descriptor.canonical_bytes.hex()
+            ),
+        }
+    elif type(payload) is PayloadReference:
+        payload_authority = {
+            "kind": "payload_reference",
+            "object_id": payload.object_id,
+            "version": payload.version,
+            "checksum": payload.checksum,
+            "owner_identity": payload.owner_identity,
+            "callback_message_type": payload.callback_message_type,
+        }
+    else:
+        _invalid("request.authority_payload")
+
+    descriptor = request.inline_descriptor
+    descriptor_authority = (
+        None
+        if descriptor is None
+        else {
+            "media_type": descriptor.media_type,
+            "size_bytes": descriptor.size_bytes,
+            "digest": descriptor.digest,
+            "observed_depth": descriptor.observed_depth,
+            "application_limit_bytes": descriptor.application_limit_bytes,
+            "transport_limit_bytes": descriptor.transport_limit_bytes,
+            "canonical_bytes": (
+                None
+                if descriptor.canonical_bytes is None
+                else descriptor.canonical_bytes.hex()
+            ),
+            "rejection_reason": (
+                None
+                if descriptor.rejection_reason is None
+                else descriptor.rejection_reason.value
+            ),
+        }
+    )
+    values = {
+        "plan_authority_digest": resolved_routing_plan_authority_digest(
+            request.plan,
+        ),
+        "message_id": request.message_id,
+        "tenant_id": request.tenant_id,
+        "source_identity": request.source_identity,
+        "authorization_binding_reference": (
+            request.authorization_binding_reference
+        ),
+        "envelope_authority": {
+            "protocol": request.envelope_authority.protocol.to_dict(),
+            "message": request.envelope_authority.message.to_dict(),
+            "source": request.envelope_authority.source.to_dict(),
+            "auth_context": request.envelope_authority.auth_context.to_dict(),
+            "trace": request.envelope_authority.trace.to_dict(),
+        },
+        "payload": payload_authority,
+        "inline_descriptor": descriptor_authority,
+        "requested_priority": (
+            None
+            if request.requested_priority is None
+            else request.requested_priority.value
+        ),
+        "requested_reliability": (
+            None
+            if request.requested_reliability is None
+            else request.requested_reliability.value
+        ),
+        "requested_expires_at": request.requested_expires_at.isoformat(
+            timespec="microseconds",
+        ),
+        "requested_ack_timeout_seconds": (
+            request.requested_ack_timeout_seconds
+        ),
+        "requested_target_strategy": request.requested_target_strategy.value,
+    }
+    canonical = json.dumps(
+        values,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
+def _inline_payload_value_digest(value: object) -> str:
+    """Bound even rejected JSON graphs without recursive serialization."""
+
+    digest = hashlib.sha256()
+    active_containers: set[int] = set()
+    stack: list[tuple[str, object]] = [("value", value)]
+
+    def add(token: str) -> None:
+        raw = token.encode("utf-8", errors="strict")
+        digest.update(len(raw).to_bytes(8, "big"))
+        digest.update(raw)
+
+    while stack:
+        operation, item = stack.pop()
+        if operation == "exit":
+            active_containers.remove(id(item))
+            add("container:end")
+            continue
+        if item is None:
+            add("none")
+        elif type(item) is bool:
+            add("bool:1" if item else "bool:0")
+        elif type(item) is int:
+            add(f"int:{item}")
+        elif type(item) is float:
+            add(f"float:{item.hex()}")
+        elif type(item) is str:
+            add("str")
+            add(item)
+        elif type(item) is bytes:
+            add("bytes")
+            digest.update(hashlib.sha256(item).digest())
+        elif type(item) in {list, dict}:
+            marker = id(item)
+            if marker in active_containers:
+                add("container:cycle")
+                continue
+            active_containers.add(marker)
+            stack.append(("exit", item))
+            if type(item) is list:
+                add(f"list:{len(item)}")
+                stack.extend(
+                    ("value", child)
+                    for child in reversed(item)
+                )
+            else:
+                ordered = sorted(
+                    item.items(),
+                    key=lambda pair: (
+                        type(pair[0]).__module__,
+                        type(pair[0]).__qualname__,
+                        str(pair[0]),
+                    ),
+                )
+                add(f"dict:{len(ordered)}")
+                for key, child in reversed(ordered):
+                    stack.append(("value", child))
+                    stack.append(("value", key))
+        else:
+            add(
+                "unsupported:"
+                f"{type(item).__module__}.{type(item).__qualname__}",
+            )
+    return "sha256:" + digest.hexdigest()
 
 
 def _invalid(field_name: str) -> None:

@@ -8,7 +8,8 @@ import hmac
 import json
 import re
 import secrets
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -1644,6 +1645,15 @@ def validate_resolved_routing_plan(
     return value
 
 
+def resolved_routing_plan_authority_digest(
+    value: object,
+) -> str:
+    """Return the complete canonical digest of one valid Router-issued plan."""
+
+    plan = validate_resolved_routing_plan(value)
+    return _router_plan_authority_digest(plan)
+
+
 def _seal_resolved_routing_plan(
     value: ResolvedRoutingPlan,
 ) -> ResolvedRoutingPlan:
@@ -1707,7 +1717,10 @@ def _revalidate_resolved_routing_plan_graph(value: object) -> None:
     if type(authorization) is not AuthorizationDecisionEvidence:
         _invalid("routing_plan.authorization_evidence.exact_type")
     authorization.__post_init__()
-    if not authorization.has_valid_binding():
+    if not (
+        authorization.is_production_authority()
+        or authorization.is_contract_test_authority()
+    ):
         _invalid("routing_plan.authorization_evidence.binding")
 
     if type(plan.scorer_identity) is not RoutingScorerIdentity:
@@ -1750,14 +1763,119 @@ def _revalidate_resolved_routing_plan_graph(value: object) -> None:
 def _router_plan_authority_signature(
     plan: ResolvedRoutingPlan,
 ) -> bytes:
+    authority_digest = _router_plan_authority_digest(plan)
     return hmac.new(
         _ROUTER_PLAN_AUTHORITY_KEY,
         (
-            f"{id(plan)}\0{plan.schema_version}\0{plan.plan_id}\0"
-            f"{plan.message_reference}\0{plan.decision_fingerprint}"
+            f"resolved-routing-plan-authority.v1\0{id(plan)}\0"
+            f"{authority_digest}"
         ).encode("utf-8"),
         hashlib.sha256,
     ).digest()
+
+
+def _router_plan_authority_digest(plan: ResolvedRoutingPlan) -> str:
+    payload = _canonical_authority_value(
+        plan,
+        excluded_fields=frozenset({"_router_authority_signature"}),
+    )
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
+def _canonical_authority_value(
+    value: object,
+    *,
+    excluded_fields: frozenset[str] = frozenset(),
+) -> object:
+    """Encode immutable authority state without relying on object identity."""
+
+    if value is None or type(value) in {bool, int, float, str}:
+        return value
+    if type(value) is bytes:
+        return {"$bytes": value.hex()}
+    if type(value) is datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            _invalid("routing_plan.authority_datetime")
+        return {
+            "$datetime": value.astimezone(timezone.utc).isoformat(
+                timespec="microseconds",
+            ),
+        }
+    if isinstance(value, Enum):
+        return {
+            "$enum": f"{type(value).__module__}.{type(value).__qualname__}",
+            "value": _canonical_authority_value(value.value),
+        }
+    if type(value) in {tuple, list}:
+        return [
+            _canonical_authority_value(item)
+            for item in value
+        ]
+    if type(value) in {set, frozenset}:
+        encoded = [
+            _canonical_authority_value(item)
+            for item in value
+        ]
+        return {
+            "$set": sorted(
+                encoded,
+                key=lambda item: json.dumps(
+                    item,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ),
+            ),
+        }
+    if isinstance(value, Mapping):
+        if any(type(key) is not str for key in value):
+            _invalid("routing_plan.authority_mapping_key")
+        return {
+            key: _canonical_authority_value(item)
+            for key, item in sorted(value.items())
+        }
+    if type(value) is AuthorizationDecisionEvidence:
+        authority_fields = {
+            definition.name: _canonical_authority_value(
+                getattr(value, definition.name),
+            )
+            for definition in fields(value)
+            if definition.name != "_issuer"
+        }
+        authority_fields["_issuer_kind"] = (
+            "production"
+            if value._broker_authority is not None
+            or value._broker_verification is not None
+            else "contract_test"
+        )
+        return {
+            "$dataclass": (
+                f"{type(value).__module__}.{type(value).__qualname__}"
+            ),
+            "fields": authority_fields,
+        }
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            "$dataclass": (
+                f"{type(value).__module__}.{type(value).__qualname__}"
+            ),
+            "fields": {
+                definition.name: _canonical_authority_value(
+                    getattr(value, definition.name),
+                )
+                for definition in fields(value)
+                if definition.name not in excluded_fields
+            },
+        }
+    _invalid("routing_plan.authority_value")
 
 
 def _strategy_parameters_payload(

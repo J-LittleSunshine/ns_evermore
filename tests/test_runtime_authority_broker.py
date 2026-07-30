@@ -607,6 +607,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     "iam_service_credential": "s" * 32,
                     "state_password_base64": None,
                 },
+                clock=ControlledClock(),
             )
         with self.assertRaises(NsValidationError):
             broker_module._BrokerStateBackend(
@@ -615,6 +616,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
                     "iam_service_credential": "s" * 32,
                     "state_password_base64": None,
                 },
+                clock=ControlledClock(),
             )
 
         raw_provider = create_state_store_provider(
@@ -763,6 +765,139 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             expected_realm="contract-test",
             expected_runtime_id="runtime:test",
             now=now,
+        ))
+
+    def test_controlled_clock_drives_proxy_certificate_and_rotation_boundaries(
+        self,
+    ) -> None:
+        clock = ControlledClock(
+            utc_start=datetime(2001, 2, 3, tzinfo=timezone.utc),
+        )
+        self.assertGreater(
+            abs(
+                (datetime.now(timezone.utc) - clock.utc_now()).total_seconds()
+            ),
+            24 * 60 * 60,
+        )
+
+        channel = object.__new__(
+            broker_module._ProductionRoleBrokerChannel,
+        )
+        handle = BrokerAuthorityHandle(
+            broker_instance_id="broker:clock",
+            endpoint_id="endpoint:iam",
+            handle_id="handle:iam",
+            role=BrokerRepositoryRole.IAM,
+            runtime_id="runtime:clock",
+            lifecycle_generation=1,
+            signature=b"test-signature",
+        )
+        object.__setattr__(channel, "_role", BrokerRepositoryRole.IAM)
+        object.__setattr__(channel, "_handle", handle)
+        proxy = object.__new__(ProductionIamAuthorityProxy)
+        for name, value in (
+            ("_channel", channel),
+            ("_handle", handle),
+            ("_clock", clock),
+            ("_iam_mode", "strict"),
+            ("_authorization_service", None),
+            ("_composition_binding", None),
+        ):
+            object.__setattr__(proxy, name, value)
+        observed: list[datetime] = []
+
+        def verify_chain(
+            value: ProductionIamAuthorityProxy,
+            now: datetime,
+        ) -> bool:
+            self.assertIs(value, proxy)
+            observed.append(now)
+            return True
+
+        with (
+            mock.patch.object(
+                broker_module._ProductionRoleBrokerChannel,
+                "alive",
+                new_callable=mock.PropertyMock,
+                return_value=True,
+            ),
+            mock.patch.object(
+                broker_module._ProductionRoleBrokerChannel,
+                "_identity_is_current",
+                return_value=True,
+            ),
+            mock.patch.object(
+                ProductionIamAuthorityProxy,
+                "_verify_production_chain",
+                autospec=True,
+                side_effect=verify_chain,
+            ),
+        ):
+            self.assertTrue(proxy._is_broker_adapter())
+            self.assertTrue(proxy._is_production_adapter())
+        self.assertEqual(
+            [clock.utc_now(), clock.utc_now(), clock.utc_now()],
+            observed,
+        )
+
+        root = Ed25519PrivateKey.generate()
+        root_public = root.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+        session_public = (
+            Ed25519PrivateKey.generate().public_key().public_bytes(
+                serialization.Encoding.Raw,
+                serialization.PublicFormat.Raw,
+            )
+        )
+        issued_at = clock.utc_now()
+        expires_at = issued_at + timedelta(seconds=60)
+        certificate = _test_certificate(
+            root,
+            session_public,
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+        verify_values = {
+            "expected_realm": "contract-test",
+            "expected_runtime_id": certificate.runtime_id,
+            "expected_instance_id": certificate.broker_instance_id,
+            "expected_session_public_key": certificate.session_public_key,
+            "expected_generation": certificate.lifecycle_generation,
+        }
+        self.assertTrue(certificate.verify(
+            root_public,
+            now=clock.utc_now(),
+            **verify_values,
+        ))
+        clock.advance(59.999)
+        self.assertTrue(certificate.verify(
+            root_public,
+            now=clock.utc_now(),
+            **verify_values,
+        ))
+        clock.advance(0.001)
+        self.assertFalse(certificate.verify(
+            root_public,
+            now=clock.utc_now(),
+            **verify_values,
+        ))
+
+        rotation_clock = ControlledClock(utc_start=issued_at)
+        approved = {
+            "session_issued_at": issued_at,
+            "session_expires_at": expires_at,
+        }
+        rotation_clock.advance(39.999)
+        self.assertFalse(attestor_module._rotation_required(
+            approved,
+            rotation_clock.utc_now(),
+        ))
+        rotation_clock.advance(0.001)
+        self.assertTrue(attestor_module._rotation_required(
+            approved,
+            rotation_clock.utc_now(),
         ))
 
     def test_wire_never_invokes_reduce_and_rejects_malformed_frames(self) -> None:
@@ -2898,22 +3033,43 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         request = _access_request()
         broker, _ = await self._broker(
-            [_decision(request).to_wire() for _ in range(4)],
-            session_ttl_seconds=0.3,
+            [_decision(request).to_wire() for _ in range(12)],
+            # Keep the real child-process certificate alive longer than one
+            # broker/attestor/HTTP round trip under full-suite load. Exact
+            # rotation and exclusive-expiry boundaries use ControlledClock.
+            session_ttl_seconds=5.0,
         )
         old_handle = broker.repositories.admission._handle
         old_verified = None
-        for expected_generation in range(2, 5):
-            await asyncio.sleep(0.22)
-            signed = await broker.iam.access_check_signed(request)
+        previous_generation = broker.current_session_identity()[
+            "lifecycle_generation"
+        ]
+        for _ in range(3):
+            deadline = asyncio.get_running_loop().time() + 20.0
+            current_generation = previous_generation
+            while current_generation <= previous_generation:
+                if asyncio.get_running_loop().time() >= deadline:
+                    self.fail("session generation did not advance before deadline")
+                certificate = broker.iam._channel.certificate
+                lifetime = (
+                    certificate.expires_at - certificate.issued_at
+                ).total_seconds()
+                trigger_at = certificate.issued_at + timedelta(
+                    seconds=lifetime * 0.75,
+                )
+                delay = (
+                    trigger_at - broker.iam._clock.utc_now()
+                ).total_seconds()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                signed = await broker.iam.access_check_signed(request)
+                current_generation = broker.current_session_identity()[
+                    "lifecycle_generation"
+                ]
             if old_verified is None:
                 old_verified = signed
-            self.assertEqual(
-                expected_generation,
-                broker.current_session_identity()[
-                    "lifecycle_generation"
-                ],
-            )
+            self.assertGreater(current_generation, previous_generation)
+            previous_generation = current_generation
             identity = broker.current_session_identity()
             self.assertEqual(
                 identity["session_public_key"], broker.public_key,

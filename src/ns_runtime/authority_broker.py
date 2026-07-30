@@ -1727,7 +1727,7 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
         return bool(
             type(self) is ProductionIamAuthorityProxy
             and self._is_broker_adapter()
-            and self._verify_production_chain(SystemClock().utc_now())
+            and self._verify_production_chain(self._clock.utc_now())
         )
 
     def _broker_session_identity_snapshot_local(
@@ -2062,7 +2062,7 @@ class ProductionIamAuthorityProxy(HandshakeIamAdapter):
                 (
                     type(self) is ProductionIamAuthorityProxy
                     and self._verify_production_chain(
-                        SystemClock().utc_now(),
+                        self._clock.utc_now(),
                     )
                 )
                 or (
@@ -3030,6 +3030,7 @@ def start_contract_test_authority_broker(
     *,
     config: AuthorityBrokerConfig,
     iam_service_credential: str,
+    clock: Clock | None = None,
     startup_timeout_seconds: float = 15.0,
     session_ttl_seconds: float = _SESSION_CERTIFICATE_TTL_SECONDS,
     delegation_ttl_seconds: float = _DELEGATION_CERTIFICATE_TTL_SECONDS,
@@ -3051,6 +3052,7 @@ def start_contract_test_authority_broker(
         realm="contract-test",
         session_ttl_seconds=session_ttl_seconds,
         delegation_ttl_seconds=delegation_ttl_seconds,
+        runtime_clock=clock or SystemClock(),
     )
 
 
@@ -3059,6 +3061,7 @@ def start_integration_test_authority_broker(
     config: AuthorityBrokerConfig,
     iam_service_credential: str,
     state_password: str | None,
+    clock: Clock | None = None,
     startup_timeout_seconds: float = 15.0,
     session_ttl_seconds: float = _SESSION_CERTIFICATE_TTL_SECONDS,
     delegation_ttl_seconds: float = _DELEGATION_CERTIFICATE_TTL_SECONDS,
@@ -3084,6 +3087,7 @@ def start_integration_test_authority_broker(
         realm="integration-test",
         session_ttl_seconds=session_ttl_seconds,
         delegation_ttl_seconds=delegation_ttl_seconds,
+        runtime_clock=clock or SystemClock(),
     )
 
 
@@ -3096,7 +3100,10 @@ def _start_test_authority_broker(
     realm: str,
     session_ttl_seconds: float,
     delegation_ttl_seconds: float,
+    runtime_clock: Clock,
 ) -> ProductionAuthorityBroker:
+    if not isinstance(runtime_clock, Clock):
+        _invalid("broker.runtime_clock")
     root_private_key = Ed25519PrivateKey.generate()
     root_private_bytes = root_private_key.private_bytes(
         encoding=serialization.Encoding.Raw,
@@ -3132,6 +3139,7 @@ def _start_test_authority_broker(
         startup_timeout_seconds=startup_timeout_seconds,
         session_ttl_seconds=session_ttl_seconds,
         delegation_ttl_seconds=delegation_ttl_seconds,
+        runtime_clock=runtime_clock,
     )
 
 
@@ -3140,6 +3148,7 @@ def _start_production_authority_broker_from_inherited_fds(
     config: AuthorityBrokerConfig,
     root_key_fd: int,
     secrets_fd: int,
+    clock: Clock | None = None,
     startup_timeout_seconds: float = 15.0,
 ) -> ProductionAuthorityBroker:
     """Deployment entry: consume one-shot inherited descriptors."""
@@ -3161,6 +3170,7 @@ def _start_production_authority_broker_from_inherited_fds(
         startup_timeout_seconds=startup_timeout_seconds,
         session_ttl_seconds=_SESSION_CERTIFICATE_TTL_SECONDS,
         delegation_ttl_seconds=_DELEGATION_CERTIFICATE_TTL_SECONDS,
+        runtime_clock=clock or SystemClock(),
     )
 
 
@@ -3174,8 +3184,9 @@ def _spawn_authority_broker(
     startup_timeout_seconds: float,
     session_ttl_seconds: float,
     delegation_ttl_seconds: float,
+    runtime_clock: Clock,
 ) -> ProductionAuthorityBroker:
-    if realm not in _BROKER_REALMS:
+    if realm not in _BROKER_REALMS or not isinstance(runtime_clock, Clock):
         _invalid("broker.realm")
     context = multiprocessing.get_context("spawn")
     attestor = start_authority_attestor(
@@ -3232,6 +3243,7 @@ def _spawn_authority_broker(
             config=config,
             realm=realm,
             startup_timeout_seconds=startup_timeout_seconds,
+            runtime_clock=runtime_clock,
         )
     except BaseException:
         for parent in parents.values():
@@ -3249,6 +3261,7 @@ def _complete_inherited_authority_broker_start(
     process: multiprocessing.Process,
     attestor: AuthorityAttestorClient,
     config: AuthorityBrokerConfig,
+    clock: Clock,
     startup_timeout_seconds: float = 15.0,
 ) -> ProductionAuthorityBroker:
     """Send only non-secret config to the already isolated broker child."""
@@ -3257,6 +3270,7 @@ def _complete_inherited_authority_broker_start(
         type(config) is not AuthorityBrokerConfig
         or not process.is_alive()
         or set(parents) != {role.value for role in BrokerRepositoryRole}
+        or not isinstance(clock, Clock)
     ):
         _invalid("broker.pending_bootstrap")
     lifecycle = parents[BrokerRepositoryRole.LIFECYCLE.value]
@@ -3275,6 +3289,7 @@ def _complete_inherited_authority_broker_start(
         config=config,
         realm="production",
         startup_timeout_seconds=startup_timeout_seconds,
+        runtime_clock=clock,
     )
 
 
@@ -3286,9 +3301,10 @@ def _accept_started_authority_broker(
     config: AuthorityBrokerConfig,
     realm: str,
     startup_timeout_seconds: float,
+    runtime_clock: Clock,
 ) -> ProductionAuthorityBroker:
     expected_roles = {role.value for role in BrokerRepositoryRole}
-    if set(parents) != expected_roles:
+    if set(parents) != expected_roles or not isinstance(runtime_clock, Clock):
         raise _broker_unavailable("startup_endpoint_set_invalid")
     ready_by_role: dict[str, dict[str, object]] = {}
     try:
@@ -3439,7 +3455,7 @@ def _accept_started_authority_broker(
     iam = object.__new__(iam_type)
     iam._channel = channels[BrokerRepositoryRole.IAM]
     iam._handle = handles[BrokerRepositoryRole.IAM.value]
-    iam._clock = SystemClock()
+    iam._clock = runtime_clock
     iam._iam_mode = config.iam_mode
     iam._authorization_service = None
     if realm == "production":
@@ -3595,6 +3611,8 @@ class _BrokerIamBackend:
         self,
         config: AuthorityBrokerConfig,
         secrets: Mapping[str, object],
+        *,
+        clock: Clock,
     ) -> None:
         _require_isolated_broker_process()
         from ns_common.http_client import NsAsyncHttpClient
@@ -3616,7 +3634,9 @@ class _BrokerIamBackend:
         if type(credential) is not str:
             _invalid("broker.iam_credential")
         self._credential = credential
-        self._clock = SystemClock()
+        if not isinstance(clock, Clock):
+            _invalid("broker.iam_clock")
+        self._clock = clock
         self._iam_mode = config.iam_mode
         self._ttl = float(config.permission_snapshot_ttl_seconds)
 
@@ -3796,10 +3816,12 @@ class _BrokerStateBackend:
         config: AuthorityBrokerConfig,
         secrets: Mapping[str, object],
         *,
-        clock: Clock | None = None,
+        clock: Clock,
     ) -> None:
         _require_isolated_broker_process()
-        self._clock = clock or SystemClock()
+        if not isinstance(clock, Clock):
+            _invalid("broker.state_clock")
+        self._clock = clock
         self.store = None
         self.repositories = {}
         self.lease = None
@@ -4342,7 +4364,7 @@ async def _broker_async_main(
         format=serialization.PublicFormat.Raw,
     )
     instance_id = "broker_" + uuid.uuid4().hex
-    iam = _BrokerIamBackend(config, secrets)
+    iam = _BrokerIamBackend(config, secrets, clock=clock)
     state = _BrokerStateBackend(config, secrets, clock=clock)
     iam_sequence = 0
     request_sequences = {role: 0 for role in expected_roles}
