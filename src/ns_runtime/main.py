@@ -69,24 +69,10 @@ async def _run_service(
                         cleanup_owner=service_cleanup_owner,
                     )
                 except BaseException as cleanup_failure:
-                    if (
-                        failure is not None
-                        and _is_cleanup_incomplete_failure(cleanup_failure)
-                        and isinstance(failure, Exception)
-                    ):
-                        cleanup_failure.__cause__ = failure
-                        failure = cleanup_failure
-                    else:
-                        selected = _prioritize_lifecycle_failure(
-                            failure,
-                            cleanup_failure,
-                        )
-                        if (
-                            failure is not None
-                            and selected is cleanup_failure
-                        ):
-                            cleanup_failure.__cause__ = failure
-                        failure = selected
+                    failure = _merge_service_failure(
+                        failure,
+                        cleanup_failure,
+                    )
             if (
                 state_store is not None
                 and store_open_attempted
@@ -95,7 +81,7 @@ async def _run_service(
                 try:
                     await state_store.close()  # type: ignore[attr-defined]
                 except BaseException as cleanup_failure:
-                    failure = _prioritize_lifecycle_failure(
+                    failure = _merge_service_failure(
                         failure,
                         cleanup_failure,
                     )
@@ -169,9 +155,10 @@ async def _stop_service_until_cleanup_complete(
             incomplete.cleanup_owner = owner  # type: ignore[attr-defined]
             incomplete.cleanup_incomplete = True  # type: ignore[attr-defined]
             if process_failure is not None:
-                raise process_failure from incomplete
+                _append_failure_cause(process_failure, incomplete)
+                raise process_failure
             if last_failure is not None:
-                raise incomplete from last_failure
+                raise incomplete
             raise incomplete
         previous_progress = current_progress
 
@@ -269,6 +256,48 @@ def _is_cleanup_incomplete_failure(error: BaseException) -> bool:
     )
 
 
+def _append_failure_cause(
+    failure: BaseException,
+    cause: BaseException,
+) -> None:
+    """Append a cause without replacing an existing cleanup chain."""
+
+    current = failure
+    visited: set[int] = set()
+    while True:
+        if current is cause:
+            return
+        identity = id(current)
+        if identity in visited:
+            return
+        visited.add(identity)
+        existing = current.__cause__
+        if existing is None:
+            current.__cause__ = cause
+            return
+        current = existing
+
+
+def _merge_service_failure(
+    operation_failure: BaseException | None,
+    cleanup_failure: BaseException,
+) -> BaseException:
+    if operation_failure is None:
+        return cleanup_failure
+    cleanup_is_incomplete = _is_cleanup_incomplete_failure(cleanup_failure)
+    if not isinstance(operation_failure, Exception):
+        if cleanup_is_incomplete:
+            _append_failure_cause(operation_failure, cleanup_failure)
+        return operation_failure
+    if not isinstance(cleanup_failure, Exception):
+        _append_failure_cause(cleanup_failure, operation_failure)
+        return cleanup_failure
+    if cleanup_is_incomplete:
+        _append_failure_cause(cleanup_failure, operation_failure)
+        return cleanup_failure
+    return operation_failure
+
+
 def _prioritize_lifecycle_failure(
     current: BaseException | None,
     candidate: BaseException,
@@ -320,13 +349,18 @@ class _MainCompositionResources:
 
     @property
     def cleanup_progress(self) -> tuple[object, ...]:
+        service_owner = self.service_lifecycle_owner
         return (
             len(self.adapters),
             self.transport_manager is not None,
             self.task_supervisor is not None,
             self.logger is not None,
             self.authority_broker is not None,
-            self.service_lifecycle_owner is not None,
+            (
+                None
+                if service_owner is None
+                else _outer_cleanup_progress(service_owner)
+            ),
         )
 
     def pending_facts(self) -> dict[str, object]:
@@ -366,6 +400,19 @@ class _MainCompositionResources:
         import asyncio
 
         failure: BaseException | None = None
+        service_owner = self.service_lifecycle_owner
+        if service_owner is not None:
+            try:
+                service_owner.close()  # type: ignore[attr-defined]
+            except BaseException as cleanup_failure:
+                failure = _prioritize_lifecycle_failure(
+                    failure,
+                    cleanup_failure,
+                )
+            if self.service_lifecycle_owner is not None:
+                if failure is not None:
+                    raise failure
+                return
         if (
             self.transport_manager is not None
             or self.adapters
@@ -444,6 +491,169 @@ class _MainCompositionResources:
             raise failure
 
 
+class _ServiceLifecycleRunner:
+    """Synchronously own one service run and its original event loop."""
+
+    def __init__(
+        self,
+        resources: _MainCompositionResources,
+        service: object,
+    ) -> None:
+        import asyncio
+
+        self._resources = resources
+        self._service = service
+        self._loop = asyncio.new_event_loop()
+        self._lease: _ServiceLifecycleCleanupLease | None = None
+        self._run_failure: BaseException | None = None
+        self._started = False
+
+    @property
+    def original_loop(self) -> object:
+        return self._loop
+
+    @property
+    def service_cleanup_lease(self) -> _ServiceLifecycleCleanupLease | None:
+        return self._lease
+
+    @property
+    def run_failure(self) -> BaseException | None:
+        return self._run_failure
+
+    @property
+    def incomplete(self) -> bool:
+        return bool(
+            self._resources.service_lifecycle_owner is self
+            and not _service_cleanup_complete(self._service)
+        )
+
+    @property
+    def cleanup_progress(self) -> tuple[object, ...]:
+        lease = self._lease
+        return (
+            not self._loop.is_closed(),
+            None if lease is None else lease.cleanup_progress,
+            _service_is_stopped(self._service),
+        )
+
+    def pending_facts(self) -> dict[str, bool]:
+        facts = _service_cleanup_pending_facts(self._service)
+        facts["service_lifecycle_owner_active"] = bool(
+            self._resources.service_lifecycle_owner is self
+        )
+        return facts
+
+    def _bind_lease(self, lease: _ServiceLifecycleCleanupLease) -> None:
+        if self._lease is not None or not isinstance(
+            lease,
+            _ServiceLifecycleCleanupLease,
+        ):
+            raise TypeError("service lifecycle lease is invalid")
+        self._lease = lease
+
+    def run(
+        self,
+        *,
+        state_store: object,
+        self_check: bool,
+    ) -> None:
+        if self._started:
+            raise RuntimeError("service lifecycle runner is single-use")
+        self._started = True
+        failure: BaseException | None = None
+        try:
+            self._loop.run_until_complete(_run_composed_service(
+                self._resources,
+                self._service,  # type: ignore[arg-type]
+                state_store=state_store,
+                self_check=self_check,
+                lifecycle_runner=self,
+            ))
+        except BaseException as run_failure:
+            self._run_failure = run_failure
+            failure = run_failure
+        if (
+            self._resources.service_lifecycle_owner is not self
+            or _service_cleanup_complete(self._service)
+        ):
+            try:
+                self._close_loop()
+            except BaseException as cleanup_failure:
+                failure = _merge_service_failure(
+                    failure,
+                    cleanup_failure,
+                )
+        if failure is not None:
+            raise failure
+
+    def close(self) -> None:
+        if self._loop.is_closed():
+            if self.incomplete:
+                raise self._unavailable_error(
+                    "service_cleanup_loop_closed",
+                )
+            return
+        if self._loop.is_running():
+            raise self._unavailable_error(
+                "service_cleanup_loop_running",
+            )
+        lease = self._lease
+        if lease is None:
+            if self.incomplete:
+                raise self._unavailable_error(
+                    "service_cleanup_lease_unavailable",
+                )
+            self._close_loop()
+            return
+
+        failure: BaseException | None = None
+        try:
+            self._loop.run_until_complete(lease.close())
+        except BaseException as cleanup_failure:
+            failure = cleanup_failure
+        if _service_cleanup_complete(self._service):
+            if self._resources.service_lifecycle_owner is self:
+                self._resources.service_lifecycle_owner = None
+            try:
+                self._close_loop()
+            except BaseException as cleanup_failure:
+                failure = _merge_service_failure(
+                    failure,
+                    cleanup_failure,
+                )
+        if failure is not None:
+            raise failure
+        if self.incomplete:
+            raise self._unavailable_error(
+                "service_cleanup_remains_incomplete",
+            )
+
+    def _close_loop(self) -> None:
+        if self._loop.is_closed():
+            return
+        if self._resources.service_lifecycle_owner is self:
+            if not _service_cleanup_complete(self._service):
+                return
+            self._resources.service_lifecycle_owner = None
+        self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+        self._loop.run_until_complete(self._loop.shutdown_default_executor())
+        self._loop.close()
+        self._lease = None
+
+    @staticmethod
+    def _unavailable_error(reason: str) -> BaseException:
+        from ns_common.exceptions import NsStateError
+
+        return NsStateError(
+            "Runtime service cleanup owner is unavailable.",
+            details={
+                "component": "runtime_main",
+                "operation": "stop",
+                "reason": reason,
+            },
+        )
+
+
 _MAX_OUTER_CLEANUP_ATTEMPTS = 16
 _MAX_STALLED_OUTER_CLEANUP_ATTEMPTS = 3
 
@@ -499,9 +709,10 @@ def _close_owner_until_cleanup_complete(
                 attempts=attempt,
             )
             if process_failure is not None:
-                raise process_failure from incomplete
+                _append_failure_cause(process_failure, incomplete)
+                raise process_failure
             if last_failure is not None:
-                raise incomplete from last_failure
+                raise incomplete
             raise incomplete
         previous_progress = current_progress
 
@@ -598,17 +809,13 @@ def _merge_main_failure(
     )
     if not isinstance(operation_failure, Exception):
         if cleanup_is_incomplete:
-            operation_failure.__cause__ = cleanup_failure
+            _append_failure_cause(operation_failure, cleanup_failure)
         return operation_failure
     if not isinstance(cleanup_failure, Exception):
-        cause = cleanup_failure.__cause__
-        if _is_outer_cleanup_incomplete_failure(cause):
-            cause.__cause__ = operation_failure
-        else:
-            cleanup_failure.__cause__ = operation_failure
+        _append_failure_cause(cleanup_failure, operation_failure)
         return cleanup_failure
     if cleanup_is_incomplete:
-        cleanup_failure.__cause__ = operation_failure
+        _append_failure_cause(cleanup_failure, operation_failure)
         return cleanup_failure
     return operation_failure
 
@@ -631,14 +838,22 @@ async def _run_composed_service(
     *,
     state_store: object,
     self_check: bool,
+    lifecycle_runner: _ServiceLifecycleRunner | None = None,
 ) -> None:
-    lifecycle_owner = _ServiceLifecycleCleanupLease(service)
+    lifecycle_lease = _ServiceLifecycleCleanupLease(service)
+    lifecycle_owner: object = (
+        lifecycle_lease
+        if lifecycle_runner is None
+        else lifecycle_runner
+    )
+    if lifecycle_runner is not None:
+        lifecycle_runner._bind_lease(lifecycle_lease)
 
     def release_service_resources() -> None:
         if resources.service_lifecycle_owner is lifecycle_owner:
             resources.service_lifecycle_owner = None
 
-    lifecycle_owner.bind_release(release_service_resources)
+    lifecycle_lease.bind_release(release_service_resources)
 
     def transfer_service_resources() -> None:
         resources.service_lifecycle_owner = lifecycle_owner
@@ -658,6 +873,22 @@ async def _run_composed_service(
             and _service_cleanup_complete(service)
         ):
             release_service_resources()
+
+
+def _run_composed_service_sync(
+    resources: _MainCompositionResources,
+    service: RuntimeService,
+    *,
+    state_store: object,
+    self_check: bool,
+) -> None:
+    """Run one composed service with an explicitly retained loop owner."""
+
+    runner = _ServiceLifecycleRunner(resources, service)
+    runner.run(
+        state_store=state_store,
+        self_check=self_check,
+    )
 
 
 def main(
@@ -905,8 +1136,6 @@ def _compose_runtime_main(
         dependencies=context.dependencies,
     )
 
-    import asyncio
-
     from ns_runtime.event_loop_observability import RuntimeEventLoopMonitor
     from ns_runtime.transport import (
         TransportAdapterBuildContext,
@@ -1136,12 +1365,12 @@ def _compose_runtime_main(
             event_loop_monitor=event_loop_monitor,
             logical_connection_owner=logical_connection_manager,
         )
-        asyncio.run(_run_composed_service(
+        _run_composed_service_sync(
             resources,
             service,
             state_store=state_store,
             self_check=self_check,
-        ))
+        )
     finally:
         # Ownership remains here only when StateStore.open() failed before
         # the service accepted the shared broker-backed dependency graph.

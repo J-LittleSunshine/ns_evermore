@@ -2287,7 +2287,7 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             permission_version="version:test",
             decided_at=datetime.now(timezone.utc),
         )
-        broker, _ = await self._broker([decision.to_wire()])
+        broker, server = await self._broker([decision.to_wire()])
         clock = ControlledClock(utc_start=PROCESSOR_NOW)
         service = MessageAuthorizationService.for_broker_contract_tests(
             iam_client=broker.iam,
@@ -2299,7 +2299,6 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
             service=service,
         )
         supervisor = TaskSupervisor(shutdown_timeout_seconds=1)
-        self.addAsyncCleanup(supervisor.shutdown, timeout_seconds=1)
         session = _processor_session()
         envelope = _processor_envelope()
         envelope = dataclasses.replace(
@@ -2340,39 +2339,100 @@ class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
         original = (
             broker_module.AuthorityAttestorClient.verify_iam_result
         )
-        delayed = False
+        worker_entered = threading.Event()
+        release_worker = threading.Event()
+        worker_entered_async = asyncio.Event()
+        loop = asyncio.get_running_loop()
 
-        def delayed_verification(client, **kwargs):
-            nonlocal delayed
-            if not delayed:
-                delayed = True
-                time.sleep(0.25)
+        def blocked_verification(client, **kwargs):
+            if not worker_entered.is_set():
+                worker_entered.set()
+                loop.call_soon_threadsafe(worker_entered_async.set)
+                if not release_worker.wait(timeout=30.0):
+                    raise RuntimeError(
+                        "test authority barrier was not released",
+                    )
             return original(client, **kwargs)
 
         ticks = 0
-        running = True
+        ticker_gate = asyncio.Event()
 
         async def ticker() -> None:
             nonlocal ticks
-            while running:
+            await ticker_gate.wait()
+            for _ in range(3):
                 ticks += 1
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0)
 
         ticker_task = asyncio.create_task(ticker())
+        worker_entry_task = asyncio.create_task(
+            worker_entered_async.wait(),
+        )
+        authorization_task = None
+        ticks_at_barrier = 0
         try:
             with mock.patch.object(
                 broker_module.AuthorityAttestorClient,
                 "verify_iam_result",
-                delayed_verification,
+                blocked_verification,
             ):
-                evidence = await authorization.authorize(context)
+                authorization_task = asyncio.create_task(
+                    authorization.authorize(context),
+                )
+                completed, _ = await asyncio.wait(
+                    {worker_entry_task, authorization_task},
+                    timeout=10.0,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not completed:
+                    self.fail(
+                        "processor authority worker did not reach test barrier",
+                    )
+                if (
+                    authorization_task in completed
+                    and not worker_entered.is_set()
+                ):
+                    await authorization_task
+                    self.fail(
+                        "processor authorization completed before test barrier",
+                    )
+                await worker_entry_task
+                ticks_at_barrier = ticks
+                ticker_gate.set()
+                await asyncio.wait_for(
+                    ticker_task,
+                    timeout=10.0,
+                )
+                release_worker.set()
+                evidence = await asyncio.wait_for(
+                    authorization_task,
+                    timeout=30.0,
+                )
+            self.assertTrue(worker_entered.is_set())
+            self.assertGreaterEqual(ticks, ticks_at_barrier + 3)
+            self.assertTrue(evidence.is_contract_test_authority())
+            self.assertFalse(evidence.is_production_authority())
+            self.assertTrue(broker._channel._custodian.process.is_alive())
+            self.assertTrue(broker._channel._custodian.attestor.alive)
         finally:
-            running = False
-            await ticker_task
-        self.assertTrue(delayed)
-        self.assertGreaterEqual(ticks, 8)
-        self.assertTrue(evidence.is_contract_test_authority())
-        self.assertFalse(evidence.is_production_authority())
+            release_worker.set()
+            if (
+                authorization_task is not None
+                and not authorization_task.done()
+            ):
+                authorization_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await authorization_task
+            if not worker_entry_task.done():
+                worker_entry_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await worker_entry_task
+            ticker_gate.set()
+            if not ticker_task.done():
+                await ticker_task
+            await supervisor.shutdown(timeout_seconds=1)
+            self._close_broker_and_assert_reaped(broker)
+            await server.close()
 
     async def test_controlled_clock_offset_honors_receipt_expiry_boundary(
         self,

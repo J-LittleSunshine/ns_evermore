@@ -33,6 +33,7 @@ from ns_common.logger import NsLogger, close_ns_loggers
 from ns_runtime.main import (
     _MainCompositionResources,
     _run_composed_service,
+    _run_composed_service_sync,
     main as _runtime_main,
 )
 from ns_runtime.service import RuntimeServiceState
@@ -249,6 +250,7 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                 self.shutdown_coordinator = Coordinator(state_store)
                 self.stop_calls = 0
                 self.state = RuntimeServiceState.CREATED
+                self.block_cleanup = True
 
             async def start(self) -> None:
                 self.state = RuntimeServiceState.RUNNING
@@ -256,6 +258,12 @@ class NsRuntimeMainTestCase(unittest.TestCase):
 
             async def stop(self) -> None:
                 self.stop_calls += 1
+                if not self.block_cleanup:
+                    await store.close()
+                    self.shutdown_coordinator.cleanup_pending = False
+                    self.shutdown_coordinator.cleanup_progress = ("complete",)
+                    self.state = RuntimeServiceState.STOPPED
+                    return
                 self.state = RuntimeServiceState.FAILED
                 raise RuntimeError("persistent cleanup failure")
 
@@ -264,12 +272,12 @@ class NsRuntimeMainTestCase(unittest.TestCase):
         store = Store()
         service = Service(store)
         with self.assertRaises(NsStateError) as raised:
-            asyncio.run(_run_composed_service(
+            _run_composed_service_sync(
                 resources,
                 service,  # type: ignore[arg-type]
                 state_store=store,
                 self_check=False,
-            ))
+            )
 
         self.assertEqual(
             "cleanup_pending_no_progress",
@@ -288,19 +296,70 @@ class NsRuntimeMainTestCase(unittest.TestCase):
         self.assertTrue(
             raised.exception.details["service_lifecycle_owner_active"],
         )
-        stop_calls_before_outer_close = service.stop_calls
-        resources.close()
-        self.assertEqual(stop_calls_before_outer_close, service.stop_calls)
-        self.assertIsNotNone(resources.service_lifecycle_owner)
+        owner = raised.exception.cleanup_owner
+        self.assertIs(raised.exception, owner.run_failure)
+        self.assertFalse(owner.original_loop.is_closed())
+        self.assertIsNotNone(owner.service_cleanup_lease)
+        service.block_cleanup = False
+        owner.close()
+        self.assertEqual(4, service.stop_calls)
+        self.assertEqual(1, store.close_calls)
+        self.assertTrue(owner.original_loop.is_closed())
+        self.assertIsNone(owner.service_cleanup_lease)
+        self.assertIsNone(resources.service_lifecycle_owner)
 
     def test_cleanup_owner_resumes_only_pending_phase_on_same_loop(self) -> None:
         events: list[str] = []
 
         class Store:
+            def __init__(self) -> None:
+                self.closed = False
+
             async def open(self) -> None:
                 events.append("store:open")
 
+            async def close(self) -> None:
+                if not self.closed:
+                    self.closed = True
+                    events.append("store:close")
+                    events.append("broker-graph:close")
+
         store = Store()
+
+        class Manager:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def close(self) -> None:
+                if not self.closed:
+                    self.closed = True
+                    events.append("transport:close")
+
+        class Supervisor:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def shutdown(self) -> None:
+                if not self.closed:
+                    self.closed = True
+                    events.append("tasks:close")
+
+        class Logger:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                if not self.closed:
+                    self.closed = True
+                    events.append("logger:close")
+
+        class Broker:
+            def close(self) -> None:
+                events.append("broker-outer:close")
+
+        manager = Manager()
+        supervisor = Supervisor()
+        logger = Logger()
 
         class Coordinator:
             def __init__(self) -> None:
@@ -327,6 +386,8 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                 self.state = RuntimeServiceState.CREATED
                 self.block_transport_close = True
                 self.tasks_closed = False
+                self.store_closed = False
+                self.logger_closed = False
                 self.stop_calls = 0
 
             async def start(self) -> None:
@@ -335,8 +396,14 @@ class NsRuntimeMainTestCase(unittest.TestCase):
             async def stop(self) -> None:
                 self.stop_calls += 1
                 if not self.tasks_closed:
-                    events.append("tasks:close")
+                    await supervisor.shutdown()
                     self.tasks_closed = True
+                if not self.store_closed:
+                    await store.close()
+                    self.store_closed = True
+                if not self.logger_closed:
+                    logger.close()
+                    self.logger_closed = True
                 if self.block_transport_close:
                     self.state = RuntimeServiceState.FAILED
                     self.shutdown_coordinator.cleanup_pending = True
@@ -345,35 +412,150 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                         "transport-pending",
                     )
                     raise RuntimeError("transport close remains blocked")
-                events.append("transport:close")
+                await manager.close()
                 self.shutdown_coordinator.cleanup_progress = ("complete",)
                 self.shutdown_coordinator.cleanup_pending = False
                 self.state = RuntimeServiceState.STOPPED
 
         resources = _MainCompositionResources()
-        resources.transport_manager = object()
-        resources.task_supervisor = object()
+        resources.transport_manager = manager
+        resources.task_supervisor = supervisor
+        resources.logger = logger
+        resources.authority_broker = Broker()
         service = Service()
 
-        async def scenario() -> None:
-            with self.assertRaises(NsStateError) as raised:
-                await _run_composed_service(
-                    resources,
-                    service,  # type: ignore[arg-type]
-                    state_store=store,
-                    self_check=True,
-                )
-            owner = raised.exception.cleanup_owner
-            self.assertIs(owner, resources.service_lifecycle_owner)
-            service.block_transport_close = False
-            await owner.close()
+        with self.assertRaises(NsStateError) as raised:
+            _run_composed_service_sync(
+                resources,
+                service,  # type: ignore[arg-type]
+                state_store=store,
+                self_check=True,
+            )
+        owner = raised.exception.cleanup_owner
+        self.assertIs(owner, resources.service_lifecycle_owner)
+        original_loop = owner.original_loop
+        lease = owner.service_cleanup_lease
+        self.assertFalse(original_loop.is_closed())
+        self.assertIsNotNone(lease)
+        self.assertIs(raised.exception, owner.run_failure)
 
-        asyncio.run(scenario())
+        with self.assertRaises(NsStateError) as wrong_loop:
+            asyncio.run(lease.close())
+        self.assertEqual(
+            "service_cleanup_loop_mismatch",
+            wrong_loop.exception.details["reason"],
+        )
+        self.assertFalse(original_loop.is_closed())
+        self.assertEqual(4, service.stop_calls)
+
+        service.block_transport_close = False
+        owner.close()
+        resources.close()
+        resources.close()
 
         self.assertEqual(1, events.count("tasks:close"))
         self.assertEqual(1, events.count("transport:close"))
+        self.assertEqual(1, events.count("store:close"))
+        self.assertEqual(1, events.count("broker-graph:close"))
+        self.assertEqual(1, events.count("logger:close"))
+        self.assertEqual(0, events.count("broker-outer:close"))
+        self.assertEqual(5, service.stop_calls)
         self.assertEqual(RuntimeServiceState.STOPPED, service.state)
+        self.assertTrue(original_loop.is_closed())
+        self.assertIsNone(owner.service_cleanup_lease)
         self.assertIsNone(resources.service_lifecycle_owner)
+
+    def test_process_cleanup_failure_keeps_service_incomplete_cause_chain(
+        self,
+    ) -> None:
+        for exception_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(exception_type=exception_type.__name__):
+                operation_failure = RuntimeError("operation-identity")
+                process_failure = exception_type()
+
+                class Store:
+                    async def open(self) -> None:
+                        return None
+
+                    async def close(self) -> None:
+                        return None
+
+                store = Store()
+
+                class Coordinator:
+                    cleanup_pending = True
+                    cleanup_progress = ("cleanup-pending",)
+
+                    def __init__(self) -> None:
+                        self.context = type(
+                            "Context",
+                            (),
+                            {"state_store": store},
+                        )()
+
+                    def install_signal_handlers(self):
+                        return nullcontext()
+
+                    async def wait_requested(self) -> None:
+                        raise operation_failure
+
+                class Service:
+                    def __init__(self) -> None:
+                        self.shutdown_coordinator = Coordinator()
+                        self.state = RuntimeServiceState.CREATED
+                        self.block_cleanup = True
+                        self.stop_calls = 0
+
+                    async def start(self) -> None:
+                        self.state = RuntimeServiceState.RUNNING
+
+                    async def stop(self) -> None:
+                        self.stop_calls += 1
+                        if self.block_cleanup:
+                            self.state = RuntimeServiceState.FAILED
+                            raise process_failure
+                        self.shutdown_coordinator.cleanup_pending = False
+                        self.shutdown_coordinator.cleanup_progress = (
+                            "complete",
+                        )
+                        self.state = RuntimeServiceState.STOPPED
+
+                resources = _MainCompositionResources()
+                resources.transport_manager = object()
+                service = Service()
+                with self.assertRaises(exception_type) as raised:
+                    _run_composed_service_sync(
+                        resources,
+                        service,  # type: ignore[arg-type]
+                        state_store=store,
+                        self_check=False,
+                    )
+
+                self.assertIs(process_failure, raised.exception)
+                incomplete = raised.exception.__cause__
+                self.assertIsInstance(incomplete, NsStateError)
+                self.assertEqual(
+                    "cleanup_pending_no_progress",
+                    incomplete.details["reason"],
+                )
+                self.assertIs(operation_failure, incomplete.__cause__)
+                owner = incomplete.cleanup_owner
+                self.assertIs(owner, resources.service_lifecycle_owner)
+                self.assertIs(process_failure, owner.run_failure)
+                self.assertFalse(owner.original_loop.is_closed())
+                self.assertIsNotNone(owner.service_cleanup_lease)
+                self.assertNotIn(
+                    "operation-identity",
+                    repr(incomplete),
+                )
+
+                service.block_cleanup = False
+                owner.close()
+                self.assertEqual(4, service.stop_calls)
+                self.assertEqual(RuntimeServiceState.STOPPED, service.state)
+                self.assertTrue(owner.original_loop.is_closed())
+                self.assertIsNone(owner.service_cleanup_lease)
+                self.assertIsNone(resources.service_lifecycle_owner)
 
     def test_start_failure_does_not_duplicate_service_owned_cleanup(self) -> None:
         start_failure = RuntimeError("service start identity")
@@ -1640,43 +1822,62 @@ class NsRuntimeMainTestCase(unittest.TestCase):
                 self.assertIs(failure, raised.exception)
                 self.assertEqual(1, close_calls)
 
-    def test_process_level_bootstrap_cleanup_failure_outranks_ordinary_error(
+    def test_process_level_cleanup_preserves_incomplete_and_operation_chain(
         self,
     ) -> None:
-        operation_failure = RuntimeError("ordinary")
-        cleanup_failure = KeyboardInterrupt("cleanup interrupt")
-        close_calls = 0
+        for exception_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(exception_type=exception_type.__name__):
+                operation_failure = RuntimeError("ordinary-operation-identity")
+                cleanup_failure = exception_type()
+                close_calls = 0
 
-        class FakeBootstrap:
-            def close(self) -> None:
-                nonlocal close_calls
-                close_calls += 1
-                raise cleanup_failure
+                class FakeBootstrap:
+                    incomplete = True
+                    cleanup_progress = ("cleanup-pending",)
 
-        preflight = mock.Mock()
-        preflight.resolve_environment.return_value = "local"
-        preflight.load_config_snapshot.side_effect = operation_failure
-        with mock.patch(
-            "ns_runtime.authority_bootstrap."
-            "load_inherited_authority_bootstrap",
-            return_value=FakeBootstrap(),
-        ):
-            with self.assertRaises(KeyboardInterrupt) as raised:
-                _runtime_main(
-                    environment="local",
-                    config_path="unused.json",
-                    preflight=preflight,
+                    def pending_facts(self) -> dict[str, object]:
+                        return {
+                            "process_owned": True,
+                            "process_alive": True,
+                            "credential": "private-owner-diagnostic",
+                        }
+
+                    def close(self) -> None:
+                        nonlocal close_calls
+                        close_calls += 1
+                        raise cleanup_failure
+
+                bootstrap = FakeBootstrap()
+                preflight = mock.Mock()
+                preflight.resolve_environment.return_value = "local"
+                preflight.load_config_snapshot.side_effect = operation_failure
+                with mock.patch(
+                    "ns_runtime.authority_bootstrap."
+                    "load_inherited_authority_bootstrap",
+                    return_value=bootstrap,
+                ):
+                    with self.assertRaises(exception_type) as raised:
+                        _runtime_main(
+                            environment="local",
+                            config_path="unused.json",
+                            preflight=preflight,
+                        )
+                self.assertIs(cleanup_failure, raised.exception)
+                self.assertEqual(3, close_calls)
+                incomplete = raised.exception.__cause__
+                self.assertIsInstance(incomplete, NsStateError)
+                self.assertEqual(
+                    "authority_bootstrap_cleanup_incomplete",
+                    incomplete.details["reason"],
                 )
-        self.assertIs(cleanup_failure, raised.exception)
-        self.assertEqual(3, close_calls)
-        incomplete = raised.exception.__cause__
-        self.assertIsInstance(incomplete, NsStateError)
-        self.assertEqual(
-            "authority_bootstrap_cleanup_incomplete",
-            incomplete.details["reason"],
-        )
-        self.assertIs(operation_failure, incomplete.__cause__)
-        self.assertIsInstance(incomplete.cleanup_owner, FakeBootstrap)
+                self.assertIs(operation_failure, incomplete.__cause__)
+                self.assertIs(bootstrap, incomplete.cleanup_owner)
+                self.assertTrue(incomplete.details["process_owned"])
+                self.assertTrue(incomplete.details["process_alive"])
+                self.assertNotIn(
+                    "private-owner-diagnostic",
+                    repr(incomplete),
+                )
 
     def test_authority_cleanup_no_progress_overrides_operation_failure(
         self,
