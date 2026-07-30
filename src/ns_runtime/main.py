@@ -31,11 +31,25 @@ async def _run_service(
         failure: BaseException | None = None
         store_open_attempted = False
         service_start_attempted = False
+        service_owns_state_store = False
         try:
             if state_store is not None:
                 store_open_attempted = True
                 await state_store.open()  # type: ignore[attr-defined]
             service_start_attempted = True
+            service_owns_state_store = bool(
+                state_store is not None
+                and getattr(
+                    getattr(
+                        service.shutdown_coordinator,
+                        "context",
+                        None,
+                    ),
+                    "state_store",
+                    None,
+                )
+                is state_store
+            )
             await service.start()
             if service_starting is not None:
                 service_starting()
@@ -49,13 +63,31 @@ async def _run_service(
         finally:
             if service_start_attempted:
                 try:
-                    await service.stop()
+                    await _stop_service_until_cleanup_complete(service)
                 except BaseException as cleanup_failure:
-                    failure = _prioritize_lifecycle_failure(
-                        failure,
-                        cleanup_failure,
-                    )
-            if state_store is not None and store_open_attempted:
+                    if (
+                        failure is not None
+                        and _is_cleanup_incomplete_failure(cleanup_failure)
+                        and isinstance(failure, Exception)
+                    ):
+                        cleanup_failure.__cause__ = failure
+                        failure = cleanup_failure
+                    else:
+                        selected = _prioritize_lifecycle_failure(
+                            failure,
+                            cleanup_failure,
+                        )
+                        if (
+                            failure is not None
+                            and selected is cleanup_failure
+                        ):
+                            cleanup_failure.__cause__ = failure
+                        failure = selected
+            if (
+                state_store is not None
+                and store_open_attempted
+                and not service_owns_state_store
+            ):
                 try:
                     await state_store.close()  # type: ignore[attr-defined]
                 except BaseException as cleanup_failure:
@@ -65,6 +97,83 @@ async def _run_service(
                     )
         if failure is not None:
             raise failure
+
+
+_MAX_SERVICE_CLEANUP_ATTEMPTS = 16
+_MAX_STALLED_SERVICE_CLEANUP_ATTEMPTS = 3
+
+
+async def _stop_service_until_cleanup_complete(
+    service: RuntimeService,
+) -> None:
+    """Retry incomplete coordinator phases before the current loop is closed."""
+
+    coordinator = service.shutdown_coordinator
+    previous_progress = _service_cleanup_progress(coordinator)
+    stalled_attempts = 0
+    process_failure: BaseException | None = None
+    last_failure: BaseException | None = None
+    for attempt in range(1, _MAX_SERVICE_CLEANUP_ATTEMPTS + 1):
+        last_failure = None
+        try:
+            await service.stop()
+        except BaseException as error:
+            last_failure = error
+            if not isinstance(error, Exception) and process_failure is None:
+                process_failure = error
+        cleanup_pending = bool(
+            getattr(coordinator, "cleanup_pending", False)
+        )
+        if not cleanup_pending:
+            if process_failure is not None:
+                if last_failure is not None and last_failure is not process_failure:
+                    raise process_failure from last_failure
+                raise process_failure
+            if last_failure is not None:
+                raise last_failure
+            return
+
+        current_progress = _service_cleanup_progress(coordinator)
+        if current_progress == previous_progress:
+            stalled_attempts += 1
+        else:
+            stalled_attempts = 0
+        if (
+            attempt >= _MAX_SERVICE_CLEANUP_ATTEMPTS
+            or stalled_attempts
+            >= _MAX_STALLED_SERVICE_CLEANUP_ATTEMPTS
+        ):
+            from ns_common.exceptions import NsStateError
+
+            incomplete = NsStateError(
+                "Runtime service cleanup did not complete.",
+                details={
+                    "component": "runtime_main",
+                    "operation": "stop",
+                    "reason": "cleanup_pending_no_progress",
+                    "attempts": attempt,
+                },
+            )
+            if process_failure is not None:
+                raise process_failure from incomplete
+            if last_failure is not None:
+                raise incomplete from last_failure
+            raise incomplete
+        previous_progress = current_progress
+
+
+def _service_cleanup_progress(coordinator: object) -> object:
+    try:
+        return getattr(coordinator, "cleanup_progress")
+    except BaseException:
+        return None
+
+
+def _is_cleanup_incomplete_failure(error: BaseException) -> bool:
+    return bool(
+        getattr(error, "details", {}).get("reason")
+        == "cleanup_pending_no_progress"
+    )
 
 
 def _prioritize_lifecycle_failure(
@@ -103,6 +212,7 @@ class _MainCompositionResources:
         self.task_supervisor: object | None = None
         self.logger: object | None = None
         self.authority_broker: object | None = None
+        self.service_lifecycle_owner: object | None = None
 
     def transfer_service_resources(self) -> None:
         self.adapters = ()
@@ -199,12 +309,17 @@ async def _run_composed_service(
     state_store: object,
     self_check: bool,
 ) -> None:
-    await _run_service(
-        service,
-        state_store=state_store,
-        self_check=self_check,
-        service_starting=resources.transfer_service_resources,
-    )
+    resources.service_lifecycle_owner = service
+    try:
+        await _run_service(
+            service,
+            state_store=state_store,
+            self_check=self_check,
+            service_starting=resources.transfer_service_resources,
+        )
+    finally:
+        # Cleanup either completed inside this loop or failed explicitly.
+        resources.service_lifecycle_owner = None
 
 
 def main(

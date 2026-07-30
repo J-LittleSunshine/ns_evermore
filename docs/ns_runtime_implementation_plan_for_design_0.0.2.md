@@ -3,7 +3,7 @@
 > 实施文档版本：`0.0.2`
 > 设计基线：`ns_runtime 设计边界与功能清单 0.0.2`
 > 仓库基线：Code Agent 当前会话所处的 `ns_evermore` 本地工作区；远程仓库、远程分支和提交历史不作为实现状态依据
-> 当前状态校准时间：`2026-07-30T15:42:58+08:00`（最终测试事实见 acceptance log 当前记录）
+> 当前状态校准时间：`2026-07-30T17:24:23+08:00`（最终测试事实见 acceptance log 当前记录）
 > 文档用途：作为人工开发者与 Code Agent 的当前状态、阶段边界和后续执行入口。
 
 文档分工：
@@ -17,7 +17,7 @@
 
 - 状态：`VERIFIED / F3 (local only)`；当前工作区修复 lifecycle owner 的逐资源完成/可重试清理、child 最终存活证明、broker endpoint/process/attestor 隔离回收，以及 admission inline descriptor/seal 的统一迭代式节点/深度/字节预算。最终命令和数量只写入 acceptance log 当前记录。
 - CI：分支 push 触发、真实 Redis 强制门禁与 base-SHA/commit whitespace gate 保持不变。workflow 文件虽声明 `workflow_dispatch`，但在该文件进入默认分支 `main` 前，GitHub Actions 人工触发入口不可用，禁止声称已可人工运行。
-- 远端事实：起始提交 `af0358bf34f6713d2b029931a1b6575a4a226ab6` 的 branch-push CI 已绿色；当前修复候选在本记录时没有对应远端 run，保持 `UNVERIFIED`，不得把起始提交的绿色结果继承为当前结果。
+- 远端事实：本轮基准提交为`a8e1c4b3044cbaad537bceabbe76420efcada4d4`；当前修复候选在本记录时没有对应远端 run，保持 `UNVERIFIED`。基准及当前未提交修复均未获得可归属于当前代码的远端绿色证据，不得继承任何前一提交的CI结果。
 - 冻结：P12继续`BLOCKED / NOT_STARTED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
 
 ### P08-FIX-03 / P09-FIX-07 / P11-FIX-08 authority closure
@@ -202,8 +202,8 @@ P00 必须记录以下事实：
 | `src/ns_backend/iam` 实际能力 | `VERIFIED` | IAM-R1保持；payload_ref validation result现冻结对象/version/checksum/tenant/size完整性元数据，runtime通过显式IAM HTTP client实时调用既有backend endpoint；backend无对象provider时继续明确invalid/fail-closed。 |
 | `src/ns_runtime` 实际能力 | `VERIFIED` | P02-P09及P10 DR-1冻结边界保持；P11以typed prepared DeliveryRecord和StateStore authority完成本地prepared -> queued -> sending -> ack_waiting，复用既有TaskSupervisor与P05 local connection owner。task.dispatch只提供显式注入的本地实验组合，production contract/默认配置仍关闭；不含P12 ACK/NACK/Defer/timeout/retry。 |
 | 配置示例与依赖清单 | `VERIFIED` | runtime.state_store支持backend、credential-free endpoint、username、env/file/none password source、namespace和timeout；Redis/Valkey driver已移入runtime生产层且动态加载，五层无环清单保持。 |
-| 当前本地测试基线 | `VERIFIED` | 本轮最终standard asyncio全树`Ran 951 tests in 253.401s, OK (skipped=7)`；authority、IAM、routing、真实Redis、delivery、main/transport与边界分组均通过，compileall、文档secret扫描和diff check通过。首轮全树的短TTL attestor时序失败、单项复跑与最终全树复跑均保留在acceptance log；均为local verification，无production root或远程CI证据。 |
-| 当前状态校准时间 | `VERIFIED` | `2026-07-30T13:19:54+08:00` |
+| 当前本地测试基线 | `VERIFIED` | 本轮开始时已验证standard asyncio全树基线为`Ran 967 tests, OK (skipped=7)`；新增9项authority cleanup、main cleanup retry与StateStore proxy close测试后，当前全树为`976`项。完全相同的强制真实Redis命令连续三轮均为`OK (skipped=7)`，耗时依次`282.921s`、`282.722s`、`282.664s`；全部首次失败、复跑和缓存墙钟测试稳定化事实见acceptance log当前记录。全部结论均为local verification，无production root或当前代码远程CI证据。 |
+| 当前状态校准时间 | `VERIFIED` | `2026-07-30T17:24:23+08:00` |
 
 ### 2.2 本地代码检查范围
 

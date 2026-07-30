@@ -26,6 +26,7 @@ from ns_common.exceptions import (
     NsDependencyError,
     NsRuntimeStartupSecurityError,
     NsRuntimeTransportDisabledError,
+    NsStateError,
     NsValidationError,
 )
 from ns_common.logger import NsLogger, close_ns_loggers
@@ -135,6 +136,140 @@ def _controlled_preflight(
 
 
 class NsRuntimeMainTestCase(unittest.TestCase):
+
+    def test_composed_service_retries_cleanup_in_same_event_loop(self) -> None:
+        events: list[str] = []
+
+        class Store:
+            async def open(self) -> None:
+                events.append("store:open")
+
+            async def close(self) -> None:
+                events.append("store:close")
+
+        store = Store()
+
+        class Coordinator:
+            def __init__(self) -> None:
+                self.cleanup_pending = False
+                self.cleanup_progress: object = ("initial",)
+                self.context = type(
+                    "Context",
+                    (),
+                    {"state_store": store},
+                )()
+
+            def install_signal_handlers(self):
+                return nullcontext()
+
+            def request_shutdown(self, _reason: object) -> None:
+                events.append("shutdown:request")
+
+            async def wait_requested(self) -> None:
+                events.append("shutdown:wait")
+
+        class Service:
+            def __init__(self) -> None:
+                self.shutdown_coordinator = Coordinator()
+                self.stop_calls = 0
+
+            async def start(self) -> None:
+                events.append("service:start")
+
+            async def stop(self) -> None:
+                self.stop_calls += 1
+                events.append("service:stop")
+                if self.stop_calls == 1:
+                    self.shutdown_coordinator.cleanup_pending = True
+                    raise RuntimeError("close failed once")
+                await store.close()
+                self.shutdown_coordinator.cleanup_progress = ("complete",)
+                self.shutdown_coordinator.cleanup_pending = False
+
+        resources = _MainCompositionResources()
+        resources.transport_manager = object()
+        resources.adapters = (object(),)
+        resources.task_supervisor = object()
+        resources.logger = object()
+        service = Service()
+
+        asyncio.run(_run_composed_service(
+            resources,
+            service,  # type: ignore[arg-type]
+            state_store=store,
+            self_check=True,
+        ))
+
+        self.assertEqual(2, service.stop_calls)
+        self.assertEqual(1, events.count("store:close"))
+        self.assertIsNone(resources.service_lifecycle_owner)
+        self.assertIsNone(resources.transport_manager)
+        self.assertEqual((), resources.adapters)
+        self.assertIsNone(resources.task_supervisor)
+        self.assertIsNone(resources.logger)
+
+    def test_composed_service_bounds_cleanup_without_progress(self) -> None:
+        operation_failure = RuntimeError("runtime-operation-identity")
+
+        class Store:
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            async def open(self) -> None:
+                return None
+
+            async def close(self) -> None:
+                self.close_calls += 1
+
+        class Coordinator:
+            cleanup_pending = True
+            cleanup_progress = ("unchanged-owner",)
+
+            def __init__(self, state_store: object) -> None:
+                self.context = type(
+                    "Context",
+                    (),
+                    {"state_store": state_store},
+                )()
+
+            def install_signal_handlers(self):
+                return nullcontext()
+
+            async def wait_requested(self) -> None:
+                raise operation_failure
+
+        class Service:
+            def __init__(self, state_store: object) -> None:
+                self.shutdown_coordinator = Coordinator(state_store)
+                self.stop_calls = 0
+
+            async def start(self) -> None:
+                return None
+
+            async def stop(self) -> None:
+                self.stop_calls += 1
+                raise RuntimeError("persistent cleanup failure")
+
+        resources = _MainCompositionResources()
+        resources.transport_manager = object()
+        store = Store()
+        service = Service(store)
+        with self.assertRaises(NsStateError) as raised:
+            asyncio.run(_run_composed_service(
+                resources,
+                service,  # type: ignore[arg-type]
+                state_store=store,
+                self_check=False,
+            ))
+
+        self.assertEqual(
+            "cleanup_pending_no_progress",
+            raised.exception.details["reason"],
+        )
+        self.assertIs(operation_failure, raised.exception.__cause__)
+        self.assertEqual(3, service.stop_calls)
+        self.assertEqual(0, store.close_calls)
+        self.assertIsNone(resources.service_lifecycle_owner)
 
     def test_composed_store_open_failure_closes_every_untransferred_resource(
         self,

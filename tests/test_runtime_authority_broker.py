@@ -463,6 +463,38 @@ def _signed_response_bytes(
 
 
 class RuntimeAuthorityBrokerTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_state_store_proxy_close_retries_before_marking_closed(
+        self,
+    ) -> None:
+        failure = RuntimeError("channel close failed once")
+
+        class Channel:
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+                if self.close_calls == 1:
+                    raise failure
+
+        channel = Channel()
+        proxy = object.__new__(
+            broker_module.AuthorityBrokerStateStoreProxy,
+        )
+        proxy._channel = channel
+        proxy._handle = None
+        proxy._state = "open"
+
+        with self.assertRaises(RuntimeError) as raised:
+            await proxy.close()
+
+        self.assertIs(failure, raised.exception)
+        self.assertEqual("open", proxy._state)
+        self.assertEqual(1, channel.close_calls)
+        await proxy.close()
+        self.assertEqual("closed", proxy._state)
+        self.assertEqual(2, channel.close_calls)
+
     async def _broker(
         self,
         outcomes: list[object],

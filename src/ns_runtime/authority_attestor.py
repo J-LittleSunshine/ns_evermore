@@ -381,6 +381,12 @@ def _prioritize_cleanup_failure(
         return candidate
     if isinstance(current, Exception) and not isinstance(candidate, Exception):
         return candidate
+    if (
+        isinstance(current, Exception)
+        and type(candidate) is AuthorityAttestationError
+        and candidate.args == ("attestor_process_did_not_exit",)
+    ):
+        return candidate
     return current
 
 
@@ -405,15 +411,18 @@ def start_authority_attestor(
         test_root = expected_test_root_public_key
     context = multiprocessing.get_context("spawn")
     from ns_runtime.authority_bootstrap import (
+        _AuthorityStartupCleanupOwner,
         _close_connections,
-        _prioritize_failure,
-        _reap_process,
+        _raise_startup_cleanup_failure,
     )
 
     connections: dict[str, Connection] = {}
     process: multiprocessing.Process | None = None
     process_start_attempted = False
     transferred = False
+    cleanup_owner = _AuthorityStartupCleanupOwner(
+        connections=(connections,),
+    )
     try:
         parent, child = context.Pipe(duplex=True)
         connections["parent"] = parent
@@ -424,7 +433,9 @@ def start_authority_attestor(
             name=f"ns-runtime-authority-attestor-{realm}",
             daemon=False,
         )
+        cleanup_owner.process = process
         process_start_attempted = True
+        cleanup_owner.process_start_attempted = True
         process.start()
         child_failure = _close_connections({
             "child": connections["child"],
@@ -461,25 +472,21 @@ def start_authority_attestor(
             timeout_seconds=timeout_seconds,
         )
         transferred = True
+        cleanup_owner.process = None
         return client
     finally:
         if not transferred:
             active_failure = sys.exc_info()[1]
-            cleanup_failure = _close_connections(connections)
-            if process is not None:
-                cleanup_failure = _prioritize_failure(
-                    cleanup_failure,
-                    _reap_process(
-                        process,
-                        started=process_start_attempted,
-                    ),
-                )
-            selected = _prioritize_failure(
-                active_failure,
-                cleanup_failure,
+            cleanup_failure: BaseException | None = None
+            try:
+                cleanup_owner.close()
+            except BaseException as error:
+                cleanup_failure = error
+            _raise_startup_cleanup_failure(
+                cleanup_owner,
+                operation_failure=active_failure,
+                cleanup_failure=cleanup_failure,
             )
-            if selected is cleanup_failure and cleanup_failure is not None:
-                raise cleanup_failure
 
 
 def _authority_attestor_process(

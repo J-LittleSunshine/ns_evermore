@@ -2930,6 +2930,18 @@ class AuthorityBrokerStateStoreProxy:
             "closed": StateStoreLifecycleState.CLOSED,
         }[self._state]
 
+    @property
+    def cleanup_progress(self) -> tuple[object, ...]:
+        channel = getattr(self, "_channel", None)
+        custodian = getattr(channel, "_custodian", None)
+        return (
+            self._state,
+            bool(getattr(channel, "_closed", False)),
+            len(getattr(custodian, "_endpoint_close_resources", ())),
+            bool(getattr(custodian, "_process_reaped", False)),
+            bool(getattr(custodian, "_attestor_closed", False)),
+        )
+
     def _binding_is_current(self) -> bool:
         expected_channel_type = {
             AuthorityBrokerStateStoreProxy: _ProductionRoleBrokerChannel,
@@ -3036,8 +3048,8 @@ class AuthorityBrokerStateStoreProxy:
     async def close(self) -> None:
         if self._state == "closed":
             return
-        self._state = "closed"
         await asyncio.to_thread(self._channel.close)
+        self._state = "closed"
 
 
 class _ContractTestAuthorityBrokerStateStoreProxy(
@@ -3269,11 +3281,10 @@ def _spawn_authority_broker(
     if realm not in _BROKER_REALMS or not isinstance(runtime_clock, Clock):
         _invalid("broker.realm")
     from ns_runtime.authority_bootstrap import (
+        _AuthorityStartupCleanupOwner,
         _close_connections,
-        _close_duplicate_handles,
         _close_inherited_fds,
-        _prioritize_failure,
-        _reap_process,
+        _raise_startup_cleanup_failure,
     )
 
     context = multiprocessing.get_context("spawn")
@@ -3285,6 +3296,11 @@ def _spawn_authority_broker(
     attestor: AuthorityAttestorClient | None = None
     process_start_attempted = False
     transferred = False
+    cleanup_owner = _AuthorityStartupCleanupOwner(
+        connections=(children, parents),
+        duplicate_handles=duplicate_handles,
+        inherited_fds=inherited_fds,
+    )
     try:
         attestor = start_authority_attestor(
             realm=realm,
@@ -3293,6 +3309,7 @@ def _spawn_authority_broker(
             ),
             timeout_seconds=startup_timeout_seconds,
         )
+        cleanup_owner.attestor = attestor
         for role in BrokerRepositoryRole:
             parent, child = context.Pipe(duplex=True)
             parents[role.value] = parent
@@ -3318,7 +3335,9 @@ def _spawn_authority_broker(
             name="ns-runtime-authority-broker",
             daemon=False,
         )
+        cleanup_owner.process = process
         process_start_attempted = True
+        cleanup_owner.process_start_attempted = True
         process.start()
         duplicate_handles.clear()
         child_close_failure = _close_connections(children)
@@ -3337,45 +3356,22 @@ def _spawn_authority_broker(
             runtime_clock=runtime_clock,
         )
         transferred = True
+        cleanup_owner.process = None
+        cleanup_owner.attestor = None
         return broker
     finally:
         if not transferred:
             active_failure = sys.exc_info()[1]
-            cleanup_failure = _close_connections(children)
-            cleanup_failure = _prioritize_failure(
-                cleanup_failure,
-                _close_connections(parents),
+            cleanup_failure: BaseException | None = None
+            try:
+                cleanup_owner.close()
+            except BaseException as error:
+                cleanup_failure = error
+            _raise_startup_cleanup_failure(
+                cleanup_owner,
+                operation_failure=active_failure,
+                cleanup_failure=cleanup_failure,
             )
-            if process is not None:
-                cleanup_failure = _prioritize_failure(
-                    cleanup_failure,
-                    _reap_process(
-                        process,
-                        started=process_start_attempted,
-                    ),
-                )
-            cleanup_failure = _prioritize_failure(
-                cleanup_failure,
-                _close_duplicate_handles(duplicate_handles),
-            )
-            cleanup_failure = _prioritize_failure(
-                cleanup_failure,
-                _close_inherited_fds(inherited_fds),
-            )
-            if attestor is not None:
-                try:
-                    attestor.close()
-                except BaseException as cleanup_error:
-                    cleanup_failure = _prioritize_failure(
-                        cleanup_failure,
-                        cleanup_error,
-                    )
-            selected = _prioritize_failure(
-                active_failure,
-                cleanup_failure,
-            )
-            if selected is cleanup_failure and cleanup_failure is not None:
-                raise cleanup_failure
 
 
 def _complete_inherited_authority_broker_start(

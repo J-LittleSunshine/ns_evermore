@@ -16,6 +16,7 @@ from ns_common.observability import (
     InMemoryTraceSink,
 )
 from ns_common.time import SystemClock
+import ns_runtime.authority_broker as broker_module
 from ns_runtime.context import RuntimeContext, RuntimeDependencySlots
 from ns_runtime.service import RuntimeService, RuntimeServiceState
 from ns_runtime.shutdown import (
@@ -138,19 +139,26 @@ def _context(
     traces: object,
     diagnostic: object | None = None,
     http_owner: NsHttpClientOwner | None = None,
+    state_store: object | None = None,
 ) -> RuntimeContext:
-    return RuntimeContext(
-        config=NsConfig(),
-        clock=SystemClock(),
-        logger=logger,
-        metrics=metrics,  # type: ignore[arg-type]
-        traces=traces,  # type: ignore[arg-type]
-        task_supervisor=supervisor,
-        dependencies=RuntimeDependencySlots(
-            diagnostic_snapshot_sink=diagnostic,  # type: ignore[arg-type]
-            http_client_owner=http_owner,
-        ),
-    )
+    with mock.patch.object(
+        broker_module.AuthorityBrokerStateStoreProxy,
+        "_binding_is_current",
+        return_value=True,
+    ):
+        return RuntimeContext(
+            config=NsConfig(),
+            clock=SystemClock(),
+            logger=logger,
+            metrics=metrics,  # type: ignore[arg-type]
+            traces=traces,  # type: ignore[arg-type]
+            task_supervisor=supervisor,
+            dependencies=RuntimeDependencySlots(
+                diagnostic_snapshot_sink=diagnostic,  # type: ignore[arg-type]
+                http_client_owner=http_owner,
+                state_store=state_store,  # type: ignore[arg-type]
+            ),
+        )
 
 
 class RuntimeShutdownCoordinatorTestCase(unittest.IsolatedAsyncioTestCase):
@@ -359,6 +367,56 @@ class RuntimeShutdownCoordinatorTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, events.count("close:metrics"))
         self.assertEqual(1, events.count("close:traces"))
         self.assertEqual(1, events.count("close:logger"))
+
+    async def test_state_store_proxy_channel_close_retries_across_two_stops(
+        self,
+    ) -> None:
+        events: list[str] = []
+
+        class Channel:
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+                events.append("state:close")
+                if self.close_calls == 1:
+                    raise RuntimeError("state close failed once")
+
+        channel = Channel()
+        state_store = object.__new__(
+            broker_module.AuthorityBrokerStateStoreProxy,
+        )
+        state_store._channel = channel
+        state_store._handle = None
+        state_store._state = "open"
+        context = _context(
+            logger=logging.Logger("runtime-shutdown-state-retry"),
+            supervisor=TaskSupervisor(),
+            metrics=_RecordingSink("metrics", events),
+            traces=_RecordingSink("traces", events),
+            state_store=state_store,
+        )
+        coordinator = RuntimeShutdownCoordinator(context=context)
+        service = RuntimeService(
+            context=context,
+            shutdown_coordinator=coordinator,
+        )
+        service._state = RuntimeServiceState.RUNNING
+
+        with self.assertRaisesRegex(
+            NsStateError,
+            "shutdown cleanup is incomplete",
+        ):
+            await service.stop()
+
+        self.assertEqual("open", state_store._state)
+        self.assertTrue(coordinator.cleanup_pending)
+        await service.stop()
+        self.assertEqual("closed", state_store._state)
+        self.assertEqual(2, channel.close_calls)
+        self.assertFalse(coordinator.cleanup_pending)
+        self.assertIs(RuntimeServiceState.STOPPED, service.state)
 
     async def test_keyboard_interrupt_during_close_does_not_skip_later_cleanup(
         self,

@@ -270,7 +270,10 @@ class NsDjangoCacheBackendTestCase(unittest.TestCase):
                 Path(temp_dir) / "ns_cache.sqlite3",
             )
 
-            with patch("ns_common.cache.django.get_cache_client", return_value=client):
+            with (
+                patch("ns_common.cache.django.get_cache_client", return_value=client),
+                patch.object(SQLiteCacheBackend, "_now", return_value=1_000.0) as cache_now,
+            ):
                 backend = NsDjangoCacheBackend(
                     "default",
                     {
@@ -288,7 +291,7 @@ class NsDjangoCacheBackendTestCase(unittest.TestCase):
                 )
 
                 self.assertEqual("value", backend.get("short"))
-                time.sleep(1.2)
+                cache_now.return_value = 1_001.0
                 self.assertIsNone(backend.get("short"))
 
 
