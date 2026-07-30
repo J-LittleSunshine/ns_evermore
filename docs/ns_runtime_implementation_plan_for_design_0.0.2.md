@@ -18,7 +18,7 @@
 - 状态：`VERIFIED / F3 (local only; remote CI UNVERIFIED)`；同步service lifecycle runner是从service运行到event loop完全关闭的唯一owner。其单调phase依次为`service_cleanup_complete`、`pending_tasks_drained`、`asyncgens_shutdown`、`executor_shutdown`与`loop_closed`；Task cancel/await、async generator、显式可观测executor及loop close均有界，任一失败保留open loop、lease和runner，后续只重试未完成phase。仅确认`loop.is_closed()`后才清空lease与resources owner。process-level finalizer `BaseException`、loop cleanup-incomplete及原service/run failure保持稳定cause链，安全facts只含布尔/数量。
 - 同一进程内的`SystemClock`共享线程安全的non-decreasing wall/monotonic时间线；每个authority composition另把同一启动锚交给父broker proxy、broker child与attestor child，三方锚定后只按monotonic elapsed推进，防止OS墙钟回拨或瞬时进程间分歧让已签名响应被误判为future-issued、提前触发rotation或延长certificate寿命。exact certificate、ticket、state response、IAM receipt签名/绑定及`issued_at <= now < expires_at`规则未改变。最终连续20轮压力与全部定向矩阵均已通过；完全相同的强制真实Redis全仓命令连续三轮均为996项、7 skipped、0 failed，完整命令、耗时及作废序列见acceptance log当前记录。
 - CI：分支 push 触发、真实 Redis 强制门禁与 base-SHA/commit whitespace gate 保持不变。workflow 文件虽声明 `workflow_dispatch`，但在该文件进入默认分支 `main` 前，GitHub Actions 人工触发入口不可用，禁止声称已可人工运行。
-- 远端事实：本轮基准 commit 与当前提交候选基线为`5b7bd1d760e7ea0b5df863ee04d4ee93eaf0f426`；当前修复候选在本记录时没有对应远端 run，保持 `UNVERIFIED`。当前 commit 及本次候选均未获得可归属于当前代码的远端绿色证据，不得继承任何前一提交的CI结果。
+- 远端事实：本轮起始基线为`5b7bd1d760e7ea0b5df863ee04d4ee93eaf0f426`，该起始commit已有远端绿色run。首次推送前的校准事实是“当前修复候选在本记录时没有对应远端 run，保持 `UNVERIFIED`”；推送后对应run已启动但尚未绿色，仍保持`UNVERIFIED`，不得继承起始commit的CI结果。
 - 冻结：P12继续`BLOCKED / NOT_STARTED / F0`；未启用ACK/NACK/Defer、retry、DLQ、cluster ownership或production `task.dispatch`。
 
 ### P08-FIX-03 / P09-FIX-07 / P11-FIX-08 authority closure
