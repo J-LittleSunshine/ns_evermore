@@ -72,7 +72,7 @@
 | [ADR-042](#adr-042) | Lease 是 Vault 权威、可续期、可撤销的分层资源 | `ACCEPTED` |
 | [ADR-043](#adr-043) | 动态凭证使用 Lease 级临时密封交付包 | `ACCEPTED` |
 | [ADR-044](#adr-044) | 按 Provider 能力分级的动态凭证签发模式 | `ACCEPTED` |
-| [ADR-045](#adr-045) | 正式但可选的 Agent 本地交付平面 | `ACCEPTED` |
+| [ADR-045](#adr-045) | 正式但可选的 Vault Delivery Agent 本地交付平面 | `ACCEPTED` |
 | [ADR-046](#adr-046) | ns_client 按 Principal 类型提供统一安全 SDK 模式 | `ACCEPTED` |
 | [ADR-047](#adr-047) | ns_runtime 经 Authority Broker 获得 Capability 后按策略直连数据面 | `ACCEPTED` |
 | [ADR-048](#adr-048) | ns_node 是独立 Node Principal 且只访问 node-scoped Secret | `ACCEPTED` |
@@ -169,8 +169,8 @@
 - ADR 编号：`ADR-007`
 - 状态：`ACCEPTED`
 - 背景：扁平资源依赖标签建立安全边界会导致大型租户权限和审计混乱；任意文件夹树又会引入策略继承、移动和路径身份歧义。
-- 决策：所有 Key、Secret、Transit、PKI、Dynamic Credential、Provider Binding 等资源统一归属于固定层级 Tenant → Project → Namespace → Resource。各层使用稳定、不透明 ID；名称只用于展示和检索。资源不得跨 Tenant 移动，标签不得替代层级安全边界。
-- 约束与后果：重命名不改变资源身份、审计或密码学绑定。简单场景可以自动创建 default Project/Namespace，但底层合同不得省略层级。跨 Project 的 Namespace 迁移属于显式安全状态变化，需要重新授权、generation 提升和 Capability 撤销。
+- 决策：面向租户的 Key、Secret、Transit、PKI、Dynamic Credential、Provider Binding 等普通产品资源统一归属于固定层级 Tenant → Project → Namespace → Resource。各层使用稳定、不透明 ID；名称只用于展示和检索。Tenant Key Domain 是 Tenant 级安全资源；Root/Seal、内部 Authority Key、Backup Protection、Shard/Region、Audit Anchor 和 Trusted Time Connector 等平台内部资源使用明确的 system/deployment/region/shard 或 Tenant scope，不得伪造 Project/Namespace 或通过普通 Tenant Resource API 暴露。资源不得跨 Tenant 移动，标签不得替代层级安全边界。
+- 约束与后果：重命名不改变资源身份、审计或密码学绑定。简单场景可以自动创建 default Project/Namespace，但底层合同不得省略层级。跨 Project/Namespace 访问没有隐式继承，只能由同一 Tenant 内显式 Grant/Guardrail 和精确 Resource/Generation Capability 放行。跨 Project 的 Namespace 迁移或资源移动属于 Shard Leader 串行执行的显式安全状态变化，必须重新授权、generation 提升、Capability 撤销、依赖/Lease/Certificate/Provider Operation 检查和 Strong Audit；资源类型或 Provider 不支持安全迁移时拒绝 metadata-only move。历史密文、签名、证书、wrapped DEK 等制品保留创建时 immutable cryptographic scope，移动后的授权使用当前行政层级，新 Version 才绑定新 scope。
 - 关联设计边界：设计清单 §4.2
 - 关联实施层：Foundation Layer
 
@@ -180,7 +180,7 @@
 - ADR 编号：`ADR-008`
 - 状态：`ACCEPTED`
 - 背景：平台单一包装根会把所有租户置于同一密码学故障域，也难以支持独立 BYOK、HYOK、迁移、冻结和销毁；完全由每租户自建根又会失去平台托管模式。
-- 决策：每个 Vault Tenant 必须拥有独立 Tenant Key Domain，并绑定独立 Tenant KEK 或等价 Provider Key 及 generation。Tenant KEK 可由 Software Authority、HSM、Cloud KMS、BYOK 或 HYOK Provider 承载。Project、Namespace 和资源密钥必须归属于唯一 Tenant，不得跨租户共享底层包装密钥。
+- 决策：每个 Vault Tenant 必须拥有独立 Tenant Key Domain，并绑定独立 Tenant KEK 或等价 Provider Key 及 generation。Tenant KEK 可由 Software Authority、HSM、Cloud KMS、BYOK 或 HYOK Provider 承载。Project、Namespace 和资源可以具有进一步受约束的包装或派生边界，但只能属于该唯一 Tenant Key Domain，不能形成任意密钥图；不得跨租户共享底层包装密钥。 平台 Root/Seal 只能保护平台 bootstrap、控制关系或明确的平台托管 Key Domain，不得形成可绕过 Tenant Key Domain、Provider 控制和 Vault Policy 的隐藏万能解密根；`external_controlled`/HYOK 资源必须保持客户 Provider 控制。
 - 约束与后果：单租户 KEK 泄露原则上不得导致其他租户解密。租户可以独立轮换、rewrap、迁移、冻结和密码学销毁。跨租户协作只能通过显式服务调用或密文交换，不得通过共享根或共享活动 Provider Session 实现。
 - 关联设计边界：设计清单 §4.3、§8、§9
 - 关联实施层：Foundation Layer、Core Security Layer
@@ -235,7 +235,7 @@
 - ADR 编号：`ADR-013`
 - 状态：`ACCEPTED`
 - 背景：backend 需要提供策略 UI、审批、运营上下文和版本管理，但若 backend 策略文本被 Vault 直接信任，会让 backend 成为数据面策略权威；双向同步则形成双权威。
-- 决策：ns_backend.vault 保存 Policy Intent、管理上下文、审批和 intent version；经版本化 Compiler 生成 Vault Policy Artifact。可执行 Artifact 的接受权必须位于 ns_vault 信任边界：Compiler 可以独立部署，但不能仅因由 backend 调用而被信任，必须具有受验证的实现版本/制品身份或在 Vault 内执行；ns_vault 必须独立校验 Artifact schema、source intent/approval、上级 Guardrail、scope、hash 和非扩权性质后再保存和执行。Artifact 记录 source intent version、compiler version、artifact version、scope、hash 和 effective time。
+- 决策：ns_backend.vault 保存 Policy Intent、管理上下文、审批和 intent version；经版本化 Compiler 生成 Vault Policy Artifact。可执行 Artifact 的接受权必须位于 ns_vault 信任边界：Compiler 可以独立部署，但不能仅因由 backend 调用而被信任，必须具有受验证的实现版本/制品身份或在 Vault 内执行；ns_vault 必须独立校验 Artifact schema、source intent/approval、上级 Guardrail、scope、hash 和非扩权性质后再保存和执行。Artifact 记录 source intent version、compiler version、artifact version、scope、hash 和 effective time。 Artifact 必须是受版本治理、可静态验证的声明式 IR，使 Grant、Deny、Guardrail、Scope、Condition 和 Delegation 的权限上界可被 Vault 机械检查；任意脚本、模板代码、动态导入或无法证明权限上界的表达式不得成为可执行 Artifact。
 - 约束与后果：编译不得扩大权限，只能等价转换或收紧；无法证明与已批准 Intent/Guardrail 一致时必须拒绝生效。Policy Artifact 生效、回滚和撤销是 Vault 权威状态变化。Intent 与 Artifact 必须可追溯，不允许 backend 直接写 Vault Policy 表、提交任意可执行策略或把 Compiler 变成 backend 的隐式授权权威。
 - 关联设计边界：设计清单 §6.2
 - 关联实施层：Foundation Layer、Platform Integration Layer
@@ -400,8 +400,8 @@
 - ADR 编号：`ADR-028`
 - 状态：`ACCEPTED`
 - 背景：Tenant KEK 直接加密全部 Secret 会提高高价值 KEK 的使用频率并使轮换必须重加密全部数据；Provider 原生密文又会割裂统一语义。
-- 决策：每个不可变 Secret Version 生成独立随机 DEK，使用 AEAD 加密完整 payload；DEK 由所属 Tenant Key Domain 当前 KEK generation 包装。Vault 存储 ciphertext、wrapped DEK、nonce、algorithm suite、KEK generation、Provider reference 和认证元数据。AAD 至少绑定 tenant、key domain、project、namespace、secret ID/version、algorithm 和 ciphertext format version；KEK generation、Provider binding 和 wrapped DEK 关系必须作为同一认证封装的一部分，不能成为可替换的未认证旁数据。
-- 约束与后果：KEK 轮换默认执行渐进式 rewrap，不重新加密业务密文。AAD、wrapped DEK 或包装元数据篡改必须导致解密失败，不允许兼容模式忽略。Secret 内容变化只能创建新 Version。
+- 决策：每个不可变 Secret Version 生成独立随机 DEK，使用 AEAD 加密完整 payload；DEK 由所属 Tenant Key Domain 当前 KEK generation 包装。Vault 存储 ciphertext、wrapped DEK、nonce、algorithm suite、KEK generation、Provider reference 和认证元数据。AAD 至少绑定 tenant、key domain、创建该 Version 时的稳定 project/namespace ID、secret ID/version、algorithm 和 ciphertext format version；KEK generation、Provider binding 和 wrapped DEK 关系必须作为同一认证封装的一部分，不能成为可替换的未认证旁数据。
+- 约束与后果：KEK 轮换默认执行渐进式 rewrap，不重新加密业务密文。AAD、wrapped DEK 或包装元数据篡改必须导致解密失败，不允许兼容模式忽略。Secret 内容变化只能创建新 Version。Secret 或 Namespace 在同一 Tenant 内移动时，历史 Version 继续按创建时 cryptographic scope 验证，不能通过修改当前 Project/Namespace 元数据重写历史 AAD；移动后新 Version 才使用新 scope。无法安全保留该关系时必须显式重新加密/迁移或创建新资源。
 - 关联设计边界：设计清单 §11.3
 - 关联实施层：Core Security Layer
 
@@ -582,12 +582,12 @@
 - 关联实施层：Advanced Security Layer
 
 <a id="adr-045"></a>
-## ADR-045：正式但可选的 Agent 本地交付平面
+## ADR-045：正式但可选的 Vault Delivery Agent 本地交付平面
 
 - ADR 编号：`ADR-045`
 - 状态：`ACCEPTED`
 - 背景：没有 Agent 会让每个应用重复实现身份、Lease、文件权限和轮换；强制 Agent 又会排除 Serverless、外部 SDK、CLI 和简单环境。
-- 决策：提供正式可选 Agent，形态可为主机级 Vault Node Agent、Sidecar、CSI 类适配、Windows Service、Unix Socket/Named Pipe 和一次性注入进程。这里的 Vault Node Agent 是本地交付组件，不是 `ns_node`，也不得借用 `ns_node` 的 Node Principal 代表 workload。直接 SDK/API/CLI 仍是一等公民。Agent 负责 workload 证明、Capability exchange、Secret/证书/凭证交付、Lease 续期、原子更新和受控缓存，但不是 Authority。
+- 决策：提供正式可选 Vault Delivery Agent，形态可为主机级交付服务、Sidecar、CSI 类适配、Windows Service、Unix Socket/Named Pipe 和一次性注入进程。Vault Delivery Agent 是 Vault 本地交付组件，不是项目中的 `ns_node` 或未来 `ns_agent`，不得占用 `src/ns_agent` 产品边界，也不得借用 `ns_node` 的 Node Principal 代表 workload。直接 SDK/API/CLI 仍是一等公民。Delivery Agent 负责 workload 证明、Capability exchange、Secret/证书/凭证交付、Lease 续期请求、原子更新和受控缓存，但不是 Authority。
 - 约束与后果：Agent 不签发 Capability、不修改权威状态、不持有 Tenant KEK/根密钥、不跨 workload 转授、不自行延长 Lease。主机级 Agent 必须依据操作系统身份、进程凭证、cgroup/container identity 或等价可信事实隔离调用方，默认只监听受保护本地通道。文件交付必须使用受限临时文件、预设最小权限、必要持久化同步和原子替换，禁止部分写入或跨 workload 可见路径。环境变量注入只作为进程启动兼容方式，不作为动态轮换的默认交付路径。断网只能在原 Capability、Lease 和 cache TTL 剩余范围内服务。本地明文缓存受 Guardrail 控制。
 - 关联设计边界：设计清单 §15.1
 - 关联实施层：Platform Integration Layer
@@ -621,7 +621,7 @@
 - 状态：`ACCEPTED`
 - 背景：ns_node 是节点级确定性安全执行基础设施，不是普通 workload 或通用 Vault Agent。若 node identity 可代表承载的任意 workload 获取 Secret，节点失陷会扩散到所有本机业务身份。
 - 决策：ns_node 以独立 Node Principal 接入。节点 bootstrap、证明和 Capability exchange 必须经过专用 Node Authority Broker；证据可包括 host/node registration、TPM、节点证书、云实例身份等。node 只能访问明确 node-scoped Secret/Certificate/Lease，不能代表 workload 获取业务 Secret。
-- 约束与后果：Node Authority Broker 只验证节点 evidence、建立 bootstrap 信任并参与 Capability exchange，不得自行签发数据面 Vault Capability或成为 Vault 最终授权者。Node Capability 绑定 node_id、host_id、node role、tenant/environment、resource/action、generation 和期限。一机多节点部署中每个 node 具有独立身份和授权，不能仅因共享主机继承其他 node 或 workload 权限；未来 host-scoped Secret 必须建模为独立 Host Resource/Action，不能从 node scope 隐式扩大。
+- 约束与后果：Node Authority Broker 只验证节点 evidence、建立 bootstrap 信任并参与 Capability exchange，不得自行签发数据面 Vault Capability 或成为 Vault 最终授权者。Node Capability 绑定 node_id、host_id、node role、tenant/environment、resource/action、generation 和期限。一机多节点部署中每个 node 具有独立身份和授权，不能仅因共享主机继承其他 node 或 workload 权限；未来 host-scoped Secret 必须建模为独立 Host Resource/Action，不能从 node scope 隐式扩大。Vault 集成必须复用 `ns_node` 专用通信进程承载全部对外网络通信，并通过受认证本地 IPC/FD 交付；调度主进程、OCR、浏览器/桌面自动化和插件执行进程不得自行连接 Vault、继承 Node Capability 或隐式读取 node-scoped Secret。通信进程只是传输边界，不是 Vault Authority；独立执行进程需要业务 Secret 时必须建立自身 workload/service Principal。
 - 关联设计边界：设计清单 §15.4
 - 关联实施层：Platform Integration Layer
 
@@ -796,7 +796,7 @@
 - ADR 编号：`ADR-064`
 - 状态：`ACCEPTED`
 - 背景：若调用方把 SecretRef、Alias 或路径当作 bearer credential，引用泄露将等价于权限泄露，并可能绕过 CURRENT Version、generation 和 Capability。
-- 决策：ResourceRef、SecretRef、KeyRef、Alias 只提供稳定资源定位，永不承载授权。每次使用必须携带有效身份/Capability并解析实际 resource ID、version/generation 和 policy state。SecretRef 默认解析 CURRENT，但执行 Capability 绑定实际 Version 和 generation。
+- 决策：ResourceRef、SecretRef、KeyRef、Alias 只提供稳定资源定位，永不承载授权。每次使用必须携带有效身份/Capability并解析实际 resource ID、version/generation 和 policy state。SecretRef 默认解析 CURRENT，但执行 Capability 绑定实际 Version 和 generation。跨 Project/Namespace 的 Ref 不产生隐式可见性或授权，只能在同一 Tenant 内经显式 Grant/Guardrail 和目标 Resource/Generation Capability 使用。
 - 约束与后果：Alias 重命名、backend Projection、Agent cache 或旧 Ref 不能恢复已禁用/销毁资源权限。Ref 可以出现在经过分类的非敏感控制面和配置中，但不得包含 Secret、可重放 Token 或 Provider 主凭证；对可能暴露租户、环境或高价值资源拓扑的引用，日志、URL 查询参数、指标标签和外部错误仍必须按 Sanitizer/披露策略处理，不能把“不是凭证”误解为“始终可公开”。
 - 关联设计边界：设计清单 §20.6
 - 关联实施层：Foundation Layer、Platform Integration Layer

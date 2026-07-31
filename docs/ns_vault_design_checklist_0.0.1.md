@@ -149,14 +149,18 @@ Platform Account
 
 ### 4.2 固定资源层级
 
-- 所有 Key、Secret、Transit、PKI、Credential Role、Lease、Provider Binding、Derivation Profile 和 Tokenization Profile 必须归属于唯一 Tenant、Project 和 Namespace。
+- 面向租户的 Key、Secret、Transit、PKI、Credential Role、Lease、Provider Binding、Derivation Profile 和 Tokenization Profile 等普通产品资源，必须归属于唯一 Tenant、Project 和 Namespace。
 - Tenant 表达客户或内部独立安全主体；Project 表达产品、系统或业务工作区；Namespace 表达授权、环境和运维隔离边界。
+- Tenant Key Domain 本身是 Tenant 级安全资源；Root/Seal、Capability/Audit/Manifest 等内部 Authority Key、Backup Protection Key、Shard/Region、外部 Audit Anchor 与 Trusted Time Connector 等平台内部资源必须使用明确的 platform/deployment/region/shard 或 Tenant scope，不得为了套用租户目录而伪造 Project/Namespace，也不得通过普通 Tenant Resource API 暴露。
+- 平台内部资源虽不属于普通租户目录，仍必须遵守明确类型、稳定 ID、版本、generation、最小权限、Strong Audit、删除/销毁和兼容治理，不得形成无治理的隐藏全局状态。
 - 简单使用场景可以自动创建默认 Project 和 Namespace，但底层模型和审计引用不得省略层级。
 - 所有层级使用稳定、不透明 ID；名称只用于展示和检索。
 - 重命名不得改变资源 ID、密码学身份、审计关联或 Capability 绑定。
 - Resource 名称只需在所属 Namespace 和 Resource Type 内唯一；Alias 不得代替稳定 ID。
 - 资源不得跨 Tenant 移动；跨 Tenant 协作只能通过显式授权的服务调用、密文交换或独立导入流程完成，不能共享底层 Tenant KEK。
-- Namespace 或资源在允许范围内移动时，必须视为安全边界变化，重新计算策略、提升 generation、撤销旧 Capability 并产生强审计。
+- 跨 Project 或 Namespace 的读取、密码学操作和交付默认不存在隐式继承；同一 Tenant 内只有显式 Grant、Guardrail 允许且最终 Capability 精确绑定目标 Resource/Generation 时才可访问，Resource 的所有权、上级 Mandatory Guardrail 和 Tenant Key Domain 不因此改变。
+- Namespace 或资源在同一 Tenant 的允许范围内移动时，必须通过 Shard Leader 的显式安全命令执行，绑定 expected generation，重新计算策略、提升 generation、撤销旧 Capability、处理或拒绝仍有效的 Lease/Certificate/Provider Operation，并产生 Strong Audit；资源类型、Provider 或依赖关系不能安全迁移时必须拒绝 metadata-only move，改用显式迁移、新资源或重新加密流程。
+- 已存在的密文、签名、证书、wrapped DEK 和其他版本化密码学制品必须保留创建时稳定的 cryptographic scope 与 AAD/格式绑定；移动后授权按当前行政层级裁决，但历史制品不得通过改写 Project/Namespace 元数据改变其认证内容。新 Version 使用移动后的当前 scope；无法同时证明历史可验证性和当前授权边界时禁止移动。
 - 标签可以用于检索、计量、条件策略和运营视图，但不能替代 Tenant、Project、Namespace 等安全边界。
 
 ### 4.3 Tenant Key Domain
@@ -167,6 +171,7 @@ Platform Account
 - Project、Namespace 和 Resource 可以拥有进一步的包装或派生边界，但必须归属于唯一 Tenant Key Domain，不能构建任意跨租户密钥图。
 - Tenant Key Domain 必须支持独立冻结、轮换、渐进式 rewrap、Provider 迁移、灾备和密码学销毁。
 - 平台可以提供默认托管 Tenant KEK，但必须允许租户升级至 HSM、BYOK 或 HYOK，且不得静默降低保障等级。
+- 平台 Root/Seal 只能保护平台 bootstrap、控制关系或明确的平台托管 Tenant Key Domain；不得存在能够绕过 Tenant Key Domain、Provider 控制和 Vault Policy 解密全部租户资源的隐藏万能根。`external_controlled`/HYOK 资源在客户 Provider 不可用或撤销授权时必须保持不可用。
 
 ## 5. 身份、Principal 与 SSO 兼容边界
 
@@ -195,6 +200,7 @@ recovery
 - `ns_vault` 不维护完整企业人员目录，而采用联邦身份认证和 Vault 本地安全绑定。
 - 支持的身份来源应包括企业 OIDC、未来 SSO、mTLS、SPIFFE/SPIRE、Kubernetes ServiceAccount、云 workload identity、TPM/TEE、设备证明、`ns_runtime` Authority Attestor、`ns_node` 节点证明及其他受批准 Provider。
 - Vault 必须独立维护受信任 issuer、trust bundle、audience、issuer-to-tenant 约束、Principal Binding、撤销状态、认证等级和 attestation policy。
+- 能为 human、service、workload、node 或 device 签发受 Vault 信任 assertion 的私钥和根签发能力，必须位于独立 SSO/IdP、隔离 Identity Authority、HSM/KMS 或等价受保护边界；普通 `ns_backend` Web/API 进程、数据库字段、内部请求头或服务凭证不得成为可冒充任意主体的 issuer。
 - 数据面优先本地验证短期签名凭证，不应要求每次请求实时向 `ns_backend` 或 SSO introspection；紧急撤销通过短有效期、本地 deny/撤销状态和 epoch 组合实现。
 - 外部 token 必须具有明确 Vault audience；面向其他服务的通用 token 不得被接受为 Vault 数据面凭证。
 - 外部 token 中的 role、group、department 和 permission claim 只能作为 Principal Binding 输入，不能直接成为 Vault Grant。
@@ -246,6 +252,8 @@ recovery
 - Policy Artifact 必须包含 source intent version、compiler version、artifact version、tenant/resource scope、hash 和生效时间。
 - backend 不直接写 Vault 权威策略表；Vault 只执行自身接受并保存的 Policy Artifact。
 - Policy Compiler 的转换结果不得超出已批准 Intent 和上级 Guardrail；编译失败、版本不兼容或 hash 不一致时必须拒绝生效。
+- Compiler 即使独立部署或由 backend 调用，也不能因此获得信任；必须具有受验证的实现版本/制品身份或运行于 Vault 信任边界内。Vault 必须独立验证 source Intent、Approval、上级 Guardrail、scope、schema、hash 和非扩权性质，不能接受 backend 提交的任意可执行策略。
+- Policy Artifact 必须采用受版本治理、可静态验证的声明式 IR；Grant、Deny、Guardrail、Scope、Condition 和 Delegation 的边界必须可被 Vault 机械检查。禁止把任意脚本、模板代码、动态导入或无法证明权限上界的表达式作为可执行 Policy Artifact。
 - Intent、Artifact、Principal Binding、Resource Generation 和 Security Epoch 必须可追溯关联。
 - 策略决策必须能够解释匹配的 Grant、Guardrail、deny、身份版本、资源版本和最终结果；所有拒绝及高风险允许应进入可解释审计。
 
@@ -319,10 +327,11 @@ recovery
 
 - Vault Authority 和 Shard 启动时默认处于 `SEALED`。
 - `SEALED` 状态只允许最小健康、证明、unseal 和受限恢复接口，不允许 Secret、Transit、私钥签名、PKI、动态凭证或数据面 Capability 操作。
-- 日常自动解封通过独立 Root Provider 完成，Root Provider 可以是 HSM、云 KMS、TPM 或受控外部 Provider；解封权限必须绑定工作负载身份、部署、区域和可用时的证明条件。
+- 日常自动解封通过独立 Root Provider 完成，Root Provider 可以是明确低保障的 Software Root Provider、HSM、云 KMS、TPM 或受控外部 Provider；解封权限必须绑定工作负载身份、部署、区域和可用时的证明条件。
+- 明文解封结果只能终止于专用 `Root/Seal Authority` 或 Crypto Authority 的严格 bootstrap 子边界；通用 Provider Host 只能传递 opaque handle、wrapped material 或受限调用结果，不得成为 root 明文中转、缓存或恢复副本。
 - 自动解封失败必须 fail-closed，不得回退到环境变量、普通配置文件或普通容器 Secret 中的明文根密钥。
 - 软件保障部署仍必须使用明确标识、独立隔离的 Software Root Provider 完成日常自动解封，不能把明文根材料写入普通启动配置；门限恢复份额属于灾难恢复域，不得退化为日常重启时的常规解封凭证。
-- 解封材料不得进入普通 API、Authority Worker、Provider Host、Agent 或 `ns_backend`。
+- 明文解封材料不得进入普通 API、Authority Worker、通用 Provider Host、Vault Delivery Agent、`ns_agent` 或 `ns_backend`。
 
 ### 8.3 独立门限灾难恢复
 
@@ -431,7 +440,7 @@ GENERATING
 
 ### 11.1 明文边界与创建路径
 
-- `ns_vault` 是 Secret 明文的唯一服务端处理边界。
+- 对 Vault 托管的静态 Secret 和由 Vault 密封交付的凭证，`ns_vault` 是唯一集中式服务端明文处理与授权边界；`provider_direct_nonrecoverable` 仅作为 §14.2 明确限定的 Provider 直交付例外，明文必须直接进入绑定的最终消费端，不得经过其他平台中间服务。
 - Secret 创建、导入和读取明文不得经过 `ns_backend.vault`；backend 只管理 metadata、policy、approval、lifecycle、command 和 projection。
 - 创建时，用户浏览器/`ns_frontend`、SDK、CLI、Agent 或批准集成必须使用由 Vault 签发或认可、绑定终端 Principal 与目标 Resource 的一次性上传会话直接向 Vault 交付 payload；frontend/backend 服务端不得中转。
 - backend、日志、中间件、异常链、指标、追踪和审计均不得接收或保存 Secret 明文。
@@ -449,7 +458,8 @@ GENERATING
 - 每个不可变 Secret Version 使用独立随机 DEK，并通过受批准 AEAD Algorithm Suite 加密完整 payload。
 - DEK 由所属 Tenant Key Domain 当前 KEK generation 包装；Vault Authority Storage 保存 ciphertext、wrapped DEK、nonce、algorithm suite、KEK generation、Provider reference 和密文格式版本。
 - Tenant KEK Rotation 默认通过 rewrap DEK 完成，不要求立即重新加密全部 Secret ciphertext。
-- AEAD AAD 至少绑定 Tenant、Tenant Key Domain、Project/Namespace、Secret ID、Secret Version、Algorithm Suite 和 Ciphertext Format Version。
+- AEAD AAD 至少绑定 Tenant、Tenant Key Domain、创建该 Version 时的稳定 Project/Namespace ID、Secret ID、Secret Version、Algorithm Suite 和 Ciphertext Format Version；KEK generation、Provider binding 和 wrapped DEK 关系也必须进入同一认证封装或等价完整性证明。
+- Secret/Namespace 在同一 Tenant 内移动时，历史 Version 必须继续以创建时 cryptographic scope 验证，不能通过修改当前 Project/Namespace 元数据重写历史 AAD；移动后新建 Version 使用新的当前 scope。无法安全保留该关系时必须通过显式重新加密/迁移创建新资源或新 Version，禁止 metadata-only move。
 - AAD 或包装元数据被篡改时必须导致解密失败，禁止宽松兼容或忽略。
 
 ### 11.4 DEK 缓存
@@ -677,10 +687,10 @@ rotated_shared_compatibility
 
 ## 15. Agent、本地交付与客户端集成
 
-### 15.1 正式但可选的 Agent
+### 15.1 正式但可选的 Vault Delivery Agent
 
-- Vault 提供正式但可选的本地交付平面，可部署为主机级 Node Agent、应用 Sidecar、Kubernetes CSI 类适配、Windows Service、本地 Unix Socket/Named Pipe 服务或一次性注入进程。
-- SDK、CLI 和直接 API 仍是一等接入方式；Agent 不是 Vault 正确运行的强制依赖。
+- Vault 提供正式但可选的本地交付平面，可部署为主机级 Vault Delivery Agent、应用 Sidecar、Kubernetes CSI 类适配、Windows Service、本地 Unix Socket/Named Pipe 服务或一次性注入进程。
+- 本文中的 Vault Delivery Agent 是 Vault 本地秘密交付组件，不是项目中的 `ns_node` 或未来 `ns_agent`，不得占用 `src/ns_agent` 产品边界，也不得借用 Node Principal 代表 workload；SDK、CLI 和直接 API 仍是一等接入方式，Delivery Agent 不是 Vault 正确运行的强制依赖。
 - Agent、SDK 和直接 API 必须使用同一身份、Capability、Resource、Policy、Lease 和 Audit 合同，不得形成 Agent 专属安全旁路。
 - Agent 可以执行 workload identity 证明、Capability Exchange、Secret/Certificate/Dynamic Credential 交付、Lease 续期、原子文件替换、轮换通知、受控 reload hook、网络重试和策略允许的短期缓存。
 - Agent 不是 Authority：不得签发 Vault Capability、执行最终授权、持有 Tenant KEK/Root Key、修改 Vault 权威状态、延长 Lease 或把一个 workload 的权限转给另一个 workload。
@@ -715,6 +725,7 @@ rotated_shared_compatibility
 - 如未来存在 host-scoped Secret，必须建模为独立 Host Resource/Action，不得通过 node-scoped 授权隐式扩大。
 - Node 被攻破后的影响目标必须限制在该节点自身已获授权的 node-scoped 能力，不能扩散到节点上所有 workload 或整个 Tenant。
 - `ns_node` 的 bootstrap、节点身份证明与 Vault Capability Exchange 必须通过专用 Node Authority Broker；TPM、节点证书、云实例身份和企业节点登记是 Broker 可验证的 evidence source，而不是绕过 Broker 的平行授权入口。Vault 始终保持最终授权，Broker 不签发数据面 Vault Capability。
+- Vault 兼容不得绕过 `ns_node` 已冻结的进程边界：所有对外 Vault 网络通信必须经 `ns_node` 专用通信进程及受认证本地 IPC/FD 路径完成，调度主进程、OCR、浏览器自动化、桌面自动化和插件执行进程不得自行建立 Vault 网络连接、继承 Node Capability 或隐式取得 node-scoped Secret。通信进程只承担传输和受控交付，不成为 Vault Authority；这些独立进程如需业务 Secret，必须使用各自明确的 workload/service Principal。
 
 ## 16. 强审计、时间与可观测性
 
@@ -792,12 +803,13 @@ rotated_shared_compatibility
 - Resource Policy 可以把可并行操作提升为 leader-only，但不能反向削弱系统或 Provider 强制限制。
 - HYOK Provider 的数据面调用默认由 Vault Authority/Worker 发起，不把通用 Provider 主权限下发给客户端。
 - 对确需客户端直连云 KMS、HSM Gateway 或外部 Provider 的场景，只能签发 Provider-specific、短期、范围受限且可审计的派生 Grant；该模式不得成为默认数据面路径，也不得绕过 Vault 的资源、策略、generation、撤销和审计语义。
-- Provider 直连不得用于绕过 Vault 的 Secret 唯一明文边界；Vault 无法验证操作结果或审计完整性时，必须按资源 Guardrail 拒绝或进入明确风险状态。
+- Provider 直连不得让 `ns_backend`、Vault Delivery Agent 之外的通用平台中间服务或其他未绑定主体接触明文，也不得扩大 §14.2 `provider_direct_nonrecoverable` 的例外范围；Vault 无法验证操作结果、主体/通道绑定或审计完整性时，必须按资源 Guardrail 拒绝或进入明确风险状态。
 
 ### 17.3 多区域热备
 
 - Vault 支持多区域热备，但同一 Tenant Key Domain 只具有一个 Home Region 和唯一写权威。
-- Secondary Region 可以维护同步副本或 Standby Authority，但不得与 Home Region 同时写同一 Key Domain。
+- Home Region 内必须具备 Shard Leader + Replica 的节点级高可用；Secondary Region 可以维护同步副本或 Standby Authority，但不得与 Home Region 同时写同一 Key Domain。
+- 多区域热备的架构目标类别是有界复制滞后与分钟级受控接管；具体 RPO/RTO、硬件规格和实际接管耗时只能由实施计划和真实演练确认。
 - 灾备切换必须提升 Authority Epoch，fence 旧 Region，重新验证 Capability，重建 Provider Session 并证明审计链连续。
 - Secret、Key、Lease、Certificate、Provider State 和 Strong Audit 必须纳入灾备同步范围。
 - Lease 恢复必须重新评估 TTL、时间可信度、撤销状态和 Provider 外部状态。
@@ -872,7 +884,8 @@ BACKUP_AVAILABLE
 
 ### 20.2 安全域分层进程模型
 
-- Vault 采用安全域分层进程模型，至少区分 API/Protocol Adapter、身份验证与策略预处理、Shard Leader/Crypto Authority、Authority Worker、Provider Host、Scheduler/Reconciler 和 Audit Writer/Anchor Connector。
+- Vault 采用安全域分层进程模型，至少区分 API/Protocol Adapter、身份验证与策略预处理、专用 Root/Seal Authority、Shard Leader/Crypto Authority、Authority Worker、Provider Host、Scheduler/Reconciler 和 Audit Writer/Anchor Connector。
+- Root/Seal Authority 可以是 Crypto Authority 的严格 bootstrap 子边界，但不得退化为通用 Provider Host；只有该边界能够接收 root 明文解封结果，普通 API、Worker、Scheduler、Audit Writer 和通用 Provider Host 只能持有最小 handle 或受限 capability。
 - 独立身份验证或策略预处理层只能验证凭证、规范化 evidence 和准备决策输入；最终资源授权、Policy Artifact 裁决和 Capability 签发必须由 Vault Authority 完成，不能形成第二授权权威。
 - 普通 API Layer 负责 REST/gRPC/IPC 适配、身份凭证接收、输入规范化和路由，不持有 Root Key、Tenant KEK 或 Provider 主能力。
 - Crypto Authority 负责 Key、Secret、Lease、Transit、Capability 和权威安全裁决。
@@ -947,17 +960,18 @@ BACKUP_AVAILABLE
 以下条目用于核对最终设计是否完整，不表示当前实现进度、验收状态或工作包完成度；后续设计、实现和审查不得遗漏：
 
 - 独立 `src/ns_vault` FastAPI/ASGI 服务边界与 `src/ns_backend/vault` Django 控制面边界。
-- Platform Account、Customer Account、Vault Tenant、Project、Namespace、Resource 统一层级。
-- Tenant Key Domain、独立 KEK Generation、软件/HSM/KMS/BYOK/HYOK 保障等级。
+- Platform Account、Customer Account、Vault Tenant、Project、Namespace、Resource 统一层级，以及 Tenant Key Domain/平台内部 Authority Resource 的明确非目录作用域。
+- 同一 Tenant 内跨 Project/Namespace 访问只通过显式 Grant/Capability，资源移动保留历史 cryptographic scope 并执行 generation、依赖和 Capability 失效门禁。
+- Tenant Key Domain、独立 KEK Generation、软件/HSM/KMS/BYOK/HYOK 保障等级，以及禁止绕过 Tenant/Provider 控制的隐藏万能根。
 - Seal、Auto-unseal、Root Provider、Threshold Recovery、Root Epoch 和 Break-glass。
 - 联邦 human/service/workload/node/device/provider/external/recovery Principal 与 SSO 兼容接口。
 - 组件/集成登记、明确 Principal 映射、接入撤销与 Capability/Lease/Session 失效，且登记本身不构成授权。
-- Mandatory Guardrail、Delegable Grant、Policy Intent/Artifact、决策解释和短期 Capability。
+- Mandatory Guardrail、Delegable Grant、受版本治理且可静态验证的声明式 Policy Intent/Artifact、决策解释和短期 Capability。
 - Command、Actual State、Execution Receipt、Security Event、Projection 和 Reconciliation。
 - Key Class、固定 Algorithm/Usage/Export、单一 Primary Version、Alias 和显式算法迁移。
-- Secret 直接上传、唯一明文边界、Envelope Encryption、独立 DEK、KEK Rewrap、单一 CURRENT Version。
+- Secret 直接上传、唯一集中式服务端明文权威、受控 `provider_direct_nonrecoverable` 直交付例外、Envelope Encryption、独立 DEK、KEK Rewrap、单一 CURRENT Version。
 - Opaque 与标准 Secret Type、字段级 Capability、Payload Size Limit 和安全解析器。
-- 默认非明文交付、人工高风险读取、Agent/Sidecar/CSI/Windows/IPC/FD/tmpfs 交付。
+- 默认非明文交付、人工高风险读取、Vault Delivery Agent/Sidecar/CSI/Windows/IPC/FD/tmpfs 交付，且 Delivery Agent 与 `ns_node`、未来 `ns_agent` 产品边界明确分离。
 - Transit Canonical Envelope、Detached Metadata、Nonce/AAD/Domain Separation 和稳定错误。
 - Random、Password Generation、Derivation Profile、Wrapped Export、Provider Handle 和 Derived Key。
 - Deterministic Transform、Tokenization、显式数据域、迁移和收敛加密禁令。
@@ -968,7 +982,7 @@ BACKUP_AVAILABLE
 - Per-lease Identity、Provider-native Session、Exclusive Pool 和明确标记的 Shared Compatibility。
 - Provider Host、Capability Manifest、Fencing/Idempotency/Reconciliation 和 External State Unknown。
 - ns_runtime Authority Broker Capability Exchange，保持现有 root trust 和普通 runtime 无根材料边界。
-- ns_node 只使用 node identity 访问 node-scoped Secret，不代表承载 workload。
+- ns_node 只使用 node identity 访问 node-scoped Secret，不代表承载 workload；Vault 网络 I/O 复用专用通信进程，调度、OCR、浏览器/桌面自动化和插件执行进程不隐式继承 Node Capability。
 - ns_client 多 Principal 模式，与 Agent、Broker 和 Authority 职责分离。
 - Shard 单写、Authority Epoch、Fencing、Authority Worker 和跨 Shard 显式流程。
 - 多区域热备、分级灾备恢复、Provider 验证、Lease 重建和 Audit Chain 连续性。
@@ -990,5 +1004,5 @@ BACKUP_AVAILABLE
 ## 23. 边界闭合说明
 
 - 本文档已经描述 `ns_vault` 的完整最终产品、安全、功能、集成、可用性、灾备、兼容与生产门禁边界。
-- 具体 API 字段、数据库表、Python 包版本、选主实现、数据库品牌、部署脚本、性能数字、测试工具和工作包排序应在长期架构决策与实施计划中继续细化，不能反向削弱本文档。
+- 具体 API 字段、数据库表、Python 包版本、选主实现、数据库品牌、部署脚本、性能数字、测试工具和工作包内部排序属于实施计划、工作包或后续工程文档；只有这些选择会改变长期权威、安全或兼容边界时才需要新增或替代 ADR，且任何细化都不能反向削弱本文档。
 - 当前仓库是否已经实现某项能力、是否存在可迁移秘密、是否通过某项测试或是否可投入生产，不属于本文档的结论；只能由实施计划和验收日志提供真实状态。
