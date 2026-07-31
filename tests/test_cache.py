@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -116,11 +115,16 @@ class SQLiteCacheBackendTestCase(unittest.TestCase):
                 Path(temp_dir) / "ns_cache.sqlite3",
             )
 
-            self.assertTrue(client.set("short", "value", ttl=1))
-            self.assertEqual("value", client.get("short"))
+            with patch.object(
+                SQLiteCacheBackend,
+                "_now",
+                return_value=1_000.0,
+            ) as cache_now:
+                self.assertTrue(client.set("short", "value", ttl=1))
+                self.assertEqual("value", client.get("short"))
 
-            time.sleep(1.2)
-            self.assertIsNone(client.get("short"))
+                cache_now.return_value = 1_001.0
+                self.assertIsNone(client.get("short"))
 
     def test_none_ttl_can_mean_forever(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -129,10 +133,15 @@ class SQLiteCacheBackendTestCase(unittest.TestCase):
                 none_ttl_means_forever=True,
             )
 
-            self.assertTrue(client.set("forever", "value", ttl=None))
-            time.sleep(1.2)
+            with patch.object(
+                SQLiteCacheBackend,
+                "_now",
+                return_value=1_000.0,
+            ) as cache_now:
+                self.assertTrue(client.set("forever", "value", ttl=None))
+                cache_now.return_value = 2_000.0
 
-            self.assertEqual("value", client.get("forever"))
+                self.assertEqual("value", client.get("forever"))
 
     def test_incr_decr(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -270,7 +279,10 @@ class NsDjangoCacheBackendTestCase(unittest.TestCase):
                 Path(temp_dir) / "ns_cache.sqlite3",
             )
 
-            with patch("ns_common.cache.django.get_cache_client", return_value=client):
+            with (
+                patch("ns_common.cache.django.get_cache_client", return_value=client),
+                patch.object(SQLiteCacheBackend, "_now", return_value=1_000.0) as cache_now,
+            ):
                 backend = NsDjangoCacheBackend(
                     "default",
                     {
@@ -288,7 +300,7 @@ class NsDjangoCacheBackendTestCase(unittest.TestCase):
                 )
 
                 self.assertEqual("value", backend.get("short"))
-                time.sleep(1.2)
+                cache_now.return_value = 1_001.0
                 self.assertIsNone(backend.get("short"))
 
 

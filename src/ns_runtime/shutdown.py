@@ -259,6 +259,17 @@ class RuntimeShutdownCoordinator:
     def cleanup_pending(self) -> bool:
         return self._cleanup_pending
 
+    @property
+    def cleanup_progress(self) -> tuple[object, ...]:
+        """Non-sensitive token used by the composition root to bound retries."""
+
+        state_store = self._context.state_store
+        return (
+            frozenset(self._completed_operations),
+            _cleanup_owner_progress(self._transport_owner),
+            _cleanup_owner_progress(state_store),
+        )
+
     def request_shutdown(self, reason: RuntimeShutdownReason) -> bool:
         if not isinstance(reason, RuntimeShutdownReason):
             raise NsValidationError(
@@ -613,6 +624,20 @@ class RuntimeShutdownCoordinator:
                 resource="runtime_logger",
                 error_type=type(error).__name__,
             ))
+
+
+def _cleanup_owner_progress(owner: object | None) -> object:
+    if owner is None:
+        return None
+    progress = getattr(owner, "cleanup_progress", None)
+    if callable(progress):
+        try:
+            return progress()
+        except BaseException:
+            return ("unavailable", id(owner))
+    if progress is not None:
+        return progress
+    return ("owned", id(owner))
 
 
 __all__ = [

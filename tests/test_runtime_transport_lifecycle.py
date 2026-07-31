@@ -9,6 +9,7 @@ from unittest import mock
 
 from ns_common.async_runtime import NsEventLoopImplementation, TaskSupervisor
 from ns_common.config import NsConfig
+from ns_common.exceptions import NsStateError
 from ns_common.observability import InMemoryMetricsSink, InMemoryTraceSink
 from ns_common.time import SystemClock
 from ns_runtime.context import RuntimeContext
@@ -448,7 +449,7 @@ class TransportLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(fatal, raised.exception)
         self.assertEqual(RuntimeServiceState.FAILED, service.state)
 
-    async def test_ordinary_cleanup_failure_does_not_replace_start_failure(
+    async def test_cleanup_incomplete_preserves_start_failure_as_cause(
         self,
     ) -> None:
         events: list[str] = []
@@ -473,10 +474,14 @@ class TransportLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
             "start",
             side_effect=start_failure,
         ):
-            with self.assertRaises(RuntimeError) as raised:
+            with self.assertRaises(NsStateError) as raised:
                 await _run_service_once(service)
 
-        self.assertIs(start_failure, raised.exception)
+        self.assertEqual(
+            "cleanup_pending_no_progress",
+            raised.exception.details["reason"],
+        )
+        self.assertIs(start_failure, raised.exception.__cause__)
         self.assertEqual(RuntimeServiceState.FAILED, service.state)
         self.assertEqual(1, len(service.shutdown_report.failures))
         self.assertNotIn("transport cleanup secret", repr(service.shutdown_report))
@@ -485,7 +490,7 @@ class TransportLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
         await service.stop()
 
         self.assertEqual(RuntimeServiceState.STOPPED, service.state)
-        self.assertEqual(2, events.count("close:websocket_tcp"))
+        self.assertEqual(5, events.count("close:websocket_tcp"))
         self.assertEqual(1, events.count("stop_admission:websocket_tcp"))
         self.assertEqual(1, events.count("drain:websocket_tcp"))
 

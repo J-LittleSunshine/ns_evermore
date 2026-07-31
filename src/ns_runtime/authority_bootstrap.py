@@ -12,6 +12,7 @@ import os
 import multiprocessing
 import json
 import sys
+import time
 from multiprocessing.connection import Connection
 from multiprocessing.reduction import DupFd
 
@@ -29,6 +30,7 @@ _ENDPOINT_ROLES = (
 class InheritedAuthorityBootstrap:
     __slots__ = (
         "_connections", "_process", "_attestor", "_consumed",
+        "_clock_wall_anchor_seconds", "_clock_monotonic_anchor_seconds",
     )
 
     def __init__(
@@ -37,6 +39,8 @@ class InheritedAuthorityBootstrap:
         connections: dict[str, Connection],
         process: multiprocessing.Process,
         attestor: object,
+        clock_wall_anchor_seconds: float,
+        clock_monotonic_anchor_seconds: float,
     ) -> None:
         if (
             type(connections) is not dict
@@ -46,12 +50,57 @@ class InheritedAuthorityBootstrap:
                 for connection in connections.values()
             )
             or not process.is_alive()
+            or type(clock_wall_anchor_seconds) is not float
+            or type(clock_monotonic_anchor_seconds) is not float
         ):
             _security_error("invalid_inherited_authority_material")
         self._connections = dict(connections)
         self._process = process
         self._attestor = attestor
+        self._clock_wall_anchor_seconds = clock_wall_anchor_seconds
+        self._clock_monotonic_anchor_seconds = (
+            clock_monotonic_anchor_seconds
+        )
         self._consumed = False
+
+    @property
+    def incomplete(self) -> bool:
+        return bool(
+            self._connections
+            or self._process is not None
+            or self._attestor is not None
+        )
+
+    @property
+    def cleanup_progress(self) -> tuple[object, ...]:
+        connections = self._connections
+        return (
+            0 if connections is None else len(connections),
+            self._process is not None,
+            self.process_alive,
+            self._attestor is not None,
+        )
+
+    @property
+    def process_alive(self) -> bool:
+        process = self._process
+        if process is None:
+            return False
+        try:
+            return bool(process.is_alive())
+        except BaseException:
+            return True
+
+    def pending_facts(self) -> dict[str, object]:
+        connections = self._connections
+        return {
+            "pending_connections": (
+                0 if connections is None else len(connections)
+            ),
+            "process_owned": self._process is not None,
+            "process_alive": self.process_alive,
+            "attestor_owned": self._attestor is not None,
+        }
 
     def launch(self, *, config: object, clock: object) -> object:
         if self._consumed:
@@ -80,6 +129,12 @@ class InheritedAuthorityBootstrap:
                 attestor=attestor,
                 config=config,
                 clock=clock,
+                clock_wall_anchor_seconds=(
+                    self._clock_wall_anchor_seconds
+                ),
+                clock_monotonic_anchor_seconds=(
+                    self._clock_monotonic_anchor_seconds
+                ),
             )
         except BaseException as operation_failure:
             cleanup_failure = self._close_owned_resources()
@@ -129,6 +184,153 @@ class InheritedAuthorityBootstrap:
         return failure
 
 
+class _AuthorityStartupCleanupOwner:
+    """Retryable owner for resources acquired by an authority start factory."""
+
+    __slots__ = (
+        "connections",
+        "duplicate_handles",
+        "inherited_fds",
+        "process",
+        "process_start_attempted",
+        "attestor",
+        "fd_close_outcome_uncertain",
+    )
+
+    def __init__(
+        self,
+        *,
+        connections: tuple[dict[str, Connection], ...] = (),
+        duplicate_handles: list[object] | None = None,
+        inherited_fds: list[int] | None = None,
+    ) -> None:
+        self.connections = connections
+        self.duplicate_handles = (
+            [] if duplicate_handles is None else duplicate_handles
+        )
+        self.inherited_fds = [] if inherited_fds is None else inherited_fds
+        self.process: multiprocessing.Process | None = None
+        self.process_start_attempted = False
+        self.attestor: object | None = None
+        self.fd_close_outcome_uncertain = False
+
+    @property
+    def incomplete(self) -> bool:
+        return bool(
+            any(connections for connections in self.connections)
+            or self.duplicate_handles
+            or self.inherited_fds
+            or self.process is not None
+            or self.attestor is not None
+            or self.fd_close_outcome_uncertain
+        )
+
+    @property
+    def process_alive(self) -> bool:
+        process = self.process
+        if process is None:
+            return False
+        try:
+            return bool(process.is_alive())
+        except BaseException:
+            return True
+
+    def pending_facts(self) -> dict[str, object]:
+        return {
+            "pending_connections": sum(
+                len(connections) for connections in self.connections
+            ),
+            "pending_duplicate_handles": len(self.duplicate_handles),
+            "pending_inherited_fds": len(self.inherited_fds),
+            "process_owned": self.process is not None,
+            "process_alive": self.process_alive,
+            "attestor_owned": self.attestor is not None,
+            "fd_close_outcome_uncertain": (
+                self.fd_close_outcome_uncertain
+            ),
+        }
+
+    def close(self) -> None:
+        failure: BaseException | None = None
+        for connections in self.connections:
+            failure = _prioritize_failure(
+                failure,
+                _close_connections(connections),
+            )
+        process = self.process
+        if process is not None:
+            failure = _prioritize_failure(
+                failure,
+                _reap_process(
+                    process,
+                    started=self.process_start_attempted,
+                ),
+            )
+            try:
+                alive = process.is_alive()
+            except BaseException as error:
+                failure = _prioritize_failure(failure, error)
+                alive = True
+            if not alive:
+                self.process = None
+        failure = _prioritize_failure(
+            failure,
+            _close_duplicate_handles(
+                self.duplicate_handles,
+                outcome_owner=self,
+            ),
+        )
+        failure = _prioritize_failure(
+            failure,
+            _close_inherited_fds(
+                self.inherited_fds,
+                outcome_owner=self,
+            ),
+        )
+        attestor = self.attestor
+        if attestor is not None:
+            try:
+                attestor.close()
+            except BaseException as error:
+                failure = _prioritize_failure(failure, error)
+            else:
+                self.attestor = None
+        if failure is not None:
+            raise failure
+
+
+def _raise_startup_cleanup_failure(
+    owner: _AuthorityStartupCleanupOwner,
+    *,
+    operation_failure: BaseException | None,
+    cleanup_failure: BaseException | None,
+) -> None:
+    if owner.incomplete:
+        if (
+            cleanup_failure is not None
+            and not isinstance(cleanup_failure, Exception)
+        ):
+            cleanup_failure.cleanup_owner = owner  # type: ignore[attr-defined]
+            cleanup_failure.cleanup_incomplete = True  # type: ignore[attr-defined]
+            if operation_failure is not None:
+                raise cleanup_failure from operation_failure
+            raise cleanup_failure
+        failure = _cleanup_error(
+            "authority_startup_cleanup_incomplete",
+            owner=owner,
+        )
+        if operation_failure is not None:
+            raise failure from operation_failure
+        if cleanup_failure is not None:
+            raise failure from cleanup_failure
+        raise failure
+    selected = _prioritize_failure(operation_failure, cleanup_failure)
+    if selected is cleanup_failure and cleanup_failure is not None:
+        if operation_failure is not None:
+            raise cleanup_failure from operation_failure
+        raise cleanup_failure
+
+
 def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
     """Move inherited secrets into a spawn child before business imports."""
 
@@ -142,6 +344,11 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
     attestor: object | None = None
     process_start_attempted = False
     transferred = False
+    cleanup_owner = _AuthorityStartupCleanupOwner(
+        connections=(children, parents),
+        duplicate_handles=duplicate_handles,
+        inherited_fds=inherited_fds,
+    )
     try:
         root_fd = _parse_inherited_fd(
             root_fd_value,
@@ -162,7 +369,16 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
         context = multiprocessing.get_context("spawn")
         from ns_runtime.authority_attestor import start_authority_attestor
 
-        attestor = start_authority_attestor(realm="production")
+        clock_wall_anchor_seconds = float(time.time())
+        clock_monotonic_anchor_seconds = float(time.monotonic())
+        attestor = start_authority_attestor(
+            realm="production",
+            _clock_wall_anchor_seconds=clock_wall_anchor_seconds,
+            _clock_monotonic_anchor_seconds=(
+                clock_monotonic_anchor_seconds
+            ),
+        )
+        cleanup_owner.attestor = attestor
         for role in _ENDPOINT_ROLES:
             parent, child = context.Pipe(duplex=True)
             parents[role] = parent
@@ -180,17 +396,24 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
                 secrets_handle,
                 attestor.public_key,
                 attestor.instance_id,
+                clock_wall_anchor_seconds,
+                clock_monotonic_anchor_seconds,
             ),
             name="ns-runtime-authority-broker",
             daemon=False,
         )
+        cleanup_owner.process = process
         process_start_attempted = True
+        cleanup_owner.process_start_attempted = True
         process.start()
         # ``Process.start`` has transferred the duplicate handles through the
         # spawn reduction protocol. They must not be detached in this parent.
         duplicate_handles.clear()
         child_close_failure = _close_connections(children)
-        fd_close_failure = _close_inherited_fds(inherited_fds)
+        fd_close_failure = _close_inherited_fds(
+            inherited_fds,
+            outcome_owner=cleanup_owner,
+        )
         if child_close_failure is not None:
             raise child_close_failure
         if fd_close_failure is not None:
@@ -215,47 +438,28 @@ def load_inherited_authority_bootstrap() -> InheritedAuthorityBootstrap:
             connections=parents,
             process=process,
             attestor=attestor,
+            clock_wall_anchor_seconds=clock_wall_anchor_seconds,
+            clock_monotonic_anchor_seconds=(
+                clock_monotonic_anchor_seconds
+            ),
         )
         transferred = True
+        cleanup_owner.process = None
+        cleanup_owner.attestor = None
         return bootstrap
     finally:
         if not transferred:
             active_failure = sys.exc_info()[1]
-            cleanup_failure = _close_connections(children)
-            cleanup_failure = _prioritize_failure(
-                cleanup_failure,
-                _close_connections(parents),
+            cleanup_failure: BaseException | None = None
+            try:
+                cleanup_owner.close()
+            except BaseException as error:
+                cleanup_failure = error
+            _raise_startup_cleanup_failure(
+                cleanup_owner,
+                operation_failure=active_failure,
+                cleanup_failure=cleanup_failure,
             )
-            if process is not None:
-                cleanup_failure = _prioritize_failure(
-                    cleanup_failure,
-                    _reap_process(
-                        process,
-                        started=process_start_attempted,
-                    ),
-                )
-            cleanup_failure = _prioritize_failure(
-                cleanup_failure,
-                _close_duplicate_handles(duplicate_handles),
-            )
-            cleanup_failure = _prioritize_failure(
-                cleanup_failure,
-                _close_inherited_fds(inherited_fds),
-            )
-            if attestor is not None:
-                try:
-                    attestor.close()
-                except BaseException as error:
-                    cleanup_failure = _prioritize_failure(
-                        cleanup_failure,
-                        error,
-                    )
-            selected = _prioritize_failure(
-                active_failure,
-                cleanup_failure,
-            )
-            if selected is cleanup_failure and cleanup_failure is not None:
-                raise cleanup_failure
 
 
 def _isolated_authority_bootstrap_entry(
@@ -264,6 +468,8 @@ def _isolated_authority_bootstrap_entry(
     secrets_handle: object,
     attestor_public_key: bytes,
     attestor_instance_id: str,
+    clock_wall_anchor_seconds: float,
+    clock_monotonic_anchor_seconds: float,
 ) -> None:
     # This module has no runtime business imports.  The spawn child receives
     # the inherited descriptors first; only then does it import broker code.
@@ -280,6 +486,8 @@ def _isolated_authority_bootstrap_entry(
         attestor_instance_id,
         300.0,
         30 * 24 * 60 * 60.0,
+        clock_wall_anchor_seconds,
+        clock_monotonic_anchor_seconds,
     )
 
 
@@ -331,46 +539,56 @@ def _close_connections(
 
 def _close_inherited_fds(
     descriptors: list[int],
+    *,
+    outcome_owner: _AuthorityStartupCleanupOwner | None = None,
 ) -> BaseException | None:
+    """Attempt each inherited raw descriptor exactly once.
+
+    As with detached duplicate handles, an integer is consumed before
+    ``os.close`` starts and is never retried.  A close exception leaves an
+    outcome fact rather than a reusable descriptor number.
+    """
+
     failure: BaseException | None = None
     seen: set[int] = set()
-    pending: list[int] = []
-    for descriptor in descriptors:
+    pending = tuple(descriptors)
+    descriptors.clear()
+    for descriptor in pending:
         if descriptor in seen:
             continue
         seen.add(descriptor)
         try:
             os.close(descriptor)
-        except OSError:
-            # A parsed but invalid descriptor still receives exactly one close
-            # attempt; its EBADF is not allowed to hide the startup rejection.
-            pass
         except BaseException as error:
             failure = _prioritize_failure(failure, error)
-            pending.append(descriptor)
-    descriptors[:] = pending
+            if outcome_owner is not None:
+                outcome_owner.fd_close_outcome_uncertain = True
     return failure
 
 
-def _close_duplicate_handles(handles: list[object]) -> BaseException | None:
+def _close_duplicate_handles(
+    handles: list[object],
+    *,
+    outcome_owner: _AuthorityStartupCleanupOwner | None = None,
+) -> BaseException | None:
+    """Detach and close each raw descriptor with one irreversible attempt."""
+
     failure: BaseException | None = None
-    pending: list[object] = []
-    for handle in handles:
+    pending = tuple(handles)
+    handles.clear()
+    for handle in pending:
         try:
             descriptor = handle.detach()
-        except (OSError, EOFError, ValueError):
-            continue
         except BaseException as error:
             failure = _prioritize_failure(failure, error)
-            pending.append(handle)
+            handles.append(handle)
             continue
         try:
             os.close(descriptor)
-        except OSError:
-            pass
         except BaseException as error:
             failure = _prioritize_failure(failure, error)
-    handles[:] = pending
+            if outcome_owner is not None:
+                outcome_owner.fd_close_outcome_uncertain = True
     return failure
 
 
@@ -408,14 +626,24 @@ def _reap_process(
     return failure
 
 
-def _cleanup_error(reason: str) -> NsRuntimeStartupSecurityError:
-    return NsRuntimeStartupSecurityError(
+def _cleanup_error(
+    reason: str,
+    *,
+    owner: _AuthorityStartupCleanupOwner | None = None,
+) -> NsRuntimeStartupSecurityError:
+    details: dict[str, object] = {
+        "component": "authority_broker_bootstrap",
+        "reason": reason,
+    }
+    if owner is not None:
+        details.update(owner.pending_facts())
+    failure = NsRuntimeStartupSecurityError(
         "Runtime authority cleanup did not complete.",
-        details={
-            "component": "authority_broker_bootstrap",
-            "reason": reason,
-        },
+        details=details,
     )
+    if owner is not None:
+        failure.cleanup_owner = owner  # type: ignore[attr-defined]
+    return failure
 
 
 def _prioritize_failure(
@@ -427,6 +655,15 @@ def _prioritize_failure(
     if current is None:
         return candidate
     if isinstance(current, Exception) and not isinstance(candidate, Exception):
+        return candidate
+    if (
+        isinstance(current, Exception)
+        and isinstance(candidate, NsRuntimeStartupSecurityError)
+        and candidate.details.get("reason") in {
+            "authority_broker_process_did_not_exit",
+            "authority_startup_cleanup_incomplete",
+        }
+    ):
         return candidate
     return current
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import heapq
 import math
+import threading
 import time as time_module
 from datetime import (
     datetime,
@@ -23,6 +24,13 @@ from ns_common.exceptions import (
 
 
 UTC_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_SYSTEM_CLOCK_WALL_ANCHOR_SECONDS = float(time_module.time())
+_SYSTEM_CLOCK_MONOTONIC_ANCHOR_SECONDS = float(time_module.monotonic())
+_SYSTEM_CLOCK_LAST_UTC = datetime.fromtimestamp(
+    _SYSTEM_CLOCK_WALL_ANCHOR_SECONDS,
+    tz=timezone.utc,
+)
+_SYSTEM_CLOCK_LOCK = threading.Lock()
 
 
 def _normalize_utc(value: Any, *, field_name: str) -> datetime:
@@ -106,12 +114,34 @@ class Clock(Protocol):
 
 
 class SystemClock:
-    """Clock backed by the operating system and the active event loop."""
+    """Process-wide non-decreasing UTC plus OS monotonic/event-loop time."""
 
     __slots__ = ()
 
     def utc_now(self) -> datetime:
-        return datetime.now(timezone.utc)
+        global _SYSTEM_CLOCK_LAST_UTC
+
+        monotonic_utc = datetime.fromtimestamp(
+            _SYSTEM_CLOCK_WALL_ANCHOR_SECONDS,
+            tz=timezone.utc,
+        ) + timedelta(
+            seconds=(
+                time_module.monotonic()
+                - _SYSTEM_CLOCK_MONOTONIC_ANCHOR_SECONDS
+            ),
+        )
+        wall_utc = datetime.fromtimestamp(
+            time_module.time(),
+            tz=timezone.utc,
+        )
+        with _SYSTEM_CLOCK_LOCK:
+            current = max(
+                _SYSTEM_CLOCK_LAST_UTC,
+                monotonic_utc,
+                wall_utc,
+            )
+            _SYSTEM_CLOCK_LAST_UTC = current
+            return current
 
     def monotonic(self) -> float:
         return time_module.monotonic()

@@ -55,6 +55,13 @@ class TransportManager:
     def state(self) -> TransportManagerState:
         return self._state
 
+    @property
+    def cleanup_progress(self) -> tuple[str, tuple[int, ...]]:
+        return (
+            self._state.value,
+            tuple(id(adapter) for adapter in self._adapters),
+        )
+
     async def start(self) -> None:
         async with self._lifecycle_lock:
             if self._state is not TransportManagerState.CREATED:

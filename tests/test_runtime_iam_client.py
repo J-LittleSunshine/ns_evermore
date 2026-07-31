@@ -264,6 +264,8 @@ class RuntimeIamClientTestCase(unittest.IsolatedAsyncioTestCase):
                 runtime_id="runtime:test",
             ),
             iam_service_credential=SERVICE,
+            startup_timeout_seconds=30.0,
+            broker_operation_timeout_seconds=30.0,
         )
         self.addAsyncCleanup(captured.close)
         self.addCleanup(broker.close)

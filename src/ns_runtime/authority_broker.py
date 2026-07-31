@@ -150,6 +150,56 @@ _ROLE_OPERATIONS: Mapping[str, frozenset[str]] = {
     }),
     "lifecycle": frozenset({"state_health"}),
 }
+
+
+class _AuthorityProcessClock:
+    """Share one non-decreasing UTC/monotonic anchor across authority children."""
+
+    __slots__ = ("_lock", "_monotonic_anchor", "_utc_anchor", "_last_utc")
+
+    def __init__(
+        self,
+        *,
+        wall_anchor_seconds: float,
+        monotonic_anchor_seconds: float,
+    ) -> None:
+        if (
+            type(wall_anchor_seconds) is not float
+            or not math.isfinite(wall_anchor_seconds)
+            or type(monotonic_anchor_seconds) is not float
+            or not math.isfinite(monotonic_anchor_seconds)
+        ):
+            _invalid("broker.clock_anchor")
+        self._utc_anchor = datetime.fromtimestamp(
+            wall_anchor_seconds,
+            tz=timezone.utc,
+        )
+        self._monotonic_anchor = monotonic_anchor_seconds
+        self._last_utc = self._utc_anchor
+        self._lock = threading.Lock()
+
+    def utc_now(self) -> datetime:
+        monotonic_utc = self._utc_anchor + timedelta(
+            seconds=(time.monotonic() - self._monotonic_anchor),
+        )
+        with self._lock:
+            current = max(self._last_utc, monotonic_utc)
+            self._last_utc = current
+            return current
+
+    def monotonic(self) -> float:
+        return time.monotonic()
+
+    async def sleep(self, delay_seconds: float) -> None:
+        if (
+            type(delay_seconds) not in {int, float}
+            or not math.isfinite(delay_seconds)
+            or delay_seconds < 0
+        ):
+            _invalid("broker.clock_delay")
+        await asyncio.sleep(float(delay_seconds))
+
+
 _IAM_PATHS: Mapping[str, str] = {
     "introspect": "internal/introspect_token/",
     "runtime_access_check": "internal/runtime_access_check/",
@@ -941,6 +991,22 @@ class _ParentEndpointCloseResource:
         self._connection.close()
 
 
+def _safe_process_status(
+    process: multiprocessing.Process,
+) -> tuple[bool, int | None]:
+    try:
+        alive = bool(process.is_alive())
+    except BaseException:
+        alive = False
+    try:
+        exitcode = process.exitcode
+    except BaseException:
+        exitcode = None
+    if type(exitcode) is not int:
+        exitcode = None
+    return alive, exitcode
+
+
 class _BrokerProcessCustodian:
     """Shared process lifecycle with only close-only endpoint resources."""
 
@@ -1079,6 +1145,7 @@ class _RoleBrokerChannel:
         "_attestor", "_identity_id", "_endpoint_id", "_role", "_handle",
         "_connection_generation", "_lock", "_closed",
         "_timeout_seconds", "_request_sequence", "_response_sequence",
+        "_diagnostics_enabled", "_request_stage", "_timeout_stage",
     )
 
     def __init__(
@@ -1098,7 +1165,10 @@ class _RoleBrokerChannel:
         role: BrokerRepositoryRole,
         handle: BrokerAuthorityHandle,
         timeout_seconds: float,
+        diagnostics_enabled: bool = False,
     ) -> None:
+        if type(diagnostics_enabled) is not bool:
+            _invalid("broker_channel.diagnostics")
         self._connection = connection
         self._custodian = custodian
         self._public_key = public_key
@@ -1121,6 +1191,9 @@ class _RoleBrokerChannel:
         self._timeout_seconds = float(timeout_seconds)
         self._request_sequence = 0
         self._response_sequence = 0
+        self._diagnostics_enabled = diagnostics_enabled
+        self._request_stage = "idle"
+        self._timeout_stage = "none"
         if not self._identity_is_current():
             self._closed = True
             self._fail_and_reap()
@@ -1163,6 +1236,47 @@ class _RoleBrokerChannel:
     @property
     def endpoint_id(self) -> str:
         return self._endpoint_id
+
+    def _set_diagnostic_stage(
+        self,
+        request_stage: str,
+        *,
+        timeout_stage: str = "none",
+    ) -> None:
+        if self._diagnostics_enabled:
+            self._request_stage = request_stage
+            self._timeout_stage = timeout_stage
+
+    def _failure_diagnostics(self, operation: str) -> dict[str, object]:
+        if not self._diagnostics_enabled:
+            return {}
+        broker_alive, broker_exitcode = _safe_process_status(
+            self._custodian.process,
+        )
+        attestor = self._attestor
+        attestor_values = attestor.last_failure_diagnostics
+        if not attestor_values:
+            attestor_alive, attestor_exitcode = _safe_process_status(
+                attestor._process,
+            )
+            attestor_values = {
+                "attestor_process_alive": attestor_alive,
+                "attestor_exitcode": attestor_exitcode,
+                "attestor_operation": "none",
+                "attestor_request_stage": "none",
+                "attestor_timeout_stage": "none",
+                "attestor_failure_code": "none",
+            }
+        return {
+            "broker_process_alive": broker_alive,
+            "broker_exitcode": broker_exitcode,
+            "operation": operation,
+            "endpoint_role": self._role.value,
+            "request_stage": self._request_stage,
+            "rotation_generation": self._lifecycle_generation,
+            "timeout_stage": self._timeout_stage,
+            **attestor_values,
+        }
 
     @property
     def handle(self) -> BrokerAuthorityHandle:
@@ -1324,25 +1438,38 @@ class _RoleBrokerChannel:
         operation: str,
         payload: dict[str, object] | list[object] | str | int | float | bool | None,
     ) -> object:
+        self._set_diagnostic_stage("request_preflight")
         if self._closed or not self._custodian.alive:
+            diagnostics = self._failure_diagnostics(operation)
             self._fail_and_reap()
-            raise _operation_unavailable(operation, "broker_unavailable")
+            raise _operation_unavailable(
+                operation,
+                "broker_unavailable",
+                diagnostics=diagnostics,
+            )
         send_attempted = False
         connection = self._connection
         try:
             with self._lock:
+                self._set_diagnostic_stage("request_locked_preflight")
                 if self._closed or not self._custodian.alive:
+                    diagnostics = self._failure_diagnostics(operation)
                     self._fail_and_reap()
                     raise _operation_unavailable(
-                        operation, "broker_unavailable",
+                        operation,
+                        "broker_unavailable",
+                        diagnostics=diagnostics,
                     )
                 connection = self._connection
                 attestor = self._attestor
+                self._set_diagnostic_stage("identity_sync_before_rotation")
                 self._sync_endpoint_identity_locked()
+                self._set_diagnostic_stage("rotation_barrier")
                 self._rotate_if_required_locked(
                     attestor=attestor,
                     operation=operation,
                 )
+                self._set_diagnostic_stage("identity_sync_after_rotation")
                 self._sync_endpoint_identity_locked()
                 handle = self._handle
                 request_id = "ipc_" + uuid.uuid4().hex
@@ -1352,6 +1479,7 @@ class _RoleBrokerChannel:
                     handle=handle,
                     payload=payload,
                 )
+                self._set_diagnostic_stage("attestor_prepare_request")
                 prepared = attestor.prepare_request(
                     identity_id=self._identity_id,
                     connection_generation=self._connection_generation,
@@ -1403,12 +1531,26 @@ class _RoleBrokerChannel:
                 })
                 self._request_sequence = request_sequence
                 send_attempted = True
+                self._set_diagnostic_stage("broker_ipc_send")
                 connection.send_bytes(raw_request)
+                self._set_diagnostic_stage("broker_ipc_wait")
                 if not connection.poll(self._timeout_seconds):
+                    self._set_diagnostic_stage(
+                        "broker_ipc_wait",
+                        timeout_stage="broker_response",
+                    )
+                    diagnostics = self._failure_diagnostics(operation)
                     self._fail_and_reap(connection=connection)
                     if operation in _WRITE_OPERATIONS:
-                        raise _indeterminate(operation, "ipc_timeout")
-                    raise _operation_unavailable(operation, "ipc_timeout")
+                        failure = _indeterminate(operation, "ipc_timeout")
+                        _attach_test_diagnostics(failure, diagnostics)
+                        raise failure
+                    raise _operation_unavailable(
+                        operation,
+                        "ipc_timeout",
+                        diagnostics=diagnostics,
+                    )
+                self._set_diagnostic_stage("broker_ipc_receive")
                 envelope = decode_frame(
                     connection.recv_bytes(MAX_FRAME_BYTES),
                 )
@@ -1423,6 +1565,7 @@ class _RoleBrokerChannel:
                     or type(values["signed_response"]) is not dict
                 ):
                     _invalid("response_envelope.binding")
+                self._set_diagnostic_stage("attestor_verify_state_response")
                 verified = attestor.verify_state_response(
                     snapshot=snapshot,
                     signed_response=values["signed_response"],
@@ -1458,6 +1601,9 @@ class _RoleBrokerChannel:
                         )
                         typed_request = _decode_iam_request(
                             operation, payload,
+                        )
+                        self._set_diagnostic_stage(
+                            "attestor_verify_iam_result",
                         )
                         inner_verified = attestor.verify_iam_result(
                             identity_id=self._identity_id,
@@ -1510,6 +1656,7 @@ class _RoleBrokerChannel:
                             is not str
                         ):
                             _invalid("response.iam_authority")
+                        self._set_diagnostic_stage("request_complete")
                         return _AttestedIamChannelResponse(
                             raw_result=decoded_result,
                             verification=dict(inner_verified),
@@ -1533,6 +1680,7 @@ class _RoleBrokerChannel:
                                 ],
                             ),
                         )
+                    self._set_diagnostic_stage("request_complete")
                     return decoded_result
                 error_value = _decode_canonical_json(
                     _exact_string(
@@ -1552,21 +1700,33 @@ class _RoleBrokerChannel:
             NsValidationError, AttributeError, KeyError, TypeError,
             ValueError,
         ):
+            diagnostics = self._failure_diagnostics(operation)
             self._fail_and_reap(connection=connection)
             if operation in _WRITE_OPERATIONS and send_attempted:
-                raise _indeterminate(
+                failure = _indeterminate(
                     operation, "attestor_verification_failed",
-                ) from None
+                )
+                _attach_test_diagnostics(failure, diagnostics)
+                raise failure from None
             raise _operation_unavailable(
-                operation, "attestor_unavailable",
+                operation,
+                "attestor_unavailable",
+                diagnostics=diagnostics,
             ) from None
         except (BrokenPipeError, EOFError, OSError):
+            diagnostics = self._failure_diagnostics(operation)
             self._fail_and_reap(
                 connection=connection,
             )
             if operation in _WRITE_OPERATIONS and send_attempted:
-                raise _indeterminate(operation, "ipc_invalid_response") from None
-            raise _operation_unavailable(operation, "ipc_closed") from None
+                failure = _indeterminate(operation, "ipc_invalid_response")
+                _attach_test_diagnostics(failure, diagnostics)
+                raise failure from None
+            raise _operation_unavailable(
+                operation,
+                "ipc_closed",
+                diagnostics=diagnostics,
+            ) from None
 
     def _rotate_if_required_locked(
         self,
@@ -1596,6 +1756,7 @@ class _RoleBrokerChannel:
         attestor: AuthorityAttestorClient,
         operation: str,
     ) -> None:
+        self._set_diagnostic_stage("rotation_probe_attestor")
         probe_id = "rotation_probe_" + uuid.uuid4().hex
         probe_fingerprint = "sha256:" + hashlib.sha256(
             probe_id.encode("utf-8"),
@@ -1616,10 +1777,15 @@ class _RoleBrokerChannel:
             previous_generation = self._lifecycle_generation
             deadline = time.monotonic() + self._timeout_seconds
             while time.monotonic() < deadline:
+                self._set_diagnostic_stage("rotation_wait_identity")
                 self._sync_endpoint_identity_locked()
                 if self._lifecycle_generation > previous_generation:
                     return
                 time.sleep(0.005)
+            self._set_diagnostic_stage(
+                "rotation_wait_identity",
+                timeout_stage="rotation_identity",
+            )
             raise AuthorityAttestationError("rotation_wait_timeout")
         if prepared.get("status") != "rotation_required":
             _invalid("attestor.rotation_status")
@@ -1628,13 +1794,20 @@ class _RoleBrokerChannel:
             _invalid("attestor.rotation_ticket")
         connection = self._connection
         generation = self._connection_generation
+        self._set_diagnostic_stage("rotation_ipc_send")
         connection.send_bytes(encode_frame({
             "version": WIRE_VERSION,
             "kind": "rotate_session",
             "ticket": ticket,
         }))
+        self._set_diagnostic_stage("rotation_ipc_wait")
         if not connection.poll(self._timeout_seconds):
+            self._set_diagnostic_stage(
+                "rotation_ipc_wait",
+                timeout_stage="rotation_response",
+            )
             raise AuthorityAttestationError("rotation_timeout")
+        self._set_diagnostic_stage("rotation_ipc_receive")
         rotation = decode_frame(
             connection.recv_bytes(MAX_FRAME_BYTES),
         )
@@ -1644,6 +1817,7 @@ class _RoleBrokerChannel:
             key: value for key, value in rotation.items()
             if key != "version"
         }
+        self._set_diagnostic_stage("rotation_attestor_approval")
         approved = attestor.approve_rotation(
             identity_id=self._identity_id,
             rotation=rotation_attestation,
@@ -1676,6 +1850,7 @@ class _RoleBrokerChannel:
         self._connection_generation += 1
         self._request_sequence = 0
         self._response_sequence = 0
+        self._set_diagnostic_stage("rotation_identity_sync")
         self._sync_endpoint_identity_locked()
 
     def close(self, *, terminate: bool = False) -> None:
@@ -2930,6 +3105,18 @@ class AuthorityBrokerStateStoreProxy:
             "closed": StateStoreLifecycleState.CLOSED,
         }[self._state]
 
+    @property
+    def cleanup_progress(self) -> tuple[object, ...]:
+        channel = getattr(self, "_channel", None)
+        custodian = getattr(channel, "_custodian", None)
+        return (
+            self._state,
+            bool(getattr(channel, "_closed", False)),
+            len(getattr(custodian, "_endpoint_close_resources", ())),
+            bool(getattr(custodian, "_process_reaped", False)),
+            bool(getattr(custodian, "_attestor_closed", False)),
+        )
+
     def _binding_is_current(self) -> bool:
         expected_channel_type = {
             AuthorityBrokerStateStoreProxy: _ProductionRoleBrokerChannel,
@@ -3036,8 +3223,8 @@ class AuthorityBrokerStateStoreProxy:
     async def close(self) -> None:
         if self._state == "closed":
             return
-        self._state = "closed"
         await asyncio.to_thread(self._channel.close)
+        self._state = "closed"
 
 
 class _ContractTestAuthorityBrokerStateStoreProxy(
@@ -3114,6 +3301,7 @@ def start_contract_test_authority_broker(
     startup_timeout_seconds: float = 15.0,
     session_ttl_seconds: float = _SESSION_CERTIFICATE_TTL_SECONDS,
     delegation_ttl_seconds: float = _DELEGATION_CERTIFICATE_TTL_SECONDS,
+    broker_operation_timeout_seconds: float | None = None,
 ) -> ProductionAuthorityBroker:
     """Start an explicitly non-production broker under an ephemeral test root."""
 
@@ -3133,6 +3321,7 @@ def start_contract_test_authority_broker(
         session_ttl_seconds=session_ttl_seconds,
         delegation_ttl_seconds=delegation_ttl_seconds,
         runtime_clock=clock or SystemClock(),
+        broker_operation_timeout_seconds=broker_operation_timeout_seconds,
     )
 
 
@@ -3145,6 +3334,7 @@ def start_integration_test_authority_broker(
     startup_timeout_seconds: float = 15.0,
     session_ttl_seconds: float = _SESSION_CERTIFICATE_TTL_SECONDS,
     delegation_ttl_seconds: float = _DELEGATION_CERTIFICATE_TTL_SECONDS,
+    broker_operation_timeout_seconds: float | None = None,
 ) -> ProductionAuthorityBroker:
     """Run real provider integration under a non-production test trust root."""
 
@@ -3168,6 +3358,7 @@ def start_integration_test_authority_broker(
         session_ttl_seconds=session_ttl_seconds,
         delegation_ttl_seconds=delegation_ttl_seconds,
         runtime_clock=clock or SystemClock(),
+        broker_operation_timeout_seconds=broker_operation_timeout_seconds,
     )
 
 
@@ -3181,9 +3372,19 @@ def _start_test_authority_broker(
     session_ttl_seconds: float,
     delegation_ttl_seconds: float,
     runtime_clock: Clock,
+    broker_operation_timeout_seconds: float | None,
 ) -> ProductionAuthorityBroker:
     if not isinstance(runtime_clock, Clock):
         _invalid("broker.runtime_clock")
+    if (
+        broker_operation_timeout_seconds is not None
+        and (
+            type(broker_operation_timeout_seconds) not in {int, float}
+            or not math.isfinite(broker_operation_timeout_seconds)
+            or broker_operation_timeout_seconds <= 0
+        )
+    ):
+        _invalid("broker.test_operation_timeout")
     root_private_key = Ed25519PrivateKey.generate()
     root_private_bytes = root_private_key.private_bytes(
         encoding=serialization.Encoding.Raw,
@@ -3220,6 +3421,7 @@ def _start_test_authority_broker(
         session_ttl_seconds=session_ttl_seconds,
         delegation_ttl_seconds=delegation_ttl_seconds,
         runtime_clock=runtime_clock,
+        test_operation_timeout_seconds=broker_operation_timeout_seconds,
     )
 
 
@@ -3265,15 +3467,22 @@ def _spawn_authority_broker(
     session_ttl_seconds: float,
     delegation_ttl_seconds: float,
     runtime_clock: Clock,
+    test_operation_timeout_seconds: float | None = None,
 ) -> ProductionAuthorityBroker:
-    if realm not in _BROKER_REALMS or not isinstance(runtime_clock, Clock):
+    if (
+        realm not in _BROKER_REALMS
+        or not isinstance(runtime_clock, Clock)
+        or (
+            realm == "production"
+            and test_operation_timeout_seconds is not None
+        )
+    ):
         _invalid("broker.realm")
     from ns_runtime.authority_bootstrap import (
+        _AuthorityStartupCleanupOwner,
         _close_connections,
-        _close_duplicate_handles,
         _close_inherited_fds,
-        _prioritize_failure,
-        _reap_process,
+        _raise_startup_cleanup_failure,
     )
 
     context = multiprocessing.get_context("spawn")
@@ -3285,14 +3494,32 @@ def _spawn_authority_broker(
     attestor: AuthorityAttestorClient | None = None
     process_start_attempted = False
     transferred = False
+    cleanup_owner = _AuthorityStartupCleanupOwner(
+        connections=(children, parents),
+        duplicate_handles=duplicate_handles,
+        inherited_fds=inherited_fds,
+    )
     try:
+        clock_wall_anchor_seconds = float(time.time())
+        clock_monotonic_anchor_seconds = float(time.monotonic())
+        if type(runtime_clock) is SystemClock:
+            runtime_clock = _AuthorityProcessClock(
+                wall_anchor_seconds=clock_wall_anchor_seconds,
+                monotonic_anchor_seconds=clock_monotonic_anchor_seconds,
+            )
         attestor = start_authority_attestor(
             realm=realm,
             expected_test_root_public_key=(
                 None if realm == "production" else expected_root_public_key
             ),
             timeout_seconds=startup_timeout_seconds,
+            diagnostics_enabled=realm != "production",
+            _clock_wall_anchor_seconds=clock_wall_anchor_seconds,
+            _clock_monotonic_anchor_seconds=(
+                clock_monotonic_anchor_seconds
+            ),
         )
+        cleanup_owner.attestor = attestor
         for role in BrokerRepositoryRole:
             parent, child = context.Pipe(duplex=True)
             parents[role.value] = parent
@@ -3314,15 +3541,22 @@ def _spawn_authority_broker(
                 attestor.instance_id,
                 float(session_ttl_seconds),
                 float(delegation_ttl_seconds),
+                clock_wall_anchor_seconds,
+                clock_monotonic_anchor_seconds,
             ),
             name="ns-runtime-authority-broker",
             daemon=False,
         )
+        cleanup_owner.process = process
         process_start_attempted = True
+        cleanup_owner.process_start_attempted = True
         process.start()
         duplicate_handles.clear()
         child_close_failure = _close_connections(children)
-        fd_close_failure = _close_inherited_fds(inherited_fds)
+        fd_close_failure = _close_inherited_fds(
+            inherited_fds,
+            outcome_owner=cleanup_owner,
+        )
         if child_close_failure is not None:
             raise child_close_failure
         if fd_close_failure is not None:
@@ -3335,47 +3569,25 @@ def _spawn_authority_broker(
             realm=realm,
             startup_timeout_seconds=startup_timeout_seconds,
             runtime_clock=runtime_clock,
+            test_operation_timeout_seconds=test_operation_timeout_seconds,
         )
         transferred = True
+        cleanup_owner.process = None
+        cleanup_owner.attestor = None
         return broker
     finally:
         if not transferred:
             active_failure = sys.exc_info()[1]
-            cleanup_failure = _close_connections(children)
-            cleanup_failure = _prioritize_failure(
-                cleanup_failure,
-                _close_connections(parents),
+            cleanup_failure: BaseException | None = None
+            try:
+                cleanup_owner.close()
+            except BaseException as error:
+                cleanup_failure = error
+            _raise_startup_cleanup_failure(
+                cleanup_owner,
+                operation_failure=active_failure,
+                cleanup_failure=cleanup_failure,
             )
-            if process is not None:
-                cleanup_failure = _prioritize_failure(
-                    cleanup_failure,
-                    _reap_process(
-                        process,
-                        started=process_start_attempted,
-                    ),
-                )
-            cleanup_failure = _prioritize_failure(
-                cleanup_failure,
-                _close_duplicate_handles(duplicate_handles),
-            )
-            cleanup_failure = _prioritize_failure(
-                cleanup_failure,
-                _close_inherited_fds(inherited_fds),
-            )
-            if attestor is not None:
-                try:
-                    attestor.close()
-                except BaseException as cleanup_error:
-                    cleanup_failure = _prioritize_failure(
-                        cleanup_failure,
-                        cleanup_error,
-                    )
-            selected = _prioritize_failure(
-                active_failure,
-                cleanup_failure,
-            )
-            if selected is cleanup_failure and cleanup_failure is not None:
-                raise cleanup_failure
 
 
 def _complete_inherited_authority_broker_start(
@@ -3385,6 +3597,8 @@ def _complete_inherited_authority_broker_start(
     attestor: AuthorityAttestorClient,
     config: AuthorityBrokerConfig,
     clock: Clock,
+    clock_wall_anchor_seconds: float,
+    clock_monotonic_anchor_seconds: float,
     startup_timeout_seconds: float = 15.0,
 ) -> ProductionAuthorityBroker:
     """Send only non-secret config to the already isolated broker child."""
@@ -3394,8 +3608,17 @@ def _complete_inherited_authority_broker_start(
         or not process.is_alive()
         or set(parents) != {role.value for role in BrokerRepositoryRole}
         or not isinstance(clock, Clock)
+        or type(clock_wall_anchor_seconds) is not float
+        or not math.isfinite(clock_wall_anchor_seconds)
+        or type(clock_monotonic_anchor_seconds) is not float
+        or not math.isfinite(clock_monotonic_anchor_seconds)
     ):
         _invalid("broker.pending_bootstrap")
+    if type(clock) is SystemClock:
+        clock = _AuthorityProcessClock(
+            wall_anchor_seconds=clock_wall_anchor_seconds,
+            monotonic_anchor_seconds=clock_monotonic_anchor_seconds,
+        )
     lifecycle = parents[BrokerRepositoryRole.LIFECYCLE.value]
     try:
         lifecycle.send_bytes(encode_frame({
@@ -3425,6 +3648,7 @@ def _accept_started_authority_broker(
     realm: str,
     startup_timeout_seconds: float,
     runtime_clock: Clock,
+    test_operation_timeout_seconds: float | None = None,
 ) -> ProductionAuthorityBroker:
     expected_roles = {role.value for role in BrokerRepositoryRole}
     if set(parents) != expected_roles or not isinstance(runtime_clock, Clock):
@@ -3551,10 +3775,15 @@ def _accept_started_authority_broker(
             endpoint_id=endpoints[role],
             role=BrokerRepositoryRole(role),
             handle=handles[role],
-            timeout_seconds=max(
-                config.iam_timeout_seconds,
-                config.state_operation_timeout_seconds,
-            ) + 2.0,
+            timeout_seconds=(
+                max(
+                    config.iam_timeout_seconds,
+                    config.state_operation_timeout_seconds,
+                ) + 2.0
+                if test_operation_timeout_seconds is None
+                else float(test_operation_timeout_seconds)
+            ),
+            diagnostics_enabled=realm != "production",
         )
         for role in sorted(expected_roles)
     }
@@ -4460,8 +4689,13 @@ async def _broker_async_main(
     attestor_instance_id: str,
     session_ttl_seconds: float,
     delegation_ttl_seconds: float,
+    clock_wall_anchor_seconds: float,
+    clock_monotonic_anchor_seconds: float,
 ) -> None:
-    clock = SystemClock()
+    clock = _AuthorityProcessClock(
+        wall_anchor_seconds=clock_wall_anchor_seconds,
+        monotonic_anchor_seconds=clock_monotonic_anchor_seconds,
+    )
     expected_roles = {role.value for role in BrokerRepositoryRole}
     if set(connections) != expected_roles:
         _invalid("broker.endpoint_set")
@@ -4831,6 +5065,8 @@ def _authority_broker_process(
     attestor_instance_id: str,
     session_ttl_seconds: float,
     delegation_ttl_seconds: float,
+    clock_wall_anchor_seconds: float,
+    clock_monotonic_anchor_seconds: float,
 ) -> None:
     """Top-level spawn target; descriptors are consumed before backends load."""
 
@@ -4854,6 +5090,10 @@ def _authority_broker_process(
             or type(delegation_ttl_seconds) not in {int, float}
             or not math.isfinite(delegation_ttl_seconds)
             or delegation_ttl_seconds <= session_ttl_seconds
+            or type(clock_wall_anchor_seconds) is not float
+            or not math.isfinite(clock_wall_anchor_seconds)
+            or type(clock_monotonic_anchor_seconds) is not float
+            or not math.isfinite(clock_monotonic_anchor_seconds)
         ):
             _invalid("broker.attestor_binding")
         root_fd = root_key_handle.detach()
@@ -4923,6 +5163,8 @@ def _authority_broker_process(
             attestor_instance_id,
             float(session_ttl_seconds),
             float(delegation_ttl_seconds),
+            clock_wall_anchor_seconds,
+            clock_monotonic_anchor_seconds,
         ))
     except BaseException as error:
         try:
@@ -6516,10 +6758,52 @@ def _state_unavailable(reason: str) -> NsRuntimeStateStoreUnavailableError:
 def _operation_unavailable(
     operation: str,
     reason: str,
+    *,
+    diagnostics: dict[str, object] | None = None,
 ) -> Exception:
     if operation in _IAM_OPERATIONS:
-        return _broker_unavailable(reason)
-    return _state_unavailable(reason)
+        failure: Exception = _broker_unavailable(reason)
+    else:
+        failure = _state_unavailable(reason)
+    _attach_test_diagnostics(failure, diagnostics or {})
+    return failure
+
+
+_TEST_DIAGNOSTIC_KEYS = frozenset({
+    "broker_process_alive",
+    "broker_exitcode",
+    "operation",
+    "endpoint_role",
+    "request_stage",
+    "rotation_generation",
+    "timeout_stage",
+    "attestor_process_alive",
+    "attestor_exitcode",
+    "attestor_operation",
+    "attestor_request_stage",
+    "attestor_timeout_stage",
+    "attestor_failure_code",
+})
+
+
+def _attach_test_diagnostics(
+    failure: Exception,
+    diagnostics: dict[str, object],
+) -> None:
+    if not diagnostics:
+        return
+    safe = {
+        key: value
+        for key, value in diagnostics.items()
+        if key in _TEST_DIAGNOSTIC_KEYS
+        and (
+            type(value) in {str, bool, int}
+            or value is None
+        )
+    }
+    details = getattr(failure, "details", None)
+    if type(details) is dict:
+        details.update(safe)
 
 
 def _invalid(field: str) -> None:
