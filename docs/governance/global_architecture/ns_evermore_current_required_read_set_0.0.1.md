@@ -4,7 +4,7 @@
 
 - **Document ID:** `NS-EVERMORE-CRRS-0001`
 - **Version:** `0.0.1`
-- **Status:** `CURRENT / GAC-EPOCH-0002`
+- **Status:** `CURRENT / GAC-EPOCH-0003`
 - **Authority Level:** `GLOBAL_CONTINUITY_READ_SET`
 - **Program:** `NGRP-001`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
@@ -14,9 +14,9 @@
 
 ## 1. Purpose
 
-This document defines the minimum sufficient Repository context with no semantic loss for recovering the project immediately after Z0 Global Acceptance.
+This document defines the minimum sufficient Repository context with no semantic loss for recovering the currently authorized Z1 Batch 1 Architecture Constraint Derivation session.
 
-## 2. Required Read Set — GAC-EPOCH-0002
+## 2. Required Read Set — GAC-EPOCH-0003
 
 Read in this order:
 
@@ -27,54 +27,61 @@ Read in this order:
 5. `docs/governance/decisions/ns_evermore_decision_registry_0.0.1.md`
 6. `docs/governance/global_architecture/ns_evermore_global_architecture_continuation_protocol_0.0.1.md`
 7. `docs/architecture_reviews/ns_evermore_ngrp_001_phase_z0_global_acceptance_0.0.1.md`
-8. `docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md`
-9. `docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md`
-10. `docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md`
-11. `docs/governance/standards/ns_evermore_session_governance_standard_0.0.1.md`
+8. `docs/architecture_reviews/ns_evermore_post_z0_constraint_pressure_assessment_0.0.1.md`
+9. `docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md`
+10. `docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md`
+11. `docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md`
+12. `docs/governance/standards/ns_evermore_session_governance_standard_0.0.1.md`
+13. `docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_session_prompt_0.0.1.md`
 
-## 3. Historical Evidence Deep-read Rule
+## 3. Historical Deep-read Rule
 
-The following Z0 producing-session artifacts are accepted historical governance evidence but are not part of the default minimum read set after Global Acceptance:
+Do not read all pre-Genesis or prior-session artifacts by default.
+
+Expand into historical evidence only for:
 
 ```text
-docs/session_prompts/ns_evermore_ngrp_001_phase_z0_genesis_bootstrap_session_prompt_0.0.1.md
-docs/architecture_reviews/ns_evermore_ngrp_001_phase_z0_genesis_bootstrap_review_0.0.1.md
-docs/session_handoffs/ns_evermore_ngrp_001_phase_z0_genesis_bootstrap_handoff_0.0.1.md
+Reopen
+Conflict
+Historical Divergence
+Evidence Ambiguity
+Cross-phase Collision
+Drift Investigation
+Explicit Compatibility / Migration analysis
 ```
 
-Read them when investigating Z0 provenance, acceptance reconstruction, conflict, drift, or historical ambiguity.
-
-Pre-Genesis repository artifacts remain non-normative unless a later authorized phase explicitly admits them.
+Pre-Genesis repository artifacts remain non-normative unless explicitly admitted under accepted provenance governance.
 
 ## 4. Recovery Target
 
-After reading the current set, a fresh Global Architecture Coordinator must recover without material ambiguity:
+A fresh bounded Z1 Batch 1 session must recover without material ambiguity:
 
 ```text
 Project identity
 Accepted Genesis Constitution
-Accepted root product constraints
+Accepted Governance Framework
 Five fixed Product Components
-Tenant / Organization non-collapse
+Tenant / Organization root non-collapse
 Technical root facts
-Current Constraint Baseline
+Current Constraint Baseline = BOOTSTRAP / ACTIVE_NSE NONE
 Accepted Z0 Decisions
-Current Global State Epoch
-Current branch and Git coordinate
-Last Globally Accepted Phase
-Current Authorized Design Phase
+Current Global State Epoch = GAC-EPOCH-0003
+Last Globally Accepted Phase = Z0
+Current Authorized Phase = Z1 / Batch 1
+Authorization Scope = TENANT_ORGANIZATION_OFFLINE_CORE_CONSTRAINTS
 Open MDE
 Pending Owner Decisions
 Blocking Items
 Known Drift
-Unique Next Legal Action
+Explicit deferred pressure
+Unique next legal action
 ```
 
 ## 5. Current State Summary
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0002
+GAC-EPOCH-0003
 
 Last Globally Accepted Phase
 NGRP-001 Phase Z0 — Genesis Governance Bootstrap
@@ -83,14 +90,14 @@ Current Constraint Baseline
 BOOTSTRAP ONLY
 ACTIVE_NSE = NONE
 
-Accepted Z0 Decisions
-Z0-DAD-001 .. Z0-DAD-010
+Current Authorized Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
 
-Current Authorized Design Phase
-NONE
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_1 / TENANT_ORGANIZATION_OFFLINE_CORE_CONSTRAINTS
 
 Current Session Authorization Prompt
-NONE — current activity is Global Architecture Coordinator governance reassessment, not a bounded design session
+docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_session_prompt_0.0.1.md
 
 Open MDE
 0
@@ -105,10 +112,7 @@ Blocking Item
 ## 6. Unique Next Legal Action
 
 ```text
-Global Architecture Coordinator
-→ reassess remaining material Architecture Constraint pressure against the accepted Genesis Constitution
-→ determine one bounded next legal phase
-→ persist explicit authorization before any Constraint Derivation session starts
+Start one bounded Z1 Batch 1 Architecture Constraint Derivation session under the current Repository-backed authorization prompt.
 ```
 
-Architecture Constraint Derivation is not yet authorized by this Read Set.
+The bounded session may derive only the authorized constraint cluster and must stop at `COMPLETED / AWAITING_GLOBAL_ACCEPTANCE`. It may not self-accept, authorize a later batch, globally close Constraint Derivation, or begin Project Architecture.
