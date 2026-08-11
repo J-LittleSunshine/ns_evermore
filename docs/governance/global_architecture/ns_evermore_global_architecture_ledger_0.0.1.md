@@ -47,21 +47,10 @@ GENESIS_GOVERNANCE_BOOTSTRAP_AUTHORIZED
 ## GAC-TR-0002 — Genesis Root Semantics Normalization
 
 ```text
-Previous State
-GAC-EPOCH-0001 / Z0 AUTHORIZED
-
-New State
-GAC-EPOCH-0001 / Z0 CONSTITUTION CANDIDATE ESTABLISHED
-
 Evidence File
 docs/ns_evermore_genesis_constitution_0.0.1.md
-
 Evidence Commit
 4df9b26e119c794f2a828261dee2bac9cb84495c
-
-Affected Artifact
-NS-EVERMORE-CONSTITUTION-0001
-
 Result
 COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 ```
@@ -128,21 +117,10 @@ SESSION_AUTHORIZATION_HANDOFF_IWP_CODEX_GOVERNANCE_SCHEMA_ESTABLISHED
 ## GAC-TR-0008 — Z0 Audit / Fresh-session Recovery Closure
 
 ```text
-Previous State
-GAC-EPOCH-0001 / Z0 IN_PROGRESS
-
-New State
-GAC-EPOCH-0001 / Z0 REVIEW COMPLETE
-
 Evidence File
 docs/architecture_reviews/ns_evermore_ngrp_001_phase_z0_genesis_bootstrap_review_0.0.1.md
-
 Evidence Commit
 344ee8c8f9f08f71414ba3457d79fd91ce95ea97
-
-Affected Artifact
-NGRP-001 / Z0 governance baseline
-
 Result
 ALL_REQUIRED_Z0_AUDITS_PASS / FRESH_SESSION_RECOVERY_PASS / GLOBAL_ACCEPT_RECOMMENDED
 ```
@@ -150,21 +128,10 @@ ALL_REQUIRED_Z0_AUDITS_PASS / FRESH_SESSION_RECOVERY_PASS / GLOBAL_ACCEPT_RECOMM
 ## GAC-TR-0009 — Z0 Session Handoff
 
 ```text
-Previous State
-GAC-EPOCH-0001 / Z0 REVIEW COMPLETE
-
-New State
-GAC-EPOCH-0001 / Z0 COMPLETED_AWAITING_GLOBAL_ACCEPTANCE
-
 Evidence File
 docs/session_handoffs/ns_evermore_ngrp_001_phase_z0_genesis_bootstrap_handoff_0.0.1.md
-
 Evidence Commit
 bec26e1caad0ed1b9d04c6893592d0e6fa35ab16
-
-Affected Artifact
-NGRP-001 / Z0 bounded session
-
 Result
 HANDOFF_PERSISTED / PRODUCING_SESSION_STOP_REQUIRED
 ```
@@ -185,14 +152,7 @@ Evidence Commit
 8dc0ad172be0223ce5af7844078a90c4ffe61599
 
 Affected Artifacts
-NS-EVERMORE-CONSTITUTION-0001 / 0.0.1
-NS-EVERMORE-GOV-FRAMEWORK-0001 / 0.0.1
-NS-EVERMORE-NSE-INDEX-0001 / 0.0.1 bootstrap semantics
-NS-EVERMORE-DECISION-REGISTRY-0001 / 0.0.1
-GACP-001 / 0.0.1
-Current Required Read Set mechanism
-Session Governance Standard / 0.0.1
-Implementation Governance Standard / 0.0.1
+Genesis Constitution / Governance Framework / Constraint Bootstrap / Decision Registry / GACP / Session and Implementation Governance
 Z0-DAD-001 .. Z0-DAD-010
 
 Result
@@ -202,23 +162,85 @@ Automatic Next Phase Authorization
 NONE
 ```
 
+## GAC-TR-0011 — Post-Z0 Remaining Constraint Pressure Assessment
+
+```text
+Previous State
+GAC-EPOCH-0002 / Z0 GLOBAL_ACCEPTED / NO DESIGN PHASE AUTHORIZED
+
+New State
+GAC-EPOCH-0002 / REMAINING_CONSTRAINT_PRESSURE_CONFIRMED
+
+Evidence File
+docs/architecture_reviews/ns_evermore_post_z0_constraint_pressure_assessment_0.0.1.md
+
+Evidence Commit
+74fe0995cad29313ee01619be267a43db8f2b856
+
+Result
+REMAINING_MATERIAL_CONSTRAINT_PRESSURE_PRESENT
+
+Selected Next Bounded Scope
+TENANT_ORGANIZATION_OFFLINE_CORE_CONSTRAINTS
+
+Project Architecture Authorization
+NO
+```
+
+## GAC-TR-0012 — Z1 Batch 1 Constraint Derivation Authorization
+
+```text
+Previous State
+GAC-EPOCH-0002 / REMAINING_CONSTRAINT_PRESSURE_CONFIRMED
+
+New State
+GAC-EPOCH-0003 / Z1 BATCH_1 AUTHORIZED
+
+Evidence File
+docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_session_prompt_0.0.1.md
+
+Evidence Commit
+988ca5074b371625447774a0ce258341924e3459
+
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_1 / TENANT_ORGANIZATION_OFFLINE_CORE_CONSTRAINTS
+
+Authorized Pressure
+Native Multi-tenancy
+Tenant / Organization Non-collapse
+Complex Extensible Organization
+Offline Core Correctness
+
+Result
+AUTHORIZED
+
+Automatic Later Batch Authorization
+NONE
+
+Project Architecture Authorization
+NONE
+```
+
 ## Current Ledger Tail
 
 ```text
 Current Epoch
-GAC-EPOCH-0002
+GAC-EPOCH-0003
 
 Last Globally Accepted Phase
 NGRP-001 / Z0 — Genesis Governance Bootstrap
 
-Acceptance Result
-GLOBAL_ACCEPT
+Current Authorized Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
 
-Accepted Z0 Decisions
-Z0-DAD-001 .. Z0-DAD-010
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_1 / TENANT_ORGANIZATION_OFFLINE_CORE_CONSTRAINTS
 
-Current Authorized Design Phase
-NONE
+Current Session Prompt
+docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_session_prompt_0.0.1.md
+
+Accepted Constraint Set
+NONE / ACTIVE_NSE = NONE
 
 Open MDE
 0
@@ -226,6 +248,6 @@ Open MDE
 Unpersisted Owner Decision
 0
 
-Unique next legal governance action
-Global Architecture Coordinator reassesses remaining material Architecture Constraint pressure and decides whether to authorize one bounded Constraint Derivation phase
+Unique next legal action
+Start one bounded Z1 Batch 1 design session under the exact Repository-backed authorization prompt; GAC itself does not perform the bounded derivation inside the coordinator role
 ```
