@@ -169,21 +169,63 @@ Result
 HANDOFF_PERSISTED / PRODUCING_SESSION_STOP_REQUIRED
 ```
 
+## GAC-TR-0010 — Z0 Global Acceptance
+
+```text
+Previous State
+GAC-EPOCH-0001 / Z0 COMPLETED_AWAITING_GLOBAL_ACCEPTANCE
+
+New State
+GAC-EPOCH-0002 / Z0 GLOBAL_ACCEPTED
+
+Evidence File
+docs/architecture_reviews/ns_evermore_ngrp_001_phase_z0_global_acceptance_0.0.1.md
+
+Evidence Commit
+8dc0ad172be0223ce5af7844078a90c4ffe61599
+
+Affected Artifacts
+NS-EVERMORE-CONSTITUTION-0001 / 0.0.1
+NS-EVERMORE-GOV-FRAMEWORK-0001 / 0.0.1
+NS-EVERMORE-NSE-INDEX-0001 / 0.0.1 bootstrap semantics
+NS-EVERMORE-DECISION-REGISTRY-0001 / 0.0.1
+GACP-001 / 0.0.1
+Current Required Read Set mechanism
+Session Governance Standard / 0.0.1
+Implementation Governance Standard / 0.0.1
+Z0-DAD-001 .. Z0-DAD-010
+
+Result
+GLOBAL_ACCEPT
+
+Automatic Next Phase Authorization
+NONE
+```
+
 ## Current Ledger Tail
 
 ```text
 Current Epoch
-GAC-EPOCH-0001
+GAC-EPOCH-0002
 
-Latest completed bounded session
-NGRP-001 / Z0
+Last Globally Accepted Phase
+NGRP-001 / Z0 — Genesis Governance Bootstrap
 
-Session status
-COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Acceptance Result
+GLOBAL_ACCEPT
 
-Global Acceptance
-NOT_YET_PERFORMED
+Accepted Z0 Decisions
+Z0-DAD-001 .. Z0-DAD-010
+
+Current Authorized Design Phase
+NONE
+
+Open MDE
+0
+
+Unpersisted Owner Decision
+0
 
 Unique next legal governance action
-Independent Global Architecture Coordinator Z0 acceptance review
+Global Architecture Coordinator reassesses remaining material Architecture Constraint pressure and decides whether to authorize one bounded Constraint Derivation phase
 ```
