@@ -4,7 +4,7 @@
 
 - **Document ID:** `NS-EVERMORE-GAC-STATE-0001`
 - **Version:** `0.0.1`
-- **Status:** `CURRENT / Z0_COMPLETED_AWAITING_GLOBAL_ACCEPTANCE`
+- **Status:** `CURRENT / GAC-EPOCH-0002`
 - **Authority Level:** `GLOBAL_CURRENT_STATE`
 - **Program:** `NGRP-001`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
@@ -15,7 +15,7 @@
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0001
+GAC-EPOCH-0002
 
 Current Branch
 architecture/ns-evermore-genesis-0.0.1
@@ -24,57 +24,74 @@ Genesis Authorized Entry HEAD
 d981da571a8b7260b35fe2aed17f390ac2abbf9c
 
 State Verified Through HEAD
-23a8d68b02ee16f971f71b5c47ef01cda817d5d4
+186c70fe0d3b87df82fa75edf9b0f11738b5bd08
 
-Z0 Design / Review Evidence HEAD
-344ee8c8f9f08f71414ba3457d79fd91ce95ea97
+Z0 Global Acceptance Evidence
+docs/architecture_reviews/ns_evermore_ngrp_001_phase_z0_global_acceptance_0.0.1.md
 
-Z0 Handoff Commit
-bec26e1caad0ed1b9d04c6893592d0e6fa35ab16
+Z0 Global Acceptance Commit
+8dc0ad172be0223ce5af7844078a90c4ffe61599
 
 Latest Ledger Reconciliation Commit
-3599179ceacdb769b8219640000941213a0856dd
+094f23bdc65a00298b07294665bf9c696115a78e
 
-Latest Working State Reconciliation Commit
-23a8d68b02ee16f971f71b5c47ef01cda817d5d4
+Latest Working State Reset Commit
+d2ffb625cf922220ff446338d7f8e961d059d1f2
+
+Latest Current Required Read Set Commit
+186c70fe0d3b87df82fa75edf9b0f11738b5bd08
 
 Current Constitution
 docs/ns_evermore_genesis_constitution_0.0.1.md
-→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ GLOBAL_ACCEPTED via NS-EVERMORE-Z0-GLOBAL-ACCEPTANCE-0001
+→ NORMATIVE ROOT CONSTITUTION
+
+Current Governance Baseline
+docs/governance/ns_evermore_genesis_governance_framework_0.0.1.md
+→ GLOBAL_ACCEPTED via NS-EVERMORE-Z0-GLOBAL-ACCEPTANCE-0001
 
 Current Constraint Baseline
 docs/ns_evermore_nse_constraints_index_0.0.1.md
-→ BOOTSTRAP ONLY
+→ GLOBAL_ACCEPTED BOOTSTRAP
 → ACTIVE_NSE = NONE
+→ Concrete Constraint Derivation = NOT_STARTED
 
 Current Project Architecture Revision
 NONE
 
 Current Accepted Genesis Decisions
-NONE YET — Z0 DADs are persisted but await independent Global Acceptance
+Z0-DAD-001 .. Z0-DAD-010
+→ GLOBAL_ACCEPTED
+
+Current Root Inherited Facts
+ROOT-FACT-001 .. ROOT-FACT-017
+→ normative through accepted Constitution
 
 Current Decision Registry
 docs/governance/decisions/ns_evermore_decision_registry_0.0.1.md
+→ accepted Z0 registry baseline
 
 Current Registries
 Decision Registry 0.0.1
 Constraint Index Bootstrap 0.0.1
 
 Last Globally Accepted Phase
-NONE — independent Z0 Global Acceptance has not yet occurred
+NGRP-001 Phase Z0 — Genesis Governance Bootstrap
+→ GLOBAL_ACCEPTED
 
 Latest Completed Bounded Session
 NGRP-001 Phase Z0 — Genesis Governance Bootstrap
-→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ COMPLETED
+→ GLOBAL_ACCEPTED by independent GAC review
 
 Current Authorized Design Phase
 NONE
 
 Current Legal Governance Action
-INDEPENDENT_GAC_Z0_ACCEPTANCE_REVIEW_ONLY
+POST_Z0_REMAINING_CONSTRAINT_PRESSURE_REASSESSMENT
 
 Authorization Scope
-NO_FURTHER_Z0_DESIGN / NO_NEXT_PHASE_AUTHORIZATION
+GAC_GOVERNANCE_ONLY / NO_DESIGN_SESSION_CURRENTLY_AUTHORIZED
 
 Open MDE
 0
@@ -104,18 +121,30 @@ Current Required Read Set
 docs/governance/global_architecture/ns_evermore_current_required_read_set_0.0.1.md
 
 Unique Next Legal Action
-Global Architecture Coordinator executes GACP-001 recovery and independently reviews Z0; result must be GLOBAL_ACCEPT / CORRECTION_REQUIRED / REJECT
+Global Architecture Coordinator reassesses remaining material Architecture Constraint pressure against the accepted Genesis Constitution and determines one bounded next legal phase; any design session requires a new explicit Repository-backed authorization prompt
 ```
 
-## Candidate versus Normative Clarification
+## Current Normative Acceptance Coordinate
 
-All Z0 design/governance artifacts remain candidate evidence and MUST NOT be consumed as globally accepted normative architecture governance until the Global Architecture Coordinator independently accepts Z0.
+```text
+Acceptance Document
+NS-EVERMORE-Z0-GLOBAL-ACCEPTANCE-0001
 
-## Explicit Stop Boundary
+Acceptance Commit
+8dc0ad172be0223ce5af7844078a90c4ffe61599
 
-The producing Z0 session is closed.
+Accepted Phase
+NGRP-001 / Z0
 
-It MUST NOT begin:
+Accepted Decisions
+Z0-DAD-001 .. Z0-DAD-010
+```
+
+The embedded candidate-state metadata inside producing-session Z0 artifacts records the state at which those artifacts were produced. Current normative status is determined by this Global State plus the exact Global Acceptance coordinate above.
+
+## Explicit No-Automatic-Progression Boundary
+
+Z0 Global Acceptance does not itself authorize:
 
 ```text
 Architecture Constraint Derivation
@@ -129,6 +158,8 @@ IWP
 Coding
 ```
 
+A subsequent GAC governance action must first reassess remaining material pressure and persist a bounded authorization prompt.
+
 ## Epoch Semantics
 
-`GAC-EPOCH-0001` remains the current epoch for the initial Genesis authorization/completion state. If the Global Architecture Coordinator issues formal Z0 acceptance or correction authorization, that governance transition must advance the epoch and persist the corresponding Ledger/State/Read-Set updates.
+`GAC-EPOCH-0002` records the formal independent Global Acceptance of the Genesis Z0 governance baseline. Any later phase authorization, correction closure, or other material governance transition must advance the epoch again.
