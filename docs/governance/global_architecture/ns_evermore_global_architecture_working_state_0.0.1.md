@@ -4,7 +4,7 @@
 
 - **Document ID:** `NS-EVERMORE-GAC-WORKING-STATE-0001`
 - **Version:** `0.0.1`
-- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0002`
+- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0003`
 - **Authority Level:** `PROVISIONAL_CONTINUITY_STATE`
 - **Program:** `NGRP-001`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
@@ -16,62 +16,86 @@
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0002
+GAC-EPOCH-0003
 
 Last Globally Accepted Phase
 NGRP-001 Phase Z0 — Genesis Governance Bootstrap
 
-Z0 Acceptance Evidence
-docs/architecture_reviews/ns_evermore_ngrp_001_phase_z0_global_acceptance_0.0.1.md
+Current Authorized Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
 
-Z0 Acceptance Commit
-8dc0ad172be0223ce5af7844078a90c4ffe61599
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_1 / TENANT_ORGANIZATION_OFFLINE_CORE_CONSTRAINTS
 
-Current Authorized Design Phase
-NONE
+Current Authorization Prompt
+docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_session_prompt_0.0.1.md
+
+Authorization Prompt Commit
+988ca5074b371625447774a0ce258341924e3459
+
+Post-Z0 Pressure Assessment
+docs/architecture_reviews/ns_evermore_post_z0_constraint_pressure_assessment_0.0.1.md
+
+Pressure Assessment Commit
+74fe0995cad29313ee01619be267a43db8f2b856
 ```
 
 ## Current Investigation
 
 ```text
-POST_Z0_REMAINING_CONSTRAINT_PRESSURE_REASSESSMENT
-→ NOT_STARTED
+NONE — Z1 Batch 1 has been authorized but the bounded design session has not yet produced candidate constraints
 ```
 
-This is a Global Architecture Coordinator governance activity, not Architecture Constraint Derivation itself.
-
-## Accepted Facts Available to Next Governance Action
+## Accepted Upstream
 
 ```text
 Genesis Constitution 0.0.1
-→ GLOBAL_ACCEPTED via Z0 acceptance coordinate
+→ GLOBAL_ACCEPTED
 
 Genesis Governance Framework 0.0.1
-→ GLOBAL_ACCEPTED via Z0 acceptance coordinate
-
-Constraint Index 0.0.1
-→ GLOBAL_ACCEPTED BOOTSTRAP / ACTIVE_NSE = NONE
+→ GLOBAL_ACCEPTED
 
 Z0-DAD-001 .. Z0-DAD-010
 → GLOBAL_ACCEPTED
 
-Open MDE
-→ 0
-
-Unpersisted Owner Decision
-→ 0
-
-Known Drift
-→ NONE
+Constraint Index 0.0.1
+→ GLOBAL_ACCEPTED BOOTSTRAP
+→ ACTIVE_NSE = NONE
 ```
 
-## Provisional Findings
+## Authorized Pressure
 
 ```text
-NONE
+Native Multi-tenancy
+Tenant / Organization Non-collapse
+Complex Extensible Organization
+Offline Core Correctness
 ```
 
-No post-Z0 constraint-pressure assessment conclusion has yet been persisted.
+## Explicit Deferred Pressure
+
+```text
+Definition / Artifact / Runtime separation
+Stable language-neutral contracts
+Extension / re-delivery
+Fixed five-component topology implications outside direct batch interaction
+First-class capability non-subordination
+Terminal / local execution governance beyond offline-core invariants
+Complete System + SDK
+Bounded enterprise integration
+Distribution / commercial optionality
+Controlled technology exceptions
+Shared Foundation provider replaceability
+Cross-session continuity
+Implementation derivability
+Any newly discovered unrelated material pressure
+```
+
+## Open MDE
+
+```text
+0 inherited into session
+```
 
 ## Pending Owner Decision
 
@@ -85,28 +109,22 @@ NONE
 NONE
 ```
 
+## Current Candidate Constraint State
+
+```text
+ACTIVE_NSE
+NONE
+
+Candidate constraints from Z1 Batch 1
+NONE YET
+```
+
 ## Unique Next Legal Action
 
 ```text
-Global Architecture Coordinator
-→ reassess remaining material Architecture Constraint pressure against the accepted Genesis Constitution
-→ determine one bounded next legal phase
-→ if authorization is justified, persist one explicit Session Authorization Prompt
+Start one bounded Z1 Batch 1 Architecture Constraint Derivation session using the exact Repository-backed authorization prompt.
 ```
 
-## Forbidden Progression Until Explicit Authorization
+## Coordinator Boundary
 
-```text
-Architecture Constraint Derivation Session
-Project Architecture
-Component / Runtime Architecture
-Shared Foundation Design
-Contract / Module / Provider Design
-Implementation Planning
-IWP
-Coding
-```
-
-## Working-state Semantics
-
-This document contains provisional continuation context only. It does not create accepted constraints or authorize a design phase.
+The Global Architecture Coordinator must remain the independent acceptance authority. The bounded Z1 derivation session must stop at `COMPLETED / AWAITING_GLOBAL_ACCEPTANCE` and return its Repository-backed handoff to the GAC.
