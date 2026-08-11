@@ -4,9 +4,9 @@
 
 - **Document ID:** `NS-EVERMORE-GAC-WORKING-STATE-0001`
 - **Version:** `0.0.1`
-- **Status:** `WORKING_CHECKPOINT / Z0_CLOSED`
+- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0002`
 - **Authority Level:** `PROVISIONAL_CONTINUITY_STATE`
-- **Program / Phase:** `NGRP-001 / Z0`
+- **Program:** `NGRP-001`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 - **Acceptance State:** `NOT_NORMATIVE`
 
@@ -15,46 +15,63 @@
 ## Current Checkpoint
 
 ```text
-Current Program
-NGRP-001 — ns_evermore Genesis Redesign
+Current Global State Epoch
+GAC-EPOCH-0002
 
-Latest bounded session
-Z0 — Genesis Governance Bootstrap
+Last Globally Accepted Phase
+NGRP-001 Phase Z0 — Genesis Governance Bootstrap
 
-Session Status
-COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Z0 Acceptance Evidence
+docs/architecture_reviews/ns_evermore_ngrp_001_phase_z0_global_acceptance_0.0.1.md
 
-Authorized Entry HEAD
-d981da571a8b7260b35fe2aed17f390ac2abbf9c
+Z0 Acceptance Commit
+8dc0ad172be0223ce5af7844078a90c4ffe61599
 
-Design / Review Evidence HEAD
-344ee8c8f9f08f71414ba3457d79fd91ce95ea97
+Current Authorized Design Phase
+NONE
+```
 
-Handoff Commit
-bec26e1caad0ed1b9d04c6893592d0e6fa35ab16
+## Current Investigation
+
+```text
+POST_Z0_REMAINING_CONSTRAINT_PRESSURE_REASSESSMENT
+→ NOT_STARTED
+```
+
+This is a Global Architecture Coordinator governance activity, not Architecture Constraint Derivation itself.
+
+## Accepted Facts Available to Next Governance Action
+
+```text
+Genesis Constitution 0.0.1
+→ GLOBAL_ACCEPTED via Z0 acceptance coordinate
+
+Genesis Governance Framework 0.0.1
+→ GLOBAL_ACCEPTED via Z0 acceptance coordinate
+
+Constraint Index 0.0.1
+→ GLOBAL_ACCEPTED BOOTSTRAP / ACTIVE_NSE = NONE
+
+Z0-DAD-001 .. Z0-DAD-010
+→ GLOBAL_ACCEPTED
+
+Open MDE
+→ 0
+
+Unpersisted Owner Decision
+→ 0
+
+Known Drift
+→ NONE
 ```
 
 ## Provisional Findings
 
 ```text
-Root product semantics normalized → YES
-Constraint derivation started → NO
-Architecture solution introduced → NO
-Open MDE → 0
-Unpersisted Owner Decision → 0
-Fresh-session Recovery Test → PASS
-Required Z0 audits → PASS
-Unexpected Drift → NONE
-Unauthorized Progression → NONE
+NONE
 ```
 
-## Pending Audit
-
-```text
-NONE within producing Z0 session
-```
-
-Independent Global Architecture Coordinator acceptance is not a pending Z0 self-review; it is the next separate governance authority action.
+No post-Z0 constraint-pressure assessment conclusion has yet been persisted.
 
 ## Pending Owner Decision
 
@@ -68,27 +85,19 @@ NONE
 NONE
 ```
 
-## Current Investigation
-
-```text
-NONE — producing Z0 session is closed
-```
-
 ## Unique Next Legal Action
 
 ```text
 Global Architecture Coordinator
-→ execute GACP-001 recovery
-→ independently review Z0 package
-→ GLOBAL_ACCEPT / CORRECTION_REQUIRED / REJECT
+→ reassess remaining material Architecture Constraint pressure against the accepted Genesis Constitution
+→ determine one bounded next legal phase
+→ if authorization is justified, persist one explicit Session Authorization Prompt
 ```
 
-## Explicitly Forbidden Continuation
-
-The producing Z0 session MUST NOT continue into:
+## Forbidden Progression Until Explicit Authorization
 
 ```text
-Architecture Constraint Derivation
+Architecture Constraint Derivation Session
 Project Architecture
 Component / Runtime Architecture
 Shared Foundation Design
@@ -100,4 +109,4 @@ Coding
 
 ## Working-state Semantics
 
-This file remains non-normative provisional continuity context. After an independent Global Acceptance/Authorization transition, it must be reset/rebased against the new Global State Epoch.
+This document contains provisional continuation context only. It does not create accepted constraints or authorize a design phase.
