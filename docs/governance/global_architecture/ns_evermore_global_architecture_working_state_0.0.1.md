@@ -4,7 +4,7 @@
 
 - **Document ID:** `NS-EVERMORE-GAC-WORKING-STATE-0001`
 - **Version:** `0.0.1`
-- **Status:** `WORKING_CHECKPOINT`
+- **Status:** `WORKING_CHECKPOINT / Z0_CLOSED`
 - **Authority Level:** `PROVISIONAL_CONTINUITY_STATE`
 - **Program / Phase:** `NGRP-001 / Z0`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
@@ -18,60 +18,43 @@
 Current Program
 NGRP-001 — ns_evermore Genesis Redesign
 
-Current Session
+Latest bounded session
 Z0 — Genesis Governance Bootstrap
 
-Current Session Status
-COMPLETING GOVERNANCE EVIDENCE
+Session Status
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 
-Recovered Entry HEAD
+Authorized Entry HEAD
 d981da571a8b7260b35fe2aed17f390ac2abbf9c
-```
 
-## Current Investigation
+Design / Review Evidence HEAD
+344ee8c8f9f08f71414ba3457d79fd91ce95ea97
 
-```text
-Z0 governance completeness and fresh-session recoverability
+Handoff Commit
+bec26e1caad0ed1b9d04c6893592d0e6fa35ab16
 ```
 
 ## Provisional Findings
 
-- Root product semantics have been normalized into the candidate Genesis Constitution.
-- Pre-Genesis repository material has been classified non-normative by default.
-- Constraint derivation has not started.
-- No architecture solution has been intentionally introduced.
-- Governance DADs are recorded and no MDE has been identified.
-- Continuation protocol exists and state/read-set/evidence completion is in progress.
-
-## Excluded Alternatives
-
-The following are explicitly excluded from Z0:
-
 ```text
-IAM architecture
-Organization model solution
-Policy architecture
-Data / Knowledge architecture
-Runtime architecture
-Component internal architecture
-Shared Foundation detailed design
-Foundation contracts/modules/providers
-Database/queue/scheduler selection
-Implementation Master Plan
-IWP generation
-Coding
+Root product semantics normalized → YES
+Constraint derivation started → NO
+Architecture solution introduced → NO
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Fresh-session Recovery Test → PASS
+Required Z0 audits → PASS
+Unexpected Drift → NONE
+Unauthorized Progression → NONE
 ```
 
 ## Pending Audit
 
-Until Z0 review evidence is persisted, the following are pending:
-
 ```text
-Mandatory Z0 audit bundle
-Fresh-session Recovery Test
-Final Git drift reconciliation
-Final handoff consistency check
+NONE within producing Z0 session
 ```
+
+Independent Global Architecture Coordinator acceptance is not a pending Z0 self-review; it is the next separate governance authority action.
 
 ## Pending Owner Decision
 
@@ -79,20 +62,42 @@ Final handoff consistency check
 NONE
 ```
 
-## Open MDE
-
-```text
-0
-```
-
 ## Blocking Item
 
 ```text
-NONE — Z0 evidence generation remains authorized work
+NONE
+```
+
+## Current Investigation
+
+```text
+NONE — producing Z0 session is closed
+```
+
+## Unique Next Legal Action
+
+```text
+Global Architecture Coordinator
+→ execute GACP-001 recovery
+→ independently review Z0 package
+→ GLOBAL_ACCEPT / CORRECTION_REQUIRED / REJECT
+```
+
+## Explicitly Forbidden Continuation
+
+The producing Z0 session MUST NOT continue into:
+
+```text
+Architecture Constraint Derivation
+Project Architecture
+Component / Runtime Architecture
+Shared Foundation Design
+Contract / Module / Provider Design
+Implementation Planning
+IWP
+Coding
 ```
 
 ## Working-state Semantics
 
-This file is provisional and MUST NOT be treated as an accepted fact source when it conflicts with Global State or accepted artifacts.
-
-After a formal Global Acceptance/Authorization transition, this file must be reset/rebased against the new Global State Epoch.
+This file remains non-normative provisional continuity context. After an independent Global Acceptance/Authorization transition, it must be reset/rebased against the new Global State Epoch.
