@@ -1,19 +1,19 @@
 # ns_evermore Global Architecture State
 
-- **Status:** `CURRENT / GAC-EPOCH-0009`
+- **Status:** `CURRENT / GAC-EPOCH-0010`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0009
+GAC-EPOCH-0010
 
 Current Branch
 architecture/ns-evermore-genesis-0.0.1
 
 State Verified Through HEAD
-d7651a32026cc7a2d55710d80384fbf010bc95b1
+4be85e5ed0dd15fda7180baa97cfea7a990afdb2
 
 Genesis Constitution
 docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -51,11 +51,6 @@ docs/architecture_reviews/ns_evermore_ngrp_001_phase_z1_constraint_derivation_ba
 Batch 2 Global Acceptance Commit
 79df81fe62de33a46da10d1aab3b529ef95a5a36
 
-Previous Constraint Index 0.0.2
-→ SUPERSEDED
-→ removed from current tree
-→ historical retrieval through Git history
-
 Current Project Architecture
 NONE
 
@@ -68,8 +63,11 @@ PRESENT
 Constraint Exhaustion Assessment
 NOT SATISFIED
 
-Current Authorized Design Phase
-NONE
+Current Authorized Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 3
+
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_3 / CROSS_BOUNDARY_EXTENSION_INTEGRATION_CONSTRAINTS
 
 Project Architecture Authorization
 NONE
@@ -92,28 +90,287 @@ NONE
 
 ---
 
-# Remaining Known Constraint Pressure
+# Current Authorization — Z1 / Batch 3
+
+Batch 3 may derive Architecture Constraints only for:
 
 ```text
-Stable language-neutral cross-boundary contracts
-Extension / re-delivery
-Complete Deployable System + System-level SDK
-Bounded enterprise integration / external Source-of-Truth preservation
-Distribution / commercial optionality
-Controlled technology exceptions / remaining supply-chain pressure
-Shared Foundation provider replaceability
-Cross-session continuity
-Implementation derivability
-Any newly admitted material pressure
+A. Stable language-neutral cross-boundary contract semantics
+B. Extension / re-delivery governance preservation
+C. Bounded enterprise integration / external Source-of-Truth preservation
+D. Shared Foundation contract/provider replaceability
 ```
 
-No next batch is authorized merely by Batch 2 acceptance.
+## A. Stable Language-neutral Cross-boundary Contract Semantics
+
+Constraint-level closure must preserve at least:
+
+```text
+Architecture Contract
+!= Python Class / Pydantic Model / Django Model / ORM Model
+!= TypeScript Interface
+!= Database Table
+!= JSON Payload automatically
+!= WebSocket Frame automatically
+!= Provider API
+
+Stable Cross-boundary Contract
+→ language-neutral
+→ versioned
+→ independently verifiable
+→ conformance-testable where applicable
+
+Communication Semantics
+→ defined before transport representation
+```
+
+Later architecture must explicitly preserve contract identity/revision, compatibility/evolution, failure/unknown/unsupported-version semantics, conformance, and representation independence without selecting concrete schemas or protocols in this batch.
+
+Do not design actual wire schemas, APIs, endpoints, WebSocket messages, serialization formats, RPC/REST/gRPC choices, SDK interfaces, or Foundation contracts.
+
+## B. Extension / Re-delivery Governance Preservation
+
+Constraint-level closure must preserve support for:
+
+```text
+First-party Extension
+Third-party Extension
+Customer-private Extension
+Plugin Extension
+Source-level Customization
+Customer Secondary Development
+Customer Re-delivery
+```
+
+Extensions MUST NOT bypass applicable:
+
+```text
+Tenant
+Organization
+IAM / Policy
+Security / Trust
+Artifact Governance
+Execution Admission
+Audit
+Data / Privacy Governance
+Supply-chain Governance
+```
+
+Extension loadability/executability/hosting MUST NOT automatically create authority, acceptance, admission, trust, or canonical state. Provenance, compatibility and governed capability scope must remain explicit.
+
+Do not design plugin APIs, extension manifests, package formats, registries, marketplaces, signing mechanisms, sandboxes, loaders, SDKs, or concrete extension lifecycle engines.
+
+## C. Bounded Enterprise Integration / External Source-of-Truth Preservation
+
+Constraint-level closure must preserve that external enterprise systems may remain authoritative for source facts even when their data is synchronized, imported, transformed, indexed, cached, projected, or processed by `ns_evermore`.
+
+At minimum preserve:
+
+```text
+Synchronization != Authority Transfer
+Import != Authority Transfer
+ETL Output != Upstream Source Fact automatically
+Index / Cache / Projection != Source of Truth automatically
+Local Replica != External Authority Replacement automatically
+Derived / Aggregated Fact != Source Fact automatically
+```
+
+Stale, conflicting, missing, unknown, or indeterminate external facts/mappings must remain explicit rather than silently canonicalized by ingestion or processing placement.
+
+`ns_evermore` remains a bounded enterprise integration/application/automation/AI/data platform rather than a universal replacement for ERP/CRM/MES/HIS/HR/OA solely by synchronization.
+
+Do not select connector protocols, integration middleware, schemas, CDC/event technology, conflict algorithms, synchronization winners, databases, queues, or external-system-specific implementation.
+
+## D. Shared Foundation Contract / Provider Replaceability
+
+Constraint-level closure must preserve:
+
+```text
+Shared Foundation
+→ outside the five Product Components
+→ NOT a sixth Product Component
+
+Stable Entry
++ Reusable Contract
++ Provider Abstraction
++ Replaceable Implementation
+
+Provider API != Foundation Contract
+Shared Code != Shared Foundation automatically
+Shared Foundation Placement != Semantic Authority
+```
+
+Future `http_client`, `cache_client`, and `storage_client` capabilities must remain provider-independent at the stable foundation boundary; provider replacement must not silently redefine contract semantics or semantic authority.
+
+Do not derive actual Foundation contracts, modules, provider interfaces, HTTP/cache/storage semantics, concrete providers, Redis/Valkey/MinIO/httpx choices, package structure, or implementation.
+
+---
+
+# Accepted Upstream Invariants
+
+Batch 3 MUST preserve accepted `NSE-001..008` in full, including:
+
+```text
+Tenant semantic invariance
+Tenant / Organization non-collapse
+Organization plurality/extensibility
+Offline governance invariance
+Product Component / Runtime non-conflation
+First-class capability non-subordination
+Definition / Artifact / Runtime separation
+Local execution source/effect accountability separation
+```
+
+No cross-boundary contract, extension, integration, or Shared Foundation constraint may create an implicit Tenant bypass, authority transfer, runtime/component collapse, artifact/admission bypass, locality-based canonicalization, or provider-defined semantic authority.
+
+---
+
+# Decision Authority
+
+```text
+Root Product / Constitutional Decision → Project Owner
+MDE → Project Owner
+DAD → authorized Architecture / Design Session
+GAC → classification / escalation / independent acceptance / authorization / continuity / drift
+Implementation / Codex → no authority to invent Architecture
+```
+
+If Batch 3 would need to choose a material Authority owner, Source of Truth, Actual-state Owner, major external compatibility commitment, stable protocol/storage/artifact-format lock-in, extension trust/security model, conflict winner, or provider lock-in, classify as MDE and return to Project Owner.
+
+If uncertain:
+
+```text
+DEFAULT → MDE
+```
+
+---
+
+# Explicit Deferred Pressure
+
+Batch 3 does not derive:
+
+```text
+Complete Deployable System + System-level SDK
+Distribution / commercial optionality
+Controlled technology exceptions / remaining supply-chain pressure
+Cross-session continuity as Architecture Constraint pressure
+Implementation derivability as Architecture Constraint pressure
+Any newly discovered unrelated material pressure
+```
+
+New out-of-scope pressure is recorded and returned to GAC; it is not silently added to Batch 3.
+
+---
+
+# Strict Forbidden Scope
+
+Batch 3 MUST NOT begin or decide:
+
+```text
+Project Architecture
+Product Component Internal Architecture
+Runtime Responsibility Architecture / Runtime Role Set
+Actual cross-boundary Contract schemas or APIs
+REST / RPC / gRPC / WebSocket message design
+SDK interface design
+Plugin / extension API or package design
+Extension registry / marketplace / loader / sandbox design
+Concrete enterprise connector / CDC / event / synchronization design
+Conflict-resolution or reconciliation winner
+Shared Foundation detailed architecture
+Foundation Contract / Module / Provider design
+Database / queue / broker / scheduler / worker choice
+Repository / package structure design
+Implementation Planning
+IWP
+Coding
+```
+
+---
+
+# Batch 3 Entry Gate
+
+Before deriving candidate constraints:
+
+```text
+Repository / branch / actual HEAD resolved
+Recovery complete under Unified Governance
+Current Global State Epoch = GAC-EPOCH-0010
+Last Globally Accepted Phase = Z1 / Batch 2
+Current Constraint Index = 0.0.3
+Accepted NSE = NSE-001..008
+Current Authorized Phase = Z1 / Batch 3
+Authorization Scope matches this State
+Open MDE = 0
+Unpersisted Owner Decision = 0
+Blocking Item = 0
+Unexpected Drift = NONE
+Unauthorized Progression = NONE
+```
+
+If recovery fails:
+
+```text
+DO NOT DERIVE
+→ RETURN TO GAC
+```
+
+---
+
+# Batch 3 Exit Gate
+
+Apply the relevant Unified Governance reviews, including at least:
+
+```text
+MAJOR_DECISION_ESCALATION_AUDIT
+DOCUMENTATION_COMPLETENESS_AUDIT
+SEMANTIC_RESOLUTION_DEPTH_REVIEW
+CONSTRAINT_TRACEABILITY_REVIEW
+AUTHORITY_SOURCE_OF_TRUTH_AMBIGUITY_REVIEW
+TENANT_ORGANIZATION_NON_COLLAPSE_REVIEW
+DEPENDENCY_INVARIANT_REVIEW
+PROVENANCE_HIDDEN_INHERITANCE_REVIEW
+ARCHITECTURE_DOWNSTREAM_DESIGN_BOUNDARY_REVIEW
+CONTRACT_REPRESENTATION_NON_CONFLATION_REVIEW
+EXTENSION_GOVERNANCE_BYPASS_REVIEW
+EXTERNAL_SOURCE_OF_TRUTH_PRESERVATION_REVIEW
+FOUNDATION_PROVIDER_REPLACEABILITY_REVIEW
+OFFLINE_PRIVATE_CORRECTNESS_REVIEW
+GIT_DRIFT_REVIEW
+```
+
+Completion requires:
+
+```text
+Authorized Batch pressure blocking gap = 0
+Accepted NSE-001..008 preserved
+Open MDE = 0
+Unpersisted Owner Decision = 0
+Architecture / Project / Runtime / Foundation Design Leakage = 0
+Missing / Ambiguous required constraint dimension = 0
+Implementation-defined Escape = 0
+Authority / Source-of-Truth ambiguity introduced = 0
+Extension governance bypass = 0
+External SoT replacement by ingestion/processing placement = 0
+Provider API promoted to Foundation Contract = 0
+Dependency / Invariant Conflict = 0
+Unexpected Drift = NONE
+Unauthorized Progression = NONE
+```
+
+Producing-session terminal state:
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ STOP
+→ RETURN TO GAC
+```
 
 ---
 
 # Current Required Read Set
 
-Minimum sufficient context for current GAC pressure reassessment:
+Minimum sufficient current context for a fresh Batch 3 session:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -140,8 +397,7 @@ Minimum sufficient context for current GAC pressure reassessment:
 # Unique Next Legal Action
 
 ```text
-Global Architecture Coordinator
-→ reassess remaining material Architecture Constraint pressure against accepted NSE-001..008
-→ determine whether another bounded constraint batch is required
-→ if required, authorize exactly one bounded scope through a separate State transition
+Start one bounded NGRP-001 Phase Z1 / Batch 3 Architecture Constraint Derivation session using this Global State and Unified Governance.
+Use generated chat bootstrap text only; do not create a Repository prompt document.
+Return candidate evidence to the Global Architecture Coordinator for independent acceptance.
 ```
