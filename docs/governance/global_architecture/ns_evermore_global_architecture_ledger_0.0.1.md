@@ -63,6 +63,19 @@ GAC-TR-0024  Constraint Exhaustion Closure / Project Architecture Entry Authoriz
              → Explicitly authorized phase: NGRP-001 Phase Z2 / Project Architecture Synthesis / Batch 1
              → Scope: PROJECT_ARCHITECTURE_SYNTHESIS_ONLY / BATCH_1 / SYSTEM_BOUNDARY_COMPONENT_RESPONSIBILITY_TOPOLOGY
              → No later phase automatically authorized
+
+GAC-TR-0025  Z2 Project Architecture Synthesis / Batch 1 Global Acceptance
+             → GAC-EPOCH-0014 → GAC-EPOCH-0015
+             → Review Entry HEAD: 6ea9bab7d69c167278c9d8ae4ebc0231798d03f1
+             → Project Architecture 0.0.2: GLOBAL_ACCEPTED / NORMATIVE / CURRENT
+             → Global Acceptance Commit: 34aed09df58089768b6fa40862e7414d793696df
+             → Owner Decision Baseline: Z2-MDE-001..017 / OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
+             → Decision Registry 0.0.5: eb28ebda40f1d9b925d6934d0f90dd2bbb4e0b86
+             → Superseded Registry 0.0.4 removed: dcd4f769636da580a0500eabefa75d0a7dbec3ea
+             → Historical Project Architecture 0.0.1 removed from current tree: 5a363bfd2206f27085cbcf4dd26da9af3cc7fc83
+             → Open MDE: 0
+             → Unpersisted Owner Decision: 0
+             → Automatic Next Phase Authorization: NONE
 ```
 
 ---
@@ -71,7 +84,7 @@ GAC-TR-0024  Constraint Exhaustion Closure / Project Architecture Entry Authoriz
 
 ```text
 Current Epoch
-GAC-EPOCH-0014
+GAC-EPOCH-0015
 
 Architecture Constraint Derivation
 GLOBAL_CLOSED / COMPLETE
@@ -80,13 +93,19 @@ Accepted Constraint Baseline
 NSE-001..017 / Index 0.0.5
 
 Current Decision Registry
-0.0.4
+0.0.5
 
-Current Authorized Phase
+Last Globally Accepted Phase
 NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 1
 
-Authorization Scope
-PROJECT_ARCHITECTURE_SYNTHESIS_ONLY / BATCH_1 / SYSTEM_BOUNDARY_COMPONENT_RESPONSIBILITY_TOPOLOGY
+Current Project Architecture
+0.0.2 / GLOBAL_ACCEPTED / NORMATIVE / CURRENT
+
+Owner Decision Baseline
+Z2-MDE-001..017 / OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
+
+Current Authorized Design Phase
+NONE
 
 Open MDE
 0
@@ -94,9 +113,6 @@ Open MDE
 Unpersisted Owner Decision
 0
 
-Project Architecture Current Revision
-NONE
-
 Unique Next Legal Action
-Start one bounded Z2 Batch 1 Project Architecture Synthesis session from current Global State; producing session stops at COMPLETED / AWAITING_GLOBAL_ACCEPTANCE and returns to GAC
+GAC performs independent remaining Project Architecture pressure assessment before authorizing any next bounded phase
 ```
