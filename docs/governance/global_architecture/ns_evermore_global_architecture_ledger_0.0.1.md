@@ -155,39 +155,56 @@ Historical evidence preserved in Git history
 
 ```text
 GAC-EPOCH-0008 → GAC-EPOCH-0009
+Review Entry HEAD: 8df78ecd3a71743e8db854e7e58f67424338de1b
+Batch 2 → GLOBAL_ACCEPTED
+Accepted NSE → NSE-005..008
+Current Accepted NSE → NSE-001..008
+Current Constraint Index → 0.0.3
+Global Acceptance Commit: 79df81fe62de33a46da10d1aab3b529ef95a5a36
+Superseded Index 0.0.2 removed: dc72dcad6879c2e978ce85cabe587a9528e9b5a1
+Automatic Next Batch Authorization → NONE
+Project Architecture Authorization → NONE
+```
 
-Review Entry HEAD
-8df78ecd3a71743e8db854e7e58f67424338de1b
+## GAC-TR-0020 — Post-Batch-2 Pressure Reassessment / Z1 Batch 3 Authorization
 
-Batch 2
-→ GLOBAL_ACCEPTED
+```text
+GAC-EPOCH-0009 → GAC-EPOCH-0010
 
-Accepted NSE
-→ NSE-005..008
-
-Current Accepted NSE
-→ NSE-001..008
-
-Current Constraint Index
-→ 0.0.3
-
-Global Acceptance Commit
-79df81fe62de33a46da10d1aab3b529ef95a5a36
-
-Superseded Index 0.0.2 removed from current tree
-→ dc72dcad6879c2e978ce85cabe587a9528e9b5a1
-
-Remaining Material Constraint Pressure
+Post-Batch-2 Remaining Pressure
 → PRESENT
 
-Global Constraint Derivation
-→ INCOMPLETE
+Selected Next Bounded Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_3 / CROSS_BOUNDARY_EXTENSION_INTEGRATION_CONSTRAINTS
 
-Automatic Next Batch Authorization
-→ NONE
+Authorized Pressure
+1. Stable language-neutral cross-boundary contract semantics
+2. Extension / re-delivery governance preservation
+3. Bounded enterprise integration / external Source-of-Truth preservation
+4. Shared Foundation contract/provider replaceability
+
+Pressure Reassessment Working-State Commit
+f2bbcfaa85c2f88f2e8d72a3ca66149251bbe9b1
+
+Accepted Upstream NSE
+NSE-001..008
+
+Deferred Beyond Batch 3
+Complete Deployable System + System-level SDK
+Distribution / commercial optionality
+Controlled technology exceptions / remaining supply-chain pressure
+Cross-session continuity as Architecture Constraint pressure
+Implementation derivability as Architecture Constraint pressure
+Any newly admitted material pressure
+
+Open MDE
+0
 
 Project Architecture Authorization
-→ NONE
+NONE
+
+Automatic Later Batch Authorization
+NONE
 ```
 
 ---
@@ -196,7 +213,7 @@ Project Architecture Authorization
 
 ```text
 Current Epoch
-GAC-EPOCH-0009
+GAC-EPOCH-0010
 
 Last Globally Accepted Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 2
@@ -204,8 +221,11 @@ NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 2
 Accepted Constraint Baseline
 NSE-001..008 / Index 0.0.3
 
-Current Authorized Design Phase
-NONE
+Current Authorized Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 3
+
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_3 / CROSS_BOUNDARY_EXTENSION_INTEGRATION_CONSTRAINTS
 
 Open MDE
 0
@@ -219,6 +239,9 @@ PRESENT
 Global Constraint Derivation
 INCOMPLETE
 
+Project Architecture Authorization
+NONE
+
 Unique Next Legal Action
-GAC reassesses remaining Architecture Constraint pressure and, only afterward, explicitly authorizes one bounded next phase if warranted
+Start one bounded Z1 Batch 3 Architecture Constraint Derivation session from current Global State; return candidate evidence to GAC for independent acceptance
 ```
