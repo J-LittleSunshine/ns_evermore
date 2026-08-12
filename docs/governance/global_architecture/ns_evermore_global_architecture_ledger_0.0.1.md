@@ -170,53 +170,55 @@ Authorized pressure:
 3. Bounded enterprise integration / external Source-of-Truth preservation
 4. Shared Foundation contract/provider replaceability
 Working-State Commit: f2bbcfaa85c2f88f2e8d72a3ca66149251bbe9b1
-Project Architecture Authorization → NONE
 ```
 
 ## GAC-TR-0021 — Z1 Batch 3 Global Acceptance
 
 ```text
 GAC-EPOCH-0010 → GAC-EPOCH-0011
+Review Entry HEAD: 8aed928ffbd1faeb8ad5dd7dcfe82f5aacba15a7
+Batch 3 → GLOBAL_ACCEPTED
+Accepted NSE → NSE-009..012
+Current Accepted NSE → NSE-001..012
+Current Index → 0.0.4
+Acceptance Commit: aea9a0670e847626acc83705d7ab70bef04a06a5
+Decision Registry → 0.0.3 / ddcf48a68f24c3991db44550d2f674038a4dd3be
+Superseded Registry 0.0.2 removed → 78498ff8700e549f9a486f1685d0a28959b7ec74
+Superseded Index 0.0.3 removed → 234fbadc064dcb49eaf4a77a19ac54ba7b692ddf
+Automatic Next Phase Authorization → NONE
+```
 
-Review Entry HEAD
-8aed928ffbd1faeb8ad5dd7dcfe82f5aacba15a7
+## GAC-TR-0022 — Post-Batch-3 Pressure Reassessment / Batch 4 Authorization
 
-Batch 3
-→ GLOBAL_ACCEPTED
-
-Accepted NSE
-→ NSE-009..012
-
-Current Accepted NSE
-→ NSE-001..012
-
-Current Constraint Index
-→ 0.0.4
-
-Global Acceptance Commit
-→ aea9a0670e847626acc83705d7ab70bef04a06a5
-
-Decision Registry synchronized
-→ 0.0.3
-→ ddcf48a68f24c3991db44550d2f674038a4dd3be
-
-Superseded Decision Registry 0.0.2 removed
-→ 78498ff8700e549f9a486f1685d0a28959b7ec74
-
-Superseded Constraint Index 0.0.3 removed
-→ 234fbadc064dcb49eaf4a77a19ac54ba7b692ddf
+```text
+GAC-EPOCH-0011 → GAC-EPOCH-0012
 
 Remaining Material Constraint Pressure
 → PRESENT
 
-Global Constraint Derivation
-→ INCOMPLETE
+Selected Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_4 / DELIVERY_TECHNOLOGY_CONTINUITY_DERIVABILITY_CONSTRAINTS
 
-Automatic Next Phase Authorization
-→ NONE
+Authorized Pressure
+1. Complete Deployable System + System-level SDK completeness boundary
+2. Distribution / commercial optionality
+3. Controlled technology exceptions + supply-chain/offline dependency evidence
+4. Repository continuity + implementation derivability
+
+Working-State Authorization Commit
+3c3ad22bd229a0d3940bbb65d9d66345b8aab7d2
+
+Accepted Upstream NSE
+NSE-001..012
+
+Open MDE
+0
 
 Project Architecture Authorization
-→ NONE
+NONE
+
+Post-Batch-4 Required GAC Action
+CONSTRAINT_EXHAUSTION_ASSESSMENT after independent Batch 4 acceptance
 ```
 
 ---
@@ -225,7 +227,7 @@ Project Architecture Authorization
 
 ```text
 Current Epoch
-GAC-EPOCH-0011
+GAC-EPOCH-0012
 
 Last Globally Accepted Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 3
@@ -236,8 +238,11 @@ NSE-001..012 / Index 0.0.4
 Current Decision Registry
 0.0.3
 
-Current Authorized Design Phase
-NONE
+Current Authorized Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 4
+
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_4 / DELIVERY_TECHNOLOGY_CONTINUITY_DERIVABILITY_CONSTRAINTS
 
 Open MDE
 0
@@ -255,5 +260,5 @@ Project Architecture Authorization
 NONE
 
 Unique Next Legal Action
-GAC performs a separate remaining-pressure reassessment and only then authorizes one bounded next phase if warranted
+Start one bounded Z1 Batch 4 Architecture Constraint Derivation session from current Global State; return candidate evidence to GAC for independent acceptance
 ```
