@@ -45,14 +45,11 @@ GAC-TR-0025  Z2 Project Architecture Synthesis / Batch 1 Global Acceptance
              → Acceptance Commit: 34aed09df58089768b6fa40862e7414d793696df
              → Owner Decision Baseline: Z2-MDE-001..017 / OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
              → Decision Registry 0.0.5: eb28ebda40f1d9b925d6934d0f90dd2bbb4e0b86
-             → Superseded Registry 0.0.4 removed: dcd4f769636da580a0500eabefa75d0a7dbec3ea
-             → Historical Project Architecture 0.0.1 removed from current tree: 5a363bfd2206f27085cbcf4dd26da9af3cc7fc83
              → Automatic Next Phase Authorization: NONE
 
 GAC-TR-0026  Post-Z2-Batch-1 Project Architecture Pressure Reassessment / Batch 2 Authorization
              → GAC-EPOCH-0015 → GAC-EPOCH-0016
              → Remaining Material Project Architecture Pressure: PRESENT
-             → Current Project Architecture 0.0.2 remains accepted normative baseline
              → Selected scope:
                PROJECT_ARCHITECTURE_SYNTHESIS_ONLY / BATCH_2 /
                CROSS_CUTTING_LIFECYCLE_TRUST_RECOVERY_EVOLUTION_SEMANTICS
@@ -62,10 +59,21 @@ GAC-TR-0026  Post-Z2-Batch-1 Project Architecture Pressure Reassessment / Batch 
                3. recovery / reconciliation / offline-degraded responsibility topology
                4. compatibility / evolution / migration / conformance / revalidation topology
                5. Project Architecture semantic-resolution matrix closure
-             → Working-State Assessment Commit: d7f9e08fad95da1ede603c7c08adb95ee6d97bbe
              → Five-component Internal Architecture Boundaries: NOT YET AUTHORIZED
-             → Runtime Responsibility Architecture: NOT AUTHORIZED
-             → Shared Foundation Detailed Design: NOT AUTHORIZED
+
+GAC-TR-0027  Z2 Project Architecture Synthesis / Batch 2 Global Acceptance
+             → GAC-EPOCH-0016 → GAC-EPOCH-0017
+             → Frozen GAC Review HEAD: b4902b2a666d3c0b3d35c5cc7f34a2b3f078ec34
+             → Project Architecture 0.0.3: GLOBAL_ACCEPTED / NORMATIVE / CURRENT
+             → Acceptance Commit: ad5a014793c60a7ec405b00e70c8e8bdae3dd884
+             → Accepted Project Architecture DAD Baseline: Z2-DAD-001..041
+             → Owner Decision Baseline unchanged: Z2-MDE-001..017
+             → Semantic Resolution Matrix: 26 / 26 CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL
+             → Decision Registry 0.0.6: 22094396a15a455893b995c8fc43a479f2308aa4
+             → Superseded Registry 0.0.5 removed: ffd519949391acbfd1b3de0d94474fca86a93c44
+             → Superseded Project Architecture 0.0.2 removed from current tree: 0b5e1bc09541db0923ee9a321066f20871357cb5
+             → Automatic Next Phase Authorization: NONE
+             → Required next GAC action: PROJECT_ARCHITECTURE_REMAINING_PRESSURE_ASSESSMENT
 ```
 
 ---
@@ -74,7 +82,7 @@ GAC-TR-0026  Post-Z2-Batch-1 Project Architecture Pressure Reassessment / Batch 
 
 ```text
 Current Epoch
-GAC-EPOCH-0016
+GAC-EPOCH-0017
 
 Architecture Constraint Derivation
 GLOBAL_CLOSED / COMPLETE
@@ -83,25 +91,22 @@ Accepted Constraint Baseline
 NSE-001..017 / Index 0.0.5
 
 Current Decision Registry
-0.0.5
+0.0.6
 
 Last Globally Accepted Phase
-NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 1
+NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 2
 
 Current Project Architecture
-0.0.2 / GLOBAL_ACCEPTED / NORMATIVE / CURRENT
+0.0.3 / GLOBAL_ACCEPTED / NORMATIVE / CURRENT
+
+Accepted Project Architecture DAD Baseline
+Z2-DAD-001..041
 
 Owner Decision Baseline
 Z2-MDE-001..017 / OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
 
 Project Architecture Synthesis Overall
-IN_PROGRESS
-
-Current Authorized Phase
-NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 2
-
-Authorization Scope
-PROJECT_ARCHITECTURE_SYNTHESIS_ONLY / BATCH_2 / CROSS_CUTTING_LIFECYCLE_TRUST_RECOVERY_EVOLUTION_SEMANTICS
+ACCEPTANCE_COMPLETE_FOR_BATCH_2 / GLOBAL_COMPLETION_PENDING_GAC_ASSESSMENT
 
 Open MDE
 0
@@ -109,6 +114,9 @@ Open MDE
 Unpersisted Owner Decision
 0
 
+Current Authorized Phase
+NONE
+
 Unique Next Legal Action
-Start one bounded Z2 Batch 2 Project Architecture Synthesis session from current Global State; return candidate revision/evidence to GAC for independent acceptance
+Global Architecture Coordinator performs PROJECT_ARCHITECTURE_REMAINING_PRESSURE_ASSESSMENT; no downstream architecture phase is authorized before that gate and a separate authorization transition.
 ```
