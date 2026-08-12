@@ -16,13 +16,15 @@
 - **Owner Decision Baseline:** `Z2-MDE-001..017 / OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED`
 - **Global Acceptance:** `NOT CLAIMED`
 
-Revision `0.0.3` is a bounded candidate evolution of accepted Project Architecture `0.0.2`. It preserves `0.0.2` as the current normative upstream baseline until independent Global Architecture Coordinator acceptance. This producing session does not supersede, delete, or demote `0.0.2`, does not advance the GAC epoch, and does not authorize any downstream architecture or implementation phase.
+Revision `0.0.3` is a cumulative bounded candidate evolution of accepted Project Architecture `0.0.2`. It incorporates the accepted Batch 1 topology as upstream normative semantics and adds only the Batch 2 cross-cutting closure authorized by `GAC-EPOCH-0016`.
+
+`0.0.2` remains the current `GLOBAL_ACCEPTED / NORMATIVE / CURRENT` Project Architecture until independent GAC acceptance of this candidate. This producing session does not supersede, delete, demote, or mutate `0.0.2`; does not advance the GAC epoch; does not declare Project Architecture globally complete; and does not authorize any downstream architecture or implementation phase.
 
 ---
 
 ## 1. Scope and Completion Boundary
 
-This revision closes only the Batch 2 Project Architecture pressure authorized by `GAC-EPOCH-0016`:
+This revision closes only:
 
 ```text
 A. Project-wide Lifecycle / Temporal / Failure Semantics
@@ -32,11 +34,11 @@ D. Compatibility / Evolution / Migration / Conformance / Revalidation Topology
 E. Project Architecture Semantic Resolution Matrix
 ```
 
-The following accepted Batch 1 architecture remains inherited and is not reopened:
+The following accepted Batch 1 architecture is cumulative in this candidate and is **not reopened**:
 
 ```text
 Exactly five Product Components
-Batch-1 Product Component responsibility skeleton
+Product Component responsibility skeleton
 Four principal capability domains
 Authority / Semantic Ownership / SoT topology
 Runtime Actual-state ownership topology
@@ -45,6 +47,7 @@ Configuration authority topology
 Shared Foundation Project-level position
 System-level SDK / Development Surface position
 Cross-component semantic dependency skeleton
+Z2-DAD-001..026
 Z2-MDE-001..017
 ```
 
@@ -53,19 +56,23 @@ This revision does **not** enter:
 ```text
 Five-component Internal Architecture Boundaries
 Component Internal Design
+Component Capability Internal Decomposition
 Runtime Responsibility Architecture
 Runtime Role taxonomy
 process / service / worker / container / deployment topology
-Concrete API / Contract schema / wire protocol design
-Database / storage topology
+Concrete API design
+Contract schema / wire/message protocol
+REST / RPC / gRPC / WebSocket selection or message design
+Database product / schema / storage topology
+PKI / KMS / HSM / TLS / certificate design
+Secret-store provider or secret-reference wire schema
+Authentication provider / protocol
+Policy engine implementation
+Concrete network security topology
 Shared Foundation Detailed Architecture
 Foundation Contract / Module / Provider Design
-Authentication provider / protocol selection
-Policy engine implementation
-PKI / KMS / HSM / TLS / certificate design
-Secret-store design
-Synchronization or reconciliation algorithm design
-SDK binding / package / generator design
+Synchronization / reconciliation algorithm
+SDK language binding / package / generator design
 Repository/package structure design
 Implementation Planning / IWP / coding
 ```
@@ -91,7 +98,7 @@ State Verified Through HEAD
 Recovered Actual Branch HEAD
 → 6d274d01877b9a2ee7db2301c9937324e8547d52
 
-Delta
+State-to-HEAD Delta
 → 1 commit
 → docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md only
 → Batch 2 authorization / GAC-EPOCH-0016
@@ -117,7 +124,7 @@ Blocking Item
 
 ### 2.2 Consumed Current Authority
 
-The synthesis consumed the current Required Read Set from Global State, including:
+The synthesis consumed the Current Required Read Set from Global State:
 
 - Genesis Constitution `0.0.1`;
 - Unified Governance `0.0.2`;
@@ -128,27 +135,29 @@ The synthesis consumed the current Required Read Set from Global State, includin
 - accepted Project Architecture `0.0.2`;
 - Batch 1 Global Acceptance evidence;
 - current Global Architecture Ledger tail;
-- precise Owner Decision evidence for the Batch-2-dependent boundaries, including Tenant, IAM, Policy, Organization SoT, Artifact Acceptance, Execution Admission, Data/Knowledge factual SoT, Runtime Actual-state, Platform Security/Trust, Configuration, and Product Definition SoT.
+- precise Owner Decision evidence required by Batch 2, including Tenant, IAM, Policy, Organization SoT, Artifact Acceptance, Execution Admission, Data/Knowledge factual SoT, Runtime Actual-state, Platform Security/Trust, Configuration, and Product Definition SoT.
 
-No prior chat, model memory, pre-Genesis architecture, implementation artifact, provider default, database placement, or obsolete design is used as authority.
+No chat text, model memory, pre-Genesis design, obsolete architecture, implementation artifact, framework/provider default, database placement, or deployment convenience is used as authority.
 
 ---
 
-## 3. Preserved Accepted Project Architecture Baseline
+# Part 0 — Cumulative Accepted Batch 1 Project Architecture
 
-### 3.1 Complete-system topology
+## 3. Complete System Semantic Boundary
 
-The complete `ns_evermore` product semantics continue to consist of exactly:
+### Z2-DAD-001 — Complete-system boundary
+
+The complete `ns_evermore` product semantics consist of:
 
 ```text
-Product Components
+Exactly five Product Components
 → ns_server
 → ns_runtime
 → ns_node
 → ns_agent
 → ns_web
 
-Shared Foundation
+Applicable Shared Foundation
 → outside the five Product Components
 → not a sixth Product Component
 
@@ -156,25 +165,263 @@ System-level SDK / Development Surface
 → part of complete-system capability closure
 → not a Product Component
 → not a Runtime Role
-→ not an independent universal authority
+→ not an independent universal semantic authority
 ```
 
-A Product Component remains a stable product-semantic boundary and is not equivalent to a process, service, container, host, database, repository directory, package, runtime instance, or deployment unit.
+External enterprise systems, external identity/authentication systems, AI/model providers, technology providers, extension providers, commercial/distribution systems, and customer-private infrastructure remain outside the native five-component topology unless later changed through authorized architecture governance.
 
-### 3.2 Four principal capability domains
+### Z2-DAD-002 — Product Component semantic identity
 
-The following remain `FIRST_CLASS / PARALLEL / NON_SUBORDINATE`:
+A Product Component is a stable product-semantic boundary and is not equivalent to:
 
 ```text
-Business Application Construction / Runtime
-Automation Construction / Execution
-AI Agent Runtime / Tooling
-Enterprise Data / Knowledge / Foundational ETL
+process
+service
+container
+pod
+VM
+host
+database
+repository directory
+package
+runtime instance
+deployment unit
 ```
 
-Composition, invocation, scheduling, execution, shared persistence, shared UI, Shared Foundation mediation, provider integration, and runtime co-location do not automatically transfer Semantic Authority, Source of Truth, or Actual-state Ownership.
+Co-location, decomposition, deployment placement, storage placement, framework choice, or transport mediation must not rewrite Product Component identity, Semantic Authority, Source of Truth, or Actual-state Ownership.
 
-### 3.3 Accepted Owner Decision baseline
+---
+
+## 4. Five Product Component Responsibility Skeleton
+
+### Z2-DAD-003 — `ns_server` responsibility envelope
+
+`ns_server` is the principal native server-side semantic/governance/control-plane and business/data backend Product Component.
+
+Top-level responsibilities include:
+
+```text
+Native Tenant Semantic Authority
+Native Tenant canonical identity/governance SoT
+Native IAM Semantic Authority
+Unified Policy Semantic Authority
+Native Organization Semantic Authority and Organization-system governance
+Business Application Definition / Platform Semantic Authority
+Business Application Canonical Definition SoT
+Business Application backend responsibility
+Automation Definition / Workflow Semantic Authority
+Automation Canonical Definition SoT
+Knowledge Base semantics
+Enterprise Data / Knowledge / Foundational ETL semantics
+Data / Knowledge management, query and aggregation backend responsibility
+Visualization/dashboard/large-screen/cockpit backend responsibility
+Formal Artifact Acceptance Authority
+Formal Execution Admission Authority
+Platform Security / Trust Semantic Authority
+Managed Runtime Configuration management authority
+Managed Runtime Configuration canonical desired-state SoT
+```
+
+Permanent non-implications:
+
+```text
+same ns_server placement
+!= same semantic domain
+!= common Source of Truth automatically
+!= domain subordination
+!= universal runtime actual-state ownership
+!= local execution ownership
+!= AI Agent Semantic Authority
+!= AI Agent Canonical Definition SoT
+!= external enterprise factual authority
+```
+
+`ns_server` is not the runtime communication hub and not the local terminal executor.
+
+### Z2-DAD-004 — `ns_runtime` responsibility envelope
+
+`ns_runtime` is the native communication and runtime-coordination Product Component.
+
+Top-level responsibilities include:
+
+```text
+long-lived communication coordination
+connection-management semantics
+routing coordination
+runtime coordination
+scheduling coordination
+dispatch coordination
+applicable runtime orchestration coordination
+bounded coordination actual-state facts
+intrinsic runtime-coordination configuration semantics
+```
+
+Permanent rules:
+
+```text
+Communication Hub != Universal SoT
+Scheduler != Business Authority
+Task Dispatch != Formal Execution Admission Authority
+Observed Runtime State != Canonical Runtime State automatically
+Runtime Configuration Consumption != Universal Configuration Authority
+```
+
+`ns_runtime` does not automatically own Tenant/IAM/Policy/domain definitions, Artifact Acceptance, Execution Admission, local protected-effect facts, or all system runtime truth.
+
+### Z2-DAD-005 — `ns_node` responsibility envelope
+
+`ns_node` is the native local/terminal execution Product Component.
+
+Top-level responsibilities include:
+
+```text
+local execution
+OCR execution
+desktop automation execution
+browser automation execution
+package/plugin/tool/workflow local execution
+local resource/file/device interaction
+protected local effects
+offline/degraded execution continuity
+local source-fact production
+reconnect/reconciliation participation
+bounded local execution actual-state facts
+intrinsic local-execution configuration semantics
+```
+
+Permanent rules:
+
+```text
+Execution != Definition
+Grant Exercise != Grant Issuance / Admission Authority
+Local Fact != Broader Canonical State automatically
+Protected Effect Fact != Policy Authority
+Applied Local Configuration != Canonical Desired Configuration automatically
+Offline Local Possession != Authority Escalation
+```
+
+### Z2-DAD-006 — `ns_agent` responsibility envelope
+
+`ns_agent` is the native AI Agent Runtime / Tooling Product Component and owns the AI Agent semantic domain.
+
+Top-level responsibilities include:
+
+```text
+AI Agent Definition / Semantic Authority
+AI Agent Canonical Definition SoT
+Agent runtime
+Agent identity/revision semantics
+Agent context semantics
+Agent memory-related capability semantics
+Agent workflow/reasoning execution semantics
+Tool invocation semantics inside the Agent domain
+RAG / Knowledge consumption capability
+AI/model provider abstraction
+later-designed model-routing responsibility
+bounded Agent-runtime actual-state facts
+intrinsic Agent-runtime/tooling configuration semantics
+```
+
+Permanent rules:
+
+```text
+Model Provider != Agent Authority
+Model != Agent
+Tool Provider != Agent Semantic Authority
+Agent Consumes Knowledge != Agent Owns Knowledge
+Agent Invokes Business Capability != Agent Owns Business Semantics
+Agent Invokes Automation != Agent Owns Automation Semantics
+RAG Consumption != Knowledge Authority Transfer
+Agent Definition SoT != Formal Artifact Acceptance Authority
+```
+
+### Z2-DAD-007 — `ns_web` responsibility envelope
+
+`ns_web` is the native human-facing web Product Component.
+
+Top-level responsibilities include:
+
+```text
+administration UI
+Business Application UI / Builder
+Automation Builder / Management UI
+AI Agent management / construction UI
+Data / Knowledge management UI
+visualization / dashboard / large-screen / cockpit UI
+operations and governance UI
+control-plane interaction UI
+genuinely frontend/presentation-local configuration semantics
+```
+
+Permanent rules:
+
+```text
+UI Editing != Semantic Authority
+UI Edit State != Canonical Product Definition SoT
+Frontend State != Canonical State automatically
+Frontend Cache != SoT
+UI Routing != Architecture Boundary
+Vue Component != Product Component
+Central Configuration UI != Configuration Semantic Authority Transfer
+```
+
+---
+
+## 5. Shared Foundation and Development Surface
+
+### Z2-DAD-008 — Shared Foundation role
+
+Shared Foundation is outside the five Product Components and may provide stable reusable provider-neutral capabilities when cross-component reuse is justified.
+
+Permanent rules:
+
+```text
+Shared Foundation != sixth Product Component
+Provider Placement != Semantic Authority
+Foundation Storage != SoT
+Foundation Cache != SoT
+Foundation Configuration Loader != Configuration Semantic Authority
+Foundation Configuration Loader != Managed Runtime Configuration Authority
+Foundation Security/Crypto/Secret Primitive != Platform Trust Authority
+```
+
+Shared Foundation detailed capability inventory/contracts/modules/providers are not designed at Project Architecture level.
+
+### Z2-DAD-009 — System-level SDK / Development Surface
+
+The product includes a system-level SDK/development surface required to make accepted architecture consumable and extension-capable.
+
+It must preserve:
+
+```text
+stable language-neutral/versioned cross-boundary semantics where applicable
+underlying Product Component / capability-domain authority
+Tenant / IAM / Policy / Trust / Artifact / Admission governance
+offline/private delivery correctness
+extension/re-delivery governance
+provider/language/framework independence at architecture identity level
+```
+
+The SDK/development surface is not a sixth component, not a Runtime Role, and not a universal authority.
+
+---
+
+## 6. Four Principal Capability Domains
+
+### Z2-DAD-010 — First-class non-subordinate domains
+
+| Principal capability domain | Top-level semantic ownership | Canonical native definition ownership | Major execution/interaction placement |
+|---|---|---|---|
+| Business Application Construction / Runtime | `ns_server` | `ns_server` | `ns_server` backend + `ns_web` UI/builder; may compose other domains |
+| Automation Construction / Execution | `ns_server` Automation Definition/Workflow semantics | `ns_server` | `ns_web` builder; `ns_runtime` coordination; `ns_node` local execution |
+| AI Agent Runtime / Tooling | `ns_agent` | `ns_agent` | `ns_agent` runtime/tooling; may consume Knowledge and invoke other domains |
+| Enterprise Data / Knowledge / Foundational ETL | `ns_server` native Data/Knowledge/ETL semantics | factual SoT follows bounded partitions; not generalized into one Product Definition SoT | `ns_server` backend; `ns_web` management/visualization; consumed by other domains |
+
+Composition, invocation, shared runtime/storage/UI, provider mediation, or co-location does not transfer semantic authority between these domains.
+
+---
+
+## 7. Accepted Owner Decision Baseline
 
 This candidate preserves without reopening:
 
@@ -198,25 +445,259 @@ This candidate preserves without reopening:
 | `Z2-MDE-016` | Split local bootstrap + centrally managed runtime desired state in `ns_server`; configuration item meaning follows capability owner; applied state follows runtime actual-state owner |
 | `Z2-MDE-017` | Canonical native Product Definition SoT → Business Application `ns_server`; Automation `ns_server`; AI Agent `ns_agent` |
 
-### 3.4 Single-final-owner invariant
+---
 
-For any single bounded semantic assertion, the architecture must be able to determine exactly one final authority/SoT/Actual-state owner where such an owner applies.
+## 8. Authority / SoT / Actual-state Invariants
+
+### Z2-DAD-011 — Authority is semantic, not physical
+
+No Authority/SoT/Actual-state ownership may be inferred solely from database/storage/runtime/framework/process/transport/cache/index/ETL/projection/replication/UI/provider/extension/package placement.
+
+### Z2-DAD-012 — Single-final-owner rule per bounded assertion
+
+For the same bounded semantic assertion, exactly one final Semantic Authority/final SoT/final Actual-state Owner is required where applicable.
 
 ```text
-Federation
-!= multiple final authorities for the same assertion
-
-Projection / replica / cache / index / local copy
-!= alternate final authority automatically
+Federation != multiple final authorities for the same assertion
 ```
 
-Different non-overlapping semantic partitions may have different owners.
+Unknown/stale/conflicting/unmapped/indeterminate states remain explicit rather than being resolved by locality, latest arrival, preferred database, or implementation convenience.
+
+### Z2-DAD-013 — Co-location does not collapse authority types
+
+```text
+Tenant Semantic Authority != Tenant Canonical SoT
+Automation Semantic Authority != Automation Canonical Definition SoT
+Platform Trust Authority != Policy Authority
+Artifact Acceptance Authority != Execution Admission Authority
+Managed Runtime Configuration Authority != Configuration Item Semantic Authority
+```
+
+Co-location inside one Product Component does not merge semantic responsibilities.
 
 ---
 
-## 4. Batch 2 Decision Classification
+## 9. Accepted Lifecycle and Cross-component Dependency Skeleton
 
-The cross-cutting rules below are `DAD`-class derivations within the exact Batch 2 authorization. They consume accepted NSE and `Z2-MDE-001..017`; they do not move an accepted Authority/SoT/Actual-state owner, select a material security/privacy policy, choose an operation-specific offline fail-open/fail-closed policy, or lock the project to a protocol/provider/storage/artifact format.
+### Z2-DAD-014 — Governing lifecycle separation
+
+The accepted conceptual sequence is:
+
+```text
+Domain Semantic Authority
+→ Canonical Product Definition SoT where applicable
+→ domain semantic validation/certification where applicable
+→ candidate artifact
+→ Formal Artifact Acceptance
+→ installation/availability where applicable
+→ activation where applicable
+→ Formal Execution Admission
+→ scheduling/routing/dispatch
+→ Runtime Execution Attempt
+→ effects/source facts
+→ observation/projection/reconciliation
+```
+
+### Z2-DAD-015 — Governance dependencies
+
+Execution-capable domains may consume:
+
+```text
+Tenant context
+IAM / Principal context
+Policy decisions/context
+Security / Trust state/evidence
+Artifact Acceptance state/evidence
+Execution Admission state/evidence
+Managed Runtime Configuration desired state
+```
+
+Consumption does not transfer those authorities.
+
+### Z2-DAD-016 — Business Application topology
+
+```text
+ns_web
+→ construct/manage Business Application UI/Builder state
+
+ns_server
+→ Business Application Semantic Authority
+→ Business Application Canonical Definition SoT
+→ Business Application backend responsibility
+→ applicable Artifact Acceptance / Admission Authority
+
+Automation / Agent / Data / external enterprise domains
+→ may be composed/consumed
+→ retain their own authorities and factual SoTs
+```
+
+### Z2-DAD-017 — Automation topology
+
+```text
+ns_web
+→ construct/manage Automation
+
+ns_server
+→ Automation Definition / Workflow Semantic Authority
+→ Automation Canonical Definition SoT
+→ Formal Artifact Acceptance Authority
+→ Formal Execution Admission Authority
+
+ns_runtime
+→ schedule / route / dispatch / coordinate
+
+ns_node
+→ applicable local execution
+→ bounded local source/effect facts
+```
+
+### Z2-DAD-018 — Agent topology
+
+```text
+ns_web
+→ Agent-facing construction/management UI
+
+ns_agent
+→ Agent Semantic Authority
+→ Agent Canonical Definition SoT
+→ Agent runtime/tooling
+
+ns_server
+→ Tenant/IAM/Policy/Trust governance
+→ Formal Artifact Acceptance
+→ Formal Execution Admission
+
+ns_runtime
+→ applicable cross-component runtime coordination
+
+ns_node / external tools / business/data/automation domains
+→ invoked capabilities as applicable
+→ retain their own authority
+```
+
+### Z2-DAD-019 — Data / Knowledge topology
+
+```text
+External bounded SoTs and native ns_evermore SoTs
+→ explicit source identity / bounded semantic partition
+
+ns_server Data / Knowledge / ETL semantics
+→ mapping / transformation / derived-data / knowledge-platform semantics
+
+Business Application / Automation / Agent / UI consumers
+→ governed consumption
+→ no SoT transfer
+```
+
+Permanent rules include:
+
+```text
+Ingestion != Authority Transfer
+ETL Output != Upstream Source Fact automatically
+Index/Cache/Vector/Embedding != SoT automatically
+RAG Consumption != Knowledge Authority Transfer
+Visualization != Data Authority Transfer
+```
+
+### Z2-DAD-020 — Configuration topology
+
+```text
+Component-local Bootstrap Configuration
+→ local per Product Component
+→ authority-neutral Shared Foundation Configuration Loader MAY be used later
+
+Managed Runtime Configuration
+→ management authority = ns_server
+→ canonical desired-state SoT = ns_server
+
+Configuration item meaning
+→ follows semantic owner of configured capability
+
+Applied Configuration Actual-state
+→ applicable runtime Actual-state Owner
+
+Observed Configuration View
+→ derived projection
+```
+
+```text
+Desired Configuration != Applied Configuration != Observed Configuration
+Configuration != Secret
+```
+
+---
+
+## 10. Accepted Factual Ownership and Federation
+
+### Z2-DAD-021 — Runtime Actual-state topology
+
+```text
+ns_runtime
+→ bounded facts genuinely originating from connection/routing/scheduling/dispatch coordination responsibility
+
+ns_node
+→ bounded local execution attempts/observations/protected effects/source facts
+
+ns_agent
+→ bounded Agent-runtime facts originating inside Agent responsibility
+
+other components
+→ only runtime facts genuinely originating inside their accepted responsibility
+
+System Runtime View
+→ coordinated/derived projection
+→ not universal factual authority by aggregation
+```
+
+Precise runtime semantic partitions/freshness/observation/reconciliation mechanics remain for `Runtime Responsibility Architecture` and cannot change `Z2-MDE-014` without revalidation.
+
+### Z2-DAD-022 — Organization factual authority
+
+Native Organization semantics are `ns_server` authority. Factual Organization SoT is assigned per Organization System/bounded semantic partition, with exactly one final SoT for the same assertion.
+
+```text
+Mapping != Identity Equality
+Ingestion != Authority Transfer
+External Organization SoT != Native Organization Semantic Authority
+```
+
+### Z2-DAD-023 — Data / Knowledge factual authority
+
+Data/Knowledge factual SoT is assigned per bounded semantic partition, preserving bounded external SoTs and explicit native SoTs where established.
+
+Derived facts retain derivation identity/provenance and do not masquerade as upstream source facts.
+
+### Z2-DAD-024 — Split bootstrap and managed runtime configuration
+
+A Product Component must be able to load sufficient local bootstrap configuration to become alive enough to obtain managed runtime configuration. `ns_server` owns managed desired-state governance/SoT; configured-capability semantic ownership and applied actual-state ownership remain separate.
+
+### Z2-DAD-025 — Offline semantics are first-class
+
+Core correctness does not depend on public Internet, mandatory vendor SaaS/public registry/online license authority, or synchronous contact with `ns_server` for every action. Offline/degraded execution does not create local Tenant/IAM/Policy/Trust/Artifact/Admission/SoT authority.
+
+### Z2-DAD-026 — Extension / re-delivery does not escalate authority
+
+```text
+Loadable != Accepted
+Hosted != Trusted
+First-party != Trusted automatically
+Customer-origin != Trusted/Untrusted automatically
+Extension Origin != Authority
+Installed != Admitted
+Executable != Authorized
+```
+
+Customer secondary development, plugins, tools, packages, custom apps, custom Automations, Agent extensions, and re-delivery remain subject to native Tenant/Policy/Trust/Artifact/Admission/domain governance.
+
+---
+
+# Part 1 — Batch 2 Cross-cutting Project Architecture Closure
+
+## 11. Batch 2 Decision Classification
+
+The cross-cutting rules below are `DAD`-class derivations inside the exact Batch 2 authorization. They consume accepted `NSE-001..017`, `Z2-DAD-001..026`, and `Z2-MDE-001..017`.
+
+They do **not** move an accepted Authority/SoT/Actual-state owner, choose a material Security/Trust/Privacy policy, choose an operation-specific offline fail-open/fail-closed policy, define a stable Principal namespace commitment, or lock the project to a protocol/provider/database/storage/artifact format.
 
 ```text
 New Project-Owner MDE required by this synthesis
@@ -229,19 +710,19 @@ Unpersisted Owner Decision
 → 0
 ```
 
-Any later proposal that crosses those limits remains subject to Unified Governance and defaults to MDE when classification is uncertain.
+Any later proposal that crosses those limits returns to Unified Governance; uncertainty defaults to MDE.
 
 ---
 
 # Part A — Project-wide Lifecycle / Temporal / Failure Semantics
 
-## 5. Project-wide Lifecycle Model
+## 12. Project-wide Lifecycle Model
 
 ### Z2-DAD-027 — Lifecycle-state separation and evidence non-escalation
 
-The Project Architecture adopts one semantic lifecycle vocabulary across capability domains without defining one universal implementation state machine.
+The Project Architecture adopts one semantic lifecycle vocabulary across capability domains without defining a universal implementation state machine.
 
-The following distinctions are permanent:
+Permanent distinctions:
 
 ```text
 Development / Domain Definition
@@ -289,31 +770,31 @@ Applied Configuration Actual-state
 
 Technical ability to load, execute, schedule, route, dispatch, store, display, cache, validate a representation, or reach a provider does not promote an object into a higher governance state.
 
-### 5.1 Project-level lifecycle responsibility matrix
+### 12.1 Project-level lifecycle responsibility matrix
 
-| Lifecycle state | Semantic meaning | Authority / canonical state | Actual-state responsibility | Evidence producer / observer | Does **not** gain authority |
+| Lifecycle state | Semantic meaning | Authority / canonical state | Actual-state responsibility | Evidence producer / observer | What does **not** gain authority |
 |---|---|---|---|---|---|
-| Development / Domain Definition | Mutable authoring/work-in-progress material | Meaning governed by the applicable domain Semantic Authority; working material is not canonical merely by existence | Not a runtime actual-state by default | Authorized development surfaces may produce/edit evidence | editor, UI, repository, filesystem, builder |
-| Canonical Product Definition SoT | Current canonical native definition revision where `Z2-MDE-017` applies | Business App → `ns_server`; Automation → `ns_server`; AI Agent → `ns_agent` | N/A as runtime state | Applicable definition owner may emit revision/provenance evidence | cache, UI edit state, artifact registry, executor |
-| Domain Semantic Certification | Domain-specific determination that a definition satisfies domain semantics | Exact certification authority remains a named downstream design question under the domain Semantic Authority; material authority changes require MDE | N/A | Later-authorized certifier may produce evidence | certification evidence does not become Artifact Acceptance |
-| Candidate Artifact | Immutable-or-bounded candidate release material derived from definition/certification context | No Formal Artifact Acceptance until `ns_server` decides acceptance | Availability of a candidate copy is factual only | build/package/supply-chain process may produce candidate evidence later | builder, registry, storage, signature alone |
-| Formal Artifact Acceptance | System governance decision that candidate material is an Accepted Artifact | Final authority → `ns_server`; accepted-artifact governance state derives from that decision | Local possession remains separate factual state | `ns_server` decides; other domains may supply certification/provenance evidence | domain certifier, signer, registry, storage, installer |
-| Installation / Availability | Material is physically/logically present and usable by a bounded runtime responsibility | No new semantic authority; does not alter acceptance | Applicable runtime actual-state owner for the installation/availability fact, precise partition later | responsible component/runtime may produce local fact | installer, filesystem, cache, runtime possession |
-| Activation | Installed material is selected/enabled for applicable runtime use | No Artifact/Admission/Policy authority transfer | Applicable runtime actual-state owner; precise partition later | responsible component/runtime may produce activation fact | activation mechanism, operator UI |
-| Formal Execution Admission | Governed decision that a specific execution intent may enter execution lifecycle under applicable context | Final authority → `ns_server` | Admission decision state is governance state, not scheduling/runtime fact | `ns_server` decides; consumers may carry/verify evidence | scheduler, dispatcher, executor, local evidence holder |
-| Scheduling / Routing / Dispatch | Runtime-coordination decision/action after applicable admission | No business/domain/admission authority | `ns_runtime` owns bounded coordination facts inside its accepted responsibility | `ns_runtime` may produce coordination evidence | scheduler, route, queue, transport |
-| Runtime Execution Attempt | An admitted/intended execution is actually attempted | Does not retrospectively prove acceptance/admission/authorization | Per bounded runtime semantic partition under `Z2-MDE-014`; e.g. local execution facts in `ns_node`, Agent runtime facts in `ns_agent` | originating runtime responsibility produces provenance-bearing source fact | executor, local success, process placement |
-| Successful Effect / Source Fact | An actual effect occurred or a source fact was observed/produced | Factual authority follows the accepted bounded source/actual-state topology; effect does not become Policy/Admission proof | Originating bounded actual-state/source-fact owner | originator produces fact; later consumers project/reconcile | central aggregator, observer, downstream consumer |
-| Observation / Projection | Derived view of authoritative/source facts | Projection is not Source of Truth by aggregation | Projection responsibility owns its projection freshness/state only; source authority remains upstream | observer/projector | UI, dashboard, cache, index, System Runtime View |
-| Managed Desired Configuration | Canonical governed target configuration | management authority and canonical desired-state SoT → `ns_server`; item meaning follows configured capability owner | Not applied actual-state | `ns_server` may produce desired-state revision evidence | distributor, loader, component local state |
-| Applied Configuration Actual-state | What configuration a bounded runtime has actually applied | Does not overwrite desired-state SoT | Applicable runtime actual-state owner under `Z2-MDE-014` | applying runtime produces result/evidence | local success, local file, projection |
-| Observed Configuration Projection | What an observer believes is applied | Derived projection only | Projector owns projection state/freshness only | observability/UI/control plane may observe | projector does not become desired/applied owner |
+| Development / Domain Definition | Mutable authoring/work-in-progress material | Meaning governed by applicable domain Semantic Authority; working material is not canonical merely by existence | Not a runtime actual-state by default | Authorized development surfaces may produce/edit evidence | editor, UI, repository, filesystem, builder |
+| Canonical Product Definition SoT | Current canonical native definition revision where `Z2-MDE-017` applies | Business App → `ns_server`; Automation → `ns_server`; AI Agent → `ns_agent` | N/A as runtime state | applicable definition owner may emit revision/provenance evidence | cache, UI edit state, artifact registry, executor |
+| Domain Semantic Certification | Domain-specific determination that a definition satisfies domain semantics | exact certification boundary/authority → `Five-component Internal Architecture Boundaries`; if a material Authority choice emerges → `Project Owner / MDE` | N/A | later-authorized certifier may produce evidence | certification evidence does not become Artifact Acceptance |
+| Candidate Artifact | Candidate release material derived from definition/certification context | no Formal Artifact Acceptance until `ns_server` decides acceptance | availability of a candidate copy is factual only | later build/package/supply-chain realization may produce evidence | builder, registry, storage, signature alone |
+| Formal Artifact Acceptance | System governance decision that candidate material is an Accepted Artifact | final authority → `ns_server`; accepted governance state derives from that decision | local possession remains separate factual state | `ns_server` decides; domains may provide certification/provenance evidence | certifier, signer, registry, storage, installer |
+| Installation / Availability | Material is present/usable by a bounded runtime responsibility | no new semantic authority; does not alter acceptance | applicable runtime Actual-state Owner; precise partition → `Runtime Responsibility Architecture` | responsible component/runtime may produce local fact | installer, filesystem, cache, runtime possession |
+| Activation | Installed material is selected/enabled for applicable runtime use | no Artifact/Admission/Policy authority transfer | applicable runtime Actual-state Owner; precise partition → `Runtime Responsibility Architecture` | responsible component/runtime may produce activation fact | activation mechanism, operator UI |
+| Formal Execution Admission | Governed decision that a specific execution intent may enter execution lifecycle | final authority → `ns_server` | governance state, not scheduling/runtime fact | `ns_server` decides; consumers may carry/verify evidence | scheduler, dispatcher, executor, local evidence holder |
+| Scheduling / Routing / Dispatch | Runtime-coordination action after applicable admission | no business/domain/admission authority | `ns_runtime` owns bounded coordination facts | `ns_runtime` may produce coordination evidence | scheduler, route, queue, transport |
+| Runtime Execution Attempt | An admitted/intended execution is actually attempted | does not retrospectively prove acceptance/admission/authorization | bounded runtime partition under `Z2-MDE-014` | originating runtime responsibility produces provenance-bearing fact | executor, local success, process placement |
+| Successful Effect / Source Fact | An actual effect occurred or source fact was observed/produced | factual authority follows accepted source/actual-state topology | originating bounded source/Actual-state Owner | originator produces fact; later consumers project/reconcile | central aggregator, observer, downstream consumer |
+| Observation / Projection | Derived view of authoritative/source facts | projection is not Source of Truth by aggregation | projector owns projection state/freshness only; source authority remains upstream | observer/projector | UI, dashboard, cache, index, System Runtime View |
+| Managed Desired Configuration | Canonical governed target configuration | management authority + canonical desired-state SoT → `ns_server`; item meaning follows configured capability owner | not applied actual-state | `ns_server` may produce desired-state revision evidence | distributor, loader, local state |
+| Applied Configuration Actual-state | What configuration a bounded runtime actually applied | does not overwrite desired-state SoT | applicable runtime Actual-state Owner | applying runtime produces result/evidence | local success, local file, projection |
+| Observed Configuration Projection | What an observer believes is applied | derived projection only | projector owns projection freshness only | observability/UI/control-plane projection | projector does not become desired/applied owner |
 
-The exact lifecycle handlers, persistence models, artifact representations, certification mechanisms, runtime roles, and state-machine implementations are downstream concerns and cannot alter these project-level meanings.
+Concrete lifecycle handlers and component-internal state realization belong to `Five-component Internal Architecture Boundaries` → `Component Internal Design`; runtime partitions/state mechanics belong to `Runtime Responsibility Architecture`; Foundation-specific reusable contract mechanics, if admitted, belong to `Foundation Contract Design`.
 
 ---
 
-## 6. Temporal and Revision Applicability
+## 13. Temporal and Revision Applicability
 
 ### Z2-DAD-028 — No implicit temporal winner; historical interpretation is context-bound
 
@@ -329,9 +810,7 @@ Temporal Applicability
 
 These are semantic information requirements, not a storage schema, timestamp schema, event format, or clock design.
 
-### 6.1 Revision dimensions remain independent
-
-At minimum, the following revisions/contexts are distinguishable:
+At minimum, the following remain distinguishable:
 
 ```text
 Definition Revision
@@ -346,79 +825,55 @@ Mapping Revision
 Observation / Projection Freshness Context
 ```
 
-A numeric or temporal ordering in one dimension does not automatically determine ordering or validity in another dimension.
+A numeric/temporal ordering in one dimension does not determine validity in another dimension.
 
-### 6.2 Permanent temporal rules
-
-```text
-Latest arrival wins automatically
-→ PROHIBITED
-
-Latest local write wins automatically
-→ PROHIBITED
-
-Highest timestamp wins automatically
-→ PROHIBITED
-
-Newer projection automatically means newer source fact
-→ PROHIBITED
-
-Current Policy automatically equals historically applied Policy
-→ PROHIBITED
-
-Current Trust state automatically equals historically applicable Trust state
-→ PROHIBITED
-
-Current Definition automatically equals definition used for historical execution
-→ PROHIBITED
-
-Current Mapping automatically rewrites historical mapping interpretation
-→ PROHIBITED
-```
-
-Historical execution/effect interpretation must remain relatable to the relevant Definition/Artifact/Admission/Policy/Trust/Configuration/Mapping context that was applicable to that execution or fact. If that applicable context cannot be established, the result is `UNKNOWN` or `INDETERMINATE`, not an automatic fallback to the current revision.
-
-### 6.3 Source time versus observation time
-
-Where a fact is observed after it originated, source-fact temporal context and observation/projection temporal context are semantically distinct.
+Permanent rules:
 
 ```text
-Later Observation Time
-!= Later Source Fact automatically
-
-Fresh Projection
-!= Fresh Source automatically
-
-Stale Projection
-!= Stale Source automatically
+Latest Arrival Wins automatically → PROHIBITED
+Latest Local Write Wins automatically → PROHIBITED
+Highest Timestamp Wins automatically → PROHIBITED
+Newer Projection = Newer Source Fact automatically → PROHIBITED
+Current Policy = Historically Applied Policy automatically → PROHIBITED
+Current Trust State = Historically Applicable Trust State automatically → PROHIBITED
+Current Definition = Definition Used Historically automatically → PROHIBITED
+Current Mapping Rewrites Historical Mapping automatically → PROHIBITED
 ```
 
-External-source freshness, mapping freshness, runtime-fact freshness, and projection freshness remain bounded semantic concerns. Concrete clocks, timestamp precision, expiry algorithms, event storage, and freshness thresholds are explicitly deferred.
+Historical execution/effect interpretation must remain relatable to the Definition/Artifact/Admission/Policy/Trust/Configuration/Mapping context applicable to that execution or fact. If applicable context cannot be established, interpretation is `UNKNOWN` or `INDETERMINATE`, not automatic fallback to current revision.
+
+Source-fact temporal context and observation/projection temporal context remain distinct:
+
+```text
+Later Observation Time != Later Source Fact automatically
+Fresh Projection != Fresh Source automatically
+Stale Projection != Stale Source automatically
+```
+
+Concrete runtime clocks/freshness/observation mechanics → `Runtime Responsibility Architecture`; non-runtime source/mapping/history mechanics → `Component Internal Design`; Foundation-specific representation, if applicable → `Foundation Contract Design`. No timestamp precision, clock source, expiry algorithm, event store, or freshness threshold is selected here.
 
 ---
 
-## 7. Failure / Unknown / Indeterminate Semantics
+## 14. Failure / Unknown / Indeterminate Semantics
 
 ### Z2-DAD-029 — Uncertainty is first-class and cannot be silently collapsed
 
-The following conditions are project-level first-class semantic states/qualifiers where applicable:
-
 | Condition | Project-level meaning |
 |---|---|
-| `UNKNOWN` | The value/state cannot currently be established from admissible evidence. |
-| `INDETERMINATE` | Available evidence is insufficient, ambiguous, contradictory, or context-incomplete such that a required semantic decision cannot be made. |
-| `MISSING` | Expected or required evidence/state is absent; absence is not automatically a negative assertion. |
+| `UNKNOWN` | State cannot currently be established from admissible evidence. |
+| `INDETERMINATE` | Evidence is insufficient/ambiguous/contradictory/context-incomplete for the required semantic decision. |
+| `MISSING` | Expected/required evidence is absent; absence is not automatically a negative domain assertion. |
 | `UNAVAILABLE` | A required capability/source/resource cannot currently provide service/evidence. |
-| `UNREACHABLE` | A communication path to a source/component cannot currently be established; reachability says nothing by itself about authority or revocation. |
-| `STALE` | Known evidence/state is not known to satisfy the currently applicable freshness/temporal requirement. |
-| `CONFLICTING` | Multiple relevant assertions/evidence items cannot be simultaneously accepted under current semantic interpretation. |
-| `UNSUPPORTED` | The capability/revision/semantic case is outside the supported contract or accepted behavior for that consumer. |
-| `UNMAPPED` | A required identity/Organization/source mapping relationship has not been established. |
-| `UNVERIFIED` | Evidence exists but required verification/interpretation has not been established. |
-| `PARTIALLY_APPLIED` | A desired/configured/intended change has been applied only to a subset of its bounded target/result semantics. |
-| `RECONCILIATION_PENDING` | Recovery/reconnect evidence is present but final reconciliation under the applicable authority has not completed. |
-| `PROJECTION_STALE` | A derived view is known or suspected not to reflect the currently applicable source/actual-state context. |
-| `AUTHORITY_BINDING_UNKNOWN` | The final authority/SoT/Actual-state owner applicable to the bounded assertion cannot currently be established. |
+| `UNREACHABLE` | Communication to a source/component cannot currently be established; reachability says nothing by itself about authority/revocation. |
+| `STALE` | Known evidence/state is not known to satisfy applicable freshness/temporal requirements. |
+| `CONFLICTING` | Relevant assertions/evidence cannot be simultaneously accepted under current semantic interpretation. |
+| `UNSUPPORTED` | Capability/revision/semantic case is outside accepted supported behavior for the consumer. |
+| `UNMAPPED` | Required identity/Organization/source mapping has not been established. |
+| `UNVERIFIED` | Evidence exists but required verification/semantic interpretation is not established. |
+| `PARTIALLY_APPLIED` | Desired/configured/intended change is applied only to a subset of its bounded target/result semantics. |
+| `RECONCILIATION_PENDING` | Recovery/reconnect evidence exists but final reconciliation under applicable authority is incomplete. |
+| `PROJECTION_STALE` | A derived view is known/suspected not to reflect applicable source/Actual-state context. |
+| `AUTHORITY_BINDING_UNKNOWN` | Applicable final Authority/SoT/Actual-state Owner cannot currently be established. |
 
 Permanent rules:
 
@@ -436,31 +891,27 @@ Unverified != Trusted automatically
 Authority Binding Unknown != Local Authority automatically
 ```
 
-No project-wide fail-open or fail-closed default is selected. A concrete operation-specific fail behavior that creates a material security/trust/privacy/authority commitment is `MDE`-class when reached. Non-material handling remains for the explicitly authorized downstream design authority for that domain.
+No project-wide fail-open/fail-closed default is selected. `Five-component Internal Architecture Boundaries` must allocate the affected component/capability responsibility; runtime/offline behavior belongs to `Runtime Responsibility Architecture`; bounded non-runtime handling belongs to `Component Internal Design`. A material Security/Trust/Privacy/Authority/offline fail policy returns to `Project Owner / MDE`.
 
 ---
 
 # Part B — Security / Trust / Principal / Data-Privacy Boundary Topology
 
-## 8. Principal Context Topology
+## 15. Principal Context Topology
 
 ### Z2-DAD-030 — Identity evidence, domain identity, and security principal are distinct
 
-Project Architecture distinguishes at least the following identity/principal contexts:
-
 | Context | Project-level semantic rule |
 |---|---|
-| Human Principal | A native security-principal context, where native, is governed by `ns_server` IAM semantics; a human's external identity is not automatically the native Principal. |
-| Service Principal | A non-human service actor may have a native Principal context governed by `ns_server` IAM semantics; service hosting or process identity does not create authorization. |
+| Human Principal | A native security-principal context, where native, is governed by `ns_server` IAM semantics; external human identity is not automatically the native Principal. |
+| Service Principal | A non-human service actor may have a native Principal context under `ns_server` IAM semantics; process/service hosting does not create authorization. |
 | Node / Device Principal | A node/device may participate as a security principal under native IAM semantics; Node identity is not Tenant identity and local possession is not trust. |
-| Agent Principal | An Agent may act under a security-principal context governed by native IAM semantics, while AI Agent Definition/Semantic Authority remains `ns_agent`; Agent Principal != Human Principal. |
-| External Identity | Identity owned/asserted by an external bounded authority; not a native Principal until governed mapping/binding semantics establish that relationship. |
-| External Authentication Assertion | Evidence produced by an external authentication boundary; evidence is not native IAM Semantic Authority and does not itself establish authorization. |
+| Agent Principal | An Agent may act under a security-principal context governed by native IAM semantics while Agent Definition/Semantic Authority remains `ns_agent`; Agent Principal != Human Principal. |
+| External Identity | Identity owned/asserted by an external bounded authority; not a native Principal until governed mapping/binding establishes that relationship. |
+| External Authentication Assertion | Evidence from an external authentication boundary; not native IAM Semantic Authority and not authorization by itself. |
 | Extension / Plugin Identity | Provenance/identity context for extension material/runtime participation; origin/loadability does not establish trust, acceptance, or authorization. |
-| Provider Identity | Identity/provenance for an AI/model/technology/third-party provider; provider identity does not confer native Product Authority or platform Trust Authority. |
-| Customer Re-delivery Identity Context | Lineage/provenance context for customer-modified or re-delivered product/extension material; customer ownership/source possession does not bypass governance. |
-
-Permanent non-equivalences:
+| Provider Identity | Identity/provenance for AI/model/technology/third-party provider; provider identity does not confer native Product Authority or Platform Trust Authority. |
+| Customer Re-delivery Identity Context | Lineage/provenance for customer-modified/re-delivered product or extension material; customer ownership/source possession does not bypass governance. |
 
 ```text
 External Identity != Native Principal
@@ -472,62 +923,43 @@ Extension Origin != Trust Level
 Customer Ownership != Governance Bypass
 ```
 
-Concrete Principal namespace/cardinality, credentials, account schema, external identity linking mechanics, OIDC/LDAP/AD/SAML integration, and session representation remain downstream.
+Concrete Principal namespace/cardinality/account/credential/session and external identity linking model belongs to `Five-component Internal Architecture Boundaries` → `Component Internal Design`; material stable Principal identity/authority commitments return to `Project Owner / MDE`.
 
 ---
 
-## 9. Authentication / IAM / Policy / Trust Separation
+## 16. Authentication / IAM / Policy / Trust Separation
 
 ### Z2-DAD-031 — Evidence production, semantic interpretation, decision authority, and enforcement are separate roles
 
-Project Architecture preserves the following separation:
-
 ```text
-Authentication Evidence
-!= Native IAM Semantic Authority
-
-Authenticated
-!= Authorized
-
-Authorization / Policy Permit
-!= Formal Artifact Acceptance
-
-Authorization / Policy Permit
-!= Formal Execution Admission
-
-Trust Evidence
-!= Platform Trusted automatically
-
-Cryptographically Valid
-!= Semantically Trusted automatically
-
-Artifact Signed
-!= Artifact Accepted automatically
-
-Provider TLS / secure transport success
-!= Provider Trusted for Product Semantics
+Authentication Evidence != Native IAM Semantic Authority
+Authenticated != Authorized
+Policy Permit != Formal Artifact Acceptance
+Policy Permit != Formal Execution Admission
+Trust Evidence != Platform Trusted automatically
+Cryptographically Valid != Semantically Trusted automatically
+Artifact Signed != Artifact Accepted automatically
+Provider Secure-Transport Success != Provider Trusted for Product Semantics
 ```
 
-### 9.1 Project-level decision boundary map
-
-| Concern | Evidence may be produced by | Final semantic decision/authority at Project level | Enforcement/consumption |
+| Concern | Evidence may be produced by | Final semantic decision/authority | Enforcement/consumption |
 |---|---|---|---|
-| External authentication fact | Later-authorized external/native authenticator/provider | External evidence remains bounded; native IAM interpretation/binding is governed by `ns_server` IAM semantics | Consumers may use governed Principal context; protocol/provider later |
-| Native Principal / IAM meaning | IAM administration, mapping, external assertions may provide inputs | Native IAM Semantic Authority → `ns_server` | Distributed consumers may carry/use context without gaining IAM Authority |
-| Unified Policy meaning / permit | Policy inputs/context may be produced across domains | Unified Policy Semantic Authority → `ns_server` | Enforcement may occur at protected boundary under later design; enforcement != Policy Authority |
-| Platform Trust meaning | Cryptographic/provider/local/security evidence may be produced across boundaries | Platform Security/Trust Semantic Authority → `ns_server` | Components may enforce/consume trust context; evidence producer != Trust Authority |
-| Formal Artifact Acceptance | domain certification, provenance, signature/supply-chain evidence may contribute | Formal Artifact Acceptance Authority → `ns_server` | storage/install/runtime may consume acceptance state; possession != acceptance |
-| Formal Execution Admission | Tenant/Principal/Policy/Trust/Artifact/runtime-intent context may contribute | Formal Execution Admission Authority → `ns_server` | `ns_runtime`/executors may consume later-designed evidence; possession != issuance authority |
+| External authentication fact | later-authorized external/native authenticator/provider | external evidence remains bounded; native IAM interpretation/binding follows `ns_server` IAM semantics | governed Principal context may be consumed; provider/protocol not selected |
+| Native Principal/IAM meaning | IAM admin/mapping/external assertion inputs | Native IAM Semantic Authority → `ns_server` | distributed consumers may carry/use context without gaining IAM Authority |
+| Unified Policy meaning/permit | policy inputs/context from applicable domains | Unified Policy Semantic Authority → `ns_server` | distributed enforcement allowed later; enforcement != Policy Authority |
+| Platform Trust meaning | crypto/provider/local/security evidence from applicable boundaries | Platform Security/Trust Semantic Authority → `ns_server` | components may enforce/consume Trust context; evidence producer != Trust Authority |
+| Formal Artifact Acceptance | certification/provenance/signature/supply-chain evidence | Formal Artifact Acceptance Authority → `ns_server` | storage/install/runtime may consume acceptance state; possession != acceptance |
+| Formal Execution Admission | Tenant/Principal/Policy/Trust/Artifact/execution-intent context | Formal Execution Admission Authority → `ns_server` | runtime/executors may consume later-designed evidence; possession != issuance authority |
 
-The concrete authentication authority/provider topology, policy evaluation engine, enforcement-point topology, credential model, and trust mechanism remain explicitly deferred. Any material change to the accepted native IAM/Policy/Trust/Artifact/Admission authority allocation is an Owner MDE.
+Authentication provider/federation/protocol, policy evaluation engine/topology, credential/session model, and concrete enforcement boundaries belong to `Five-component Internal Architecture Boundaries` → `Component Internal Design`; runtime enforcement/consumption responsibility belongs to `Runtime Responsibility Architecture`; material Authority/Trust/Policy change returns to `Project Owner / MDE`.
 
 ---
 
-## 10. Security / Trust Boundary Topology
+## 17. Security / Trust Boundary Topology
 
 ### Z2-DAD-032 — Boundary crossing never transfers trust or semantic authority automatically
 
-The following are distinct trust-boundary participants:
+Distinct trust-boundary participants include:
 
 ```text
 ns_server
@@ -547,9 +979,7 @@ Customer Re-delivery
 Offline / Disconnected Components
 ```
 
-For any crossing where the semantics are applicable, downstream design must preserve the relevant Tenant, Organization, Principal, IAM, Policy, Trust, Artifact/Admission, Data/Privacy, provenance, revision, and temporal applicability context. The crossing mechanism itself is never the authority proof.
-
-Permanent rules:
+Where applicable, a boundary crossing must preserve relevant Tenant, Organization, Principal, IAM, Policy, Trust, Artifact/Admission, Data/Privacy, provenance, revision, and temporal-applicability semantics. The crossing mechanism is never authority proof.
 
 ```text
 Crossing Boundary != Trust Transfer automatically
@@ -563,11 +993,11 @@ Shared Foundation Mediation != Trust Authority
 SDK Binding != Trust Authority
 ```
 
-No network segmentation, firewall topology, TLS mode, PKI hierarchy, certificate format, KMS, sandbox, or authentication protocol is selected here.
+Network segmentation/firewall topology/TLS mode/PKI/certificates/KMS/sandbox/authentication protocol are not selected. Component trust-boundary allocation belongs to `Five-component Internal Architecture Boundaries`; runtime trust consumption/enforcement belongs to `Runtime Responsibility Architecture`; reusable Foundation primitives, if admitted, belong to `Shared Foundation Architecture` → `Foundation Contract Design` → `Provider Design`. Material Trust policy/lock-in returns to `Project Owner / MDE`.
 
 ---
 
-## 11. Data / Privacy / Trust Boundary
+## 18. Data / Privacy / Trust Boundary
 
 ### Z2-DAD-033 — Data use, storage, derivation, and export do not transfer semantic ownership
 
@@ -575,22 +1005,20 @@ Protected-data responsibility follows accepted semantic/SoT ownership plus appli
 
 | Data class | Project-level authority/privacy rule |
 |---|---|
-| Tenant-scoped Data | Must preserve native Tenant scope; Tenant identity/authority cannot be inferred from storage or external customer identity. |
-| Organization-scoped Data | Must preserve Tenant/Organization non-collapse and applicable Organization System/SoT binding. |
+| Tenant-scoped Data | Preserve native Tenant scope; Tenant identity/authority cannot be inferred from storage or external customer identity. |
+| Organization-scoped Data | Preserve Tenant/Organization non-collapse and applicable Organization System/SoT binding. |
 | Principal-associated Data | Native Principal semantics remain under IAM authority; external identity data does not automatically become native Principal truth. |
 | Business Application Data | Definition authority/SoT and business factual SoT remain distinct; UI/runtime/storage consumption does not transfer them. |
-| Automation Data | Automation Definition semantics remain `ns_server`; execution/output facts follow their own bounded factual owners. |
-| Agent Context | `ns_agent` owns Agent-domain semantics, but consumed external/business/data facts retain their original authority/provenance. |
-| Agent Memory-related Data | Memory capability is Agent-domain semantics; stored/remembered source material does not become Agent-owned source truth merely by memory placement. |
-| Knowledge / RAG Data | RAG consumption, indexing, embedding, vectorization, retrieval, or generation does not transfer Knowledge/Data SoT. |
-| External Enterprise Data | Bounded external SoT may remain authoritative; ingestion/ETL/replication/local availability does not transfer SoT. |
-| Local Execution Source Facts | Originating `ns_node` bounded source/effect facts remain provenance-bearing; central observation does not erase or universalize authority. |
-| Runtime Facts | Follow `Z2-MDE-014` per bounded runtime semantic partition; aggregate views are derived. |
-| Audit / Evidence Data | Evidence can support decisions/accountability but storage in an audit/evidence system does not become universal business/runtime truth. |
-| Configuration | Desired/applied/observed semantics follow `Z2-MDE-016`; Configuration != Secret. |
-| Secret References | References identify governed secret material without becoming the material itself; ordinary configuration storage must not absorb secret material by convenience. |
-
-Permanent rules:
+| Automation Data | Automation Definition semantics remain `ns_server`; execution/output facts follow bounded factual owners. |
+| Agent Context | `ns_agent` owns Agent-domain semantics; consumed external/business/data facts retain original authority/provenance. |
+| Agent Memory-related Data | Agent-memory capability semantics do not convert remembered source material into Agent-owned source truth. |
+| Knowledge / RAG Data | Retrieval/indexing/embedding/vectorization/generation/RAG consumption does not transfer Knowledge/Data SoT. |
+| External Enterprise Data | bounded external SoT may remain authoritative; ingestion/ETL/replication/local availability does not transfer SoT. |
+| Local Execution Source Facts | `ns_node` bounded source/effect facts remain provenance-bearing; central observation does not erase/universalize authority. |
+| Runtime Facts | follow `Z2-MDE-014`; aggregate views remain derived. |
+| Audit / Evidence Data | supports decision/accountability but audit-store placement does not create universal business/runtime truth. |
+| Configuration | desired/applied/observed semantics follow `Z2-MDE-016`; Configuration != Secret. |
+| Secret References | identify governed secret material without becoming material themselves; ordinary configuration must not absorb secret material by convenience. |
 
 ```text
 Data Storage Placement != Data Authority
@@ -602,17 +1030,13 @@ Extension Reachability != Data Access Authority
 Audit Record Presence != Domain Truth automatically
 ```
 
-Cross-boundary data disclosure, including AI/model/provider calls and extension access, must be governed by the applicable Tenant/Principal/Policy/Trust/Data-Privacy context and explicitly bounded to the data required by the accepted capability semantics. This is a project-level governance requirement, not a concrete data-classification label set, DLP product, encryption algorithm, or privacy-policy implementation.
-
-Material new Security/Trust/Privacy policy commitments remain MDE-class.
+Cross-boundary disclosure, including AI/model/provider calls and extension access, must be governed by applicable Tenant/Principal/Policy/Trust/Data-Privacy context and bounded to the accepted capability purpose/scope. Concrete classification labels, DLP/encryption/KMS products, and privacy implementation belong to later authorized design; material new Security/Trust/Privacy policy remains `Project Owner / MDE`.
 
 ---
 
-## 12. Secret versus Configuration Boundary
+## 19. Secret versus Configuration Boundary
 
 ### Z2-DAD-034 — Secret material remains a separately governed custody domain
-
-Project Architecture preserves:
 
 ```text
 Configuration != Secret
@@ -623,40 +1047,40 @@ Shared Foundation Crypto / Secret Primitive != Platform Trust Authority
 
 Project-level obligations:
 
-1. secret material must later have an explicit custody authority/responsibility;
-2. secret references must preserve sufficient identity, scope, provenance, and applicability semantics for governed consumption;
-3. secret consumption must remain subject to applicable Tenant/Principal/Policy/Trust governance;
-4. secret material must not be copied into ordinary configuration merely for implementation convenience;
-5. Shared Foundation may later mediate reusable authority-neutral secret/crypto primitives only under accepted stable contracts;
-6. provider identity/storage placement cannot become secret or Trust semantic authority automatically.
+1. secret material must later have explicit custody responsibility;
+2. secret references must preserve sufficient identity/scope/provenance/applicability for governed consumption;
+3. secret consumption remains subject to applicable Tenant/Principal/Policy/Trust governance;
+4. secret material must not be copied into ordinary configuration for convenience;
+5. Shared Foundation may later mediate reusable authority-neutral crypto/secret primitives only under accepted stable contracts;
+6. provider/storage placement cannot become Secret or Trust Authority automatically.
 
 Named downstream authority:
 
 ```text
 Five-component Internal Architecture Boundaries
-→ allocate component-level custody/consumption responsibility where needed
+→ allocate component custody/consumption responsibility
 
 Shared Foundation Architecture / Foundation Contract Design
-→ define authority-neutral reusable secret/crypto semantics if admitted
+→ authority-neutral reusable secret/crypto semantics if admitted
 
 Provider Design
-→ select concrete provider only after stable semantics
+→ concrete provider after stable semantics
 
 Project Owner / MDE
-→ any material Trust/Privacy/security policy or high-lock-in custody commitment
+→ material Trust/Privacy/Security policy or high-lock-in custody commitment
 ```
 
-This revision does not select Vault, KMS, HSM, secret store, key hierarchy, credential format, rotation algorithm, or secret-reference wire schema.
+No Vault/KMS/HSM/secret store/key hierarchy/credential format/rotation algorithm/secret-reference wire schema is selected.
 
 ---
 
 # Part C — Recovery / Reconciliation / Offline-Degraded Responsibility Topology
 
-## 13. Project-wide Recovery and Reconciliation Model
+## 20. Project-wide Recovery and Reconciliation Model
 
 ### Z2-DAD-035 — Recovery preserves authority and performs evidence handoff, not canonicalization by availability
 
-Every recovery/reconciliation boundary must preserve enough semantic information to determine, where applicable:
+Every recovery/reconciliation boundary preserves enough semantic information to determine, where applicable:
 
 ```text
 Fact Origin
@@ -672,45 +1096,41 @@ Resulting Projection Responsibility
 
 These are semantic obligations, not a synchronization message schema or reconciliation algorithm.
 
-### 13.1 Reconciliation responsibility matrix
-
-| Recovery/reconciliation pair | Origin / final authority invariant | Handoff responsibility | Final decision / resulting projection rule |
+| Recovery/reconciliation pair | Origin / final authority invariant | Evidence handoff responsibility | Final decision / projection rule |
 |---|---|---|---|
-| External bounded SoT ↔ local replica | Bounded external SoT remains final where assigned; replica does not acquire authority by availability | Native integration/domain responsibility preserves source identity/revision/provenance | Final SoT follows accepted bounded partition; local/central projection remains derived |
-| Organization source ↔ native mapping/projection | Native Organization semantics → `ns_server`; factual SoT → per bounded Organization partition | `ns_server`-owned Organization semantics govern mapping interpretation; source supplies bounded facts | same assertion has exactly one final SoT; unresolved mapping/conflict remains explicit |
-| Data/Knowledge source ↔ ETL/derived/projection | Source facts keep source authority; derived facts have distinct derivation identity | `ns_server` Data/Knowledge/ETL semantics preserve transformation provenance | ETL/index/cache/vector/projection does not become upstream source; derived SoT must be explicit if material |
-| `ns_node` local source/effect fact ↔ central observation | bounded local execution/effect fact originates under `ns_node` actual-state responsibility | `ns_node` preserves provenance and hands off reconciliation evidence | central/system projection is derived; broader domain canonicalization follows applicable authority, not central arrival |
-| `ns_agent` runtime fact ↔ system projection | bounded Agent-runtime fact originates under `ns_agent` responsibility | `ns_agent` preserves fact/revision/context evidence | projection does not transfer Agent or consumed-domain authority |
-| `ns_runtime` coordination fact ↔ System Runtime View | bounded coordination fact owned by `ns_runtime` | `ns_runtime` exposes/forwards evidence later under stable semantics | System Runtime View remains derived, not universal runtime SoT |
-| Managed Desired Configuration ↔ Applied Configuration | desired SoT → `ns_server`; applied fact → applicable runtime actual-state owner | manager distributes desired context; runtime returns application evidence later | partial/failed/unknown application does not overwrite desired; observed view remains projection |
-| Artifact Acceptance Evidence ↔ local artifact possession | acceptance decision → `ns_server`; local possession is factual | accepted evidence may be carried/verified later; local runtime reports possession/install state | possession/replay/successful load does not create or retroactively prove acceptance |
-| Execution Admission Evidence ↔ local/offline execution | Admission Authority → `ns_server`; execution fact → bounded executor actual-state owner | later-designed evidence can be carried to disconnected consumer; executor preserves use/effect provenance | local possession/exercise does not create Admission Authority; replay does not retroactively authorize |
-| Tenant/IAM/Policy/Trust context ↔ offline/local consumption | native authorities remain `ns_server` under accepted decisions | later-designed governed evidence may be cached/pre-issued/locally verifiable | disconnection does not transfer authority; stale/unknown/conflicting evidence stays explicit |
-| Extension / Re-delivery state ↔ accepted governance state | origin/lineage does not create Trust/Acceptance/Admission | extension/re-delivery boundary preserves provenance, revision and applicable governance evidence | reconnect/re-delivery does not erase Tenant/Policy/Trust/Artifact/Admission obligations |
-
-Permanent prohibitions:
+| External bounded SoT ↔ local replica | bounded external SoT remains final where assigned; replica does not acquire authority by availability | component owning native integration/domain semantics preserves source identity/revision/provenance | final SoT follows accepted partition; local/central view remains derived |
+| Organization source ↔ native mapping/projection | native Organization semantics → `ns_server`; factual SoT → bounded Organization partition | `ns_server` Organization semantics govern mapping interpretation; source supplies bounded facts | same assertion has one final SoT; unresolved mapping/conflict explicit |
+| Data/Knowledge source ↔ ETL/derived/projection | source facts keep source authority; derived facts have distinct derivation identity | `ns_server` Data/Knowledge/ETL semantics preserve transformation provenance | ETL/index/cache/vector/projection does not become upstream source; derived SoT explicit if material |
+| `ns_node` local source/effect fact ↔ central observation | bounded local execution/effect fact originates under `ns_node` actual-state responsibility | `ns_node` preserves provenance and hands off reconciliation evidence | central/system projection derived; broader canonicalization follows applicable authority, not central arrival |
+| `ns_agent` runtime fact ↔ system projection | bounded Agent-runtime fact originates under `ns_agent` | `ns_agent` preserves fact/revision/context | projection does not transfer Agent or consumed-domain authority |
+| `ns_runtime` coordination fact ↔ System Runtime View | bounded coordination fact owned by `ns_runtime` | `ns_runtime` provides coordination evidence under later stable semantics | System Runtime View remains derived, not universal runtime SoT |
+| Managed Desired Configuration ↔ Applied Configuration | desired SoT → `ns_server`; applied fact → applicable runtime Actual-state Owner | manager supplies desired context; runtime returns application evidence later | partial/failed/unknown application does not overwrite desired; observed view derived |
+| Artifact Acceptance Evidence ↔ local artifact possession | acceptance decision → `ns_server`; local possession factual | accepted evidence may later be carried/verified; runtime reports possession/install facts | possession/replay/load success does not create/retroactively prove acceptance |
+| Execution Admission Evidence ↔ local/offline execution | Admission Authority → `ns_server`; execution fact → bounded executor owner | later evidence may be carried to disconnected consumer; executor preserves use/effect provenance | local possession/exercise does not create Admission Authority; replay does not retroactively authorize |
+| Tenant/IAM/Policy/Trust context ↔ offline/local consumption | native authorities remain `ns_server` | later governed evidence may be cached/pre-issued/locally verifiable | disconnection does not transfer authority; stale/unknown/conflict remains explicit |
+| Extension / Re-delivery state ↔ accepted governance state | origin/lineage does not create Trust/Acceptance/Admission | extension/re-delivery boundary preserves provenance/revision/governance evidence | reconnect/re-delivery does not erase Tenant/Policy/Trust/Artifact/Admission obligations |
 
 ```text
-Reconnect → Authority Transfer
-Reconciliation → Authority Transfer
-Recovery → SoT Transfer
-Local Availability → Canonicalization
-Central Availability → Canonicalization
-Replay → Retroactive Authorization
-Successful Sync → Proof of Original Authority
-Local Copy During Offline → External SoT Replacement
-Central Projection → Source Fact Authority
+Reconnect → Authority Transfer               PROHIBITED
+Reconciliation → Authority Transfer          PROHIBITED
+Recovery → SoT Transfer                      PROHIBITED
+Local Availability → Canonicalization        PROHIBITED
+Central Availability → Canonicalization      PROHIBITED
+Replay → Retroactive Authorization           PROHIBITED
+Successful Sync → Proof of Original Authority PROHIBITED
+Local Copy During Offline → External SoT Replacement PROHIBITED
+Central Projection → Source Fact Authority   PROHIBITED
 ```
 
-No `latest-write-wins`, `central-wins`, `local-wins`, universal `source-wins`, vector clock, CRDT, event sourcing, or specific reconciliation engine is selected.
+No latest-write-wins/central-wins/local-wins/universal-source-wins/vector-clock/CRDT/event-sourcing/specific reconciliation engine is selected.
+
+Concrete runtime recovery/reconciliation mechanics belong to `Runtime Responsibility Architecture`; Organization/Data/non-runtime mapping/ETL algorithms belong to `Component Internal Design`; any material conflict-winner/authority policy returns to `Project Owner / MDE`.
 
 ---
 
-## 14. Offline / Degraded Governance Topology
+## 21. Offline / Degraded Governance Topology
 
 ### Z2-DAD-036 — Offline continuity is governed evidence consumption, never governance bypass
-
-Permanent rules:
 
 ```text
 Offline != No Tenant
@@ -725,43 +1145,47 @@ Offline != Local SoT Transfer
 Central Authority != Synchronous Online Dependency For Every Action
 ```
 
-Project Architecture explicitly permits later-authorized, bounded cached/pre-issued/locally-verifiable governed evidence to support offline/degraded execution and governance consumption. This permission does **not** select a grant token, admission token, certificate, lease, offline credential, policy bundle, artifact manifest, or other concrete mechanism.
+Project Architecture permits later-authorized bounded cached/pre-issued/locally-verifiable governed evidence to support offline/degraded execution and governance consumption. This permission does not select a grant/admission token, certificate, lease, offline credential, policy bundle, artifact manifest, or other concrete mechanism.
 
-Any such later evidence mechanism must preserve enough semantics to determine its issuing/controlling authority, applicable identity/revision/scope, Tenant/Principal/Policy/Trust/Artifact/Admission context where relevant, temporal applicability, provenance, and the bounded action/capability to which it applies. This is an information-applicability requirement, not a wire-schema definition.
+Any later evidence mechanism must preserve enough semantics to establish its controlling authority, applicable identity/revision/scope, relevant Tenant/Principal/Policy/Trust/Artifact/Admission context, temporal applicability, provenance, and bounded capability/action. This is an information-applicability requirement, not a wire-schema definition.
 
-If the applicable evidence cannot establish the required state, the condition remains `UNKNOWN`, `INDETERMINATE`, `STALE`, `UNVERIFIED`, `UNAVAILABLE`, or another explicit state as appropriate. Project Architecture does not convert that condition automatically into allow or deny.
+If applicable evidence cannot establish required state, the result remains an explicit `UNKNOWN`, `INDETERMINATE`, `STALE`, `UNVERIFIED`, `UNAVAILABLE`, or other applicable state; Project Architecture does not automatically convert uncertainty into allow or deny.
 
-Concrete operation-specific offline fail-open/fail-closed behavior:
+Named downstream authority:
 
 ```text
-if material to Security / Trust / Privacy / Authority / product semantics
-→ Project Owner / MDE
+Five-component Internal Architecture Boundaries
+→ allocate capability/component responsibility for offline behavior
 
-otherwise
-→ applicable named downstream architecture/design authority inside its authorization
+Runtime Responsibility Architecture
+→ define runtime/offline evidence consumption, actual-state, freshness and recovery mechanics
+
+Component Internal Design
+→ define bounded non-runtime handling within accepted responsibility
+
+Project Owner / MDE
+→ material operation-specific fail-open/fail-closed or Trust/Privacy/Authority policy
 ```
 
 ---
 
 # Part D — Compatibility / Evolution / Migration / Conformance / Revalidation
 
-## 15. Compatibility and Evolution Classification
+## 22. Compatibility and Evolution Classification
 
 ### Z2-DAD-037 — Semantic compatibility precedes representation compatibility
 
-The project uses the following primary change classes. A change receives the highest-governance class that applies; a migration obligation may additionally exist beneath that class.
+A proposed change receives the highest-governance **primary class** that applies; a migration obligation may additionally exist beneath that class.
 
-| Primary class | Meaning | Minimum governance consequence |
+| Primary class | Meaning | Minimum consequence |
 |---|---|---|
-| `CONFORMANCE_ONLY_IMPLEMENTATION_CHANGE` | Implementation/provider/package/layout changes with no accepted semantic effect | No Project Architecture revalidation; prove conformance |
-| `COMPATIBLE_EVOLUTION` | Accepted semantics evolve without changing existing identity/authority/state meaning/invariants for supported consumers | Explicit semantic compatibility evidence; downstream version/support handling |
-| `EXPLICIT_MIGRATION_REQUIRED` | State/definition/artifact/configuration/representation must transition under explicit interpretation, while no higher-class semantic authority change is introduced | Named migration plan/design and verification before transition |
-| `ARCHITECTURE_REVALIDATION_REQUIRED` | Change alters an accepted Project Architecture semantic boundary/invariant or stable contract meaning | Return to GAC for classification/revalidation before downstream reliance |
-| `OWNER_MDE_REQUIRED` | Change is Owner-reserved: major Authority/SoT/Actual-state, principal identity, Trust/Privacy/Security policy, offline fail policy, stable compatibility/historical interpretation, major lifecycle authority, high-lock-in protocol/storage/artifact/provider commitment, etc. | Stop affected work; Project Owner decision plus GAC revalidation/continuity as applicable |
+| `CONFORMANCE_ONLY_IMPLEMENTATION_CHANGE` | implementation/provider/package/layout change with no accepted semantic effect | no Project Architecture revalidation; downstream conformance evidence required |
+| `COMPATIBLE_EVOLUTION` | semantics evolve while preserving existing supported identity/authority/state meaning/invariants | explicit semantic compatibility evidence; `Five-component Internal Architecture Boundaries`/`Component Internal Design` or `Foundation Contract Design` as applicable must preserve support behavior |
+| `EXPLICIT_MIGRATION_REQUIRED` | definition/artifact/configuration/data/representation/state must transition under explicit interpretation with no higher-class authority change | migration design + verification before transition via named downstream authority in §23/§27 |
+| `ARCHITECTURE_REVALIDATION_REQUIRED` | accepted Project Architecture boundary/invariant/stable contract meaning changes | return to GAC classification/revalidation before downstream reliance |
+| `OWNER_MDE_REQUIRED` | Owner-reserved material Authority/SoT/Actual-state/Principal identity/Trust/Privacy/Security/offline fail/lifecycle authority/compatibility-history/high-lock-in commitment | stop affected work; Project Owner decision + GAC continuity/revalidation as applicable |
 
-### 15.1 Semantic compatibility predicate
-
-Compatibility must be evaluated at the semantic level before representation readability/interoperability. Relevant dimensions include, where applicable:
+Semantic compatibility must consider, where applicable:
 
 ```text
 Identity
@@ -782,8 +1206,6 @@ Historical Interpretation
 Migration Interpretation
 ```
 
-Permanent rules:
-
 ```text
 Version Bump != Compatible automatically
 Schema Readable != Semantically Compatible
@@ -794,30 +1216,26 @@ No Compile Error != Compatible
 Transport Compatibility != Semantic Compatibility automatically
 ```
 
-Unsupported, unknown, ambiguous, or incompatible semantic revisions must remain explicit; implementations may not silently coerce them to the nearest/current shape.
+Unsupported/unknown/ambiguous/incompatible semantic revisions remain explicit; implementations must not silently coerce them to a current/nearest representation.
 
-### 15.2 Provider and representation evolution
-
-A provider, framework, transport, database, SDK binding, or serialization representation may be replaced without Project Architecture revalidation **only** when accepted semantic identity, authority, failure meaning, temporal applicability, compatibility obligations, offline correctness, and contract semantics remain preserved. If replacement requires semantic change, the change is classified by this section rather than hidden inside implementation substitution.
+Provider/framework/transport/database/SDK binding/serialization replacement requires no Project Architecture revalidation **only** when accepted semantic identity, authority, failure meaning, temporal applicability, compatibility obligations, offline correctness, and contract semantics remain preserved.
 
 ---
 
-## 16. Migration Classes and Obligations
+## 23. Migration Classes and Obligations
 
 ### Z2-DAD-038 — Copying state is not semantic migration completion
 
 | Migration class | Project-level obligations | Escalation trigger |
 |---|---|---|
-| Data Migration | Preserve bounded SoT, source identity, provenance, derivation distinction, Tenant/Organization scope, and historical interpretation; copied data is not automatically canonical | Authority/SoT reassignment or material privacy/trust change → MDE/revalidation |
-| Definition Migration | Preserve domain Semantic Authority, canonical Definition SoT, definition identity/revision lineage, and historical execution interpretation | Definition Authority/SoT/stable identity change → MDE/revalidation |
-| Artifact Migration | Preserve Definition/Certification/Artifact distinction, Artifact Acceptance provenance, compatibility, and applicable Admission relationship | New acceptance semantics/authority, stable artifact-format lock-in, or historical reinterpretation → MDE as applicable |
-| Configuration Migration | Preserve bootstrap vs managed desired vs applied vs observed states and configured-capability semantic authority | Change to `Z2-MDE-016` topology → MDE/revalidation |
-| Authority / SoT Topology Migration | Explicitly define old/new authority applicability and cutover semantics without leaving multiple final authorities for same assertion | Always material → Owner MDE + architecture revalidation |
-| Identity Mapping Migration | Preserve old/new identity/mapping lineage and historical mapping interpretation; unmapped/conflicting states explicit | Material Principal/stable identity commitment or authority relationship change → Owner MDE |
-| Runtime Actual-state Transition | Preserve bounded actual-state ownership and source/effect provenance through implementation/runtime transition | Change actual-state ownership partition or one-final-owner rule → Owner MDE/revalidation |
-| Provider / Implementation Migration | Preserve stable semantics, failure meaning, conformance, offline/private correctness, and authority neutrality | Semantic contract change/high lock-in → revalidation/MDE as applicable |
-
-Permanent rules:
+| Data Migration | preserve bounded SoT/source identity/provenance/derivation/Tenant/Organization/history; copied data not automatically canonical | Authority/SoT or material Privacy/Trust change → MDE/revalidation |
+| Definition Migration | preserve Semantic Authority/canonical Definition SoT/identity/revision lineage/historical execution interpretation | Definition Authority/SoT/stable identity change → MDE/revalidation |
+| Artifact Migration | preserve Definition/Certification/Artifact distinction, Acceptance provenance, compatibility, applicable Admission relationship | acceptance authority/semantic change or major stable format/history commitment → MDE as applicable |
+| Configuration Migration | preserve bootstrap/managed desired/applied/observed separation and configured-capability semantics | change `Z2-MDE-016` topology → MDE/revalidation |
+| Authority / SoT Topology Migration | explicit old/new authority applicability/cutover; never leave multiple final authorities for same assertion | always material → Project Owner MDE + architecture revalidation |
+| Identity Mapping Migration | preserve old/new mapping lineage and historical interpretation; unmapped/conflict explicit | material Principal/stable identity/authority relationship → Project Owner MDE |
+| Runtime Actual-state Transition | preserve bounded ownership and source/effect provenance through runtime/provider transition | owner partition or one-final-owner change → Project Owner MDE/revalidation |
+| Provider / Implementation Migration | preserve stable semantics/failure/conformance/offline correctness/authority neutrality | semantic contract/high-lock-in change → revalidation/MDE as applicable |
 
 ```text
 Data Copied != Migration Complete
@@ -827,56 +1245,52 @@ Artifact Repacked != Artifact Governance Migrated
 Configuration File Converted != Desired/Applied Semantics Migrated
 ```
 
-A migration may temporarily involve old/new physical representations, but semantic applicability must remain unambiguous; physical coexistence cannot create two final authorities for the same assertion.
+Physical coexistence during migration must not create two final semantic authorities for the same assertion.
+
+Concrete component migration mechanics → `Component Internal Design`; provider realization → `Provider Design`; implementation sequencing/readiness proof → `Design-to-Implementation Readiness`; semantic topology changes return upstream before those mechanics are designed.
 
 ---
 
-## 17. Project Conformance Topology
+## 24. Project Conformance Topology
 
-### Z2-DAD-039 — Every downstream architecture/design layer must prove conformance to accepted upstream semantics
-
-Accepted Project Architecture requires downstream conformance evidence. The following named authorities have these future obligations when GAC explicitly authorizes them:
+### Z2-DAD-039 — Downstream architecture/design must prove conformance
 
 | Named downstream authority | Minimum Project Architecture conformance obligation |
 |---|---|
-| Five-component Internal Architecture Boundaries | Prove internal boundaries do not move accepted Product Component responsibilities, Authority/SoT, lifecycle, trust, data, offline, compatibility or recovery semantics |
-| Runtime Responsibility Architecture | Define precise runtime actual-state partitions, freshness/observation/recovery handoffs and runtime roles without changing `Z2-MDE-014` or making coordination/projection universal authority |
-| Shared Foundation Architecture | Preserve non-component status, authority neutrality, stable reusable semantics and provider replaceability |
-| Foundation Contract Design | Define stable language-neutral semantics before representation; make failure/unknown/version compatibility explicit |
-| Foundation Module Design | Realize accepted Foundation contracts without inventing product-domain authority |
-| Provider Design | Prove concrete providers conform to stable semantics and do not acquire Authority/SoT by placement |
-| Component Internal Design | Realize component responsibility without inventing missing Project Architecture or crossing accepted trust/SoT/lifecycle boundaries |
-| Design-to-Implementation Readiness | Verify accepted design is implementation-derivable and all architecture-critical dimensions are resolved or legally delegated |
-| Implementation Planning | Consume accepted design only; has no Architecture Authority and must return discovered design gaps upstream |
+| Five-component Internal Architecture Boundaries | do not move Product Component responsibilities, Authority/SoT, lifecycle, Trust/Data/offline/recovery/evolution semantics |
+| Runtime Responsibility Architecture | define precise runtime actual-state partitions/freshness/observation/recovery/Runtime Roles without changing `Z2-MDE-014` or making coordination/projection universal authority |
+| Shared Foundation Architecture | preserve non-component status, authority neutrality, stable reusable semantics, provider replaceability |
+| Foundation Contract Design | semantic-before-representation stable contracts with explicit failure/unknown/version compatibility |
+| Foundation Module Design | realize accepted Foundation contracts without inventing product-domain authority |
+| Provider Design | concrete provider conforms to stable semantics and gains no Authority/SoT by placement |
+| Component Internal Design | realize component responsibility without inventing missing Project Architecture or crossing accepted Trust/SoT/lifecycle boundaries |
+| Design-to-Implementation Readiness | prove accepted design is implementation-derivable and no architecture-critical gap is hidden in implementation |
+| Implementation Planning | consumes accepted design only; no Architecture Authority; discovered design gaps return upstream |
 
-Conformance is semantic, not implementation identity. Passing compilation/tests, using a reference SDK, matching a schema, or using the same provider does not by itself prove architecture conformance.
-
-This revision does not select conformance tools or test frameworks.
+Compilation/tests/reference SDK/schema equality/provider equality do not by themselves prove architecture conformance. Concrete conformance tooling is not selected.
 
 ---
 
-## 18. Project Architecture Revalidation Triggers
+## 25. Project Architecture Revalidation Triggers
 
-### Z2-DAD-040 — Material downstream change returns to the correct decision authority
+### Z2-DAD-040 — Material downstream change returns to the correct authority
 
 | Proposed change | Required authority/action |
 |---|---|
-| Change exactly-five Product Component topology | Project Owner / constitutional revalidation + GAC |
-| Move accepted Authority / Semantic Owner / SoT / Actual-state owner | Project Owner MDE + architecture revalidation |
-| Change four first-class capability-domain non-subordination relationship | Project Owner MDE + material architecture revalidation |
-| Change Tenant or Tenant/Organization non-collapse semantics | Project Owner MDE / constitutional revalidation + GAC |
-| Change native Principal/IAM authority relationship materially | Project Owner MDE + architecture revalidation |
-| Change material Security / Trust / Privacy policy | Project Owner MDE + architecture revalidation |
-| Change operation-specific offline fail-open/fail-closed policy materially | Project Owner MDE |
-| Change Definition/Artifact/Admission/Runtime separation | Project Owner MDE + architecture revalidation |
-| Change stable cross-boundary contract semantics | Compatibility assessment + GAC revalidation; Owner MDE if major externally visible/historical/lock-in commitment |
-| Change bounded external SoT preservation or one-final-owner rule | Project Owner MDE + architecture revalidation |
+| Change exactly-five Product Component topology | `Project Owner` / constitutional revalidation + GAC |
+| Move accepted Authority / Semantic Owner / SoT / Actual-state Owner | `Project Owner / MDE` + GAC architecture revalidation |
+| Change four first-class capability-domain non-subordination | `Project Owner / MDE` + material architecture revalidation |
+| Change Tenant or Tenant/Organization non-collapse semantics | `Project Owner / MDE` / constitutional revalidation + GAC |
+| Materially change native Principal/IAM authority relationship | `Project Owner / MDE` + architecture revalidation |
+| Material Security / Trust / Privacy policy change | `Project Owner / MDE` + architecture revalidation |
+| Material operation-specific offline fail-open/fail-closed policy | `Project Owner / MDE` |
+| Change Definition/Artifact/Admission/Runtime separation | `Project Owner / MDE` + architecture revalidation |
+| Change stable cross-boundary contract semantics | GAC compatibility/revalidation; `Project Owner / MDE` for major externally visible/history/lock-in commitment |
+| Change bounded external SoT preservation or one-final-owner rule | `Project Owner / MDE` + architecture revalidation |
 | Change offline/private core-correctness baseline | Project Owner-level revalidation + GAC |
-| Replace provider while stable semantics and authority remain preserved | Conformance-only or compatible evolution; Project Architecture revalidation not required solely by replacement |
-| Change internal package/directory layout with no semantic effect | No Project Architecture revalidation; conformance still required |
-| Change database/storage/transport technology with no accepted semantic effect | No Project Architecture revalidation solely for technology change |
-
-Classification authority remains:
+| Replace provider while stable semantics/authority preserved | conformance-only or compatible evolution; no Project Architecture revalidation solely for replacement |
+| Change internal package/directory layout with no semantic effect | no Project Architecture revalidation; conformance still required |
+| Change database/storage/transport with no accepted semantic effect | no Project Architecture revalidation solely for technology change |
 
 ```text
 GAC
@@ -889,51 +1303,51 @@ Authorized Architecture / Design Session
 → DAD only inside exact authorized scope
 
 Implementation / Codex
-→ no Architecture Authority
+→ NO Architecture Authority
 ```
 
 ---
 
 # Part E — Project Architecture Semantic Resolution Matrix
 
-## 19. Semantic Resolution Matrix Interpretation
+## 26. Matrix Interpretation
 
-### Z2-DAD-041 — Project-level semantic closure is distinct from downstream mechanism design
+### Z2-DAD-041 — Project-level closure is distinct from downstream mechanism design
 
-The matrix status applies to the **Project Architecture-level semantic dimension**. A dimension can be `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` while concrete schema, protocol, module, runtime role, algorithm, provider, or internal boundary remains explicitly delegated to a named later authority. Such a delegation is not an unresolved Project Architecture gap because the governing semantics and the legal decision authority are already explicit.
+A matrix status applies to the **Project Architecture semantic dimension**. A dimension may be `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` while concrete schema/protocol/module/runtime role/algorithm/provider/internal boundary is explicitly delegated to a named later authority. That is not an unresolved Project Architecture gap because governing semantics and legal decision authority are explicit.
 
 No dimension below uses `TODO`, implementation-default, provider-default, framework-default, or unnamed “later” language.
 
-## 20. Mandatory Project Architecture Semantic Resolution Matrix
+## 27. Mandatory Project Architecture Semantic Resolution Matrix
 
 | Semantic Dimension | Status | Project Architecture resolution | Named downstream continuation / revalidation authority |
 |---|---|---|---|
-| Identity / Namespace | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Product Component/domain/principal/source identities remain distinct; external identity != native identity automatically; identity/revision/provenance must remain traceable | Five-component Internal Architecture Boundaries / Component Internal Design for concrete identifiers; Project Owner/MDE for material stable identity commitment |
-| Revision / Evolution | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Definition/artifact/admission/policy/trust/config/source/mapping/projection revisions are distinct; no universal latest-wins | Applicable Contract/Component design; material compatibility commitment → MDE as applicable |
-| Authority | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | `Z2-MDE-001..017` preserved; no placement/evidence/execution-based authority transfer | GAC classification; Project Owner/MDE for any material reassignment |
-| Semantic Ownership | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Four principal domains remain non-subordinate; capability semantic ownership survives composition/mediation | Five-component Internal Architecture Boundaries must conform |
-| Source of Truth | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Native Tenant/Definition SoTs and bounded Organization/Data federation established; one final SoT per same assertion | Component/Internal integration design defines concrete partitions; changes → MDE |
-| Actual-state Ownership | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Per bounded runtime semantic partition, exactly one final Actual-state Owner; system views are projections | Runtime Responsibility Architecture defines precise partitions/freshness without changing topology |
-| State / Lifecycle | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Definition/Certification/Artifact/Install/Activate/Admission/Schedule/Attempt/Effect/Projection and config states remain distinct | Five-component Internal Architecture Boundaries / Component Internal Design for concrete lifecycle handlers |
-| Temporal Semantics | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | identity+revision+provenance+authority-context+temporal-applicability required; historical context not replaced by current state | Runtime Responsibility Architecture / applicable Contract Design for clock/freshness representation |
-| Failure / Unknown / Indeterminate | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Unknown, indeterminate, missing, unavailable, unreachable, stale, conflicting, unsupported, unmapped, unverified, partially applied, reconciliation pending, projection stale, authority binding unknown are explicit | Applicable downstream design defines operation handling; material fail policy → Project Owner/MDE |
-| Tenant | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Native Tenant authority/SoT in `ns_server`; Tenant remains explicit offline and distinct from Organization | Five-component Internal Architecture Boundaries / Component Internal Design must preserve |
-| Organization | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Native Organization semantics `ns_server`; factual SoT per bounded Organization partition; mappings do not imply equality | Component Internal Design for concrete Organization/mapping mechanics; ownership change → MDE |
-| Principal | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Human/service/node/agent/native/external/extension/provider/re-delivery contexts distinguished; no identity collapse | Five-component Internal Architecture Boundaries / Component Internal Design for concrete Principal model; material identity decision → MDE |
-| Authentication | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Authentication evidence != native IAM authority; external assertions are evidence until governed native interpretation/binding | Five-component Internal Architecture Boundaries / Component Internal Design for provider/protocol; material authority/trust change → MDE |
-| Authorization / Policy | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Policy Authority `ns_server`; authenticated != authorized; Policy Permit != Artifact Acceptance/Admission; enforcement != authority | Five-component Internal Architecture Boundaries / Component Internal Design for evaluation/enforcement topology; material policy → MDE |
-| Security | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Platform Trust Authority `ns_server`; crypto/transport/provider/local success are evidence, not trust authority | Five-component Internal Architecture Boundaries / Shared Foundation Architecture / Provider Design; material security policy → MDE |
-| Data / Privacy / Trust | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | storage/consumption/ETL/RAG/provider calls/extensions do not transfer data authority; governed cross-boundary disclosure required | Component Internal Design / Shared Foundation Architecture for mechanics; material privacy/trust policy → MDE |
-| Serialization / Representation | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | semantic identity/compatibility precedes representation; representation cannot define authority/state meaning | Applicable later Contract Design; Foundation Contract Design for Foundation; no implementation-defined contract |
-| Offline / Degraded | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | governance preserved without synchronous central dependency for every action; bounded governed evidence allowed later; no local authority escalation | Runtime Responsibility Architecture / Component Internal Design for mechanisms; material fail-open/fail-closed → MDE |
-| Recovery / Reconciliation | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | provenance-preserving evidence handoff; recovery/reconnect/sync never transfer authority; reconciliation pending/conflict explicit | Runtime Responsibility Architecture / Component Internal Design for algorithms |
-| Compatibility | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | semantic compatibility before representation; five governance change classes established; unsupported/unknown explicit | Applicable Contract/Component design proves compatibility; major commitment → GAC/MDE |
-| Migration | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Data/Definition/Artifact/Configuration/Authority-SoT/Identity/Runtime/Provider migration classes and obligations established | Component Internal Design / Provider Design / Design-to-Implementation Readiness for mechanics; topology migration → MDE |
-| Conformance | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | downstream architecture/design/provider/planning must prove conformance and cannot invent architecture | Named downstream authorities in §17; GAC/Design-to-Implementation Readiness gates |
-| Cross-boundary Dependency | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | dependency, invocation, transport, provider and Shared Foundation mediation do not transfer authority; applicable context/provenance preserved | Five-component Internal Architecture Boundaries / applicable Contract Design |
-| Invariant | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | NSE-001..017 and accepted `0.0.2`/MDE invariants explicitly preserved across lifecycle/trust/recovery/evolution | All downstream authorities must demonstrate preservation |
-| Decision Traceability | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Batch 2 DADs derive only from Repository current authority; MDE baseline is explicit; no Owner decision invented | Repository-backed continuity + GAC independent acceptance |
-| Revalidation Trigger | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | material trigger classes and responsible authority established in §18 | GAC classifies; Project Owner decides MDE; bounded sessions act only when authorized |
+| Identity / Namespace | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Product Component/domain/principal/source identities distinct; external identity != native identity automatically; identity/revision/provenance traceable | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; material stable identity → `Project Owner / MDE` |
+| Revision / Evolution | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Definition/artifact/admission/policy/trust/config/source/mapping/projection revisions distinct; no universal latest-wins | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; Foundation contract revision → `Foundation Contract Design`; material compatibility commitment → GAC/MDE |
+| Authority | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | `Z2-MDE-001..017` preserved; no placement/evidence/execution-based authority transfer | GAC classification; reassignment → `Project Owner / MDE` |
+| Semantic Ownership | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | four principal domains non-subordinate; ownership survives composition/mediation | `Five-component Internal Architecture Boundaries` must conform |
+| Source of Truth | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Tenant/Definition native SoTs plus bounded Organization/Data federation; one final SoT per same assertion | `Component Internal Design` defines concrete partitions/mappings; ownership change → MDE |
+| Actual-state Ownership | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | per bounded runtime partition one final owner; system views derived | `Runtime Responsibility Architecture` defines precise partitions/freshness; owner change → MDE |
+| State / Lifecycle | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Definition/Certification/Artifact/Install/Activate/Admission/Schedule/Attempt/Effect/Projection/config states distinct | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; runtime partition mechanics → `Runtime Responsibility Architecture` |
+| Temporal Semantics | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | identity+revision+provenance+authority-context+temporal-applicability; history not replaced by current state | `Runtime Responsibility Architecture` for runtime; `Component Internal Design` for source/mapping history; Foundation representation → `Foundation Contract Design` |
+| Failure / Unknown / Indeterminate | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | explicit Unknown/Indeterminate/Missing/Unavailable/Unreachable/Stale/Conflicting/Unsupported/Unmapped/Unverified/Partially Applied/Reconciliation Pending/Projection Stale/Authority Binding Unknown | `Five-component Internal Architecture Boundaries`; runtime handling → `Runtime Responsibility Architecture`; bounded non-runtime handling → `Component Internal Design`; material fail policy → MDE |
+| Tenant | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | native Tenant authority/SoT `ns_server`; explicit offline; Tenant != Organization | `Five-component Internal Architecture Boundaries` → `Component Internal Design` must preserve |
+| Organization | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | native semantics `ns_server`; factual SoT per bounded Organization partition; mapping != identity equality | `Component Internal Design`; ownership/semantic change → MDE |
+| Principal | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Human/service/node/agent/external/extension/provider/re-delivery contexts distinguished | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; material identity → MDE |
+| Authentication | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Authentication evidence != native IAM authority; external assertion requires governed native interpretation/binding | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; material Authority/Trust change → MDE |
+| Authorization / Policy | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Policy Authority `ns_server`; authenticated != authorized; Permit != Artifact/Admission; enforcement != Authority | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; runtime enforcement → `Runtime Responsibility Architecture`; material Policy → MDE |
+| Security | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Trust Authority `ns_server`; crypto/transport/provider/local success are evidence, not Trust Authority | `Five-component Internal Architecture Boundaries`; reusable Foundation → `Shared Foundation Architecture` / `Foundation Contract Design`; provider → `Provider Design`; material Security → MDE |
+| Data / Privacy / Trust | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | storage/consumption/ETL/RAG/provider/extension access does not transfer data authority; governed disclosure required | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; reusable Foundation mechanics → `Shared Foundation Architecture`; material Privacy/Trust → MDE |
+| Serialization / Representation | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | semantic identity/compatibility before representation; representation cannot define authority/state meaning | component cross-boundary realization → `Five-component Internal Architecture Boundaries` → `Component Internal Design`; Foundation → `Foundation Contract Design`; major stable protocol commitment → MDE |
+| Offline / Degraded | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | governance preserved without synchronous central dependency for every action; bounded governed evidence allowed later; no local authority escalation | `Five-component Internal Architecture Boundaries`; runtime mechanics → `Runtime Responsibility Architecture`; bounded component behavior → `Component Internal Design`; material fail policy → MDE |
+| Recovery / Reconciliation | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | provenance-preserving evidence handoff; recovery/reconnect/sync never transfer authority; pending/conflict explicit | runtime → `Runtime Responsibility Architecture`; Organization/Data/non-runtime → `Component Internal Design`; material winner policy → MDE |
+| Compatibility | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | semantic compatibility before representation; five change classes; unsupported/unknown explicit | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; Foundation contract → `Foundation Contract Design`; major commitment → GAC/MDE |
+| Migration | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Data/Definition/Artifact/Configuration/Authority-SoT/Identity/Runtime/Provider migration classes established | `Component Internal Design` / `Provider Design` → `Design-to-Implementation Readiness`; topology migration → MDE |
+| Conformance | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | all downstream architecture/design/provider/planning layers prove semantic conformance; implementation cannot invent architecture | named authorities in §24 + GAC / `Design-to-Implementation Readiness` gates |
+| Cross-boundary Dependency | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | dependency/invocation/transport/provider/Foundation mediation does not transfer authority; context/provenance preserved | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; Foundation cross-boundary contract → `Foundation Contract Design` |
+| Invariant | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | `NSE-001..017`, accepted `Z2-DAD-001..026`, `Z2-MDE-001..017` preserved | every named downstream authority must demonstrate preservation |
+| Decision Traceability | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | Batch 2 DADs derive from Repository current authority; no Owner decision invented | Repository-backed continuity + GAC independent acceptance |
+| Revalidation Trigger | `CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL` | material trigger classes and responsible authority established | GAC classifies; Project Owner decides MDE; bounded sessions only inside authorization |
 
 Matrix result:
 
@@ -959,64 +1373,64 @@ Implementation-defined Escape
 
 ---
 
-## 21. Explicit Named Downstream Deferrals
+## 28. Explicit Named Downstream Deferrals
 
-The following concrete questions are intentionally not designed by Batch 2. Their semantic boundaries are closed above; their mechanisms belong to named later authorities and require explicit GAC authorization before work begins.
+The following concrete questions are intentionally not designed in Batch 2. Their Project Architecture semantics are closed; mechanisms belong to the named authority and require explicit GAC authorization before that work begins.
 
 | Deferred concrete question | Named later authority |
 |---|---|
-| Precise runtime semantic-partition taxonomy, runtime freshness/observation/recovery mechanics | `Runtime Responsibility Architecture` |
-| Runtime Roles, processes, services, workers, schedulers, dispatch workers, connection workers, heartbeats | `Runtime Responsibility Architecture` |
-| Component-internal lifecycle handlers, enforcement boundaries, internal capability decomposition | `Five-component Internal Architecture Boundaries` → `Component Internal Design` |
-| Domain Semantic Certification authority/mechanism where still required | `Five-component Internal Architecture Boundaries`; material authority choice → `Project Owner / MDE` |
-| IAM factual SoT/federation detail, Principal schema, credentials, authentication provider/protocol, session identity representation | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; material identity/trust decision → `Project Owner / MDE` |
-| Policy evaluation engine/topology and concrete enforcement points | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; material Policy commitment → `Project Owner / MDE` |
-| PKI/KMS/HSM/TLS/certificate/trust-store/network-security implementation | `Five-component Internal Architecture Boundaries`; reusable primitives, if admitted → `Shared Foundation Architecture` / `Foundation Contract Design`; concrete provider → `Provider Design`; material Trust/lock-in → `Project Owner / MDE` |
-| Secret material custody details, secret-reference contract/schema, secret provider/rotation | `Five-component Internal Architecture Boundaries`; reusable semantics, if admitted → `Shared Foundation Architecture` / `Foundation Contract Design`; provider → `Provider Design`; material Trust/Privacy commitment → `Project Owner / MDE` |
-| Artifact package/signature/registry/storage representation | `Five-component Internal Architecture Boundaries` and later applicable Contract/Component design; provider realization → `Provider Design`; major stable format lock-in → `Project Owner / MDE` |
-| Execution Admission evidence/token/grant representation | `Five-component Internal Architecture Boundaries` + `Runtime Responsibility Architecture` and later applicable Contract Design; material stable/offline commitment → `Project Owner / MDE` |
-| Operation-specific offline fail-open/fail-closed behavior | Applicable later architecture/design authority; **material** behavior → `Project Owner / MDE` |
-| Offline credential/grant/bundle/lease/certificate/token mechanism | `Five-component Internal Architecture Boundaries` + `Runtime Responsibility Architecture` / applicable Contract Design; material trust/identity commitment → `Project Owner / MDE` |
-| Configuration file format, revision representation, push/pull/watch/distribution protocol | `Five-component Internal Architecture Boundaries` + `Runtime Responsibility Architecture`; reusable loader semantics → `Shared Foundation Architecture` / `Foundation Contract Design`; provider → `Provider Design` |
-| Organization mapping/synchronization algorithms and concrete external-system mappings | `Component Internal Design`; material SoT/identity relationship change → `Project Owner / MDE` |
-| Data/Knowledge synchronization/ETL/reconciliation algorithms and concrete partition inventory | `Component Internal Design`; material SoT change → `Project Owner / MDE` |
-| Reconciliation conflict-resolution algorithm, clocks, vector clocks/CRDT/event-store choices if ever proposed | `Runtime Responsibility Architecture` / `Component Internal Design`; material winner/lock-in policy → `Project Owner / MDE` |
-| Stable contract concrete wire/schema/REST/RPC/gRPC/WebSocket representation | applicable later Contract Design; Foundation boundaries → `Foundation Contract Design`; major stable protocol commitment → `Project Owner / MDE` |
-| Shared Foundation capability inventory, contracts, modules, providers | `Shared Foundation Architecture` → `Foundation Contract Design` → `Foundation Module Design` → `Provider Design` |
-| SDK language bindings, package layout, generators and distribution mechanics | semantic ownership first in `Five-component Internal Architecture Boundaries`; implementation readiness via `Design-to-Implementation Readiness`; no Architecture Authority in Implementation Planning |
-| Database/storage/cache topology and concrete technology | `Component Internal Design` / `Shared Foundation Architecture` as applicable → `Provider Design`; material storage-format/lock-in commitment → `Project Owner / MDE` |
-| Concrete migration tooling, execution sequencing, rollback tooling | `Component Internal Design` / `Provider Design` → `Design-to-Implementation Readiness`; any semantic authority change returns upstream |
-| Concrete conformance-test tooling | applicable downstream design → `Design-to-Implementation Readiness`; tools do not define semantics |
+| precise runtime semantic partitions/freshness/observation/recovery mechanics | `Runtime Responsibility Architecture` |
+| Runtime Roles/processes/services/workers/schedulers/dispatch workers/connection workers/heartbeats | `Runtime Responsibility Architecture` |
+| component lifecycle handlers/enforcement boundaries/internal capability decomposition | `Five-component Internal Architecture Boundaries` → `Component Internal Design` |
+| Domain Semantic Certification authority/mechanism where needed | `Five-component Internal Architecture Boundaries`; material authority choice → `Project Owner / MDE` |
+| IAM factual SoT/federation detail, Principal schema, credentials, authentication provider/protocol, session representation | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; material identity/trust decision → `Project Owner / MDE` |
+| Policy evaluation engine/topology and concrete enforcement points | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; runtime enforcement → `Runtime Responsibility Architecture`; material Policy → `Project Owner / MDE` |
+| PKI/KMS/HSM/TLS/certificate/trust-store/network-security implementation | `Five-component Internal Architecture Boundaries`; reusable primitives if admitted → `Shared Foundation Architecture` / `Foundation Contract Design`; provider → `Provider Design`; material Trust/lock-in → MDE |
+| Secret custody detail/secret-reference contract/provider/rotation | `Five-component Internal Architecture Boundaries`; reusable semantics if admitted → `Shared Foundation Architecture` / `Foundation Contract Design`; provider → `Provider Design`; material Trust/Privacy → MDE |
+| Artifact package/signature/registry/storage representation | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; reusable provider → `Provider Design`; major stable format lock-in → MDE |
+| Execution Admission evidence/token/grant representation | `Five-component Internal Architecture Boundaries` + `Runtime Responsibility Architecture`; component realization → `Component Internal Design`; material stable/offline commitment → MDE |
+| operation-specific offline fail-open/fail-closed behavior | `Five-component Internal Architecture Boundaries`; runtime behavior → `Runtime Responsibility Architecture`; bounded non-runtime behavior → `Component Internal Design`; material behavior → `Project Owner / MDE` |
+| offline credential/grant/bundle/lease/certificate/token mechanism | `Five-component Internal Architecture Boundaries` + `Runtime Responsibility Architecture` → `Component Internal Design`; material Trust/identity commitment → MDE |
+| configuration format/revision representation/push-pull-watch/distribution protocol | `Five-component Internal Architecture Boundaries` + `Runtime Responsibility Architecture`; reusable loader → `Shared Foundation Architecture` / `Foundation Contract Design`; provider → `Provider Design` |
+| Organization mapping/synchronization algorithms and concrete external mappings | `Component Internal Design`; material SoT/identity relationship → MDE |
+| Data/Knowledge synchronization/ETL/reconciliation algorithms and concrete partition inventory | `Component Internal Design`; material SoT change → MDE |
+| reconciliation conflict-resolution algorithm/clocks/vector-clock/CRDT/event-store if proposed | runtime → `Runtime Responsibility Architecture`; domain/non-runtime → `Component Internal Design`; material winner/lock-in → MDE |
+| stable component cross-boundary wire/schema/REST/RPC/gRPC/WebSocket representation | `Five-component Internal Architecture Boundaries` → `Component Internal Design`; Foundation boundary → `Foundation Contract Design`; major stable protocol commitment → MDE |
+| Shared Foundation capability inventory/contracts/modules/providers | `Shared Foundation Architecture` → `Foundation Contract Design` → `Foundation Module Design` → `Provider Design` |
+| SDK language bindings/package layout/generators/distribution mechanics | semantic ownership → `Five-component Internal Architecture Boundaries`; realization → `Component Internal Design`; readiness → `Design-to-Implementation Readiness` |
+| database/storage/cache topology and concrete technology | component concern → `Component Internal Design`; reusable Foundation concern → `Shared Foundation Architecture`; provider → `Provider Design`; material lock-in → MDE |
+| concrete migration tooling/execution sequencing/rollback tooling | `Component Internal Design` / `Provider Design` → `Design-to-Implementation Readiness`; semantic authority change returns upstream |
+| concrete conformance-test tooling | downstream design owner → `Design-to-Implementation Readiness`; tools do not define semantics |
 
-No item in this table is delegated to “implementation decides”.
+No item is delegated to “implementation decides”.
 
 ---
 
-## 22. Constraint Traceability
+## 29. Constraint Traceability
 
 | Constraint | Preservation in Candidate 0.0.3 |
 |---|---|
-| `NSE-001` | Tenant remains native, explicit, governed through offline/degraded/recovery conditions |
-| `NSE-002` | Tenant and Organization remain non-collapsed across Principal/Data/Recovery semantics |
-| `NSE-003` | Organization plurality, mappings, temporal/history and bounded SoT federation preserved |
-| `NSE-004` | Offline/private lifecycle correctness preserved without governance bypass or mandatory synchronous central dependency for every action |
-| `NSE-005` | Product Component semantic identity remains independent of runtime/process/deployment topology |
-| `NSE-006` | Four first-class domains remain non-subordinate; composition/mediation does not transfer authority |
-| `NSE-007` | Definition/Certification/Artifact/Install/Activate/Admission/Attempt states remain distinct |
-| `NSE-008` | Local execution/source-effect facts remain accountable without local authority escalation; reconciliation preserves evidence |
-| `NSE-009` | Stable cross-boundary semantics remain language/representation independent; semantic compatibility precedes representation |
-| `NSE-010` | Extension/customer re-delivery origin/loadability/ownership never creates Trust/Acceptance/Admission/Authority bypass |
-| `NSE-011` | External bounded SoT, mapping, freshness, provenance, stale/conflict/unmapped conditions preserved through recovery/migration |
-| `NSE-012` | Shared Foundation remains authority-neutral/provider-neutral; provider replacement cannot silently redefine semantics |
-| `NSE-013` | Complete-system semantic identity is unaffected by lifecycle/provider/migration implementation choices |
-| `NSE-014` | Commercial/distribution state remains outside core Authority/Trust correctness unless explicitly accepted later |
-| `NSE-015` | Technology/provider changes are classified by semantic effect; dependency/provider placement cannot define architecture |
-| `NSE-016` | Recovery used actual Git HEAD/current Repository authority; candidate remains non-accepted until independent GAC review |
-| `NSE-017` | All project-level dimensions are closed or explicitly assigned to named later authorities; implementation cannot invent missing architecture |
+| `NSE-001` | Tenant native/explicit across online/offline/recovery contexts |
+| `NSE-002` | Tenant != Organization across Principal/Data/Recovery semantics |
+| `NSE-003` | Organization plurality/mapping/history/bounded SoT federation preserved |
+| `NSE-004` | Offline/private lifecycle correctness without governance bypass or universal synchronous central dependency |
+| `NSE-005` | Product Component identity independent of runtime/process/deployment topology |
+| `NSE-006` | four domains first-class/non-subordinate; composition/mediation no authority transfer |
+| `NSE-007` | Definition/Certification/Artifact/Install/Activate/Admission/Attempt separated |
+| `NSE-008` | local execution/source-effect accountability preserved; no locality-based authority escalation |
+| `NSE-009` | cross-boundary semantics language/representation independent; semantic compatibility first |
+| `NSE-010` | extension/re-delivery source/loadability/ownership no Trust/Acceptance/Admission bypass |
+| `NSE-011` | external bounded SoT/mapping/freshness/provenance/conflict/unmapped preserved through recovery/migration |
+| `NSE-012` | Shared Foundation authority/provider neutral; provider replacement cannot redefine semantics silently |
+| `NSE-013` | complete-system identity remains five components + Foundation + SDK/development surface |
+| `NSE-014` | commercial/distribution mechanisms do not control core Authority/Trust correctness |
+| `NSE-015` | technology/provider changes classified by semantic effect; placement cannot define architecture |
+| `NSE-016` | actual HEAD/current Repository authority recovered; candidate remains non-accepted until GAC |
+| `NSE-017` | Project-level dimensions closed; downstream named; implementation cannot invent architecture |
 
 ---
 
-## 23. Batch 2 Completion State
+## 30. Batch 2 Completion State
 
 Within the bounded Batch 2 authorization:
 
@@ -1024,8 +1438,14 @@ Within the bounded Batch 2 authorization:
 Repository Recovery
 → PASS
 
+Accepted NSE-001..017
+→ PRESERVED
+
 Accepted Project Architecture 0.0.2
 → PRESERVED AS UPSTREAM / CURRENT NORMATIVE BASELINE
+
+Accepted Z2-DAD-001..026
+→ PRESERVED / CUMULATIVE IN THIS CANDIDATE
 
 Accepted Z2-MDE-001..017
 → PRESERVED / NOT REOPENED
@@ -1097,11 +1517,11 @@ Scope Leakage into downstream detailed design
 → 0
 ```
 
-Candidate status:
+Candidate state:
 
 ```text
 NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 2
 → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 ```
 
-This bounded candidate does **not** declare `PROJECT ARCHITECTURE GLOBAL COMPLETE`. A separate GAC independent acceptance and `PROJECT_ARCHITECTURE_REMAINING_PRESSURE_ASSESSMENT` are required. It does not authorize Five-component Internal Architecture Boundaries or any other later phase.
+This bounded candidate does **not** declare `PROJECT ARCHITECTURE GLOBAL COMPLETE`. Independent GAC acceptance and `PROJECT_ARCHITECTURE_REMAINING_PRESSURE_ASSESSMENT` are required. It does not authorize Five-component Internal Architecture Boundaries, Runtime Responsibility Architecture, Shared Foundation Architecture, Foundation Design, Component Internal Design, or implementation work.
