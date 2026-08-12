@@ -1,19 +1,19 @@
 # ns_evermore Global Architecture State
 
-- **Status:** `CURRENT / GAC-EPOCH-0014`
+- **Status:** `CURRENT / GAC-EPOCH-0015`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0014
+GAC-EPOCH-0015
 
 Current Branch
 architecture/ns-evermore-genesis-0.0.1
 
 State Verified Through HEAD
-7caa10effda5082a029139b052b4eb03a5994efc
+b07964864b38c9769b96a5acd25becf123c93944
 
 Genesis Constitution
 docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -24,7 +24,7 @@ docs/governance/ns_evermore_governance_0.0.2.md
 → OWNER_DECIDED / GAC_RECOGNIZED / NORMATIVE
 
 Current Decision Registry
-docs/governance/decisions/ns_evermore_decision_registry_0.0.4.md
+docs/governance/decisions/ns_evermore_decision_registry_0.0.5.md
 → CURRENT / NORMATIVE
 
 Current Constraint Index
@@ -34,25 +34,29 @@ docs/ns_evermore_nse_constraints_index_0.0.5.md
 Accepted NSE
 NSE-001..017
 
-Last Globally Accepted Phase
-NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 4
-→ GLOBAL_ACCEPTED
-
-Batch 4 Global Acceptance Commit
-384ebf94c411eb3cb314143df06f740c74c25cf8
+Architecture Constraint Derivation
+GLOBAL_CLOSED / COMPLETE
 
 Constraint Exhaustion Assessment
-docs/architecture_reviews/ns_evermore_ngrp_001_phase_z1_constraint_exhaustion_assessment_0.0.1.md
-→ SATISFIED
+SATISFIED
 
-Constraint Exhaustion Commit
-ad0c6c87a788e1fc891ce0a8b2f7729221d1bfc0
+Last Globally Accepted Phase
+NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 1
+→ GLOBAL_ACCEPTED
 
-Remaining Material Constraint Pressure
-NONE_FOUND
+Current Project Architecture
+docs/ns_evermore_project_architecture_0.0.2.md
+→ GLOBAL_ACCEPTED / NORMATIVE / CURRENT
 
-Global Architecture Constraint Derivation
-GLOBAL_CLOSED / COMPLETE
+Project Architecture Batch 1 Global Acceptance
+docs/architecture_reviews/ns_evermore_ngrp_001_phase_z2_project_architecture_synthesis_batch_1_global_acceptance_0.0.1.md
+
+Project Architecture Batch 1 Acceptance Commit
+34aed09df58089768b6fa40862e7414d793696df
+
+Owner Decision Baseline
+Z2-MDE-001..017
+→ OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
 
 Open MDE
 0
@@ -63,232 +67,130 @@ Unpersisted Owner Decision
 Owner-reserved unresolved decision
 0
 
-Blocking Semantic Gap
-0
-
-Current Project Architecture Revision
+Blocking Item
 NONE
-
-Current Authorized Phase
-NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 1
-
-Authorization Scope
-PROJECT_ARCHITECTURE_SYNTHESIS_ONLY / BATCH_1 / SYSTEM_BOUNDARY_COMPONENT_RESPONSIBILITY_TOPOLOGY
-
-Project Architecture Authorization
-BATCH_1 ONLY
 
 Known Drift
 NONE
+
+Current Authorized Design Phase
+NONE
 ```
 
 ---
 
-# Current Authorization — Z2 / Project Architecture Synthesis / Batch 1
+# Current Accepted Project Architecture Baseline
 
-## Authorized Objectives
-
-Batch 1 may synthesize only the project-level architecture needed to establish the system and Product Component responsibility skeleton:
+Accepted Project Architecture 0.0.2 establishes at Project Architecture level:
 
 ```text
-A. Complete-system Project Architecture boundary
-B. Five Product Component top-level responsibility synthesis
-C. First-class capability / supporting-capability placement from accepted inherited facts
-D. Cross-component semantic responsibility and dependency topology
-E. Project-level responsibility / Authority / SoT decision matrix for matters inside this batch
-```
+Exactly five Product Components
+→ ns_server / ns_runtime / ns_node / ns_agent / ns_web
 
-### A. Complete-system boundary
+Shared Foundation
+→ outside five / not sixth Product Component
 
-Synthesize the complete-system architecture boundary using accepted `NSE-013` and inherited product facts.
+System-level SDK / Development Surface
+→ complete-system surface / not Product Component / not universal authority
 
-Preserve exactly the five Product Components:
-
-```text
-ns_server
-ns_runtime
-ns_node
-ns_agent
-ns_web
-```
-
-Preserve Shared Foundation outside those five and not as a sixth Product Component. Preserve the system-level development/SDK surface without converting it into a Product Component, Runtime Role or semantic authority.
-
-Do not design release/package/deployment topology.
-
-### B. Product Component top-level responsibility synthesis
-
-Consume Constitution root responsibilities and frozen placements exactly. Establish top-level responsibility boundaries and explicit responsibility exclusions sufficient for later Component Internal Architecture and Runtime Responsibility Architecture.
-
-Do not decompose components into internal modules, Django apps, packages, services or processes.
-
-### C. Capability placement
-
-Synthesize only capability placement already fixed or safely derivable from accepted upstream facts.
-
-The principal domains remain:
-
-```text
-Business Application Construction / Runtime
-Automation Construction / Execution
-AI Agent Runtime / Tooling
-Enterprise Data / Knowledge / foundational ETL
+Four principal capability domains
 → FIRST_CLASS / PARALLEL / NON_SUBORDINATE
-```
 
-Terminal / Local Execution and visualization/cockpit responsibilities must be placed according to the Constitution without creating new product-significant capabilities.
+Tenant Semantic Authority / Tenant canonical SoT
+→ ns_server / ns_server
 
-If a product-significant capability not fixed upstream becomes necessary, do not invent it; return it to Project Owner governance.
+IAM Semantic Authority
+→ ns_server
 
-### D. Cross-component semantic responsibility and dependency topology
+Unified Policy Semantic Authority
+→ ns_server
 
-Define project-level responsibility/dependency relationships without turning transport, database, process, provider or shared implementation into semantic authority.
+Native Organization Semantic Authority
+→ ns_server
 
-Cross-component dependencies may be identified at semantic level, but Batch 1 must not design actual Contract schemas, APIs, messages, protocols or deployment connections.
+Organization factual SoT
+→ per bounded Organization semantic partition / exactly one final SoT per same assertion
 
-### E. Responsibility / Authority / SoT decision matrix
+Business Application Semantic Authority / Canonical Definition SoT
+→ ns_server / ns_server
 
-Identify project-level Authority, Semantic Ownership, Source-of-Truth and Actual-state Ownership questions required to make the responsibility skeleton unambiguous.
+Automation Semantic Authority / Canonical Definition SoT
+→ ns_server / ns_server
 
-Resolve only:
+AI Agent Semantic Authority / Canonical Definition SoT
+→ ns_agent / ns_agent
 
-```text
-INHERITED_FACT
-or
-DAD-safe matters inside the exact Batch 1 scope
-```
+Data / Knowledge / ETL Semantic Authority
+→ ns_server
 
-Any material choice involving:
+Data / Knowledge factual SoT
+→ per bounded semantic partition / exactly one final SoT per same assertion
 
-```text
-Semantic Ownership
-Source of Truth
-Actual-state Ownership
-IAM / Policy / Organization Authority
-Artifact / Admission Authority
-Security / Trust Authority
-major stable identity / compatibility commitment
-material offline fail-open / fail-closed
-major provider/protocol/storage/format lock-in
-high migration cost
-```
+Formal Artifact Acceptance Authority
+→ ns_server
 
-must follow Unified Governance and be escalated as MDE where applicable, one material decision at a time.
+Formal Execution Admission Authority
+→ ns_server
 
----
+Platform Security / Trust Semantic Authority
+→ ns_server
 
-# Accepted Upstream Invariants
+Runtime Actual-state Ownership
+→ per bounded runtime semantic partition / exactly one final owner per same assertion
 
-The entire accepted `NSE-001..017` baseline is normative input. Project Architecture must synthesize solutions **inside** these constraints and must not reopen them for implementation convenience.
+Managed Runtime Configuration
+→ authority + canonical desired-state SoT = ns_server
+→ item semantics follow configured capability owner
+→ applied state follows runtime actual-state owner
 
-In particular preserve:
-
-```text
-Tenant semantic invariance
-Tenant / Organization non-collapse
-Organization plurality/extensibility
-Offline/private correctness
-Product Component / Runtime non-conflation
-First-class capability non-subordination
-Definition / Artifact / Runtime separation
-Local source/effect accountability
-Contract representation independence
-Extension/re-delivery governance
-External SoT preservation
-Shared Foundation provider replaceability
-Complete-system semantic integrity
-Commercial/distribution optionality
-Controlled technology exceptions / offline dependency closure
-Repository-backed continuity
-Implementation derivability
+Component-local Bootstrap Configuration
+→ local per component / independently loadable
+→ common loader MAY be Shared Foundation and remains authority-neutral
 ```
 
 ---
 
-# Strict Forbidden Scope
+# Explicitly Deferred Downstream Questions
 
-Z2 Batch 1 MUST NOT begin or decide:
-
-```text
-Product Component internal module decomposition
-Runtime Role set
-Process / service / container / deployment topology
-Database / persistence product or topology
-Concrete IAM / Policy / Organization persistence model
-Actual API / wire / schema / protocol design
-Shared Foundation detailed architecture
-Foundation Contract / Module / Provider design
-Concrete SDK API/package design
-Repository / package structure design
-Implementation Planning
-IWP
-Coding
-```
-
-No downstream phase is automatically authorized by Batch 1 completion.
-
----
-
-# Entry Gate
-
-Before Project Architecture synthesis:
+Accepted Project Architecture 0.0.2 intentionally leaves later-authority questions such as:
 
 ```text
-Repository / branch / actual HEAD resolved
-Recovery complete under Unified Governance
-Current Global State Epoch = GAC-EPOCH-0014
-Architecture Constraint Derivation = GLOBAL_CLOSED / COMPLETE
-Current Constraint Index = 0.0.5
-Accepted NSE = NSE-001..017
-Current Decision Registry = 0.0.4
-Current Project Architecture Revision = NONE
-Current Authorized Phase = Z2 / Project Architecture Synthesis / Batch 1
-Authorization Scope matches this State
-Open inherited MDE = 0
-Unpersisted Owner Decision = 0
-Blocking Item = 0
-Unexpected Drift = NONE
-Unauthorized Progression = NONE
+IAM factual SoT / external federation details
+Policy persistence / evaluation / enforcement topology
+precise runtime semantic partitions and Runtime Roles
+process / service / worker / container topology
+wire protocol / message schema
+Artifact and Admission representation/technology
+offline operation-specific fail behavior
+PKI / KMS / certificate / trust-store realization
+secret custody / secret-reference contract
+configuration representation/distribution mechanism
+Shared Foundation detailed architecture/contracts/modules/providers
+SDK language bindings/packaging
+Component internal modules
+persistence/database topology
+semantic certification authorities where not yet required
+Organization/Data reconciliation algorithms
 ```
 
-If recovery fails:
-
-```text
-DO NOT SYNTHESIZE
-→ RETURN TO GAC
-```
-
----
-
-# Exit / Stop Rule
-
-Producing session maximum state:
-
-```text
-NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 1
-→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
-→ STOP
-→ RETURN TO GAC
-```
-
-The session must not self-accept, authorize another Project Architecture batch, enter Component/Runtime/Foundation design, declare Project Architecture complete globally, or begin implementation work.
+These are NOT implementation-defined freedom where material. They remain subject to the later authorized Architecture/Design authority and Unified Governance classification.
 
 ---
 
 # Current Required Read Set
 
-Minimum sufficient context for a fresh Z2 Batch 1 session:
+Minimum sufficient context for the current GAC remaining-pressure assessment:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
 2. docs/governance/ns_evermore_governance_0.0.2.md
 3. docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md
 4. docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md
-5. docs/governance/decisions/ns_evermore_decision_registry_0.0.4.md
+5. docs/governance/decisions/ns_evermore_decision_registry_0.0.5.md
 6. docs/ns_evermore_nse_constraints_index_0.0.5.md
 7. docs/nse_constraints/ns_evermore_nse_001_0.0.1.md through ns_evermore_nse_017_0.0.1.md
-8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_4_global_acceptance_0.0.1.md
-9. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z1_constraint_exhaustion_assessment_0.0.1.md
+8. docs/ns_evermore_project_architecture_0.0.2.md
+9. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z2_project_architecture_synthesis_batch_1_global_acceptance_0.0.1.md
 10. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md
     → relevant tail only unless deeper history is required
 ```
@@ -298,7 +200,6 @@ Minimum sufficient context for a fresh Z2 Batch 1 session:
 # Unique Next Legal Action
 
 ```text
-Start one bounded NGRP-001 Phase Z2 / Project Architecture Synthesis / Batch 1 session using this Global State and Unified Governance.
-Use generated chat bootstrap text only; do not create a Repository prompt document.
-Return candidate Project Architecture evidence to the Global Architecture Coordinator for independent acceptance.
+GAC performs an independent remaining Project Architecture pressure assessment.
+No Z2 Batch 2, Component Internal Architecture, Runtime Responsibility Architecture, Shared Foundation, Contract, or implementation phase is currently authorized.
 ```
