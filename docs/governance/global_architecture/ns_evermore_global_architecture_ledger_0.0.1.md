@@ -57,29 +57,34 @@ GAC-TR-0027  Z2 Project Architecture Synthesis / Batch 2 Global Acceptance
              → Project Architecture 0.0.3: GLOBAL_ACCEPTED / NORMATIVE / CURRENT
              → Acceptance Commit: ad5a014793c60a7ec405b00e70c8e8bdae3dd884
              → Accepted Project Architecture DAD Baseline: Z2-DAD-001..041
-             → Owner Decision Baseline unchanged: Z2-MDE-001..017
              → Semantic Resolution Matrix: 26 / 26 CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL
-             → Decision Registry 0.0.6: 22094396a15a455893b995c8fc43a479f2308aa4
-             → Superseded Registry 0.0.5 removed: ffd519949391acbfd1b3de0d94474fca86a93c44
-             → Superseded Project Architecture 0.0.2 removed from current tree: 0b5e1bc09541db0923ee9a321066f20871357cb5
-             → Automatic Next Phase Authorization: NONE
 
-GAC-TR-0028  Project Architecture Global Closure / Z3 Batch 1 Authorization
+GAC-TR-0028  Project Architecture Global Closure / Initial Z3 Batch 1 Authorization
              → GAC-EPOCH-0017 → GAC-EPOCH-0018
              → Remaining-pressure Assessment: e1c7cb512c0e343c5c07eacbe8c84e247340b678
              → Remaining Material Project Architecture Pressure: NONE_FOUND
              → Project Architecture Synthesis: GLOBAL_CLOSED / COMPLETE
-             → Current normative Project Architecture: 0.0.3
-             → Next legal top-level phase: Five-component Internal Architecture Boundaries
-             → Authorized bounded session:
-               NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1
-             → Scope:
+             → Current Project Architecture: 0.0.3
+             → Initial Z3 Batch 1 scope:
                FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 /
                COMPONENT_CAPABILITY_INVENTORY_OWNER_CHECKPOINT
-             → Objective: establish five-component capability inventories/classification and execute mandatory Owner Capability Checkpoint before internal decomposition
-             → Component Internal Design: NOT AUTHORIZED
-             → Runtime Responsibility Architecture: NOT AUTHORIZED
-             → Shared Foundation Architecture: NOT AUTHORIZED
+
+GAC-TR-0029  Project Owner Capability Clarification / Z3 Batch 1 Discovery-scope Refinement
+             → GAC-EPOCH-0018 → GAC-EPOCH-0019
+             → Project Architecture 0.0.3 remains accepted / closed; no reopen required
+             → Project Owner capability requirements persisted:
+               1. ns_agent can delegate applicable executable work/task intent to ns_node
+               2. ns_server requires continuously available server-local background work capability for long-running and time-triggered work; physical process-pool topology remains later design
+               3. Automation intended for ns_node execution supports both source-code/SDK authoring and ns_web visual drag-and-drop authoring under the same ns_server-owned Automation semantics
+             → Decision Registry 0.0.7: 0980d11d17ab81701d4858b0de03e7a5b3bfdf2d
+             → Superseded Decision Registry 0.0.6 removed: 45b3242ddb495f9e258bb01905be8935eebee3f1
+             → Z3 Batch 1 refined scope:
+               FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 /
+               COMPONENT_AND_COMMON_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT
+             → Batch 1 now performs broad five-component capability pressure scan + cross-component common-capability discovery + Owner Capability Checkpoint
+             → Shared Foundation detailed architecture remains NOT AUTHORIZED
+             → normative Five-component Internal Architecture boundary synthesis deferred to planned Z3 Batch 2 after Batch 1 acceptance and separate authorization
+             → Working-State Commit: 4d7260bb7432027bcaa5ea53f219f994b0f3138d
 ```
 
 ---
@@ -88,7 +93,7 @@ GAC-TR-0028  Project Architecture Global Closure / Z3 Batch 1 Authorization
 
 ```text
 Current Epoch
-GAC-EPOCH-0018
+GAC-EPOCH-0019
 
 Architecture Constraint Derivation
 GLOBAL_CLOSED / COMPLETE
@@ -100,7 +105,7 @@ Accepted Constraint Baseline
 NSE-001..017 / Index 0.0.5
 
 Current Decision Registry
-0.0.6
+0.0.7
 
 Current Project Architecture
 0.0.3 / GLOBAL_ACCEPTED / NORMATIVE / CURRENT
@@ -108,17 +113,26 @@ Current Project Architecture
 Accepted Project Architecture DAD Baseline
 Z2-DAD-001..041
 
-Owner Decision Baseline
+Owner MDE Baseline
 Z2-MDE-001..017 / OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
 
-Remaining Material Project Architecture Pressure
-NONE_FOUND
+Current Z3 Owner Capability Clarifications
+→ Agent-to-Node delegation REQUIRED
+→ ns_server server-local long-running/time-triggered background work REQUIRED
+→ Automation dual authoring: SDK source + ns_web visual drag-and-drop REQUIRED
 
 Current Authorized Phase
 NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1
 
 Authorization Scope
-FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 / COMPONENT_CAPABILITY_INVENTORY_OWNER_CHECKPOINT
+FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 / COMPONENT_AND_COMMON_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT
+
+Batch 1 Boundary
+Capability discovery / classification / Owner checkpoint only
+No normative internal-boundary decomposition
+
+Planned but NOT AUTHORIZED
+Z3 Batch 2 → Five-component Internal Architecture Boundary Synthesis after Batch 1 acceptance
 
 Open MDE
 0
@@ -127,5 +141,5 @@ Unpersisted Owner Decision
 0
 
 Unique Next Legal Action
-Start one bounded Z3 Batch 1 session to build five-component Capability Inventories, classify capability scope and complete the Owner Capability Checkpoint; stop before internal module decomposition and return candidate evidence to GAC.
+Start one bounded Z3 Batch 1 session to perform broad five-component and common-capability discovery, identify missing product functions, resolve Owner capability questions, and stop before internal-boundary synthesis.
 ```
