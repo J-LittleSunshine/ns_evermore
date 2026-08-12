@@ -1,19 +1,19 @@
 # ns_evermore Global Architecture State
 
-- **Status:** `CURRENT / GAC-EPOCH-0011`
+- **Status:** `CURRENT / GAC-EPOCH-0012`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0011
+GAC-EPOCH-0012
 
 Current Branch
 architecture/ns-evermore-genesis-0.0.1
 
 State Verified Through HEAD
-74e7230667f4652d97c1b421c54ce235c2ff9484
+622e34cb3067cbd7a5f614d67641b1d6febad1b9
 
 Genesis Constitution
 docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -67,8 +67,11 @@ PRESENT
 Constraint Exhaustion Assessment
 NOT SATISFIED
 
-Current Authorized Design Phase
-NONE
+Current Authorized Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 4
+
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_4 / DELIVERY_TECHNOLOGY_CONTINUITY_DERIVABILITY_CONSTRAINTS
 
 Project Architecture Authorization
 NONE
@@ -91,25 +94,122 @@ NONE
 
 ---
 
-# Batch 3 Acceptance Result
+# Current Authorization — Z1 / Batch 4
+
+Batch 4 may derive Architecture Constraints only for:
 
 ```text
-NGRP-001 Phase Z1 / Batch 3
-→ GLOBAL_ACCEPT
-
-Accepted by this transition
-→ NSE-009..012
-
-Current accepted baseline
-→ NSE-001..012
-→ Index 0.0.4
+A. Complete Deployable System + System-level SDK completeness boundary
+B. Distribution / commercial optionality
+C. Controlled technology exceptions + supply-chain/offline dependency evidence
+D. Repository continuity + implementation derivability
 ```
 
-The accepted constraints preserve stable language-neutral contract semantics, extension/re-delivery governance, bounded external Source-of-Truth semantics, and Shared Foundation provider replaceability without selecting downstream contract representations, extension mechanisms, integration protocols/conflict winners, Foundation contracts/modules/providers, or implementation technology.
+## A. Complete Deployable System + System-level SDK Completeness Boundary
+
+Constraint-level closure must preserve that `ns_evermore` is a complete deployable system rather than a disconnected collection of components or libraries.
+
+The complete-system obligation must preserve the accepted five Product Components, applicable Shared Foundation, and system-level SDK/development surface required by accepted product semantics while keeping Product Component identity distinct from package/process/deployment layout.
+
+System completeness MUST NOT be silently redefined by implementation convenience, omission of a required Product Component, or packaging topology.
+
+Do not design actual SDK APIs, package layouts, installers, release bundles, deployment topology, build tooling, or distribution artifacts.
+
+## B. Distribution / Commercial Optionality
+
+Constraint-level closure must preserve that commercial/distribution mechanisms are optional layers and cannot silently become mandatory core correctness or governance dependencies.
+
+At minimum preserve:
+
+```text
+Commercial Layer != Core Product Semantic Authority
+Distribution Channel != Core Correctness Authority
+License / Entitlement Presence != Tenant / Policy / Artifact Authority automatically
+Optional Vendor Control Plane != Mandatory Core Dependency
+Public Marketplace / Registry != Mandatory Private Deployment Dependency
+Commercial Unavailability != Core Governance Bypass
+```
+
+Private/offline build, test, package, install, run, upgrade, rollback, recovery and accepted governance must remain valid without a mandatory public Internet/SaaS/vendor control plane unless the Project Owner explicitly changes the constitutional baseline.
+
+Do not select licensing systems, entitlement models, marketplaces, commercial models, distribution channels, telemetry services, vendor control planes, or commercial implementation.
+
+## C. Controlled Technology Exceptions / Supply-chain Evidence
+
+Constraint-level closure must preserve the inherited Python-first direction while ensuring technology exceptions are explicit, bounded, justified, and unable to redefine accepted semantic boundaries by implementation convenience.
+
+At minimum preserve:
+
+```text
+Technology Choice != Product Component Identity
+Framework / Library != Architecture Contract
+Provider != Semantic Authority
+Technology Exception != Governance Exception
+Technology Exception != Tenant / Security / Offline Bypass
+```
+
+Dependency/supply-chain provenance and evidence must support the complete private/offline lifecycle without requiring public package registries, public schema registries, public artifact stores, online dependency resolution, or vendor SaaS on a core correctness path.
+
+Do not select exception languages, package managers, SBOM formats, scanners, signing products, registries, artifact stores, concrete dependency technologies, or provider products.
+
+## D. Repository Continuity / Implementation Derivability
+
+Constraint-level closure must preserve:
+
+```text
+Chat / Model Memory != Project Authority
+Repository Current Authority → persistent project memory
+Accepted Design → must become implementation-derivable before Implementation Planning
+Implementation / Codex → cannot invent missing Architecture
+```
+
+Future downstream work must not infer or create missing:
+
+```text
+Authority
+Semantic Ownership
+Source of Truth
+Actual-state Ownership
+Product Component Boundary
+Runtime Responsibility
+Contract Semantics
+Tenant / Organization Semantics
+Security / Trust Boundary
+Artifact / Admission Semantics
+Major Compatibility / Migration Commitment
+```
+
+merely to make implementation proceed.
+
+Missing upstream semantics discovered during Implementation Planning / IWP / Codex must return to the correct design authority rather than becoming implementation convention.
+
+Do not design repository package structure, Implementation Master Plan, IWP contents, Codex workflow, code-generation tooling, or implementation details.
 
 ---
 
-# Current Decision Authority
+# Accepted Upstream Invariants
+
+Batch 4 MUST preserve accepted `NSE-001..012` in full.
+
+No delivery, commercial, technology, supply-chain, continuity, or implementation-derivability constraint may create:
+
+```text
+Tenant bypass
+Tenant / Organization collapse
+Product Component / Runtime conflation
+Cross-domain authority transfer
+Artifact / Admission bypass
+Locality-based canonicalization
+Contract / representation conflation
+Extension governance bypass
+Ingestion-based automatic SoT transfer
+Provider-defined Foundation semantic authority
+Implementation-defined Architecture escape
+```
+
+---
+
+# Decision Authority
 
 ```text
 Root Product / Constitutional Decision → Project Owner
@@ -119,37 +219,144 @@ GAC → classification / escalation / independent acceptance / authorization / c
 Implementation / Codex → no Architecture authority
 ```
 
-Before future Component Internal Design:
+If Batch 4 would need to choose a material commercial model, licensing semantics, exception technology, stable artifact/package format, provider/vendor lock-in, externally observable compatibility commitment, security/trust model, Authority/SoT owner, or another major long-term commitment, classify it as MDE and return to Project Owner.
+
+If uncertain:
 
 ```text
-Component Capability Inventory
-→ INHERITED_REQUIRED / DERIVED_REQUIRED / OWNER_DECISION_REQUIRED / DEFERRED / NON_GOAL
-→ ask Project Owner only for OWNER_DECISION_REQUIRED items
-→ accept Component Capability Baseline
-→ Component Internal Design
+DEFAULT → MDE
 ```
 
 ---
 
-# Remaining Known Constraint Pressure
+# Strict Forbidden Scope
 
-The following has not yet been globally closed at Architecture Constraint level:
+Batch 4 MUST NOT begin or decide:
 
 ```text
-Complete Deployable System + System-level SDK
-Distribution / commercial optionality
-Controlled technology exceptions / remaining supply-chain pressure
-Cross-session continuity as Architecture Constraint pressure
-Implementation derivability as Architecture Constraint pressure
+Project Architecture
+Product Component Internal Architecture
+Runtime Responsibility Architecture
+Actual SDK / API / Contract design
+Shared Foundation detailed architecture
+Foundation Contract / Module / Provider design
+Licensing / commercial implementation
+Concrete technology / provider selection
+Package manager / registry / SBOM / scanner selection
+Repository / package structure design
+Implementation Master Plan
+IWP
+Coding
 ```
 
-No next bounded design phase is authorized by Batch 3 acceptance itself.
+---
+
+# Batch 4 Entry Gate
+
+Before deriving candidate constraints:
+
+```text
+Repository / branch / actual HEAD resolved
+Recovery complete under Unified Governance
+Current Global State Epoch = GAC-EPOCH-0012
+Last Globally Accepted Phase = Z1 / Batch 3
+Current Constraint Index = 0.0.4
+Accepted NSE = NSE-001..012
+Current Decision Registry = 0.0.3
+Current Authorized Phase = Z1 / Batch 4
+Authorization Scope matches this State
+Open MDE = 0
+Unpersisted Owner Decision = 0
+Blocking Item = 0
+Unexpected Drift = NONE
+Unauthorized Progression = NONE
+```
+
+If recovery fails:
+
+```text
+DO NOT DERIVE
+→ RETURN TO GAC
+```
+
+---
+
+# Batch 4 Exit Gate
+
+Apply relevant Unified Governance reviews, including at least:
+
+```text
+MAJOR_DECISION_ESCALATION_AUDIT
+DOCUMENTATION_COMPLETENESS_AUDIT
+SEMANTIC_RESOLUTION_DEPTH_REVIEW
+CONSTRAINT_TRACEABILITY_REVIEW
+AUTHORITY_SOURCE_OF_TRUTH_AMBIGUITY_REVIEW
+TENANT_ORGANIZATION_NON_COLLAPSE_REVIEW
+DEPENDENCY_INVARIANT_REVIEW
+PROVENANCE_HIDDEN_INHERITANCE_REVIEW
+ARCHITECTURE_DOWNSTREAM_DESIGN_BOUNDARY_REVIEW
+COMPLETE_SYSTEM_BOUNDARY_REVIEW
+COMMERCIAL_CORE_CORRECTNESS_SEPARATION_REVIEW
+TECHNOLOGY_EXCEPTION_GOVERNANCE_REVIEW
+SUPPLY_CHAIN_OFFLINE_CLOSURE_REVIEW
+REPOSITORY_CONTINUITY_REVIEW
+IMPLEMENTATION_DERIVABILITY_REVIEW
+OFFLINE_PRIVATE_CORRECTNESS_REVIEW
+GIT_DRIFT_REVIEW
+```
+
+Completion requires:
+
+```text
+Authorized Batch pressure blocking gap = 0
+Accepted NSE-001..012 preserved
+Open MDE = 0
+Unpersisted Owner Decision = 0
+Architecture / Project / Runtime / Foundation Design Leakage = 0
+Missing / Ambiguous required constraint dimension = 0
+Implementation-defined Architecture Escape = 0
+Commercial layer promoted to core authority = 0
+Technology exception governance bypass = 0
+Mandatory public core dependency introduced = 0
+Repository continuity ambiguity introduced = 0
+Dependency / Invariant Conflict = 0
+Unexpected Drift = NONE
+Unauthorized Progression = NONE
+```
+
+Producing-session terminal state:
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ STOP
+→ RETURN TO GAC
+```
+
+Batch 4 MUST NOT claim global Constraint Exhaustion.
+
+---
+
+# Post-Batch-4 GAC Gate
+
+After independent Batch 4 acceptance, the GAC MUST perform:
+
+```text
+CONSTRAINT_EXHAUSTION_ASSESSMENT
+```
+
+Project Architecture may be authorized only if that separate assessment finds:
+
+```text
+Remaining Material Constraint Pressure → NONE_FOUND
+Open MDE → 0
+Blocking Semantic Gap → 0
+```
 
 ---
 
 # Current Required Read Set
 
-Minimum sufficient context for GAC pressure reassessment:
+Minimum sufficient current context for a fresh Batch 4 session:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -161,25 +368,7 @@ Minimum sufficient context for GAC pressure reassessment:
 7. docs/nse_constraints/ns_evermore_nse_001_0.0.1.md through ns_evermore_nse_012_0.0.1.md
 8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_3_global_acceptance_0.0.1.md
 9. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md
-   → relevant tail only unless deeper history is needed
-```
-
----
-
-# Current-tree Simplification
-
-```text
-Current Constraint Index copies
-1 → 0.0.4
-
-Current Decision Registry copies
-1 → 0.0.3
-
-Repository Session Prompt files
-0
-
-Historical revisions
-→ Git history
+   → relevant tail only unless deeper history is required
 ```
 
 ---
@@ -187,6 +376,7 @@ Historical revisions
 # Unique Next Legal Action
 
 ```text
-Global Architecture Coordinator performs a separate remaining Architecture Constraint pressure reassessment.
-Only after that reassessment may exactly one bounded next phase be explicitly authorized if warranted.
+Start one bounded NGRP-001 Phase Z1 / Batch 4 Architecture Constraint Derivation session using this Global State and Unified Governance.
+Use generated chat bootstrap text only; do not create a Repository prompt document.
+Return candidate evidence to the Global Architecture Coordinator for independent acceptance.
 ```
