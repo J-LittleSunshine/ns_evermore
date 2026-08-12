@@ -107,7 +107,7 @@ GACP_001_ESTABLISHED / WORKING_STATE_ESTABLISHED / CRRS_ESTABLISHED
 Session Governance Standard Commit
 0232949edfb1646b3674c58651a4eb8374a4e907
 Implementation Governance Standard Commit
-416965d6e6e7ef885d5d648ba9dd5ea77dde6257
+416965d6e6e7ef885d5a34a9
 Z0 Authorization Prompt Commit
 288c8052a7cc10749524741afae0ae85e0aae846
 Result
@@ -264,11 +264,76 @@ Project Architecture Authorization
 NONE
 ```
 
+## GAC-TR-0014 — Post-Z1-Batch-1 Remaining Constraint Pressure Assessment
+
+```text
+Previous State
+GAC-EPOCH-0004 / Z1 BATCH_1 GLOBAL_ACCEPTED / NO DESIGN PHASE AUTHORIZED
+
+New State
+GAC-EPOCH-0004 / REMAINING_CONSTRAINT_PRESSURE_REASSESSED
+
+Evidence File
+docs/architecture_reviews/ns_evermore_post_z1_batch_1_constraint_pressure_assessment_0.0.1.md
+
+Evidence Commit
+98a8c63d0bbb0bed134d93defee5533748d9b9ba
+
+Result
+REMAINING_MATERIAL_CONSTRAINT_PRESSURE_PRESENT
+
+Selected Next Bounded Scope
+COMPONENT_CAPABILITY_EXECUTION_BOUNDARY_CONSTRAINTS
+
+Project Architecture Authorization
+NO
+```
+
+## GAC-TR-0015 — Z1 Batch 2 Constraint Derivation Authorization
+
+```text
+Previous State
+GAC-EPOCH-0004 / REMAINING_CONSTRAINT_PRESSURE_REASSESSED
+
+New State
+GAC-EPOCH-0005 / Z1 BATCH_2 AUTHORIZED
+
+Evidence File
+docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_2_session_prompt_0.0.1.md
+
+Evidence Commit
+a805b131e77ed0efe51c6fe695109fb8c1c9876a
+
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_2 / COMPONENT_CAPABILITY_EXECUTION_BOUNDARY_CONSTRAINTS
+
+Authorized Pressure
+Fixed Five Product Component semantic-boundary / Runtime non-conflation
+First-class capability non-subordination / authority non-transfer
+Definition / Artifact / Runtime separation
+Terminal / Local Execution authority and source-effect governance beyond NSE-004
+
+Accepted Upstream NSE
+NSE-001..004
+
+Result
+AUTHORIZED
+
+Automatic Later Batch Authorization
+NONE
+
+Global Constraint Exhaustion
+NOT CLAIMED
+
+Project Architecture Authorization
+NONE
+```
+
 ## Current Ledger Tail
 
 ```text
 Current Epoch
-GAC-EPOCH-0004
+GAC-EPOCH-0005
 
 Last Globally Accepted Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
@@ -277,8 +342,14 @@ Accepted Constraint Baseline
 NSE-001..004
 NS-EVERMORE-NSE-INDEX-0001 / 0.0.2
 
-Current Authorized Design Phase
-NONE
+Current Authorized Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 2
+
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_2 / COMPONENT_CAPABILITY_EXECUTION_BOUNDARY_CONSTRAINTS
+
+Current Session Prompt
+docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_2_session_prompt_0.0.1.md
 
 Open MDE
 0
@@ -289,6 +360,9 @@ Unpersisted Owner Decision
 Remaining Material Constraint Pressure
 PRESENT
 
+Global Constraint Derivation
+INCOMPLETE
+
 Unique next legal action
-Global Architecture Coordinator reassesses remaining material constraint pressure against accepted NSE-001..004 and determines one bounded next legal phase; no later batch is automatically authorized
+Start one bounded Z1 Batch 2 Architecture Constraint Derivation session under the exact Repository-backed authorization prompt; it must return to the Global Architecture Coordinator for independent acceptance
 ```
