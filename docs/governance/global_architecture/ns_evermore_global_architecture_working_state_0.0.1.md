@@ -20,78 +20,79 @@ Current Authorized Design Phase
 NONE
 ```
 
-## Current Governance
+## Post-Batch-2 Remaining Pressure Reassessment
+
+Remaining material Architecture Constraint pressure is still present.
+
+The next most upstream coherent cluster is:
 
 ```text
-Unified Governance
-docs/governance/ns_evermore_governance_0.0.2.md
-
-Authorization facts
-→ Global Architecture State
-
-Chat bootstrap prompts
-→ generated / disposable / non-normative
-```
-
-## Batch 2 Acceptance
-
-```text
-Global Acceptance Commit
-79df81fe62de33a46da10d1aab3b529ef95a5a36
-
-Accepted NSE
-NSE-005 — Product Component Semantic Topology and Runtime Non-conflation
-NSE-006 — First-class Capability Domain Non-subordination and Authority Non-transfer
-NSE-007 — Definition, Artifact, and Runtime Governance State Separation
-NSE-008 — Local Execution Authority and Source-effect Accountability Separation
-
-Previous accepted Index 0.0.2
-→ removed from current tree after supersession
-→ historical retrieval remains available through Git history
-```
-
-## Remaining Known Constraint Pressure
-
-```text
-Stable language-neutral cross-boundary contracts
-Extension / re-delivery
-Complete Deployable System + System-level SDK
+Stable language-neutral cross-boundary contract semantics
+Extension / re-delivery governance preservation
 Bounded enterprise integration / external Source-of-Truth preservation
+Shared Foundation contract/provider replaceability
+```
+
+Dependency rationale:
+
+```text
+Stable cross-boundary semantics
+→ prevents Python/Pydantic/Django/TypeScript/JSON/WebSocket/provider APIs from becoming Architecture Contracts by placement
+
+Extension / re-delivery governance
+→ consumes NSE-001..008 and especially NSE-007 artifact/execution separation
+→ prevents plugin/source/customer extension from creating governance bypass paths
+
+Bounded enterprise integration / external SoT
+→ prevents import/sync/ETL/index/cache/projection from silently transferring upstream authority
+
+Shared Foundation provider replaceability
+→ depends on stable contract semantics
+→ prevents provider APIs/shared utility code from becoming semantic authority or a sixth Product Component
+```
+
+These four pressures can be constrained without selecting actual wire contracts, APIs, plugin formats, integration protocols, providers, Foundation modules, or implementation technologies.
+
+## Pressure Deferred Beyond the Next Cluster
+
+```text
+Complete Deployable System + System-level SDK
 Distribution / commercial optionality
 Controlled technology exceptions / remaining supply-chain pressure
-Shared Foundation provider replaceability
-Cross-session continuity
-Implementation derivability
+Cross-session continuity as Architecture Constraint pressure
+Implementation derivability as Architecture Constraint pressure
 Any newly admitted material pressure
 ```
 
-## Open Governance State
+## Decision State
 
 ```text
+New MDE required by pressure selection
+0
+
 Open MDE
 0
 
 Unpersisted Owner Decision
 0
 
-Owner-reserved unresolved decision
-0
-
 Blocking Item
-NONE
-
-Known Drift
 NONE
 ```
 
-## Current Investigation
+Selecting the next bounded pressure cluster is governance sequencing only; it does not select Authority, Source of Truth, provider, protocol, storage, artifact format, or another MDE-class architecture commitment.
+
+## Recommended Next Bounded Phase
 
 ```text
-GAC POST-BATCH-2 REMAINING CONSTRAINT PRESSURE REASSESSMENT
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 3
+
+Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_3 / CROSS_BOUNDARY_EXTENSION_INTEGRATION_CONSTRAINTS
 ```
 
 ## Unique Next Legal Action
 
 ```text
-Global Architecture Coordinator reassesses remaining material Architecture Constraint pressure against accepted NSE-001..008 and selects at most one bounded next phase.
+GAC may explicitly authorize one bounded Z1 Batch 3 session for the four selected pressure families through a separate Global State transition.
 ```
