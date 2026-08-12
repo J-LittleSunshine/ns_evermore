@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0017`
+- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0018`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 - **Acceptance State:** `NOT_NORMATIVE`
 
@@ -8,23 +8,30 @@
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0017
+GAC-EPOCH-0018
 
 Architecture Constraint Derivation
 GLOBAL_CLOSED / COMPLETE
+
+Project Architecture Synthesis
+GLOBAL_CLOSED / COMPLETE
+
+Current Project Architecture
+docs/ns_evermore_project_architecture_0.0.3.md
+→ GLOBAL_ACCEPTED / NORMATIVE / CURRENT
+
+Project Architecture Remaining-pressure Assessment
+docs/architecture_reviews/ns_evermore_ngrp_001_phase_z2_project_architecture_remaining_pressure_assessment_0.0.1.md
+→ SATISFIED
+
+Remaining Material Project Architecture Pressure
+NONE_FOUND
 
 Accepted Constraint Baseline
 NSE-001..017 / Index 0.0.5
 
 Current Decision Registry
 0.0.6
-
-Last Globally Accepted Phase
-NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 2
-
-Current Project Architecture
-docs/ns_evermore_project_architecture_0.0.3.md
-→ GLOBAL_ACCEPTED / NORMATIVE / CURRENT
 
 Accepted Project Architecture DAD Baseline
 Z2-DAD-001..041
@@ -33,119 +40,197 @@ Owner Decision Baseline
 Z2-MDE-001..017 / OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
 ```
 
-## Z2 Batch 2 Acceptance Result
-
-```text
-Batch 2
-→ GLOBAL_ACCEPTED
-
-Global Acceptance Evidence
-docs/architecture_reviews/ns_evermore_ngrp_001_phase_z2_project_architecture_synthesis_batch_2_global_acceptance_0.0.1.md
-
-Acceptance Commit
-ad5a014793c60a7ec405b00e70c8e8bdae3dd884
-
-Lifecycle / Temporal / Failure
-→ PROJECT-LEVEL CLOSED
-
-Principal / Authentication / Authorization
-→ PROJECT-LEVEL CLOSED
-
-Security / Trust / Data-Privacy / Secret Boundary
-→ PROJECT-LEVEL CLOSED
-
-Recovery / Reconciliation / Offline-Degraded
-→ PROJECT-LEVEL CLOSED
-
-Compatibility / Evolution / Migration / Conformance / Revalidation
-→ PROJECT-LEVEL CLOSED
-
-Semantic Resolution Matrix
-→ 26 / 26 CLOSED_AT_PROJECT_ARCHITECTURE_LEVEL
-
-Open MDE
-0
-
-Unpersisted Owner Decision
-0
-
-Unexpected Drift
-NONE
-
-Unauthorized Progression
-NONE
-```
-
-## Current-tree Hygiene
-
-```text
-Project Architecture 0.0.3
-→ only current working-tree Project Architecture revision
-
-Project Architecture 0.0.2
-→ superseded current revision
-→ removed from current tree
-→ recoverable from Git history
-
-Decision Registry 0.0.6
-→ only current working-tree Decision Registry revision
-
-Decision Registry 0.0.5
-→ removed from current tree
-→ recoverable from Git history
-```
-
-## Project Architecture Global Completion
-
-```text
-Project Architecture Synthesis Overall
-→ ACCEPTANCE_COMPLETE_FOR_BATCH_2
-→ GLOBAL_COMPLETION_NOT_YET_DECLARED
-
-Remaining Material Project Architecture Pressure
-→ ASSESSMENT_PENDING
-```
-
-Batch 2 acceptance does not automatically close Project Architecture Synthesis.
-
 ## Current Authorized Phase
 
 ```text
-NONE
+NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1
 ```
 
-No bounded downstream phase is authorized at this checkpoint.
-
-## Required GAC Action
+Authorization Scope:
 
 ```text
-PROJECT_ARCHITECTURE_REMAINING_PRESSURE_ASSESSMENT
+FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 / COMPONENT_CAPABILITY_INVENTORY_OWNER_CHECKPOINT
 ```
 
-The GAC must independently determine whether any material Project Architecture pressure remains after accepted cumulative Project Architecture `0.0.3`.
+## Authorized Objectives
 
-## Decision / Block State
+### A. Five-component Capability Inventory
+
+For each fixed Product Component:
 
 ```text
-Open MDE
-0
-
-Unpersisted Owner Decision
-0
-
-Owner-reserved unresolved decision
-0
-
-Blocking Item
-NONE
-
-Known Drift
-NONE
+ns_server
+ns_runtime
+ns_node
+ns_agent
+ns_web
 ```
+
+construct a capability inventory grounded only in accepted Constitution, NSE, Project Architecture and Owner decisions.
+
+The inventory must answer what each component is expected to do as a Product Component before normative internal decomposition begins.
+
+### B. Capability Classification
+
+Every capability item must be classified using Unified Governance statuses:
+
+```text
+INHERITED_REQUIRED
+DERIVED_REQUIRED
+OWNER_DECISION_REQUIRED
+DEFERRED
+NON_GOAL
+```
+
+Rules:
+
+```text
+INHERITED_REQUIRED
+→ already required upstream
+→ do not ask Project Owner again
+
+DERIVED_REQUIRED
+→ supporting capability necessarily implied by accepted semantics
+→ may be DAD if not MDE-class
+
+OWNER_DECISION_REQUIRED
+→ material product function not already fixed upstream
+→ Project Owner decides before downstream design relies on it
+
+DEFERRED
+→ intentionally excluded from current boundary scope
+
+NON_GOAL
+→ explicitly excluded capability
+```
+
+### C. Cross-component Capability Boundary Review
+
+Identify:
+
+```text
+capability overlap
+capability gap
+responsibility ambiguity
+cross-component dependency
+possible authority-transfer misunderstanding
+capability that belongs to execution/mediation rather than semantic ownership
+```
+
+Do not resolve an overlap by physical placement or implementation convenience.
+
+### D. Owner Capability Checkpoint
+
+If `OWNER_DECISION_REQUIRED` items exist:
+
+```text
+process one material product-capability question at a time
+present A / B / C durable options
+include recommendation / rationale / benefits / costs / long-term impact
+persist Owner decision before dependent work continues
+```
+
+Do not re-ask capabilities already frozen upstream.
+
+Examples of inherited capabilities that are not re-voted include, among others:
+
+```text
+ns_node OCR / desktop automation / browser automation / plugin / local execution
+ns_agent model-provider / tool / context / memory-related / RAG / Agent runtime
+ns_server IAM / Policy / Organization / Business Application backend / Data-Knowledge-ETL
+ns_runtime communication / routing / scheduling / dispatch coordination
+ns_web Business App / Automation / Agent / Data-Knowledge / visualization UI-builder surfaces
+```
+
+### E. Candidate Component Capability Baseline
+
+Produce a coherent candidate baseline that can later become the normative upstream input for component internal-boundary decomposition.
+
+It must preserve:
+
+```text
+exactly five Product Components
+accepted Project Architecture responsibility/Authority/SoT topology
+four principal capability domains FIRST_CLASS / PARALLEL / NON_SUBORDINATE
+Tenant / Organization invariants
+lifecycle/trust/recovery/evolution semantics
+Shared Foundation non-component status
+```
+
+## Explicit Forbidden Scope
+
+This Batch does NOT authorize:
+
+```text
+Component Internal Design
+internal module decomposition
+Django app decomposition
+Python package decomposition
+Vue component/folder decomposition
+class/service/repository/adapter design
+Runtime Responsibility Architecture
+Runtime Role taxonomy
+process/service/worker/container/deployment topology
+actual API / Contract schema / wire protocol design
+database/storage topology
+Shared Foundation detailed capability inventory/architecture
+Foundation Contract / Module / Provider Design
+SDK binding/package design
+Implementation Planning
+IWP
+Coding
+```
+
+No component capability may be invented merely because a framework/library/provider makes it easy to implement.
+
+## Decision Authority
+
+```text
+Root Product / Constitutional Decision → Project Owner
+MDE → Project Owner
+Product-significant new capability → Project Owner capability checkpoint
+DAD → authorized session inside exact scope
+GAC → classification / acceptance / authorization / continuity
+Implementation → no Architecture authority
+```
+
+Material Authority/SoT/Trust/identity/compatibility/lock-in changes remain MDE-class.
+
+## Entry Gate
+
+```text
+Repository / branch / actual HEAD resolved
+Recovery complete under Unified Governance
+Current Global State Epoch = GAC-EPOCH-0018
+Architecture Constraint Derivation = GLOBAL_CLOSED / COMPLETE
+Project Architecture Synthesis = GLOBAL_CLOSED / COMPLETE
+Current Project Architecture = 0.0.3 / GLOBAL_ACCEPTED / NORMATIVE / CURRENT
+Current Decision Registry = 0.0.6
+Accepted NSE = NSE-001..017
+Accepted DAD baseline = Z2-DAD-001..041
+Accepted Owner MDE baseline = Z2-MDE-001..017
+Open inherited MDE = 0
+Unpersisted Owner Decision = 0
+Blocking Item = NONE
+Unexpected Drift = NONE
+Unauthorized Progression = NONE
+```
+
+## Exit / Stop Rule
+
+Producing-session maximum:
+
+```text
+NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1
+→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ STOP
+→ RETURN TO GAC
+```
+
+The session must not self-accept, enter component internal module design, enter Runtime Responsibility Architecture, authorize another batch, or start implementation work.
 
 ## Unique Next Legal Action
 
 ```text
-Global Architecture Coordinator performs PROJECT_ARCHITECTURE_REMAINING_PRESSURE_ASSESSMENT.
-No Five-component Internal Architecture Boundaries, Runtime Responsibility Architecture, Shared Foundation Architecture, Component Internal Design or implementation work is authorized until that assessment and a separate GAC authorization transition complete.
+Start one bounded Z3 / Five-component Internal Architecture Boundaries / Batch 1 session for COMPONENT_CAPABILITY_INVENTORY_OWNER_CHECKPOINT.
 ```
