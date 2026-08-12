@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0013`
+- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0014`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 - **Acceptance State:** `NOT_NORMATIVE`
 
@@ -8,11 +8,13 @@
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0013
+GAC-EPOCH-0014
 
-Last Globally Accepted Phase
-NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 4
-→ GLOBAL_ACCEPTED
+Architecture Constraint Derivation
+GLOBAL_CLOSED / COMPLETE
+
+Constraint Exhaustion Assessment
+SATISFIED
 
 Accepted Constraint Baseline
 NSE-001..017 / Index 0.0.5
@@ -20,28 +22,54 @@ NSE-001..017 / Index 0.0.5
 Current Decision Registry
 0.0.4
 
-Current Authorized Design Phase
+Current Project Architecture Revision
 NONE
 
-Project Architecture Authorization
-NONE
+Current Authorized Phase
+NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 1
+
+Authorization Scope
+PROJECT_ARCHITECTURE_SYNTHESIS_ONLY / BATCH_1 / SYSTEM_BOUNDARY_COMPONENT_RESPONSIBILITY_TOPOLOGY
 ```
 
-## Batch 4 Acceptance
+## Authorized Objectives
 
 ```text
-Accepted NSE
-NSE-013
-NSE-014
-NSE-015
-NSE-016
-NSE-017
+A. Complete-system Project Architecture boundary
+B. Five Product Component top-level responsibility synthesis
+C. First-class capability / supporting-capability placement at project level using inherited facts only
+D. Cross-component semantic responsibility and dependency topology
+E. Project-level responsibility / Authority / SoT decision matrix for matters inside this batch
+```
 
-Batch 4 Global Acceptance Commit
-384ebf94c411eb3cb314143df06f740c74c25cf8
+The session may resolve only inherited or DAD-safe matters inside scope. Any material Authority, Semantic Ownership, Source-of-Truth, Actual-state Ownership, Security/Trust, stable compatibility, major lifecycle or lock-in choice must follow Unified Governance and escalate as MDE where applicable.
 
+No new product-significant capability may be invented. Product capability questions not already inherited are reserved for Project Owner review under the Owner Capability rule at the legally appropriate design stage.
+
+## Strict Boundaries
+
+Batch 1 does not authorize:
+
+```text
+Product Component internal module decomposition
+Runtime Role / process / service / container / deployment topology
+Concrete database / persistence architecture
+Concrete IAM / Policy / Organization data model
+Actual API / wire / schema / protocol design
+Shared Foundation detailed architecture
+Foundation Contract / Module / Provider design
+SDK API/package design
+Repository / package layout
+Implementation Planning
+IWP
+Coding
+```
+
+## Decision / Block State
+
+```text
 Open MDE
-0
+0 at authorization entry
 
 Unpersisted Owner Decision
 0
@@ -56,33 +84,20 @@ Known Drift
 NONE
 ```
 
-## Current Gate
+## Exit Rule
 
-Batch 4 acceptance does not automatically close global Architecture Constraint Derivation.
-
-```text
-Constraint Exhaustion Assessment
-PENDING / GAC ONLY
-
-Remaining Material Constraint Pressure
-PENDING ASSESSMENT
-```
-
-The next GAC action is an independent full-baseline search for any still-unconverted material Architecture Constraint pressure.
-
-Exit criteria for global Constraint Derivation:
+Producing session maximum state:
 
 ```text
-Remaining Material Constraint Pressure → NONE_FOUND
-Open MDE → 0
-Blocking Semantic Gap → 0
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ STOP
+→ RETURN TO GAC
 ```
 
-Only after that gate may GAC explicitly authorize Project Architecture.
+Completion does not authorize another Project Architecture batch, Component Architecture, Runtime Architecture, Foundation, or Implementation work.
 
 ## Unique Next Legal Action
 
 ```text
-GLOBAL ARCHITECTURE COORDINATOR
-→ execute CONSTRAINT_EXHAUSTION_ASSESSMENT across Constitution + Root Facts + accepted NSE-001..017
+Start one bounded NGRP-001 Phase Z2 / Project Architecture Synthesis / Batch 1 session from current Global State and Unified Governance.
 ```
