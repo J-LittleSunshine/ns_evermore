@@ -1,7 +1,7 @@
 # ns_evermore Global Architecture Working State
 
 - **Version:** `0.0.1`
-- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0007`
+- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0008`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 - **Acceptance State:** `NOT_NORMATIVE`
 
@@ -9,7 +9,7 @@
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0007
+GAC-EPOCH-0008
 
 Last Globally Accepted Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
@@ -42,6 +42,27 @@ Current Required Read Set
 Chat bootstrap prompt
 → generated / disposable / non-normative
 ```
+
+## Current-tree Cleanup State
+
+```text
+Superseded governance duplicates removed from current working tree
+→ YES
+
+Historical retrieval
+→ Git history / recorded commits
+
+Deleted current-tree categories
+→ old NSE bootstrap index 0.0.1
+→ superseded governance framework / standards / standalone GACP / standalone decision-authority model / standalone CRRS
+→ old decision registry 0.0.1
+→ all repository-backed session prompt documents
+
+Cleanup Commit
+888b00eaefda6e39445400c70209f06d74769253
+```
+
+The cleanup changes current-tree visibility only. It does not revoke historical evidence, change accepted NSE, change Batch 2 scope, or change any accepted architecture semantic.
 
 ## Product Owner Capability Rule
 
