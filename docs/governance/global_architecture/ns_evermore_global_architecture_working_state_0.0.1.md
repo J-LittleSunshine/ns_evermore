@@ -4,7 +4,7 @@
 
 - **Document ID:** `NS-EVERMORE-GAC-WORKING-STATE-0001`
 - **Version:** `0.0.1`
-- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0004`
+- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0005`
 - **Authority Level:** `PROVISIONAL_CONTINUITY_STATE`
 - **Program:** `NGRP-001`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
@@ -16,57 +16,57 @@
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0004
+GAC-EPOCH-0005
 
 Last Globally Accepted Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
-
-Z1 Batch 1 Global Acceptance
-docs/architecture_reviews/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_global_acceptance_0.0.1.md
-
-e606578177b513fd502b16fa7e273ef502914be1
 
 Accepted Constraint Baseline
 NSE-001..004
 NS-EVERMORE-NSE-INDEX-0001 / 0.0.2
 
-Current Authorized Design Phase
-NONE
+Current Authorized Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 2
+
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_2 / COMPONENT_CAPABILITY_EXECUTION_BOUNDARY_CONSTRAINTS
+
+Current Authorization Prompt
+docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_2_session_prompt_0.0.1.md
+
+Authorization Prompt Commit
+a805b131e77ed0efe51c6fe695109fb8c1c9876a
+
+Post-Batch-1 Pressure Assessment
+docs/architecture_reviews/ns_evermore_post_z1_batch_1_constraint_pressure_assessment_0.0.1.md
+
+Pressure Assessment Commit
+98a8c63d0bbb0bed134d93defee5533748d9b9ba
 ```
 
-## Accepted Constraint Invariants
+## Accepted Upstream Constraints
 
 ```text
-NSE-001
-Native Tenant Semantic Invariance
-
-NSE-002
-Tenant / Organization Semantic Non-collapse
-
-NSE-003
-Organization Structural Plurality and Extensibility
-
-NSE-004
-Offline Core Correctness and Governance Invariance
+NSE-001 — Native Tenant Semantic Invariance
+NSE-002 — Tenant / Organization Semantic Non-collapse
+NSE-003 — Organization Structural Plurality and Extensibility
+NSE-004 — Offline Core Correctness and Governance Invariance
 ```
 
-## Current Investigation
+## Authorized Pressure
 
 ```text
-Post-Batch-1 Remaining Material Constraint Pressure Reassessment
-```
-
-## Known Remaining Pressure
-
-At least the following accepted-Constitution pressure remains unconverted into globally accepted concrete constraints:
-
-```text
+Fixed Five Product Component semantic-boundary / Runtime non-conflation
+First-class capability non-subordination / authority non-transfer
 Definition / Artifact / Runtime separation
-Stable language-neutral contracts
+Terminal / Local Execution authority and source-effect governance beyond NSE-004
+```
+
+## Explicit Deferred Pressure
+
+```text
+Stable language-neutral cross-boundary contracts
 Extension / re-delivery
-Fixed five-component topology implications
-First-class capability non-subordination
-Terminal / local execution governance beyond NSE-004 offline invariants
 Complete System + SDK
 Bounded enterprise integration
 Distribution / commercial optionality
@@ -74,13 +74,19 @@ Controlled technology exceptions
 Shared Foundation provider replaceability
 Cross-session continuity
 Implementation derivability
-Any newly discovered material pressure admitted through governance
+Any newly discovered unrelated material pressure
+```
+
+## Current Investigation
+
+```text
+NONE — Batch 2 has been authorized; bounded producing session has not yet returned candidate evidence
 ```
 
 ## Open MDE
 
 ```text
-0
+0 inherited into Batch 2
 ```
 
 ## Pending Owner Decision
@@ -98,18 +104,15 @@ NONE
 ## Known Drift
 
 ```text
-NONE at acceptance synchronization boundary
+NONE at authorization synchronization boundary
 ```
 
 ## Unique Next Legal Action
 
 ```text
-Global Architecture Coordinator
-→ reassess remaining material Architecture Constraint pressure against accepted NSE-001..004
-→ identify one bounded next legal phase
-→ persist a separate authorization transition if another constraint batch is authorized
+Start one bounded NGRP-001 Phase Z1 / Batch 2 Architecture Constraint Derivation session under the exact Repository-backed authorization prompt.
 ```
 
 ## Coordinator Boundary
 
-Z1 Batch 1 acceptance does not automatically authorize a later batch and does not authorize Project Architecture.
+The Global Architecture Coordinator remains the independent acceptance authority. Batch 2 must stop at `COMPLETED / AWAITING_GLOBAL_ACCEPTANCE` and return Repository-backed evidence to the GAC.
