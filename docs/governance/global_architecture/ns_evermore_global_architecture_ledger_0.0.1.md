@@ -10,8 +10,7 @@ Current truth is in Global Architecture State. This file keeps only the durable 
 ## GAC-TR-0001 — Genesis Program Authorization / Branch Bootstrap
 
 ```text
-UNINITIALIZED
-→ GAC-EPOCH-0001 / Z0 AUTHORIZED
+UNINITIALIZED → GAC-EPOCH-0001 / Z0 AUTHORIZED
 Entry: d981da571a8b7260b35fe2aed17f390ac2abbf9c
 ```
 
@@ -40,7 +39,6 @@ Commit: 5225ad7616c594abb2abbbdcb83fa7a53e631608
 
 ```text
 NSE namespace established
-ACTIVE_NSE → NONE
 Decision Registry established
 ```
 
@@ -68,7 +66,7 @@ Review Commit: 344ee8c8f9f08f71414ba3457d79fd91ce95ea97
 ## GAC-TR-0009 — Z0 Handoff
 
 ```text
-Z0 producing session completed / awaiting acceptance
+Z0 completed / awaiting acceptance
 Handoff Commit: bec26e1caad0ed1b9d04c6893592d0e6fa35ab16
 ```
 
@@ -93,7 +91,7 @@ Assessment Commit: 74fe0995cad29313ee01619be267a43db8f2b856
 ```text
 GAC-EPOCH-0002 → GAC-EPOCH-0003
 Scope → TENANT_ORGANIZATION_OFFLINE_CORE_CONSTRAINTS
-Authorization Evidence Commit: 988ca5074b371625447774a0ce258341924e3459
+Historical Authorization Commit: 988ca5074b371625447774a0ce258341924e3459
 ```
 
 ## GAC-TR-0013 — Z1 Batch 1 Global Acceptance
@@ -128,7 +126,6 @@ GAC-EPOCH-0005 → GAC-EPOCH-0006
 Owner / MDE / DAD / Implementation authority clarified
 Decision Authority Commit: f6a46cb29d2db09256623bde42fae6ba0532210a
 Decision Registry 0.0.2 Commit: 8770c304d392932c6d97198f4eee969ce4596a96
-Batch 2 scope unchanged
 ```
 
 ## GAC-TR-0017 — Governance Consolidation
@@ -136,7 +133,7 @@ Batch 2 scope unchanged
 ```text
 GAC-EPOCH-0006 → GAC-EPOCH-0007
 Unified Governance activated
-Prompt documents retired as current authorization mechanism
+Prompt documents retired
 Current Required Read Set embedded in Global State
 Owner Capability Checkpoint added
 Unified Governance Commit: dbf52978385a5d875e1103da69e1a7acd2d4b888
@@ -146,9 +143,8 @@ Unified Governance Commit: dbf52978385a5d875e1103da69e1a7acd2d4b888
 
 ```text
 GAC-EPOCH-0007 → GAC-EPOCH-0008
-Superseded governance/prompt duplicates removed from current tree
+Superseded governance/prompt duplicates removed
 Cleanup Commit: 888b00eaefda6e39445400c70209f06d74769253
-Historical evidence preserved in Git history
 ```
 
 ## GAC-TR-0019 — Z1 Batch 2 Global Acceptance
@@ -159,52 +155,68 @@ Review Entry HEAD: 8df78ecd3a71743e8db854e7e58f67424338de1b
 Batch 2 → GLOBAL_ACCEPTED
 Accepted NSE → NSE-005..008
 Current Accepted NSE → NSE-001..008
-Current Constraint Index → 0.0.3
-Global Acceptance Commit: 79df81fe62de33a46da10d1aab3b529ef95a5a36
-Superseded Index 0.0.2 removed: dc72dcad6879c2e978ce85cabe587a9528e9b5a1
-Automatic Next Batch Authorization → NONE
-Project Architecture Authorization → NONE
+Current Index → 0.0.3
+Acceptance Commit: 79df81fe62de33a46da10d1aab3b529ef95a5a36
 ```
 
-## GAC-TR-0020 — Post-Batch-2 Pressure Reassessment / Z1 Batch 3 Authorization
+## GAC-TR-0020 — Post-Batch-2 Pressure Reassessment / Batch 3 Authorization
 
 ```text
 GAC-EPOCH-0009 → GAC-EPOCH-0010
-
-Post-Batch-2 Remaining Pressure
-→ PRESENT
-
-Selected Next Bounded Scope
-ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_3 / CROSS_BOUNDARY_EXTENSION_INTEGRATION_CONSTRAINTS
-
-Authorized Pressure
+Scope → CROSS_BOUNDARY_EXTENSION_INTEGRATION_CONSTRAINTS
+Authorized pressure:
 1. Stable language-neutral cross-boundary contract semantics
 2. Extension / re-delivery governance preservation
 3. Bounded enterprise integration / external Source-of-Truth preservation
 4. Shared Foundation contract/provider replaceability
+Working-State Commit: f2bbcfaa85c2f88f2e8d72a3ca66149251bbe9b1
+Project Architecture Authorization → NONE
+```
 
-Pressure Reassessment Working-State Commit
-f2bbcfaa85c2f88f2e8d72a3ca66149251bbe9b1
+## GAC-TR-0021 — Z1 Batch 3 Global Acceptance
 
-Accepted Upstream NSE
-NSE-001..008
+```text
+GAC-EPOCH-0010 → GAC-EPOCH-0011
 
-Deferred Beyond Batch 3
-Complete Deployable System + System-level SDK
-Distribution / commercial optionality
-Controlled technology exceptions / remaining supply-chain pressure
-Cross-session continuity as Architecture Constraint pressure
-Implementation derivability as Architecture Constraint pressure
-Any newly admitted material pressure
+Review Entry HEAD
+8aed928ffbd1faeb8ad5dd7dcfe82f5aacba15a7
 
-Open MDE
-0
+Batch 3
+→ GLOBAL_ACCEPTED
+
+Accepted NSE
+→ NSE-009..012
+
+Current Accepted NSE
+→ NSE-001..012
+
+Current Constraint Index
+→ 0.0.4
+
+Global Acceptance Commit
+→ aea9a0670e847626acc83705d7ab70bef04a06a5
+
+Decision Registry synchronized
+→ 0.0.3
+→ ddcf48a68f24c3991db44550d2f674038a4dd3be
+
+Superseded Decision Registry 0.0.2 removed
+→ 78498ff8700e549f9a486f1685d0a28959b7ec74
+
+Superseded Constraint Index 0.0.3 removed
+→ 234fbadc064dcb49eaf4a77a19ac54ba7b692ddf
+
+Remaining Material Constraint Pressure
+→ PRESENT
+
+Global Constraint Derivation
+→ INCOMPLETE
+
+Automatic Next Phase Authorization
+→ NONE
 
 Project Architecture Authorization
-NONE
-
-Automatic Later Batch Authorization
-NONE
+→ NONE
 ```
 
 ---
@@ -213,19 +225,19 @@ NONE
 
 ```text
 Current Epoch
-GAC-EPOCH-0010
+GAC-EPOCH-0011
 
 Last Globally Accepted Phase
-NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 2
-
-Accepted Constraint Baseline
-NSE-001..008 / Index 0.0.3
-
-Current Authorized Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 3
 
-Authorization Scope
-ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_3 / CROSS_BOUNDARY_EXTENSION_INTEGRATION_CONSTRAINTS
+Accepted Constraint Baseline
+NSE-001..012 / Index 0.0.4
+
+Current Decision Registry
+0.0.3
+
+Current Authorized Design Phase
+NONE
 
 Open MDE
 0
@@ -243,5 +255,5 @@ Project Architecture Authorization
 NONE
 
 Unique Next Legal Action
-Start one bounded Z1 Batch 3 Architecture Constraint Derivation session from current Global State; return candidate evidence to GAC for independent acceptance
+GAC performs a separate remaining-pressure reassessment and only then authorizes one bounded next phase if warranted
 ```
