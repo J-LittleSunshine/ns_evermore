@@ -154,53 +154,52 @@ Historical Batch 2 Prompt revision Commit: 07579a96d5094536c990c220dea7e26233beb
 ## GAC-TR-0017 — Governance Consolidation and Prompt De-documentation
 
 ```text
-Previous State
-GAC-EPOCH-0006 / Z1 BATCH_2 AUTHORIZED
+GAC-EPOCH-0006
+→ GAC-EPOCH-0007
+Unified Governance activated
+Prompt documents retired as current authorization mechanism
+Current Required Read Set embedded in Global State
+Product Owner Capability Checkpoint added
+Unified Governance Commit: dbf52978385a5d875e1103da69e1a7acd2d4b888
+Batch 2 scope unchanged
+Project Architecture Authorization → NONE
+```
 
-New State
-GAC-EPOCH-0007 / Z1 BATCH_2 AUTHORIZED / UNIFIED_GOVERNANCE_ACTIVE
+## GAC-TR-0018 — Superseded Working-tree Document Cleanup
 
-Owner Governance Direction
-- Chat bootstrap prompts are disposable and need not be stored in Repository.
-- Repository must persist authorization facts, not the generated chat text.
-- Consolidate compatible governance rules and reduce unnecessary identifier namespaces.
-- Product-significant Component capabilities require Project Owner review before Component Internal Design.
+```text
+GAC-EPOCH-0007
+→ GAC-EPOCH-0008
 
-Unified Governance Baseline
-docs/governance/ns_evermore_governance_0.0.2.md
+Owner Direction
+→ remove redundant/superseded documents from current working tree
+→ retain historical evidence through Git history and recorded commits
 
-Unified Governance Commit
-dbf52978385a5d875e1103da69e1a7acd2d4b888
+Cleanup Commit
+888b00eaefda6e39445400c70209f06d74769253
 
-Standalone CRRS mechanism
-→ RETIRED AS CURRENT MECHANISM
-→ Current Required Read Set moves into Global Architecture State
-Retirement Commit: 0e94e24fa1673564524eea5848c82f448021ace3
+Removed from current tree
+→ NSE Index 0.0.1 bootstrap snapshot
+→ superseded Genesis Governance Framework
+→ standalone Decision Authority Model
+→ Decision Registry 0.0.1
+→ standalone GACP
+→ standalone CRRS
+→ standalone Session Governance Standard
+→ standalone Implementation Governance Standard
+→ all repository-backed session prompt files
 
-Current Session Authorization Mechanism
-Global Architecture State + accepted upstream evidence + Unified Governance
+Historical Evidence
+→ PRESERVED IN GIT HISTORY
 
-Chat Prompt
-→ generated delivery text only
-→ not normative
-→ no repository prompt document required
+Current normative replacements
+→ Unified Governance 0.0.2
+→ Decision Registry 0.0.2
+→ NSE Index 0.0.2
+→ Global State embedded authorization/read-set
 
-Superseded-as-current governance inputs
-- Genesis Governance Framework 0.0.1
-- Decision Authority Model 0.0.1
-- GACP-001 standalone protocol
-- Session Governance Standard 0.0.1
-- Implementation Governance Standard 0.0.1
-- standalone CRRS mechanism
-
-Historical evidence
-→ RETAINED
-
-Current Batch 2 scope
+Accepted NSE / Batch 2 scope / Project Architecture authorization
 → UNCHANGED
-
-Project Architecture Authorization
-→ NONE
 ```
 
 ---
@@ -209,7 +208,7 @@ Project Architecture Authorization
 
 ```text
 Current Epoch
-GAC-EPOCH-0007
+GAC-EPOCH-0008
 
 Last Globally Accepted Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
@@ -231,6 +230,12 @@ Global Architecture State
 
 Repository Session Prompt Required
 NO
+
+Superseded working-tree duplicates
+REMOVED
+
+Historical retrieval
+Git history
 
 Open MDE
 0
