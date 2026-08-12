@@ -1,72 +1,46 @@
 # ns_evermore Global Architecture State
 
-## Authority Metadata
-
-- **Document ID:** `NS-EVERMORE-GAC-STATE-0001`
 - **Version:** `0.0.1`
-- **Status:** `CURRENT / GAC-EPOCH-0006`
-- **Authority Level:** `GLOBAL_CURRENT_STATE`
-- **Program:** `NGRP-001`
+- **Status:** `CURRENT / GAC-EPOCH-0007`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
-
----
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0006
+GAC-EPOCH-0007
 
 Current Branch
 architecture/ns-evermore-genesis-0.0.1
 
 State Verified Through HEAD
-42b47e247a9bd7f97c0babd58d142ef7276ed604
+22be32baca7b43728038b90f1a83ee6fdc7bf538
 
 Genesis Constitution
 docs/ns_evermore_genesis_constitution_0.0.1.md
 → GLOBAL_ACCEPTED / NORMATIVE
 
-Genesis Governance Framework
-docs/governance/ns_evermore_genesis_governance_framework_0.0.1.md
-→ GLOBAL_ACCEPTED
-
-Current Decision Authority Model
-docs/governance/decisions/ns_evermore_decision_authority_model_0.0.1.md
-→ NS-EVERMORE-DECISION-AUTHORITY-MODEL-0001
-→ OWNER-GOV-001
+Current Unified Governance Baseline
+docs/governance/ns_evermore_governance_0.0.2.md
 → OWNER_DECIDED / GAC_RECOGNIZED / NORMATIVE
 
-Decision Authority Model Commit
-f6a46cb29d2db09256623bde42fae6ba0532210a
+Unified Governance Commit
+dbf52978385a5d875e1103da69e1a7acd2d4b888
 
 Current Decision Registry
 docs/governance/decisions/ns_evermore_decision_registry_0.0.2.md
-→ NS-EVERMORE-DECISION-REGISTRY-0001 / 0.0.2
 → CURRENT / NORMATIVE
-
-Decision Registry Commit
-8770c304d392932c6d97198f4eee969ce4596a96
-
-Previous Decision Registry
-docs/governance/decisions/ns_evermore_decision_registry_0.0.1.md
-→ SUPERSEDED AS CURRENT REGISTRY
-→ HISTORICAL Z0 EVIDENCE
 
 Last Globally Accepted Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
 → GLOBAL_ACCEPTED
 
-Z1 Batch 1 Global Acceptance Evidence
-docs/architecture_reviews/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_global_acceptance_0.0.1.md
-
-Z1 Batch 1 Global Acceptance Commit
+Batch 1 Global Acceptance Commit
 e606578177b513fd502b16fa7e273ef502914be1
 
 Current Accepted Constraint Index
 docs/ns_evermore_nse_constraints_index_0.0.2.md
-→ NS-EVERMORE-NSE-INDEX-0001 / 0.0.2
-→ GLOBAL_ACCEPTED / CURRENT NORMATIVE INDEX
+→ CURRENT NORMATIVE INDEX
 
 Accepted Architecture Constraints
 NSE-001 — Native Tenant Semantic Invariance
@@ -74,103 +48,7 @@ NSE-002 — Tenant / Organization Semantic Non-collapse
 NSE-003 — Organization Structural Plurality and Extensibility
 NSE-004 — Offline Core Correctness and Governance Invariance
 
-Accepted NSE Count
-4
-
 Current Project Architecture Revision
-NONE
-
-Post-Batch-1 Constraint Pressure Assessment
-docs/architecture_reviews/ns_evermore_post_z1_batch_1_constraint_pressure_assessment_0.0.1.md
-
-Pressure Assessment Commit
-98a8c63d0bbb0bed134d93defee5533748d9b9ba
-
-Current Authorized Phase
-NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 2
-
-Authorization Scope
-ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_2 / COMPONENT_CAPABILITY_EXECUTION_BOUNDARY_CONSTRAINTS
-
-Current Authorization Prompt
-docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_2_session_prompt_0.0.2.md
-
-Authorization Prompt ID
-NGRP-001-Z1-B2-AUTH-0002
-
-Authorization Prompt Commit
-07579a96d5094536c990c220dea7e26233bebb7e
-
-Previous Batch 2 Authorization Prompt
-docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_2_session_prompt_0.0.1.md
-→ SUPERSEDED AS CURRENT AUTHORIZATION PROMPT
-→ HISTORICAL GAC-EPOCH-0005 EVIDENCE
-
-Authorized Material Pressure
-Fixed Five Product Component semantic-boundary / Runtime non-conflation
-First-class capability non-subordination / authority non-transfer
-Definition / Artifact / Runtime separation
-Terminal / Local Execution authority and source-effect governance beyond NSE-004
-
-Explicit Deferred Constraint Pressure
-Stable language-neutral cross-boundary contracts
-Extension / re-delivery
-Complete System + SDK
-Bounded enterprise integration
-Distribution / commercial optionality
-Controlled technology exceptions
-Shared Foundation provider replaceability
-Cross-session continuity
-Implementation derivability
-Any newly discovered unrelated material pressure
-
-Decision Authority Operating Model
-Root Product / Constitutional Decisions → Project Owner
-MDE → Project Owner
-DAD → Authorized Architecture / Design Session
-Implementation Choice → Authorized implementation authority only where Accepted Design leaves implementation freedom
-GAC → classification / escalation / independent acceptance / phase authorization / continuity / drift
-Codex → no Architecture authority
-
-Owner Reserved Decision Rule
-Project Owner may explicitly reserve an unresolved delegated decision before finalization
-Accepted Architecture cannot be silently overridden
-Formal reopen / supersession / impact analysis / revalidation applies to accepted material
-
-Component Internal Design Rule
-Authority / SoT / Trust / major compatibility / major lock-in change → MDE / Project Owner
-Non-semantic internal decomposition within accepted boundaries → DAD / authorized design session
-
-Repository / Package Structure Rule
-Directory/package layout without architecture impact → DAD or Implementation Planning
-Directory Placement != Architecture Boundary
-Python Package != Product Component
-Django App != Architecture Authority
-
-Technology Decision Rule
-Frozen Python / Django / WebSocket / Vue root facts → INHERITED_FACT
-Replaceable ordinary library/provider implementation within accepted boundaries → DAD or implementation choice
-Major vendor/provider/language/framework/protocol/storage/artifact-format lock-in or high migration cost → MDE / Project Owner
-
-Open MDE
-0 inherited into Batch 2
-
-Unpersisted Owner Decisions
-0
-
-Owner-reserved Unresolved Decisions
-0
-
-Blocking Items
-0
-
-Known Drift
-NONE
-
-Unexpected Drift
-NONE
-
-Unauthorized Progression
 NONE
 
 Global Constraint Derivation
@@ -184,102 +62,378 @@ NOT SATISFIED
 
 Project Architecture Authorization
 NONE
-
-Latest Ledger Reconciliation Commit
-3be5d7423f4a202fcb95efc98353b96dbae28ce3
-
-Latest Working State Commit
-65ae8b17e0f647a369ca152332f439e3cfc051fb
-
-Latest Current Required Read Set Commit
-42b47e247a9bd7f97c0babd58d142ef7276ed604
-
-Current Required Read Set
-docs/governance/global_architecture/ns_evermore_current_required_read_set_0.0.1.md
-
-Unique Next Legal Action
-Start one bounded NGRP-001 Phase Z1 / Batch 2 Architecture Constraint Derivation session using Authorization Prompt 0.0.2 and OWNER-GOV-001; the producing session must stop at COMPLETED / AWAITING_GLOBAL_ACCEPTANCE and return to the Global Architecture Coordinator
 ```
 
-## Current Acceptance Coordinate
+---
+
+# Current Authorization — Z1 / Batch 2
 
 ```text
-Batch 1 Acceptance Document
-NS-EVERMORE-Z1-B1-GLOBAL-ACCEPTANCE-0001
+Current Authorized Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 2
 
-Batch 1 Acceptance Commit
-e606578177b513fd502b16fa7e273ef502914be1
+Authorization Scope
+ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_2 / COMPONENT_CAPABILITY_EXECUTION_BOUNDARY_CONSTRAINTS
 
-Accepted Constraint Baseline
-NSE-001..004
-Index 0.0.2
+Authorization Authority
+Global Architecture Coordinator
+
+Authorization Source
+THIS GLOBAL STATE
++ Unified Governance 0.0.2
++ Post-Batch-1 Pressure Assessment
++ Accepted NSE-001..004
+
+Repository Session Prompt Document Required
+NO
+
+Chat Bootstrap Prompt
+GENERATED / DISPOSABLE / NON-NORMATIVE
 ```
 
-## Current Governance Decision Coordinate
+## Authorized Material Pressure
+
+Batch 2 may derive Architecture Constraints only for:
 
 ```text
-Owner Governance Decision
-OWNER-GOV-001
-
-Decision Authority Model
-NS-EVERMORE-DECISION-AUTHORITY-MODEL-0001 / 0.0.1
-
-Decision Evidence Commit
-f6a46cb29d2db09256623bde42fae6ba0532210a
-
-Decision Registry
-NS-EVERMORE-DECISION-REGISTRY-0001 / 0.0.2
-
-Governance Transition
-GAC-TR-0016
-
-Global State Epoch
-GAC-EPOCH-0006
+A. Fixed Five Product Component semantic-boundary / Runtime non-conflation
+B. First-class capability non-subordination / authority non-transfer
+C. Definition / Artifact / Runtime separation
+D. Terminal / Local Execution authority and source-effect governance beyond NSE-004
 ```
 
-## Current Authorization Coordinate
+### A. Product Component / Runtime non-conflation
+
+Constraint-level closure must preserve:
 
 ```text
-Authorization Transition
-GAC-TR-0016 revision synchronization over existing Batch 2 scope
-
-Authorization Prompt
-NGRP-001-Z1-B2-AUTH-0002 / 0.0.2
-
-Authorization Prompt Commit
-07579a96d5094536c990c220dea7e26233bebb7e
-
-Global State Epoch
-GAC-EPOCH-0006
+Product Component != Runtime Role
+Runtime Role != Process
+Runtime Role != Service
+Runtime Role != Container
+Runtime Role != Deployment Unit
+Five Product Components != Five Processes
+Five Product Components != Five Services
+Five Product Components != Five Containers
+Five Product Components != Five Databases
+Five Product Components != Five Deployment Units
 ```
 
-## Scope Preservation
+Do not derive actual Runtime Roles, processes, services, deployment units, package layout, or database topology.
 
-`OWNER-GOV-001` clarifies decision authority; it does not alter the current Batch 2 architecture-constraint scope and does not create a new Architecture Constraint, Project Architecture decision, component internal design, directory layout, provider choice, or implementation decision.
+### B. First-class capability non-subordination
 
-## Explicit Boundaries
+Preserve the four principal capability domains as:
 
-The current Batch 2 authorization does not authorize:
+```text
+FIRST_CLASS
+PARALLEL
+NON_SUBORDINATE
+```
+
+Prevent:
+
+```text
+Cross-domain Composition -> Authority Transfer
+Shared Implementation -> Authority Transfer
+Shared Runtime -> Authority Transfer
+Shared Database -> Source-of-Truth Transfer
+Data Processing -> Business Authority Transfer
+Automation Execution -> Universal Execution Semantic Ownership
+AI Agent Invocation -> Universal Capability Ownership
+```
+
+Future Authority/SoT allocation may be required, but Batch 2 must not assign it unless already fixed upstream.
+
+### C. Definition / Artifact / Runtime separation
+
+Preserve distinct semantics for:
+
+```text
+Development Definition
+Domain Semantic Certification
+Accepted Artifact
+Installation
+Activation
+Formal Execution Admission
+Runtime Execution Attempt
+```
+
+Runtime capability to load or execute material does not itself create certification, artifact acceptance, installation, activation, admission, or authorization.
+
+Formal production execution must not treat mutable working source, unpublished definition, unchecked dynamic code, or unaccepted packages as accepted executable artifacts merely through implementation convenience.
+
+Do not select artifact format, registry, signing implementation, package manager, database model, deployment mechanism, activation/admission engine, or concrete lifecycle implementation.
+
+### D. Terminal / Local Execution authority and source-effect governance
+
+Build on accepted `NSE-001..004` without reopening them.
+
+Preserve at least:
+
+```text
+ns_node executes task != Task Definition Authority
+ns_node executes workflow != Workflow Semantic Authority
+local execution != Policy Authority
+local cache != Source of Truth automatically
+local runtime fact != Canonical Runtime State automatically
+local grant exercise != Grant Issuance Authority
+local protected effect != Authorization Authority
+local Audit Evidence Candidate != Canonical Audit Evidence
+```
+
+Preserve source-fact production, protected-effect accountability, provenance, recovery, reconnection, and reconciliation-handoff obligations while leaving concrete Authority placement and mechanisms to later architecture.
+
+Do not choose local database, cache provider, grant format, credential design, authorization engine, audit store, scheduler, worker, synchronization protocol, runtime topology, or recovery algorithm.
+
+---
+
+# Accepted Upstream Invariants That Batch 2 Must Preserve
+
+```text
+NSE-001 Native Tenant Semantic Invariance
+NSE-002 Tenant / Organization Semantic Non-collapse
+NSE-003 Organization Structural Plurality and Extensibility
+NSE-004 Offline Core Correctness and Governance Invariance
+```
+
+Batch 2 must not weaken Tenant scope, collapse Organization into Tenant, narrow Organization structural plurality, or turn offline/local execution into a governance bypass.
+
+---
+
+# Decision Authority Operating Model
+
+Current model from Unified Governance:
+
+```text
+Root Product / Constitutional Decisions
+→ Project Owner
+
+MDE
+→ Project Owner
+
+DAD
+→ Authorized Architecture / Design Session
+
+Implementation Choice
+→ authorized downstream implementation authority only where Accepted Design leaves freedom
+
+GAC
+→ classification / escalation / independent acceptance / authorization / continuity / drift
+
+Codex
+→ no Architecture authority
+```
+
+Product-significant Component capability questions are Project Owner decisions when they are not already inherited/accepted.
+
+Before future Component Internal Design:
+
+```text
+Component Capability Inventory
+→ classify INHERITED_REQUIRED / DERIVED_REQUIRED / OWNER_DECISION_REQUIRED / DEFERRED / NON_GOAL
+→ ask Project Owner only for OWNER_DECISION_REQUIRED items
+→ accept Component Capability Baseline
+→ then perform Component Internal Design
+```
+
+No separate capability-number namespace is required unless later traceability genuinely needs it.
+
+---
+
+# Explicit Deferred Constraint Pressure
+
+Batch 2 does not derive:
+
+```text
+Stable language-neutral cross-boundary contracts
+Extension / re-delivery
+Complete System + SDK
+Bounded enterprise integration
+Distribution / commercial optionality
+Controlled technology exceptions
+Shared Foundation provider replaceability
+Cross-session continuity
+Implementation derivability
+Any newly discovered unrelated material pressure
+```
+
+New out-of-scope pressure is reported to GAC; it is not silently added to Batch 2.
+
+---
+
+# Strict Forbidden Scope
+
+Batch 2 MUST NOT begin or decide:
 
 ```text
 Project Architecture
-Actual Product Component internal design
-Actual Runtime Role design
+Actual Product Component internal architecture
+Actual Runtime Role set
 Process / Service / Container / Deployment topology
 Repository/package structure design
 IAM / Policy / Organization architecture solution
-Database / persistence design
-Stable cross-boundary Contract derivation beyond referenced interaction boundaries
-Extension / re-delivery constraint derivation beyond referenced interaction boundaries
+Tenant / Organization redesign beyond accepted NSE-001..004
+Database model / topology / product
+Artifact registry / signing / package implementation
+Activation / admission engine implementation
+Task / workflow definition model
+Queue / broker / scheduler / worker model
 Shared Foundation detailed design
-Foundation Contracts / Modules / Providers
+Stable cross-boundary Contract derivation except referenced interaction boundaries
+Extension / re-delivery Constraint derivation except referenced interaction boundaries
+Foundation Contract / Module / Provider design
 Implementation Planning
 IWP
 Coding
 ```
 
-Batch 2 may derive only candidate Architecture Constraints from its authorized pressure cluster. It cannot self-accept, authorize a later batch, claim global Constraint Exhaustion, or reinterpret the Decision Authority Model.
+---
 
-## Epoch Semantics
+# Batch 2 Entry Gate
 
-`GAC-EPOCH-0006` records the Project Owner's explicit Decision Authority Model and the governance revision of the already-authorized Z1 Batch 2 session to consume that model. No architecture scope expansion occurred.
+Before deriving a candidate constraint, the bounded session must verify:
+
+```text
+Repository reachable
+Branch correct
+Actual branch HEAD resolved
+Recovery complete under Unified Governance §11
+Current Global State Epoch = GAC-EPOCH-0007
+Last Globally Accepted Phase = Z1 / Batch 1
+Current Accepted Constraint Index = 0.0.2
+Accepted NSE = NSE-001..004
+Current Authorized Phase = Z1 / Batch 2
+Authorization Scope matches this State
+Open inherited MDE = 0
+Unpersisted Owner Decision = 0
+Blocking Item = 0
+Unexpected Drift = NONE
+Unauthorized Progression = NONE
+```
+
+If any item fails:
+
+```text
+DO NOT DERIVE
+→ RETURN TO GAC
+```
+
+---
+
+# Batch 2 Required Review / Exit Gate
+
+Apply all relevant Unified Governance reviews, including at least:
+
+```text
+MAJOR_DECISION_ESCALATION_AUDIT
+DOCUMENTATION_COMPLETENESS_AUDIT
+SEMANTIC_RESOLUTION_DEPTH_REVIEW
+CONSTRAINT_TRACEABILITY_REVIEW
+AUTHORITY_SOURCE_OF_TRUTH_AMBIGUITY_REVIEW
+TENANT_ORGANIZATION_NON_COLLAPSE_REVIEW
+DEPENDENCY_INVARIANT_REVIEW
+PROVENANCE_HIDDEN_INHERITANCE_REVIEW
+ARCHITECTURE_DOWNSTREAM_DESIGN_BOUNDARY_REVIEW
+COMPONENT_BOUNDARY_AMBIGUITY_REVIEW
+RUNTIME_BOUNDARY_AMBIGUITY_REVIEW
+SOURCE_EFFECT_RESPONSIBILITY_REVIEW
+OFFLINE_PRIVATE_CORRECTNESS_REVIEW
+GIT_DRIFT_REVIEW
+```
+
+Batch 2 may complete only when:
+
+```text
+Produced constraint records complete
+Authorized Batch pressure has no unresolved blocking semantic gap
+Accepted NSE-001..004 preserved
+Open MDE = 0
+Unpersisted Owner Decision = 0
+Architecture Solution Leakage = 0
+Project Architecture Leakage = 0
+Runtime Architecture Leakage = 0
+Missing/Ambiguous required constraint dimension = 0
+Implementation-defined escape = 0
+Tenant / Organization collapse = 0
+Dependency / invariant conflict = 0
+Source/effect responsibility ambiguity introduced = 0
+Unexpected Drift = NONE
+Unauthorized Progression = NONE
+```
+
+Producing-session maximum state:
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ STOP
+→ RETURN TO GAC
+```
+
+It cannot self-accept, authorize another batch, globally close Constraint Derivation, or begin Project Architecture.
+
+---
+
+# Current Required Read Set
+
+For a fresh Batch 2 session, minimum sufficient current context is:
+
+```text
+1. docs/ns_evermore_genesis_constitution_0.0.1.md
+2. docs/governance/ns_evermore_governance_0.0.2.md
+3. docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md
+4. docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md
+5. docs/ns_evermore_nse_constraints_index_0.0.2.md
+6. docs/nse_constraints/ns_evermore_nse_001_0.0.1.md
+7. docs/nse_constraints/ns_evermore_nse_002_0.0.1.md
+8. docs/nse_constraints/ns_evermore_nse_003_0.0.1.md
+9. docs/nse_constraints/ns_evermore_nse_004_0.0.1.md
+10. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_global_acceptance_0.0.1.md
+11. docs/architecture_reviews/ns_evermore_post_z1_batch_1_constraint_pressure_assessment_0.0.1.md
+12. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md
+   → relevant tail only unless deeper history is needed
+```
+
+Read additional history only for reopen, conflict, divergence, evidence ambiguity, cross-phase collision, drift investigation, or explicit compatibility/migration work.
+
+The following are **not current mandatory inputs**:
+
+```text
+docs/session_prompts/*
+standalone GACP-001
+genesis governance framework 0.0.1
+standalone Decision Authority Model 0.0.1
+standalone Session Governance Standard 0.0.1
+standalone Implementation Governance Standard 0.0.1
+standalone CRRS mechanism
+```
+
+They remain historical governance evidence.
+
+---
+
+# Current Governance Coordinates
+
+```text
+Unified Governance Commit
+dbf52978385a5d875e1103da69e1a7acd2d4b888
+
+CRRS Mechanism Retirement Commit
+0e94e24fa1673564524eea5848c82f448021ace3
+
+Ledger Consolidation Commit
+fbda4ec995a8322c113ff46c8daac523b6b30ab2
+
+Working State Rebase Commit
+22be32baca7b43728038b90f1a83ee6fdc7bf538
+```
+
+---
+
+# Unique Next Legal Action
+
+```text
+Start one bounded NGRP-001 Phase Z1 / Batch 2 Architecture Constraint Derivation session using this Global State and Unified Governance Baseline.
+Use generated chat bootstrap text only as delivery convenience.
+Return candidate evidence to the current Global Architecture Coordinator for independent acceptance.
+```
