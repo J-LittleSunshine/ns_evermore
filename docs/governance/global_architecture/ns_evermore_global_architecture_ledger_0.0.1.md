@@ -329,11 +329,63 @@ Project Architecture Authorization
 NONE
 ```
 
+## GAC-TR-0016 — Project Owner Decision Authority Model / Batch 2 Authorization Revision
+
+```text
+Previous State
+GAC-EPOCH-0005 / Z1 BATCH_2 AUTHORIZED
+
+New State
+GAC-EPOCH-0006 / Z1 BATCH_2 AUTHORIZED UNDER OWNER-GOV-001
+
+Owner Governance Decision
+OWNER-GOV-001 — Decision Authority Model
+
+Decision Evidence
+docs/governance/decisions/ns_evermore_decision_authority_model_0.0.1.md
+
+Decision Evidence Commit
+f6a46cb29d2db09256623bde42fae6ba0532210a
+
+Current Decision Registry
+docs/governance/decisions/ns_evermore_decision_registry_0.0.2.md
+
+Decision Registry Commit
+8770c304d392932c6d97198f4eee969ce4596a96
+
+Revised Batch 2 Authorization Prompt
+docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_2_session_prompt_0.0.2.md
+
+Revised Authorization Prompt Commit
+07579a96d5094536c990c220dea7e26233bebb7e
+
+Authorization Scope Change
+NONE
+
+Architecture Constraint Scope Change
+NONE
+
+Decision Authority Clarification
+Project Owner → Root / MDE
+GAC → classification / acceptance / authorization / continuity
+Authorized Design Session → DAD
+Implementation / Codex → non-architecture implementation freedom only
+
+Result
+OWNER_DECISION_PERSISTED / DECISION_AUTHORITY_MODEL_NORMATIVE / BATCH_2_PROMPT_REVISED
+
+Automatic Later Phase Authorization
+NONE
+
+Project Architecture Authorization
+NONE
+```
+
 ## Current Ledger Tail
 
 ```text
 Current Epoch
-GAC-EPOCH-0005
+GAC-EPOCH-0006
 
 Last Globally Accepted Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
@@ -342,6 +394,13 @@ Accepted Constraint Baseline
 NSE-001..004
 NS-EVERMORE-NSE-INDEX-0001 / 0.0.2
 
+Current Decision Authority Model
+OWNER-GOV-001
+→ OWNER_DECIDED / GAC_RECOGNIZED / NORMATIVE
+
+Current Decision Registry
+NS-EVERMORE-DECISION-REGISTRY-0001 / 0.0.2
+
 Current Authorized Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 2
 
@@ -349,7 +408,7 @@ Authorization Scope
 ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_2 / COMPONENT_CAPABILITY_EXECUTION_BOUNDARY_CONSTRAINTS
 
 Current Session Prompt
-docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_2_session_prompt_0.0.1.md
+docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_2_session_prompt_0.0.2.md
 
 Open MDE
 0
@@ -364,5 +423,5 @@ Global Constraint Derivation
 INCOMPLETE
 
 Unique next legal action
-Start one bounded Z1 Batch 2 Architecture Constraint Derivation session under the exact Repository-backed authorization prompt; it must return to the Global Architecture Coordinator for independent acceptance
+Start one bounded Z1 Batch 2 Architecture Constraint Derivation session under Authorization Prompt 0.0.2 and OWNER-GOV-001; it must return to the Global Architecture Coordinator for independent acceptance
 ```
