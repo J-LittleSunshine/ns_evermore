@@ -40,26 +40,16 @@ GAC-TR-0024  Constraint Exhaustion Closure / Project Architecture Entry Authoriz
 
 GAC-TR-0025  Z2 Project Architecture Synthesis / Batch 1 Global Acceptance
              → GAC-EPOCH-0014 → GAC-EPOCH-0015
-             → Review Entry HEAD: 6ea9bab7d69c167278c9d8ae4ebc0231798d03f1
              → Project Architecture 0.0.2: GLOBAL_ACCEPTED / NORMATIVE / CURRENT
              → Acceptance Commit: 34aed09df58089768b6fa40862e7414d793696df
-             → Owner Decision Baseline: Z2-MDE-001..017 / OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
-             → Decision Registry 0.0.5: eb28ebda40f1d9b925d6934d0f90dd2bbb4e0b86
-             → Automatic Next Phase Authorization: NONE
+             → Owner Decision Baseline: Z2-MDE-001..017
 
 GAC-TR-0026  Post-Z2-Batch-1 Project Architecture Pressure Reassessment / Batch 2 Authorization
              → GAC-EPOCH-0015 → GAC-EPOCH-0016
              → Remaining Material Project Architecture Pressure: PRESENT
-             → Selected scope:
+             → Scope:
                PROJECT_ARCHITECTURE_SYNTHESIS_ONLY / BATCH_2 /
                CROSS_CUTTING_LIFECYCLE_TRUST_RECOVERY_EVOLUTION_SEMANTICS
-             → Authorized pressure:
-               1. project-wide lifecycle / temporal / failure semantics
-               2. Security / Trust / Principal / Data-Privacy boundary topology
-               3. recovery / reconciliation / offline-degraded responsibility topology
-               4. compatibility / evolution / migration / conformance / revalidation topology
-               5. Project Architecture semantic-resolution matrix closure
-             → Five-component Internal Architecture Boundaries: NOT YET AUTHORIZED
 
 GAC-TR-0027  Z2 Project Architecture Synthesis / Batch 2 Global Acceptance
              → GAC-EPOCH-0016 → GAC-EPOCH-0017
@@ -73,7 +63,23 @@ GAC-TR-0027  Z2 Project Architecture Synthesis / Batch 2 Global Acceptance
              → Superseded Registry 0.0.5 removed: ffd519949391acbfd1b3de0d94474fca86a93c44
              → Superseded Project Architecture 0.0.2 removed from current tree: 0b5e1bc09541db0923ee9a321066f20871357cb5
              → Automatic Next Phase Authorization: NONE
-             → Required next GAC action: PROJECT_ARCHITECTURE_REMAINING_PRESSURE_ASSESSMENT
+
+GAC-TR-0028  Project Architecture Global Closure / Z3 Batch 1 Authorization
+             → GAC-EPOCH-0017 → GAC-EPOCH-0018
+             → Remaining-pressure Assessment: e1c7cb512c0e343c5c07eacbe8c84e247340b678
+             → Remaining Material Project Architecture Pressure: NONE_FOUND
+             → Project Architecture Synthesis: GLOBAL_CLOSED / COMPLETE
+             → Current normative Project Architecture: 0.0.3
+             → Next legal top-level phase: Five-component Internal Architecture Boundaries
+             → Authorized bounded session:
+               NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1
+             → Scope:
+               FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 /
+               COMPONENT_CAPABILITY_INVENTORY_OWNER_CHECKPOINT
+             → Objective: establish five-component capability inventories/classification and execute mandatory Owner Capability Checkpoint before internal decomposition
+             → Component Internal Design: NOT AUTHORIZED
+             → Runtime Responsibility Architecture: NOT AUTHORIZED
+             → Shared Foundation Architecture: NOT AUTHORIZED
 ```
 
 ---
@@ -82,9 +88,12 @@ GAC-TR-0027  Z2 Project Architecture Synthesis / Batch 2 Global Acceptance
 
 ```text
 Current Epoch
-GAC-EPOCH-0017
+GAC-EPOCH-0018
 
 Architecture Constraint Derivation
+GLOBAL_CLOSED / COMPLETE
+
+Project Architecture Synthesis
 GLOBAL_CLOSED / COMPLETE
 
 Accepted Constraint Baseline
@@ -92,9 +101,6 @@ NSE-001..017 / Index 0.0.5
 
 Current Decision Registry
 0.0.6
-
-Last Globally Accepted Phase
-NGRP-001 Phase Z2 — Project Architecture Synthesis / Batch 2
 
 Current Project Architecture
 0.0.3 / GLOBAL_ACCEPTED / NORMATIVE / CURRENT
@@ -105,8 +111,14 @@ Z2-DAD-001..041
 Owner Decision Baseline
 Z2-MDE-001..017 / OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
 
-Project Architecture Synthesis Overall
-ACCEPTANCE_COMPLETE_FOR_BATCH_2 / GLOBAL_COMPLETION_PENDING_GAC_ASSESSMENT
+Remaining Material Project Architecture Pressure
+NONE_FOUND
+
+Current Authorized Phase
+NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1
+
+Authorization Scope
+FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 / COMPONENT_CAPABILITY_INVENTORY_OWNER_CHECKPOINT
 
 Open MDE
 0
@@ -114,9 +126,6 @@ Open MDE
 Unpersisted Owner Decision
 0
 
-Current Authorized Phase
-NONE
-
 Unique Next Legal Action
-Global Architecture Coordinator performs PROJECT_ARCHITECTURE_REMAINING_PRESSURE_ASSESSMENT; no downstream architecture phase is authorized before that gate and a separate authorization transition.
+Start one bounded Z3 Batch 1 session to build five-component Capability Inventories, classify capability scope and complete the Owner Capability Checkpoint; stop before internal module decomposition and return candidate evidence to GAC.
 ```
