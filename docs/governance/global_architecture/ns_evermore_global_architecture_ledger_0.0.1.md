@@ -221,26 +221,64 @@ Project Architecture Authorization
 NONE
 ```
 
+## GAC-TR-0013 — Z1 Batch 1 Global Acceptance
+
+```text
+Previous State
+GAC-EPOCH-0003 / Z1 BATCH_1 COMPLETED_AWAITING_GLOBAL_ACCEPTANCE
+
+New State
+GAC-EPOCH-0004 / Z1 BATCH_1 GLOBAL_ACCEPTED
+
+Evidence File
+docs/architecture_reviews/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_global_acceptance_0.0.1.md
+
+Evidence Commit
+e606578177b513fd502b16fa7e273ef502914be1
+
+Review Entry HEAD
+8e931f5f9613a6ae3eb7b440f01bab24f83e0fcd
+
+Accepted Constraints
+NSE-001
+NSE-002
+NSE-003
+NSE-004
+
+Accepted Constraint Index
+NS-EVERMORE-NSE-INDEX-0001 / 0.0.2
+
+Result
+GLOBAL_ACCEPT
+
+Remaining Material Constraint Pressure
+PRESENT
+
+Global Constraint Derivation
+INCOMPLETE
+
+Automatic Next Phase Authorization
+NONE
+
+Project Architecture Authorization
+NONE
+```
+
 ## Current Ledger Tail
 
 ```text
 Current Epoch
-GAC-EPOCH-0003
+GAC-EPOCH-0004
 
 Last Globally Accepted Phase
-NGRP-001 / Z0 — Genesis Governance Bootstrap
-
-Current Authorized Phase
 NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
 
-Authorization Scope
-ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_1 / TENANT_ORGANIZATION_OFFLINE_CORE_CONSTRAINTS
+Accepted Constraint Baseline
+NSE-001..004
+NS-EVERMORE-NSE-INDEX-0001 / 0.0.2
 
-Current Session Prompt
-docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_session_prompt_0.0.1.md
-
-Accepted Constraint Set
-NONE / ACTIVE_NSE = NONE
+Current Authorized Design Phase
+NONE
 
 Open MDE
 0
@@ -248,6 +286,9 @@ Open MDE
 Unpersisted Owner Decision
 0
 
+Remaining Material Constraint Pressure
+PRESENT
+
 Unique next legal action
-Start one bounded Z1 Batch 1 design session under the exact Repository-backed authorization prompt; GAC itself does not perform the bounded derivation inside the coordinator role
+Global Architecture Coordinator reassesses remaining material constraint pressure against accepted NSE-001..004 and determines one bounded next legal phase; no later batch is automatically authorized
 ```
