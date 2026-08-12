@@ -4,7 +4,7 @@
 
 - **Document ID:** `NS-EVERMORE-GAC-STATE-0001`
 - **Version:** `0.0.1`
-- **Status:** `CURRENT / GAC-EPOCH-0003`
+- **Status:** `CURRENT / GAC-EPOCH-0004`
 - **Authority Level:** `GLOBAL_CURRENT_STATE`
 - **Program:** `NGRP-001`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
@@ -15,103 +15,62 @@
 
 ```text
 Current Global State Epoch
-GAC-EPOCH-0003
+GAC-EPOCH-0004
 
 Current Branch
 architecture/ns-evermore-genesis-0.0.1
 
-Genesis Authorized Entry HEAD
-d981da571a8b7260b35fe2aed17f390ac2abbf9c
-
 State Verified Through HEAD
-ec2ece1b887ebda8215bbd257f0337870825f235
+4c91a3d52f0a2aed023142aa90b00e2ccf8c98ac
 
-Z0 Global Acceptance Evidence
-docs/architecture_reviews/ns_evermore_ngrp_001_phase_z0_global_acceptance_0.0.1.md
-
-Z0 Global Acceptance Commit
-8dc0ad172be0223ce5af7844078a90c4ffe61599
-
-Post-Z0 Constraint Pressure Assessment
-docs/architecture_reviews/ns_evermore_post_z0_constraint_pressure_assessment_0.0.1.md
-
-Pressure Assessment Commit
-74fe0995cad29313ee01619be267a43db8f2b856
-
-Current Z1 Authorization Prompt
-docs/session_prompts/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_session_prompt_0.0.1.md
-
-Z1 Authorization Prompt Commit
-988ca5074b371625447774a0ce258341924e3459
-
-Latest Ledger Reconciliation Commit
-0cb489bc84d6ec9f0055d6f818c1f5d3cc20efdb
-
-Latest Working State Commit
-f8e84912cba89e7b805d928ac17e4023a74c9db1
-
-Latest Current Required Read Set Commit
-ec2ece1b887ebda8215bbd257f0337870825f235
-
-Current Constitution
+Genesis Constitution
 docs/ns_evermore_genesis_constitution_0.0.1.md
-→ GLOBAL_ACCEPTED / NORMATIVE via NS-EVERMORE-Z0-GLOBAL-ACCEPTANCE-0001
+→ GLOBAL_ACCEPTED / NORMATIVE
 
-Current Governance Baseline
+Genesis Governance Framework
 docs/governance/ns_evermore_genesis_governance_framework_0.0.1.md
 → GLOBAL_ACCEPTED
 
-Current Constraint Baseline
+Last Globally Accepted Phase
+NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
+→ GLOBAL_ACCEPTED
+
+Z1 Batch 1 Global Acceptance Evidence
+docs/architecture_reviews/ns_evermore_ngrp_001_phase_z1_constraint_derivation_batch_1_global_acceptance_0.0.1.md
+
+Z1 Batch 1 Global Acceptance Commit
+e606578177b513fd502b16fa7e273ef502914be1
+
+Accepted Constraint Index
+docs/ns_evermore_nse_constraints_index_0.0.2.md
+→ NS-EVERMORE-NSE-INDEX-0001 / 0.0.2
+→ GLOBAL_ACCEPTED / CURRENT NORMATIVE INDEX
+
+Previous Constraint Index
 docs/ns_evermore_nse_constraints_index_0.0.1.md
-→ GLOBAL_ACCEPTED BOOTSTRAP
-→ ACTIVE_NSE = NONE
-→ Concrete Constraint Derivation has not yet produced any candidate constraint
+→ SUPERSEDED AS CURRENT INDEX
+→ HISTORICAL ACCEPTED GENESIS BOOTSTRAP EVIDENCE
+
+Accepted Architecture Constraints
+NSE-001 — Native Tenant Semantic Invariance
+NSE-002 — Tenant / Organization Semantic Non-collapse
+NSE-003 — Organization Structural Plurality and Extensibility
+NSE-004 — Offline Core Correctness and Governance Invariance
+
+Accepted NSE Count
+4
 
 Current Project Architecture Revision
 NONE
 
-Current Accepted Genesis Decisions
-Z0-DAD-001 .. Z0-DAD-010
-→ GLOBAL_ACCEPTED
+Current Authorized Design Phase
+NONE
 
-Current Root Inherited Facts
-ROOT-FACT-001 .. ROOT-FACT-017
-→ normative through accepted Constitution
-
-Last Globally Accepted Phase
-NGRP-001 Phase Z0 — Genesis Governance Bootstrap
-→ GLOBAL_ACCEPTED
-
-Current Authorized Phase
-NGRP-001 Phase Z1 — Architecture Constraint Derivation / Batch 1
-
-Authorization Scope
-ARCHITECTURE_CONSTRAINT_DERIVATION_ONLY / BATCH_1 / TENANT_ORGANIZATION_OFFLINE_CORE_CONSTRAINTS
-
-Authorized Material Pressure
-Native Multi-tenancy
-Tenant / Organization Non-collapse
-Complex Extensible Organization
-Offline Core Correctness
-
-Explicit Deferred Constraint Pressure
-Definition / Artifact / Runtime separation
-Stable language-neutral contracts
-Extension / re-delivery
-Fixed five-component topology implications outside direct batch interaction
-First-class capability non-subordination
-Terminal / local execution governance beyond offline-core invariants
-Complete System + SDK
-Bounded enterprise integration
-Distribution / commercial optionality
-Controlled technology exceptions
-Shared Foundation provider replaceability
-Cross-session continuity
-Implementation derivability
-Any newly discovered unrelated material pressure
+Current Legal Governance Action
+POST_BATCH_1_REMAINING_CONSTRAINT_PRESSURE_REASSESSMENT
 
 Open MDE
-0 inherited into Z1 Batch 1
+0
 
 Unpersisted Owner Decisions
 0
@@ -128,61 +87,76 @@ NONE
 Unauthorized Progression
 NONE
 
+Architecture Solution Leakage from accepted Batch 1
+0
+
+Project Architecture Leakage
+0
+
+Remaining Material Constraint Pressure
+PRESENT
+
+Global Constraint Derivation
+INCOMPLETE
+
+Constraint Exhaustion Assessment
+NOT YET SATISFIED
+
+Project Architecture Authorization
+NONE
+
+Latest Ledger Reconciliation Commit
+14ba3894fac42aebf4a855f8a080d8c7e90f8981
+
+Latest Working State Commit
+7483a45db6dbb115058091c7bcca314a736d3f04
+
+Latest Current Required Read Set Commit
+4c91a3d52f0a2aed023142aa90b00e2ccf8c98ac
+
 Current Required Read Set
 docs/governance/global_architecture/ns_evermore_current_required_read_set_0.0.1.md
 
 Unique Next Legal Action
-Start one bounded Z1 Batch 1 Architecture Constraint Derivation session using the exact Repository-backed authorization prompt; the bounded session must stop at COMPLETED / AWAITING_GLOBAL_ACCEPTANCE and return to the Global Architecture Coordinator
+Global Architecture Coordinator reassesses remaining material Architecture Constraint pressure against accepted NSE-001..004 and determines exactly one bounded next legal phase; no later batch is automatically authorized
 ```
 
-## Current Normative Acceptance Coordinate
+## Current Accepted Constraint Coordinates
 
 ```text
-Z0 Acceptance Document
-NS-EVERMORE-Z0-GLOBAL-ACCEPTANCE-0001
+NSE-001
+docs/nse_constraints/ns_evermore_nse_001_0.0.1.md
+→ accepted via NS-EVERMORE-Z1-B1-GLOBAL-ACCEPTANCE-0001
 
-Z0 Acceptance Commit
-8dc0ad172be0223ce5af7844078a90c4ffe61599
+NSE-002
+docs/nse_constraints/ns_evermore_nse_002_0.0.1.md
+→ accepted via NS-EVERMORE-Z1-B1-GLOBAL-ACCEPTANCE-0001
 
-Accepted Phase
-NGRP-001 / Z0
+NSE-003
+docs/nse_constraints/ns_evermore_nse_003_0.0.1.md
+→ accepted via NS-EVERMORE-Z1-B1-GLOBAL-ACCEPTANCE-0001
+
+NSE-004
+docs/nse_constraints/ns_evermore_nse_004_0.0.1.md
+→ accepted via NS-EVERMORE-Z1-B1-GLOBAL-ACCEPTANCE-0001
 ```
 
-## Current Authorization Coordinate
+## Explicit No-Automatic-Progression Boundary
+
+Batch 1 acceptance does not authorize:
 
 ```text
-Authorization Transition
-GAC-TR-0012
-
-Authorization Prompt
-NGRP-001-Z1-B1-AUTH-0001
-
-Authorization Prompt Commit
-988ca5074b371625447774a0ce258341924e3459
-
-Global State Epoch
-GAC-EPOCH-0003
-```
-
-## Explicit Boundaries
-
-The current Z1 authorization does not authorize:
-
-```text
+Z1 Batch 2
 Project Architecture
-IAM / Policy / Organization architecture solutions
+IAM / Policy / Organization architecture solution
 Runtime Architecture
-Component Internal Architecture
 Shared Foundation detailed design
-Foundation Contracts / Modules / Providers
-Database / queue / scheduler / worker choices
+Contracts / Modules / Providers
 Implementation Planning
 IWP
 Coding
 ```
 
-The Z1 bounded session may only derive candidate Architecture Constraints from its authorized pressure cluster. It cannot self-accept or authorize a later batch.
-
 ## Epoch Semantics
 
-`GAC-EPOCH-0003` records explicit authorization of the first bounded Architecture Constraint Derivation session after independent Z0 Global Acceptance and post-Z0 pressure reassessment.
+`GAC-EPOCH-0004` records independent Global Acceptance of Z1 Batch 1 and promotion of `NSE-001..004` plus Constraint Index `0.0.2` to the current normative Architecture Constraint baseline.
