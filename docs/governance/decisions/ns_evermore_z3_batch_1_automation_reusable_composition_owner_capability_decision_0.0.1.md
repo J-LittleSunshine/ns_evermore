@@ -1,41 +1,20 @@
 # NGRP-001 Phase Z3 / Batch 1 — Reusable Automation Composition Owner Capability Decision
 
 - **Program / Phase:** `NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1`
-- **Authorization Scope:** `FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 / COMPONENT_AND_COMMON_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT`
-- **Repository:** `J-LittleSunshine/ns_evermore`
-- **Branch:** `architecture/ns-evermore-genesis-0.0.1`
-- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
 - **Decision Authority:** `PROJECT_OWNER / PRODUCT_CAPABILITY_CHECKPOINT`
+- **Capability Classification:** `OWNER_DECISION_REQUIRED`
+- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
+- **Evidence Correction Scope:** `CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY`
+- **Selected Semantics:** `UNCHANGED`
 - **Global Acceptance:** `NOT CLAIMED`
-
----
 
 ## 1. Material Capability Question
 
-Should a Native Automation Definition be able to natively reference, invoke, and reuse another Native Automation Definition as a governed product capability, or should Automation Definitions remain independent execution units whose composition is performed only by external Business Application / Agent / integration logic?
+Should a Native Automation Definition be able to natively reference, invoke and reuse another Native Automation Definition as a governed product capability, or should Automation Definitions remain independent execution units whose composition is performed only by external Business Application / Agent / integration logic?
 
-The question is product-significant because it determines whether Automation can become a reusable, composable enterprise automation asset model rather than encouraging copied workflow logic or glue orchestration outside the Automation domain.
+This is product-significant because it determines whether Automation can become a reusable composable enterprise asset model rather than encouraging copied workflow logic or glue orchestration outside the Automation domain.
 
-It does not reopen accepted ownership:
-
-```text
-Automation Definition / Workflow Semantic Authority
-→ ns_server
-
-Automation Canonical Definition SoT
-→ ns_server
-
-Automation visual authoring
-→ ns_web
-
-Automation source authoring
-→ System-level SDK / Development Surface
-
-Applicable local execution
-→ ns_node
-```
-
-## 2. Classification
+## 2. Classification and MDE Boundary
 
 ```text
 Capability Classification
@@ -45,35 +24,67 @@ MDE
 → NO
 ```
 
-The capability does not move Authority, SoT, Actual-state Ownership, Trust, Artifact Acceptance, Execution Admission, Tenant, IAM, Policy or runtime ownership.
+The capability materially expands Automation composition but does not move Authority, SoT, Actual-state Ownership, Trust, Artifact Acceptance, Execution Admission, Tenant, IAM, Policy or runtime ownership.
 
-## 3. Durable Alternatives Presented
+## 3. Durable Mutually-exclusive Alternatives
 
-### Option A — Independent Automation Definitions
+### A — Independent Automation Definitions
 
 Native Automation Definitions remain independent. Reuse/composition is performed by Business Application, Agent, integration code or another external caller.
 
-### Option B — Native Reusable Automation Composition
+### B — Native Reusable Automation Composition
 
 A Native Automation Definition may, under governed semantics, reference, invoke and reuse another Native Automation Definition.
 
-### Option C — Strict Hierarchical Subflow Only
+### C — Strict Hierarchical Subflow Only
 
 Native Automation supports only a permanently hierarchical Parent Automation → Child/Subflow model rather than general reusable Automation-to-Automation composition.
 
 ## 4. Recommendation Presented
 
-`B — Native Reusable Automation Composition`.
+```text
+Recommendation
+→ B — Native Reusable Automation Composition
+```
 
-Rationale:
+### Recommendation Rationale
 
-- avoids workflow copying and divergence;
-- enables reusable enterprise Automation assets;
-- supports layered decomposition, testing, customer secondary development and re-delivery;
-- preserves the Automation domain as first-class instead of moving composition into Business Application or glue code;
-- does not require any concrete graph/subflow/runtime realization in this Batch.
+Option B avoids workflow copying/divergence, allows reusable enterprise Automation assets and layered decomposition, and keeps Automation composition inside its own first-class domain instead of forcing Business Application or glue code to own it. It does so without selecting a DAG/subflow/runtime realization.
 
-## 5. Project Owner Decision
+## 5. Tradeoffs and Impact
+
+**Benefits**
+- reusable Automation assets reduce duplicated workflow logic and version divergence;
+- improves modular testing, customer secondary development and re-delivery;
+- supports larger Automation definitions through governed composition.
+
+**Costs**
+- later design must manage dependency/revision compatibility and composed lifecycle visibility;
+- testing, diagnostics and provenance must account for caller/callee Automation relationships.
+
+**Risks / Complexity**
+- cycles/recursive composition, binding ambiguity and failure propagation require later explicit treatment;
+- silent latest-version binding or implicit lifecycle sharing could create unsafe compatibility behavior;
+- composition must not become an Artifact/Admission bypass.
+
+**Long-term Impact**
+- Automation becomes a composable enterprise Automation asset platform rather than a set of isolated workflows;
+- general reuse is not permanently constrained to a strict parent-child hierarchy.
+
+**Compatibility / Migration Impact**
+- caller and referenced Automation revisions may evolve independently and require explicit supported/unsupported/incompatible semantics;
+- exact binding/version-range/migration rules remain deferred.
+
+**Offline / Private Deployment Impact**
+- reusable composition must remain resolvable under private/offline correctness without mandatory public registries or SaaS orchestration;
+- disconnected composition cannot bypass Tenant/IAM/Policy/Trust/Artifact/Admission governance.
+
+**Cross-component Impact**
+- `ns_server` remains Automation Semantic Authority and Definition SoT;
+- SDK and `ns_web` must later be able to express the accepted composition semantics;
+- `ns_runtime` may later coordinate runtime execution and `ns_node` may execute applicable work, without either gaining Automation authority.
+
+## 6. Project Owner Selected Result
 
 ```text
 Selected Option
@@ -92,107 +103,36 @@ Automation Canonical Definition SoT
 → ns_server / UNCHANGED
 ```
 
-## 6. Normative Capability Consequences
+## 7. Normative Capability Consequence
 
-The Z3 Batch 1 capability baseline may consume:
+Automation must support governed reusable Automation-to-Automation composition. Complete source and visual authoring surfaces must later be capable of expressing applicable accepted composition semantics.
 
-```text
-Automation
-→ MUST support governed reusable Automation-to-Automation composition
+## 8. Authority / SoT / Actual-state Preservation
 
-System-level SDK / Source Authoring
-→ MUST be able to express applicable reusable Automation composition semantics later
+Automation Semantic Authority/Definition SoT remain `ns_server`; Artifact Acceptance and Execution Admission remain distinct accepted authorities; runtime actual-state remains partitioned; `ns_runtime` coordination and `ns_node` execution do not gain Automation authority.
 
-ns_web Visual Authoring
-→ MUST be able to express applicable reusable Automation composition semantics later
-```
-
-Permanent non-transfer rules:
+## 9. Explicit Non-implications
 
 ```text
-Automation A invokes Automation B
-!= Authority Transfer
-
-Composition
-!= Artifact Acceptance bypass
-
-Composition
-!= Execution Admission bypass
-
-Referenced Automation exists
-!= Referenced Automation is automatically executable
-
-Reuse
-!= Same lifecycle state
-
-Automation Composition
-!= Business Application Authority
-
-Automation Composition
-!= ns_runtime Automation Semantic Authority
+Automation A invokes Automation B != Authority transfer
+Composition != Artifact Acceptance bypass
+Composition != Execution Admission bypass
+Referenced Automation exists != automatically executable
+Reuse != same lifecycle state
+Composition != Business Application Authority
+Composition != ns_runtime Automation Authority
 ```
 
-## 7. Explicit Non-implications / Deferred Mechanics
+## 10. Deferred Mechanics / Named Later Authority
 
-This Owner capability decision does **not** decide:
+Not decided here: subflow schema, DAG/graph representation, recursion, cycle policy, parameter binding, sync/async invocation, call-stack semantics, transaction model, failure propagation/retry, runtime routing/process topology, artifact/package format or cross-component protocol.
 
-```text
-subflow schema
-DAG / graph representation
-recursive invocation
-cycle policy
-parameter binding
-sync / async invocation
-call-stack semantics
-transaction model
-failure propagation algorithm
-retry algorithm
-runtime routing
-runtime process topology
-artifact/package format
-cross-component protocol
-```
-
-Named later authority remains the separately authorized Five-component Internal Architecture Boundary / Runtime Responsibility / Component Internal Design / Contract authorities as applicable.
-
-## 8. Offline / Private Deployment Consequence
-
-Reusable Automation composition must remain compatible with private/offline correctness. A composed Automation must not rely on mandatory public registries, SaaS orchestration or online-only resolution as a core correctness dependency.
-
-Composition does not permit bypassing Tenant/IAM/Policy/Trust/Artifact/Admission governance when disconnected.
-
-## 9. Compatibility / Migration Consequence
-
-A caller Automation and a referenced Automation may evolve independently, so later design must provide explicit revision/compatibility/unsupported semantics sufficient to prevent silent reinterpretation.
-
-This decision does not select exact binding or version-range rules.
-
-## 10. Preserved Invariants
-
-This decision preserves:
-
-- exactly five Product Components;
-- Automation as a first-class / parallel / non-subordinate domain;
-- `Automation Semantic Authority → ns_server`;
-- `Automation Canonical Definition SoT → ns_server`;
-- Definition / Artifact / Admission / Runtime separation;
-- `ns_runtime` scheduling/dispatch not gaining Automation authority;
-- `ns_node` execution not gaining Automation authority;
-- SDK/Web dual authoring convergence;
-- offline/private correctness;
-- no premature internal/runtime/Foundation/implementation design.
+These remain for separately authorized Five-component Internal Architecture Boundary work, Runtime Responsibility Architecture, Component Internal Design and later Contract/Foundation work if admitted. MDE-class changes return to Project Owner.
 
 ## 11. Revalidation Trigger
 
-Revalidate if the Project Owner later changes one or more of:
-
-- Native Automation reusable composition support;
-- Automation Definition / Semantic Authority;
-- Automation Canonical Definition SoT;
-- the requirement that composition cannot bypass Artifact/Admission governance.
-
-Changes in graph representation, orchestration library, scheduler, process topology, API, package format or transport do not by themselves revalidate this product capability decision.
+Revalidate if the Project Owner changes reusable Automation composition, Automation Authority/SoT, or the requirement that composition cannot bypass Artifact/Admission governance.
 
 ## 12. Bounded-session Authority Limit
 
-This evidence does not constitute GAC Global Acceptance, does not advance the GAC Epoch, does not authorize Z3 Batch 2, and does not begin internal architecture, Runtime Responsibility Architecture, Shared Foundation Architecture, Foundation design, Implementation Planning, IWP or coding.
+This evidence correction preserves the already selected result and does not claim Global Acceptance, advance GAC state, authorize later batches or enter downstream architecture/design/implementation work.
