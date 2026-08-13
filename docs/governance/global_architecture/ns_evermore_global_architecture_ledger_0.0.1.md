@@ -87,20 +87,29 @@ GAC-TR-0031
 → Z3 Batch 1 Correction Review / Final Global Acceptance
 → GAC-EPOCH-0020 → GAC-EPOCH-0021
 → Correction final / frozen acceptance HEAD: 78feeae573ecc306063ccde62709c5627b4c2241
-→ Correction delta: 12 commits / 10 decision evidence normalization + correction review/handoff
 → Owner decision evidence completeness: PASS 10/10
-→ A/B/C recoverability: 10/10
-→ Recommendation / rationale / tradeoff recoverability: 10/10
 → Semantic selection changes during correction: 0
 → New capability discovery during correction: 0
-→ Capability candidate consistency: PASS
-→ Z3 Batch 1 Global Acceptance evidence: docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_global_acceptance_0.0.1.md
-→ Global Acceptance commit: 29ef1618a14a754e275e637bbe710e271b7e2567
+→ Z3 Batch 1 Global Acceptance commit: 29ef1618a14a754e275e637bbe710e271b7e2567
 → Accepted capability baseline: docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md
 → Decision Registry 0.0.8: 12575195efb80538c0566c2b22110115c20c4fd4
 → Superseded Decision Registry 0.0.7 removed: b86cf96c1fe1927dde5c159c91bce1336fa3535b
 → Z3 Batch 1: GLOBAL_ACCEPTED
 → Automatic next-Batch authorization: NONE
+
+GAC-TR-0032
+→ Separate post-Batch-1 Z3 Batch 2 Authorization
+→ GAC-EPOCH-0021 → GAC-EPOCH-0022
+→ Accepted Z3 Batch 1 capability baseline remains normative upstream
+→ Authorized phase: NGRP-001 Phase Z3 / Batch 2
+→ Scope: FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_2 / USER_OPERATOR_DEVELOPER_INTERACTION_EXPERIENCE_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT
+→ Authorized pressure: End-user / Operator-Admin / Developer-Delivery interaction capability discovery
+→ Includes async/long-running operation feedback, Agent/Automation/HITL interaction, offline/degraded/unknown experience, diagnostic/explainability, dual-authoring developer experience, governance interaction, operational experience and cross-surface semantic consistency
+→ Product-significant new interaction capabilities return to Project Owner one material question at a time
+→ Detailed UI/page/wireframe/Design System/Vue architecture: NOT AUTHORIZED
+→ Five-component Internal Architecture Boundary Synthesis: NOT AUTHORIZED in Batch 2
+→ Planned Z3 Batch 3 remains Five-component Internal Architecture Boundary Synthesis after independent Batch 2 acceptance and separate GAC authorization
+→ Working-State Authorization Commit: a01b0346e5532105cc98179c67695a1e71a5710f
 ```
 
 ---
@@ -109,7 +118,7 @@ GAC-TR-0031
 
 ```text
 Current Epoch
-→ GAC-EPOCH-0021
+→ GAC-EPOCH-0022
 
 Architecture Constraint Derivation
 → GLOBAL_CLOSED / COMPLETE
@@ -142,9 +151,11 @@ Accepted Z3 Capability Baseline
 Accepted Z3 Owner Capability Requirements
 → 3 pre-Batch clarifications + 10 Batch 1 Owner capability decisions
 
-Common Capability Candidate Inventory
-→ accepted as DISCOVERY / CLASSIFICATION / PRESSURE baseline only
-→ NOT Shared Foundation Architecture
+Current Authorized Phase
+→ NGRP-001 Phase Z3 / Batch 2
+
+Authorization Scope
+→ FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_2 / USER_OPERATOR_DEVELOPER_INTERACTION_EXPERIENCE_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT
 
 Open MDE
 → 0
@@ -155,13 +166,9 @@ Unpersisted Owner Decision
 Blocking Item
 → NONE
 
-Current Authorized Phase
-→ NONE
-
 Planned but NOT AUTHORIZED
-→ Z3 Batch 2: User / Operator / Developer Interaction Experience Capability Discovery + Owner Capability Checkpoint
 → Z3 Batch 3: Five-component Internal Architecture Boundary Synthesis
 
 Unique Next Legal Action
-→ GAC performs a separate explicit authorization transition for the next bounded Z3 Batch.
+→ Start one bounded Z3 Batch 2 Interaction Experience Capability Discovery / Owner Checkpoint session; stop at COMPLETED / AWAITING_GLOBAL_ACCEPTANCE and return to GAC.
 ```
