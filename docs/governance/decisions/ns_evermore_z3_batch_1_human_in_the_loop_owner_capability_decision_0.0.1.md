@@ -1,14 +1,12 @@
 # NGRP-001 Phase Z3 / Batch 1 — Governed Human-in-the-loop Owner Capability Decision
 
 - **Program / Phase:** `NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1`
-- **Authorization Scope:** `FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 / COMPONENT_AND_COMMON_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT`
-- **Repository:** `J-LittleSunshine/ns_evermore`
-- **Branch:** `architecture/ns-evermore-genesis-0.0.1`
-- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
 - **Decision Authority:** `PROJECT_OWNER / PRODUCT_CAPABILITY_CHECKPOINT`
+- **Capability Classification:** `OWNER_DECISION_REQUIRED`
+- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
+- **Evidence Correction Scope:** `CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY`
+- **Selected Semantics:** `UNCHANGED`
 - **Global Acceptance:** `NOT CLAIMED`
-
----
 
 ## 1. Material Capability Question
 
@@ -16,7 +14,7 @@ Should Automation and AI Agent execution both natively support governed Human-in
 
 This is product-significant because it determines whether execution may natively request and consume governed human input/review/choice/confirmation/correction before continuing, rather than forcing each application to recreate human-intervention lifecycle semantics.
 
-## 2. Classification
+## 2. Classification and MDE Boundary
 
 ```text
 Capability Classification
@@ -26,34 +24,67 @@ MDE
 → NO
 ```
 
-The decision does not move or merge Policy Authority, Formal Artifact Acceptance Authority, Formal Execution Admission Authority, Automation Semantic Authority, Agent Semantic Authority, Source of Truth, Actual-state Ownership, or Platform Trust Authority.
+The capability is material, but the selected semantics do not move or merge Policy Authority, Formal Artifact Acceptance Authority, Formal Execution Admission Authority, Automation Semantic Authority, Agent Semantic Authority, Source of Truth, Actual-state Ownership or Platform Trust Authority. Human action remains participation evidence, not automatic governance authority.
 
-## 3. Alternatives Presented
+## 3. Durable Mutually-exclusive Alternatives
 
-### Option A — No native HITL
+### A — No native HITL
 
 Automation and Agent execution remain machine-only. Human participation is implemented externally through Business Application or other composition.
 
-### Option B — Native governed HITL in both Automation and Agent
+### B — Native governed HITL in both Automation and Agent
 
-Both domains support native product semantics for applicable human participation, including requesting human input, review, choice, confirmation or correction and then continuing, branching or terminating according to later-designed governed lifecycle semantics.
+Both domains support native product semantics for applicable human input, review, choice, confirmation or correction and may later wait/continue/branch/terminate under separately designed governed lifecycle semantics.
 
-### Option C — Native HITL only in Automation
+### C — Native HITL only in Automation
 
 Automation owns native human-intervention capability; Agent requires Automation or Business Application composition for human participation.
 
 ## 4. Recommendation Presented
 
-`B — Native governed HITL in both Automation and Agent`.
+```text
+Recommendation
+→ B — Native governed HITL in both Automation and Agent
+```
 
-Rationale:
+### Recommendation Rationale
 
-- enterprise Automation and Agent workflows commonly require human review, input, exception handling and risk confirmation;
-- `UNKNOWN`, `INDETERMINATE`, `CONFLICTING` and similar accepted system states need a legitimate human-handoff path in addition to automatic continuation or failure;
-- keeping native HITL in both first-class domains avoids subordinating Agent execution to Automation merely to interact with a human;
-- the capability can remain compatible with offline/private deployment and accepted authority separation.
+Enterprise Automation and Agent workflows commonly need human review, input, exception handling and risk confirmation. Accepted `UNKNOWN / INDETERMINATE / CONFLICTING` conditions require a legitimate human-handoff path in addition to automatic continuation or failure. Option B preserves both Automation and Agent as first-class domains and avoids subordinating all Agent human interaction to Automation.
 
-## 5. Project Owner Decision
+## 5. Tradeoffs and Impact
+
+**Benefits**
+- native human review/input/correction/exception handling in both first-class execution domains;
+- supports safer handling of uncertain or high-context execution states;
+- avoids repeated application-specific human-intervention lifecycle glue.
+
+**Costs**
+- later architecture must define provenance, principal binding, lifecycle/resume and recovery semantics for human participation;
+- operational and UI surfaces must expose enough execution context for meaningful human action.
+
+**Risks / Complexity**
+- stale, conflicting or mis-bound human responses could be misapplied without strong provenance;
+- timeout, session loss and offline/degraded recovery create lifecycle complexity;
+- human confirmation could be incorrectly conflated with Policy, Artifact Acceptance or Execution Admission if boundaries are not preserved.
+
+**Long-term Impact**
+- `ns_evermore` supports a native human-machine execution model rather than machine-only workflows;
+- Agent remains independently capable of human interaction rather than being structurally subordinate to Automation.
+
+**Compatibility / Migration Impact**
+- future lifecycle revisions must preserve which human response applies to which execution/revision context;
+- missing/stale/conflicting/unverifiable responses remain explicit rather than silently interpreted as approval or denial.
+
+**Offline / Private Deployment Impact**
+- applicable HITL must remain usable in private/offline scenarios without mandatory public approval/identity SaaS or vendor control plane;
+- offline human participation does not create local Policy/Admission/Artifact/Trust authority.
+
+**Cross-component Impact**
+- Automation semantics remain under `ns_server`; Agent semantics remain under `ns_agent`;
+- `ns_web` may provide human-facing interaction surfaces under later authorized design;
+- `ns_runtime`/`ns_node` may later participate in wait/resume/local-attended execution mechanics without acquiring semantic authority.
+
+## 6. Project Owner Selected Result
 
 ```text
 Selected Option
@@ -66,118 +97,50 @@ AI Agent Governed Human-in-the-loop
 → REQUIRED
 ```
 
-## 6. Normative Capability Consequences
+## 7. Normative Capability Consequence
 
-The Z3 Batch 1 capability baseline may consume:
+Automation and Agent execution may require governed human input/review/choice/confirmation/correction and may continue, branch or terminate after a governed human response according to later-designed lifecycle semantics.
+
+## 8. Authority / SoT / Actual-state Preservation
 
 ```text
-Automation execution
-→ MAY require governed human input / review / choice / confirmation / correction
-→ MAY pause or wait where later lifecycle design permits
-→ MAY continue / branch / terminate after governed human response
+Automation Semantic Authority
+→ ns_server / UNCHANGED
 
-AI Agent execution
-→ MAY require governed human input / review / choice / confirmation / correction
-→ MAY continue / branch / terminate after governed human response
+AI Agent Semantic Authority
+→ ns_agent / UNCHANGED
+
+Artifact Acceptance Authority
+→ ns_server / UNCHANGED
+
+Execution Admission Authority
+→ ns_server / UNCHANGED
+
+Runtime Actual-state Ownership
+→ unchanged per bounded semantic partition
 ```
 
-Permanent non-equivalences:
+## 9. Explicit Non-implications
 
 ```text
 Human Approval != Unified Policy Authority
-Human Confirmation != Formal Execution Admission Authority
-Human Review != Formal Artifact Acceptance Authority
+Human Confirmation != Execution Admission Authority
+Human Review != Artifact Acceptance Authority
 Human Input != Semantic Authority Transfer
-Operator UI != Human-task Source of Truth automatically
-Successful human interaction != Retroactive proof of prior authorization
+Operator UI != Human-task SoT automatically
+Successful human interaction != retroactive proof of authorization
 ```
 
-## 7. Cross-component Non-implications
+## 10. Deferred Mechanics / Named Later Authority
 
-This capability decision does not freeze internal responsibility decomposition, but preserves the following accepted architecture:
+Not decided here: human-task identity/schema, assignment/approval model, principal binding, response representation, wait/suspend/resume state machine, timeout/escalation, notifications, offline synchronization, recovery algorithm, runtime role/process/worker topology, API/message/transport or storage model.
 
-```text
-Automation Definition / Workflow Semantic Authority
-→ ns_server
+These remain for separately authorized Five-component Internal Architecture Boundary work, Runtime Responsibility Architecture, Component Internal Design and later Contract/Foundation/Provider work if admitted. Material Authority/Trust/Security/fail-open-fail-closed changes return to Project Owner/MDE.
 
-AI Agent Definition / Semantic Authority
-→ ns_agent
+## 11. Revalidation Trigger
 
-Formal Artifact Acceptance Authority
-→ ns_server
+Revalidate if the Project Owner removes native HITL from Automation or Agent, makes one domain dependent on the other for all human participation, or materially changes accepted Authority/Trust/Admission relationships through human-action semantics.
 
-Formal Execution Admission Authority
-→ ns_server
+## 12. Bounded-session Authority Limit
 
-ns_web
-→ human-facing UI / governance / control-plane surfaces
-```
-
-Any later participation by `ns_web`, `ns_runtime`, `ns_node`, or other components in assignment, presentation, waiting, resume, local attended execution, notification or recovery must conform to separately authorized Five-component Internal Architecture / Runtime Responsibility / Component Internal Design work.
-
-## 8. Explicit Deferred Mechanics
-
-This Owner capability decision does **not** decide:
-
-```text
-human-task identity / schema
-assignment model
-approval model
-principal binding
-human-response representation
-wait / suspend / resume state machine
-timeout semantics
-escalation semantics
-notification mechanism
-offline queueing / synchronization
-recovery algorithm
-runtime role / process / worker topology
-API / message / transport
-storage / database model
-```
-
-Named later authorities:
-
-```text
-Five-component Internal Architecture Boundary Synthesis
-Runtime Responsibility Architecture
-Component Internal Design
-Foundation / Contract / Provider design where later admitted
-Project Owner / MDE for any material Authority / Trust / Security / fail-open-fail-closed commitment
-```
-
-## 9. Offline / Private Deployment Consequence
-
-Governed HITL must remain compatible with private/offline operation where the underlying execution scenario is supported. No mandatory public SaaS approval service, public identity service or vendor control plane may be required for core correctness.
-
-Offline/degraded human participation does not create local Policy, Admission, Artifact or Trust Authority.
-
-## 10. Compatibility / Recovery Consequence
-
-Future lifecycle design must preserve enough provenance and revision context to determine what human response applied to which bounded execution context. Missing, stale, conflicting or unverifiable human-response state remains explicit and cannot be silently treated as approval or denial by implementation convention.
-
-## 11. Preserved Invariants
-
-This decision preserves:
-
-- exactly five Product Components;
-- Business Application / Automation / AI Agent / Data-Knowledge first-class non-subordination;
-- Definition / Artifact / Admission / Runtime separation;
-- `Automation Semantic Authority → ns_server`;
-- `AI Agent Semantic Authority → ns_agent`;
-- `Formal Artifact Acceptance Authority → ns_server`;
-- `Formal Execution Admission Authority → ns_server`;
-- Tenant / Organization / IAM / Policy / Trust invariants;
-- Runtime Actual-state per bounded semantic partition;
-- offline/private governance invariance;
-- no premature Runtime Architecture or Component Internal Design.
-
-## 12. Revalidation Trigger
-
-Revalidate if the Project Owner later removes native HITL from Automation or Agent, makes one domain dependent on the other for all human participation, or materially changes accepted Authority/Trust/Admission relationships through human action semantics.
-
-## 13. Bounded-session Authority Limit
-
-This evidence records one Project Owner capability decision inside Z3 Batch 1.
-
-It does not constitute GAC Global Acceptance, advance GAC Epoch, authorize Z3 Batch 2, start Five-component Internal Architecture Boundary synthesis, start Runtime Responsibility Architecture, start Component Internal Design, start Shared Foundation Architecture, or authorize Implementation Planning / IWP / coding.
+This evidence correction preserves the already selected Owner result only. It does not claim Global Acceptance, advance GAC state, authorize later batches or enter downstream architecture/design/implementation work.
