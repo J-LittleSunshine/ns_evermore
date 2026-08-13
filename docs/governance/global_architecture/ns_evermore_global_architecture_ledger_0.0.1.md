@@ -76,56 +76,56 @@ GAC-TR-0029
 GAC-TR-0030
 → Z3 Batch 1 initial independent Global Acceptance Review
 → GAC-EPOCH-0019 → GAC-EPOCH-0020
-→ Producing-session final HEAD: 72aa856d874e21b6bd262d8b2d7ad349acc07c79
-→ Capability semantics / common-capability authority-neutrality: PASS
+→ Capability semantics/common-capability pressure: PASS
 → Decision evidence completeness: CORRECTION_REQUIRED
-→ Review commit: 6998f2b3b2a93457a43b746d273853a7cd8d168b
 → Correction scope: CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY
-→ Z3 Batch 1 Global Acceptance NOT GRANTED at this transition
 
 GAC-TR-0031
 → Z3 Batch 1 Correction Review / Final Global Acceptance
 → GAC-EPOCH-0020 → GAC-EPOCH-0021
-→ Correction final / frozen acceptance HEAD: 78feeae573ecc306063ccde62709c5627b4c2241
-→ Owner decision evidence completeness: PASS 10/10
-→ Semantic selection changes during correction: 0
-→ New capability discovery during correction: 0
 → Z3 Batch 1 Global Acceptance commit: 29ef1618a14a754e275e637bbe710e271b7e2567
-→ Accepted capability baseline: docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md
-→ Decision Registry 0.0.8: 12575195efb80538c0566c2b22110115c20c4fd4
-→ Superseded Decision Registry 0.0.7 removed: b86cf96c1fe1927dde5c159c91bce1336fa3535b
-→ Z3 Batch 1: GLOBAL_ACCEPTED
-→ Automatic next-Batch authorization: NONE
+→ Decision Registry 0.0.8
+→ Accepted Z3 Batch 1 Capability Baseline established
 
 GAC-TR-0032
 → Separate post-Batch-1 Z3 Batch 2 Authorization
 → GAC-EPOCH-0021 → GAC-EPOCH-0022
-→ Authorized: USER_OPERATOR_DEVELOPER_INTERACTION_EXPERIENCE_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT
-→ Detailed UI / Internal Architecture / Runtime Architecture / Shared Foundation: NOT AUTHORIZED
-→ Planned Z3 Batch 3 remains Five-component Internal Architecture Boundary Synthesis after independent acceptance and separate authorization
+→ USER_OPERATOR_DEVELOPER_INTERACTION_EXPERIENCE_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT authorized
 
 GAC-TR-0033
 → Z3 Batch 2 Independent Global Acceptance
 → GAC-EPOCH-0022 → GAC-EPOCH-0023
-→ Producing-session entry HEAD: e1fdd822fcfae2827ea93cf859c405db9faf7d7d
 → Frozen GAC review HEAD: 8bf767d24650e58813c02c862a273914a422e230
 → Producing delta: 11 commits / 8 Owner decision evidence + Candidate + Review + Handoff
-→ Candidate: docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_2_interaction_experience_capability_discovery_candidate_0.0.1.md
 → Global Acceptance commit: 86838aaff04751d85d84339f33c1df31ad729e94
 → Decision Registry 0.0.9: a04dfa1c5e2cc840008e90f07e93d7497a274bc7
 → Superseded Decision Registry 0.0.8 removed: 70b98897dd1070fa753822f9b097f6c8174d7330
-→ Accepted Owner decisions: 8
-→ Source↔Visual Interoperability MDE: ACCEPTED / Option B
-→ Notification + External Delivery MDE: ACCEPTED / Option B + Feishu/WeCom/SMS target directions
-→ Other interaction capability decisions: ACCEPTED
+→ 8 Batch 2 Owner decisions accepted, including 2 MDE-class commitments
 → Open MDE: 0
-→ Unpersisted Owner Decision: 0
-→ Authority/SoT ambiguity: NONE
-→ UI Authority escalation: NONE
-→ Runtime/Internal/Foundation design leakage: NONE
 → Z3 Batch 2: GLOBAL_ACCEPTED
 → Automatic Batch 3 authorization: NONE
-→ Next GAC gate: Z3_CAPABILITY_EXHAUSTION / INTERNAL_BOUNDARY_READINESS_ASSESSMENT
+
+GAC-TR-0034
+→ Z3 Capability Exhaustion / Internal-boundary Readiness / Batch 3 Authorization
+→ GAC-EPOCH-0023 → GAC-EPOCH-0024
+→ Assessment: docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_capability_exhaustion_internal_boundary_readiness_assessment_0.0.1.md
+→ Assessment commit: 058e07f0f927fbf805e487581f8e7ea5a05e6c68
+→ Remaining Five-component Product Capability Pressure: NONE_FOUND
+→ Remaining Interaction Experience Capability Pressure: NONE_FOUND
+→ Remaining Common Capability Pressure Blocking Component Boundaries: NONE_FOUND
+→ Unclassified Material Product Capability: 0
+→ Open OWNER_DECISION_REQUIRED: 0
+→ Open MDE: 0
+→ Blocking Capability Gap: 0
+→ Capability Overlap Ambiguity: 0
+→ Implementation-defined Capability Escape: 0
+→ Z3 Capability Exhaustion for Current Accepted Product Scope: SATISFIED
+→ Five-component Internal-boundary Readiness: SATISFIED
+→ Authorized Phase: NGRP-001 Phase Z3 / Batch 3
+→ Scope: FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_3 / COMPONENT_INTERNAL_BOUNDARY_SYNTHESIS
+→ Component Internal Design: NOT AUTHORIZED
+→ Runtime Responsibility Architecture: NOT AUTHORIZED in this Batch
+→ Shared Foundation Architecture: NOT AUTHORIZED
 ```
 
 ---
@@ -134,7 +134,7 @@ GAC-TR-0033
 
 ```text
 Current Epoch
-→ GAC-EPOCH-0023
+→ GAC-EPOCH-0024
 
 Architecture Constraint Derivation
 → GLOBAL_CLOSED / COMPLETE
@@ -142,20 +142,11 @@ Architecture Constraint Derivation
 Project Architecture Synthesis
 → GLOBAL_CLOSED / COMPLETE
 
-Accepted Constraint Baseline
-→ NSE-001..017 / Index 0.0.5
-
 Current Project Architecture
 → 0.0.3 / GLOBAL_ACCEPTED / NORMATIVE / CURRENT
 
 Current Decision Registry
 → 0.0.9
-
-Accepted Project Architecture DAD
-→ Z2-DAD-001..041
-
-Owner MDE
-→ Z2-MDE-001..017 + accepted Z3 Batch 2 MDE-class Owner commitments
 
 Z3 Batch 1
 → GLOBAL_ACCEPTED
@@ -163,11 +154,14 @@ Z3 Batch 1
 Z3 Batch 2
 → GLOBAL_ACCEPTED
 
-Accepted Z3 Batch 1 Capability Baseline
-→ docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md
+Z3 Capability Exhaustion for Current Accepted Product Scope
+→ SATISFIED
 
-Accepted Z3 Batch 2 Interaction Experience Baseline
-→ docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_2_interaction_experience_capability_discovery_candidate_0.0.1.md
+Five-component Internal-boundary Readiness
+→ SATISFIED
+
+Remaining Material Product Capability Pressure
+→ NONE_FOUND
 
 Open MDE
 → 0
@@ -175,15 +169,16 @@ Open MDE
 Unpersisted Owner Decision
 → 0
 
-Blocking Item
-→ NONE
-
 Current Authorized Phase
-→ NONE
+→ NGRP-001 Phase Z3 / Batch 3
 
-Planned but NOT AUTHORIZED
-→ Z3 Batch 3: Five-component Internal Architecture Boundary Synthesis
+Authorization Scope
+→ FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_3 / COMPONENT_INTERNAL_BOUNDARY_SYNTHESIS
+
+Planned next top-level phase after accepted Z3 internal-boundary closure
+→ Runtime Responsibility Architecture
+→ NOT CURRENTLY AUTHORIZED
 
 Unique Next Legal Action
-→ GAC performs Z3 Capability Exhaustion / Internal-boundary Readiness Assessment.
+→ Start one bounded Z3 Batch 3 Five-component Internal Architecture Boundary Synthesis session.
 ```
