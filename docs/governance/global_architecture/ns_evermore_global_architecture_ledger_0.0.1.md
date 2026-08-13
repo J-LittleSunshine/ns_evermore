@@ -96,12 +96,9 @@ GAC-TR-0033
 → Z3 Batch 2 Independent Global Acceptance
 → GAC-EPOCH-0022 → GAC-EPOCH-0023
 → Frozen GAC review HEAD: 8bf767d24650e58813c02c862a273914a422e230
-→ Producing delta: 11 commits / 8 Owner decision evidence + Candidate + Review + Handoff
 → Global Acceptance commit: 86838aaff04751d85d84339f33c1df31ad729e94
-→ Decision Registry 0.0.9: a04dfa1c5e2cc840008e90f07e93d7497a274bc7
-→ Superseded Decision Registry 0.0.8 removed: 70b98897dd1070fa753822f9b097f6c8174d7330
+→ Decision Registry 0.0.9
 → 8 Batch 2 Owner decisions accepted, including 2 MDE-class commitments
-→ Open MDE: 0
 → Z3 Batch 2: GLOBAL_ACCEPTED
 → Automatic Batch 3 authorization: NONE
 
@@ -109,23 +106,36 @@ GAC-TR-0034
 → Z3 Capability Exhaustion / Internal-boundary Readiness / Batch 3 Authorization
 → GAC-EPOCH-0023 → GAC-EPOCH-0024
 → Assessment: docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_capability_exhaustion_internal_boundary_readiness_assessment_0.0.1.md
-→ Assessment commit: 058e07f0f927fbf805e487581f8e7ea5a05e6c68
-→ Remaining Five-component Product Capability Pressure: NONE_FOUND
-→ Remaining Interaction Experience Capability Pressure: NONE_FOUND
-→ Remaining Common Capability Pressure Blocking Component Boundaries: NONE_FOUND
-→ Unclassified Material Product Capability: 0
-→ Open OWNER_DECISION_REQUIRED: 0
-→ Open MDE: 0
-→ Blocking Capability Gap: 0
-→ Capability Overlap Ambiguity: 0
-→ Implementation-defined Capability Escape: 0
+→ Remaining Material Product Capability Pressure: NONE_FOUND
 → Z3 Capability Exhaustion for Current Accepted Product Scope: SATISFIED
 → Five-component Internal-boundary Readiness: SATISFIED
 → Authorized Phase: NGRP-001 Phase Z3 / Batch 3
-→ Scope: FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_3 / COMPONENT_INTERNAL_BOUNDARY_SYNTHESIS
-→ Component Internal Design: NOT AUTHORIZED
-→ Runtime Responsibility Architecture: NOT AUTHORIZED in this Batch
-→ Shared Foundation Architecture: NOT AUTHORIZED
+→ Scope: COMPONENT_INTERNAL_BOUNDARY_SYNTHESIS
+
+GAC-TR-0035
+→ Z3 Batch 3 Independent Global Acceptance
+→ GAC-EPOCH-0024 → GAC-EPOCH-0025
+→ Producing Entry HEAD: dca0cdcbc59e4d9945f30a1abbf6fcbf732ec551
+→ Frozen Producing Final HEAD: b59a15c983f2fa1a9c841ba6698871a62e4a9d48
+→ Producing Delta: 4 commits / Candidate + DAD + Review + Handoff
+→ Global Acceptance commit: c81f08a28be73016c1aa55bef0dd2489d98105c0
+→ Decision Registry 0.0.10: 8ac93c4651a0d208d22e1f8f7264c19e980a2689
+→ Superseded Decision Registry 0.0.9 removed: cc81b3dbd80635a540be4aa4eac66c8dca68ae03
+→ Five-component Internal Architecture Boundary Baseline: GLOBAL_ACCEPTED / NORMATIVE
+→ Boundary Count: ns_server 13 / ns_runtime 4 / ns_node 4 / ns_agent 6 / ns_web 7 / total 34
+→ Accepted Z3 DAD: Z3-DAD-001..014
+→ Batch 1 Capability Coverage: 100%
+→ Batch 2 Interaction Coverage: 100%
+→ Authority / SoT Ambiguity: 0
+→ Actual-state / Source-effect Ownership Ambiguity: 0
+→ Missing Product Capability: 0
+→ Open MDE: 0
+→ Runtime Responsibility Architecture Leakage: 0
+→ Component Internal Design Leakage: 0
+→ Shared Foundation Detailed-design Leakage: 0
+→ Z3 Batch 3: GLOBAL_ACCEPTED
+→ Automatic Runtime Responsibility Architecture authorization: NONE
+→ Required next GAC gate: Five-component Internal-boundary Exhaustion / Runtime Responsibility Readiness Assessment
 ```
 
 ---
@@ -134,7 +144,7 @@ GAC-TR-0034
 
 ```text
 Current Epoch
-→ GAC-EPOCH-0024
+→ GAC-EPOCH-0025
 
 Architecture Constraint Derivation
 → GLOBAL_CLOSED / COMPLETE
@@ -146,7 +156,7 @@ Current Project Architecture
 → 0.0.3 / GLOBAL_ACCEPTED / NORMATIVE / CURRENT
 
 Current Decision Registry
-→ 0.0.9
+→ 0.0.10
 
 Z3 Batch 1
 → GLOBAL_ACCEPTED
@@ -154,14 +164,14 @@ Z3 Batch 1
 Z3 Batch 2
 → GLOBAL_ACCEPTED
 
-Z3 Capability Exhaustion for Current Accepted Product Scope
-→ SATISFIED
+Z3 Batch 3
+→ GLOBAL_ACCEPTED
 
-Five-component Internal-boundary Readiness
-→ SATISFIED
+Five-component Internal Architecture Boundary Baseline
+→ GLOBAL_ACCEPTED / NORMATIVE
 
-Remaining Material Product Capability Pressure
-→ NONE_FOUND
+Accepted Z3 DAD
+→ Z3-DAD-001..014
 
 Open MDE
 → 0
@@ -169,16 +179,18 @@ Open MDE
 Unpersisted Owner Decision
 → 0
 
+Missing Product Capability
+→ 0
+
 Current Authorized Phase
-→ NGRP-001 Phase Z3 / Batch 3
+→ NONE
 
-Authorization Scope
-→ FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_3 / COMPONENT_INTERNAL_BOUNDARY_SYNTHESIS
+Required GAC Gate
+→ Five-component Internal-boundary Exhaustion / Runtime Responsibility Readiness Assessment
 
-Planned next top-level phase after accepted Z3 internal-boundary closure
-→ Runtime Responsibility Architecture
+Runtime Responsibility Architecture
 → NOT CURRENTLY AUTHORIZED
 
 Unique Next Legal Action
-→ Start one bounded Z3 Batch 3 Five-component Internal Architecture Boundary Synthesis session.
+→ GAC performs the independent runtime-responsibility readiness assessment.
 ```
