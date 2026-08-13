@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0020`
+- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0021`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 - **Acceptance State:** `NOT_NORMATIVE`
 
@@ -21,7 +21,7 @@ Accepted NSE
 → NSE-001..017 / Index 0.0.5
 
 Current Decision Registry
-→ 0.0.7
+→ 0.0.8
 
 Accepted Project Architecture DAD
 → Z2-DAD-001..041
@@ -30,122 +30,42 @@ Owner MDE
 → Z2-MDE-001..017 / OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
 ```
 
-## Z3 Batch 1 Independent Review Result
+## Z3 Batch 1 Final Global Acceptance
 
-Reviewed producing-session range:
-
-```text
-Entry HEAD
-→ f4df0cdbbb1430ed16de0522a01198c264754d29
-
-Frozen Review HEAD
-→ 72aa856d874e21b6bd262d8b2d7ad349acc07c79
-
-Delta
-→ 11 commits
-→ 10 Owner capability decision evidence files
-→ 1 capability-discovery candidate
-→ no pre-existing file modified/deleted
-```
-
-Reviewed candidate:
+Accepted capability baseline:
 
 `docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md`
 
-GAC review evidence:
+Global Acceptance evidence:
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_global_acceptance_review_0.0.1.md`
-
-Result:
+`docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_global_acceptance_0.0.1.md`
 
 ```text
-Five-component capability semantic coverage
-→ PASS
+Z3 Batch 1
+→ GLOBAL_ACCEPTED
 
-Common capability discovery / authority neutrality
-→ PASS
+Five-component Capability Baseline
+→ GLOBAL_ACCEPTED / NORMATIVE Z3 UPSTREAM
 
-Project Architecture preservation
-→ PASS
+Common Capability Candidate Inventory
+→ ACCEPTED AS DISCOVERY / CLASSIFICATION / PRESSURE BASELINE ONLY
+→ NOT Shared Foundation Architecture
 
-Downstream scope leakage
-→ NONE FOUND
+Owner Capability Decisions
+→ 3 pre-Batch clarifications + 10 Batch 1 decisions
+→ PERSISTED / GAC_RECOGNIZED
 
-New MDE required by selected capability semantics
-→ NONE FOUND
-
-Decision evidence completeness
-→ CORRECTION_REQUIRED
-
-Z3 Batch 1 Global Acceptance
-→ NOT GRANTED
-```
-
-## Blocking Evidence Correction
-
-The selected capability semantics are not being reopened.
-
-Correction is required because Repository evidence must be independently recoverable under the current Owner Capability Checkpoint authorization.
-
-Mandatory correction includes:
-
-```text
-1. audit all 10 new Owner capability decision files for checkpoint evidence completeness;
-2. complete missing durable A/B/C alternatives / recommendation / rationale / benefits / costs / long-term-impact context where absent;
-3. specifically resolve the ambiguous Repository mapping of:
-   ns_node attended/unattended decision
-   Selected Option B
-   → ATTENDED_AND_UNATTENDED_LOCAL_EXECUTION_REQUIRED;
-4. complete the recommendation/tradeoff record for Agent dynamic Automation authoring;
-5. preserve all selected semantic results unless a real contradiction is discovered;
-6. re-run documentation-completeness / decision-traceability review;
-7. hand corrected evidence back to GAC.
-```
-
-The correction session MUST NOT re-run capability discovery or add product capabilities.
-
-## Current Authorized Phase
-
-```text
-NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1 Correction Remediation
-```
-
-Authorization Scope:
-
-```text
-FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY
-/ BATCH_1
-/ CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY
-```
-
-## Strict Forbidden Scope
-
-```text
-new capability discovery
-new Owner capability decisions unless correction reveals a genuine semantic contradiction
-Five-component Internal Architecture Boundary synthesis
-Component Internal Design
-Runtime Responsibility Architecture
-Shared Foundation Architecture
-Foundation Contract / Module / Provider Design
-API/schema/protocol design
-process/service/worker/container topology
-Implementation Planning
-IWP
-Coding
-```
-
-## Decision / Block State
-
-```text
 Open MDE
 → 0
 
 Unpersisted Owner Decision
 → 0
 
-Blocking Item
-→ OWNER_CAPABILITY_DECISION_EVIDENCE_COMPLETENESS
+Decision Evidence Completeness Blocker
+→ CLOSED
+
+Capability Gap Blocking Later Z3 Work
+→ 0
 
 Unexpected Drift
 → NONE
@@ -154,25 +74,49 @@ Unauthorized Progression
 → NONE
 ```
 
-## Future Sequencing Intent — NOT AUTHORIZED
-
-After Batch 1 correction is independently accepted:
+## Accepted Owner Capability Baseline Summary
 
 ```text
-planned Z3 Batch 2
-→ User / Operator / Developer Interaction Experience Capability Discovery + Owner Checkpoint
-
-planned Z3 Batch 3
-→ Five-component Internal Architecture Boundary Synthesis
+Agent → Node governed task delegation
+ns_server server-local long-running / time-triggered background work
+Automation complete dual authoring
+Agent complete dual authoring
+Business Application complete dual authoring
+Data / Knowledge / ETL complete dual authoring
+Native general Multi-Agent composition
+Native Multimodal Agent
+Automation + Agent governed HITL
+Governed Event-driven Automation
+Reusable Automation composition
+Agent dynamic candidate Automation authoring under normal governance
+ns_node attended + unattended local execution
 ```
 
-Neither future Batch is currently authorized.
+All accepted Project Architecture Authority / SoT / Actual-state boundaries remain unchanged.
+
+## Current Authorized Phase
+
+```text
+NONE
+```
+
+Acceptance does not automatically authorize another Z3 Batch.
+
+## Planned Sequencing — NOT YET AUTHORIZED
+
+Project Owner sequencing intent:
+
+```text
+Z3 Batch 2
+→ User / Operator / Developer Interaction Experience Capability Discovery
+→ Owner Capability Checkpoint for material interaction-capability choices
+
+Z3 Batch 3
+→ Five-component Internal Architecture Boundary Synthesis
+```
 
 ## Unique Next Legal Action
 
 ```text
-Run one bounded Z3 Batch 1 correction-remediation session under:
-CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY
-
-Return corrected decision evidence + correction review/handoff to GAC.
+GAC performs a separate explicit authorization transition for the next bounded Z3 Batch if current Repository state remains consistent.
 ```
