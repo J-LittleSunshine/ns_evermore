@@ -1,60 +1,83 @@
 # ns_evermore Global Architecture Working State
 
-- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0028`
+- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0029`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
-- **Acceptance State:** `NOT_NORMATIVE / CONTINUITY_CHECKPOINT`
+- **Acceptance State:** `NOT_NORMATIVE / AUTHORIZATION_CHECKPOINT`
 
-## Current Checkpoint
+## Current Baseline
 
 ```text
-Project Architecture 0.0.3 → GLOBAL_ACCEPTED / NORMATIVE / CURRENT
-Z3 Batch 1/2/3 → GLOBAL_ACCEPTED
+Project Architecture 0.0.3 → GLOBAL_ACCEPTED / CURRENT
 Five-component Internal Architecture Boundary Baseline → GLOBAL_ACCEPTED / NORMATIVE
-Accepted Z3 DAD → Z3-DAD-001..014
 Runtime Responsibility Architecture / Batch 1 → GLOBAL_ACCEPTED
-Runtime Role Taxonomy → 22 roles
-34 Internal Boundary Runtime Coverage → 100%
-Mandatory Runtime Journeys A-U → CLOSED
+Runtime Responsibility Architecture → GLOBAL_CLOSED / COMPLETE
 Accepted Runtime DAD → RRA-B1-DAD-001..010
-Current Decision Registry → 0.0.11 / CURRENT / NORMATIVE
+Runtime Role Taxonomy → 22 roles
+Decision Registry → 0.0.11 / CURRENT / NORMATIVE
 Open MDE → 0
 Unpersisted Owner Decision → 0
-Missing Product Capability / Internal Boundary → 0
 Blocking Item → NONE
 ```
 
-Runtime Global Acceptance:
-`docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_global_acceptance_0.0.1.md`
-
-## Decision Registry Synchronization
+Readiness evidence:
+`docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_exhaustion_shared_foundation_readiness_assessment_0.0.1.md`
 
 ```text
-Runtime Batch 1 Registry synchronization → COMPLETE
-Current Registry → docs/governance/decisions/ns_evermore_decision_registry_0.0.11.md
-Superseded Registry 0.0.10 → CURRENT_AUTHORITY_NONE
-Architecture semantic correction required → NO
+Remaining Material Runtime Responsibility Pressure → NONE_FOUND
+Shared Foundation Architecture Readiness → SATISFIED
 ```
-
-The attempted physical deletion of `0.0.10` encountered transient GitHub service errors; the file was instead explicitly marked `SUPERSEDED / CURRENT_AUTHORITY_NONE`. This is non-blocking cleanup because current authority is unambiguous.
 
 ## Current Authorized Phase
 
 ```text
-NONE
+NGRP-001 — Shared Foundation Architecture / Batch 1
 ```
 
-## Runtime Architecture Global Closure / Exhaustion / Readiness
+Authorization Scope:
 
 ```text
-Runtime Responsibility Architecture Global Closure → NOT DECLARED
-Runtime Architecture Exhaustion → NOT YET ASSESSED AFTER BATCH 1 ACCEPTANCE
-Shared Foundation Readiness → NOT DECLARED
+SHARED_FOUNDATION_ARCHITECTURE_ONLY
+/ BATCH_1
+/ FOUNDATION_CAPABILITY_ELIGIBILITY_BOUNDARY_AND_CROSS_COMPONENT_REUSE_SYNTHESIS
+```
+
+Authorized work is architecture-level only: classify reusable candidate pressure, derive Shared Foundation capability boundaries, map consumers, preserve authority-neutrality, and record later stable Contract pressure.
+
+Permanent rules:
+
+```text
+Shared Foundation → outside five Product Components
+Shared Foundation != sixth Product Component
+Reuse != Product Authority
+Foundation placement != Semantic Authority / SoT / Runtime Actual-state Owner
+```
+
+Candidate pressure includes configuration loading, logging/diagnostics, telemetry/health, time/freshness, correlation context, language-neutral representation helpers, network/cache/storage client mechanics, error/status primitives, Tenant/Principal context carriers, secret-reference/redaction and compatibility/conformance helpers.
+
+Strictly forbidden:
+
+```text
+Foundation Contract detailed design
+Foundation Module design
+Provider design/selection
+concrete API/schema/wire format
+package/library/framework selection
+Product Component or Runtime Role topology change
+Component Internal Design
+Implementation Planning / IWP / Coding
+```
+
+Producing-session maximum:
+
+```text
+Shared Foundation Architecture / Batch 1
+→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ STOP
+→ RETURN TO GAC
 ```
 
 ## Unique Next Legal Action
 
 ```text
-GAC performs a separate Runtime Responsibility Architecture remaining-pressure / exhaustion / readiness assessment.
+Start one bounded Shared Foundation Architecture / Batch 1 session under the authorized scope.
 ```
-
-No subsequent Batch, Shared Foundation Architecture, Component Internal Design, Contract/Module/Provider Design, Implementation Planning, IWP or coding is authorized by this checkpoint.
