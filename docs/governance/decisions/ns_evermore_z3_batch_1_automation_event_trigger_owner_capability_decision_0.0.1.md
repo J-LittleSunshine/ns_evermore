@@ -1,38 +1,20 @@
 # NGRP-001 Phase Z3 / Batch 1 — Automation Event-driven Trigger Owner Capability Decision
 
 - **Program / Phase:** `NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1`
-- **Authorization Scope:** `FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 / COMPONENT_AND_COMMON_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT`
-- **Repository:** `J-LittleSunshine/ns_evermore`
-- **Branch:** `architecture/ns-evermore-genesis-0.0.1`
-- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
 - **Decision Authority:** `PROJECT_OWNER / PRODUCT_CAPABILITY_CHECKPOINT`
+- **Capability Classification:** `OWNER_DECISION_REQUIRED`
+- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
+- **Evidence Correction Scope:** `CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY`
+- **Selected Semantics:** `UNCHANGED`
 - **Global Acceptance:** `NOT CLAIMED`
-
----
 
 ## 1. Material Capability Question
 
-Should native Automation support governed event-driven triggering as a first-class product capability, rather than limiting execution initiation to explicit invocation and time/schedule-driven initiation?
+Should Native Automation support governed event-driven triggering as a first-class product capability, rather than limiting execution initiation to explicit invocation and time/schedule-driven initiation?
 
-This question is product-significant because event-driven initiation materially affects enterprise integration, delivery ergonomics, cross-domain composition and the product boundary of Automation as a first-class capability domain.
+This is product-significant because event-driven initiation materially affects enterprise integration, delivery ergonomics, cross-domain composition and the Automation product boundary.
 
-Accepted ownership remains unchanged:
-
-```text
-Automation Definition / Workflow Semantic Authority
-→ ns_server
-
-Automation Canonical Definition SoT
-→ ns_server
-
-ns_runtime
-→ applicable scheduling / routing / dispatch / runtime coordination responsibility
-
-ns_node
-→ applicable local execution responsibility
-```
-
-## 2. Classification
+## 2. Classification and MDE Boundary
 
 ```text
 Capability Classification
@@ -40,48 +22,68 @@ Capability Classification
 
 MDE
 → NO
-
-Reason
-→ Event-triggered Automation is a material product capability not explicitly frozen upstream.
-→ This decision does not move Authority, Source of Truth, Actual-state Ownership, Trust, Tenant, IAM, Policy, Artifact Acceptance or Execution Admission ownership.
 ```
 
-## 3. Durable Alternatives Presented
+Event-driven Automation is a material product capability not explicitly frozen upstream, but the selected semantics do not move Authority, SoT, Actual-state Ownership, Trust, Tenant, IAM, Policy, Artifact Acceptance or Execution Admission ownership.
 
-### Option A — No native event-triggered Automation
+## 3. Durable Mutually-exclusive Alternatives
+
+### A — No native event-triggered Automation
 
 Automation initiation remains centered on explicit invocation and schedule/time-triggered execution. External/internal events must first be handled by another capability and converted into an explicit execution intent.
 
-### Option B — Governed native event-driven Automation
+### B — Governed native event-driven Automation
 
-Automation Definition natively supports applicable event-driven trigger semantics:
+Automation Definition natively supports applicable event occurrence → governed trigger evaluation → execution intent, after which the existing Artifact/Admission/Runtime lifecycle remains applicable.
 
-```text
-event occurrence
-→ governed trigger evaluation
-→ execution intent
-→ existing Artifact / Admission / Runtime lifecycle
-```
+### C — Native-platform events only
 
-Event sources may include applicable native business, data/integration, external enterprise-system, node/local, Agent-originated or operational events, subject to later detailed capability and contract design.
-
-### Option C — Native-platform events only
-
-Automation supports platform-native event triggering, while external enterprise events must first be normalized by Business Application / Data Integration into a native event domain.
+Automation supports platform-native event triggering, while external enterprise events must first be normalized by Business Application/Data Integration into a native event domain.
 
 ## 4. Recommendation Presented
 
-`B — Governed native event-driven Automation`.
+```text
+Recommendation
+→ B — Governed native event-driven Automation
+```
 
-Rationale:
+### Recommendation Rationale
 
-- Automation is a first-class principal capability domain;
-- enterprise integration, Data/Knowledge/ETL, local execution and Agent capabilities create durable event-driven composition pressure;
-- without a native event-trigger capability, repeated glue code would be required merely to convert events into Automation execution requests;
-- native event triggering preserves the Automation product boundary without assigning Automation authority to event producers or transports;
-- offline/private deployment remains possible with private/local event sources.
+Automation is a first-class principal capability domain and enterprise integration, Data/Knowledge/ETL, local execution and Agent capabilities create durable event-driven composition pressure. Option B avoids repeated glue code whose sole job is to translate events into Automation invocation, while preserving event producers/transports as non-authoritative inputs.
 
-## 5. Project Owner Decision
+## 5. Tradeoffs and Impact
+
+**Benefits**
+- supports enterprise event-driven Automation without repeated glue services;
+- enables business/data/integration/local/Agent-originated event composition where later accepted semantics permit;
+- complements explicit and scheduled invocation without changing Automation authority.
+
+**Costs**
+- later architecture must define event identity, provenance, compatibility and recovery semantics;
+- operational/conformance tooling must distinguish event receipt, trigger evaluation, admission and runtime execution.
+
+**Risks / Complexity**
+- duplicate/replayed/out-of-order/stale events can produce ambiguous trigger pressure unless later semantics are explicit;
+- implementations may incorrectly equate event receipt with permission/admission;
+- external event mapping can accidentally imply external SoT transfer if provenance is not preserved.
+
+**Long-term Impact**
+- Automation becomes a manual/explicit + scheduled + event-driven enterprise Automation platform rather than only a task/schedule executor;
+- event transport remains replaceable and outside Automation Semantic Authority.
+
+**Compatibility / Migration Impact**
+- later evolution must preserve event source/identity/revision and supported/unsupported trigger semantics where material;
+- no event envelope, delivery guarantee or versioning representation is selected here.
+
+**Offline / Private Deployment Impact**
+- event-driven Automation must work with private/local event sources and must not require public brokers, vendor SaaS, public registries or public event services for core correctness.
+
+**Cross-component Impact**
+- `ns_server` remains Automation Semantic Authority and Canonical Definition SoT;
+- `ns_runtime` may later coordinate delivery/scheduling/dispatch but does not gain Automation authority;
+- `ns_node`, Agent, Business/Data or external systems may be event sources/participants without gaining Automation/Policy/Admission authority.
+
+## 6. Project Owner Selected Result
 
 ```text
 Selected Option
@@ -91,118 +93,45 @@ Native Automation Event-driven Trigger Capability
 → REQUIRED
 ```
 
-## 6. Normative Capability Consequences for Z3 Batch 1
-
-The Z3 Batch 1 capability baseline may consume:
+## 7. Normative Capability Consequence
 
 ```text
 Automation
 → MUST support governed event-driven triggering as a native product capability
 
 Event occurrence
-→ MAY form an applicable trigger input
+→ MAY form applicable trigger input
 → MUST NOT itself imply Execution Admission
 
 Event-triggered execution
-→ remains inside existing Tenant / IAM / Policy / Trust / Artifact / Admission governance
+→ remains inside accepted Tenant/IAM/Policy/Trust/Artifact/Admission governance
 ```
 
-Permanent non-transfer rules:
+## 8. Authority / SoT / Actual-state Preservation
+
+Automation Authority/Definition SoT remain `ns_server`; runtime actual-state ownership remains partitioned; external factual SoT is not transferred merely by an event; Formal Artifact Acceptance and Execution Admission remain distinct accepted authorities.
+
+## 9. Explicit Non-implications
 
 ```text
 Event Received != Execution Admitted
-Event Source != Automation Semantic Authority
+Event Source != Automation Authority
 Event Producer != Policy Authority
 Event Transport != Event Semantic Authority
 Event Trigger != Runtime Dispatch Authority
-External Event != External Source-of-Truth Transfer
+External Event != External SoT Transfer
 ```
 
-## 7. Explicit Non-implications / Deferred Mechanics
+## 10. Deferred Mechanics / Named Later Authority
 
-This decision does **not** decide:
+Not decided here: Event Bus, broker, queue, webhook, WebSocket path, topic/subscription model, event schema/envelope, delivery guarantee, ordering/retry/dedup/replay algorithms, routing, runtime roles/process topology, event storage, connectors or a specific event standard.
 
-```text
-Event Bus
-Broker
-Queue
-Webhook
-WebSocket event path
-Topic / subscription model
-Event schema / envelope
-Delivery guarantee
-Ordering algorithm
-Retry algorithm
-Deduplication algorithm
-Replay algorithm
-Routing path
-Runtime Role or process topology
-Event storage
-Concrete source connectors
-CloudEvents or another standard
-```
-
-Named later authority:
-
-```text
-Five-component Internal Architecture Boundary Synthesis
-→ capability/component boundary continuation only after separate GAC authorization
-
-Runtime Responsibility Architecture
-→ runtime coordination / delivery / recovery semantics where applicable
-
-Component Internal Design
-→ bounded component realization after authorization
-
-Shared Foundation / Contract / Provider authorities
-→ reusable authority-neutral mechanics only if later admitted
-
-Project Owner / MDE
-→ any later material Authority / SoT / Trust / major compatibility / high-lock-in commitment
-```
-
-## 8. Offline / Private Deployment Consequence
-
-Event-driven Automation must remain compatible with private/offline operation. It must not require a mandatory public event service, vendor SaaS control plane, public broker or public registry for core correctness.
-
-## 9. Compatibility / Recovery Consequence
-
-Later design must preserve explicit event identity/source/provenance/revision/compatibility and applicable unknown/stale/conflicting/replay conditions where material. No event representation or reconciliation algorithm is frozen here.
-
-## 10. Preserved Invariants
-
-This decision preserves:
-
-- exactly five Product Components;
-- Automation as first-class / parallel / non-subordinate capability domain;
-- `Automation Semantic Authority / Canonical Definition SoT → ns_server`;
-- Formal Artifact Acceptance Authority and Formal Execution Admission Authority remaining `ns_server` and semantically distinct;
-- `ns_runtime` scheduling/dispatch responsibility without Automation semantic authority transfer;
-- `ns_node` execution without Automation authority transfer;
-- external bounded Sources of Truth;
-- Tenant / Organization / IAM / Policy / Trust / Artifact / Admission governance;
-- offline/private correctness;
-- no Runtime Architecture, Shared Foundation detailed design or implementation leakage.
+These remain for separately authorized Five-component Internal Architecture Boundary work, Runtime Responsibility Architecture, Component Internal Design, and later Shared Foundation/Contract/Provider work if admitted. MDE-class changes return to Project Owner.
 
 ## 11. Revalidation Trigger
 
-Revalidate if the Project Owner later changes native event-driven Automation support, changes Automation semantic authority/SoT, or changes the rule that event occurrence/transport does not itself create governance authority or admission.
+Revalidate if the Project Owner changes native event-driven Automation support, Automation Authority/SoT, or the rule that event occurrence/transport does not itself create governance authority or admission.
 
 ## 12. Bounded-session Authority Limit
 
-This evidence records one Project Owner capability decision inside Z3 Batch 1.
-
-It does not:
-
-```text
-constitute GAC Global Acceptance
-advance GAC Epoch
-authorize Z3 Batch 2
-complete Z3 Batch 1
-start normative Five-component Internal Architecture Boundary synthesis
-start Component Internal Design
-start Runtime Responsibility Architecture
-start Shared Foundation Architecture
-start Foundation Contract / Module / Provider Design
-start Implementation Planning / IWP / coding
-```
+This correction preserves the already selected Owner result and does not claim Global Acceptance, advance GAC state, authorize later batches or enter downstream architecture/design/implementation work.
