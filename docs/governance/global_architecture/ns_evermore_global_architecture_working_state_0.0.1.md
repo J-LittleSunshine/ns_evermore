@@ -1,138 +1,105 @@
 # ns_evermore Global Architecture Working State
 
-- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0025`
+- **Status:** `WORKING_CHECKPOINT / GAC-EPOCH-0026`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 - **Acceptance State:** `NOT_NORMATIVE`
 
 ## Current Checkpoint
 
 ```text
-Architecture Constraint Derivation
-→ GLOBAL_CLOSED / COMPLETE
-
-Project Architecture Synthesis
-→ GLOBAL_CLOSED / COMPLETE
-
-Current Project Architecture
-→ docs/ns_evermore_project_architecture_0.0.3.md
-→ GLOBAL_ACCEPTED / NORMATIVE / CURRENT
-
-Current Decision Registry
-→ 0.0.10 / CURRENT / NORMATIVE
-
-Z3 Batch 1 Capability Baseline
-→ GLOBAL_ACCEPTED / NORMATIVE
-
-Z3 Batch 2 Interaction Experience Baseline
-→ GLOBAL_ACCEPTED / NORMATIVE
-
-Z3 Capability Exhaustion for Current Accepted Product Scope
-→ SATISFIED
-
-Z3 Batch 3 Five-component Internal Architecture Boundaries
-→ GLOBAL_ACCEPTED
-
-Accepted Z3 Batch 3 Candidate
-→ docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_five_component_internal_architecture_boundaries_candidate_0.0.1.md
-
-Accepted Z3 Batch 3 DAD
-→ Z3-DAD-001..014
-
-Boundary Count
-→ ns_server 13
-→ ns_runtime 4
-→ ns_node 4
-→ ns_agent 6
-→ ns_web 7
-→ Total 34
-
-Open MDE
-→ 0
-
-Unpersisted Owner Decision
-→ 0
-
-Missing Product Capability
-→ 0
-
-Blocking Item
-→ NONE
+Architecture Constraint Derivation → GLOBAL_CLOSED / COMPLETE
+Project Architecture Synthesis → GLOBAL_CLOSED / COMPLETE
+Current Project Architecture → 0.0.3 / GLOBAL_ACCEPTED / NORMATIVE / CURRENT
+Current Decision Registry → 0.0.10 / CURRENT / NORMATIVE
+Z3 Batch 1 → GLOBAL_ACCEPTED
+Z3 Batch 2 → GLOBAL_ACCEPTED
+Z3 Batch 3 → GLOBAL_ACCEPTED
+Five-component Internal Architecture Boundary Baseline → GLOBAL_ACCEPTED / NORMATIVE
+Accepted Z3 DAD → Z3-DAD-001..014
+Internal-boundary Exhaustion → SATISFIED
+Runtime Responsibility Architecture Readiness → SATISFIED
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Missing Product Capability → 0
+Blocking Item → NONE
 ```
 
-## Batch 3 Global Acceptance
+Readiness evidence:
 
-Evidence:
-
-`docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_global_acceptance_0.0.1.md`
-
-Result:
-
-```text
-GLOBAL_ACCEPT
-
-Accepted Batch 1 Capability Coverage
-→ 100%
-
-Accepted Batch 2 Interaction Coverage
-→ 100%
-
-Authority / SoT Ambiguity
-→ 0
-
-Actual-state / Source-effect Ownership Ambiguity
-→ 0
-
-Runtime Responsibility Architecture Leakage
-→ 0
-
-Component Internal Design Leakage
-→ 0
-
-Shared Foundation Detailed-design Leakage
-→ 0
-
-Unexpected Drift
-→ NONE
-```
+`docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_internal_boundary_exhaustion_runtime_responsibility_readiness_assessment_0.0.1.md`
 
 ## Current Authorized Phase
 
 ```text
-NONE
+NGRP-001 — Runtime Responsibility Architecture / Batch 1
 ```
 
-Runtime Responsibility Architecture is not automatically authorized by Batch 3 Global Acceptance.
-
-## Current GAC Gate
+Authorization Scope:
 
 ```text
-Five-component Internal-boundary Exhaustion
-/ Runtime Responsibility Readiness Assessment
-→ REQUIRED NEXT
+RUNTIME_RESPONSIBILITY_ARCHITECTURE_ONLY
+/ BATCH_1
+/ RUNTIME_ROLE_INTERACTION_TOPOLOGY_AND_EXECUTION_RESPONSIBILITY_SYNTHESIS
 ```
 
-The assessment must determine whether any unresolved component-boundary ambiguity, runtime-custody ambiguity, missing stable contract pressure, MDE, unnamed deferral or architecture escape would force Runtime Responsibility Architecture to invent upstream architecture.
+## Authorized Purpose
 
-## Strict Current Stop
+Derive architecture-level runtime roles and runtime interaction/responsibility topology from the accepted five-component internal-boundary baseline without changing Product Component scope or Authority/SoT ownership.
 
-Until the readiness assessment is complete:
+Authorized work includes at architecture level:
 
 ```text
-Runtime Responsibility Architecture
-→ NOT AUTHORIZED
+runtime role taxonomy distinct from Product Components
+component-boundary → runtime-role responsibility mapping
+long-lived connection / presence responsibility
+routing / scheduling / dispatch runtime responsibility
+server-local background execution runtime responsibility
+Node attended / unattended execution runtime responsibility
+Agent runtime / Multi-Agent runtime responsibility
+Agent→Node / Agent→Automation runtime participation
+HITL wait / resume runtime responsibility
+operation intervention request / outcome observation topology
+trial runtime participation
+Notification external-delivery runtime participation
+Desired / Applied / Observed runtime evidence flow
+recovery / reconciliation runtime responsibility
+offline / degraded runtime behavior
+runtime Actual-state/source-effect partition preservation
+runtime contract pressure
+```
 
+## Strict Forbidden Scope
+
+```text
+Product Capability expansion
+Product Component topology change
+Authority / SoT reassignment without Owner MDE
 Component Internal Design
-→ NOT AUTHORIZED
-
+Django App / Python package / Vue module decomposition
+class/service/repository design
+concrete API/schema/wire protocol
+queue/broker/transport/provider technology selection
+concrete database/storage schema
 Shared Foundation Architecture
-→ NOT AUTHORIZED
+Foundation Contract / Module / Provider Design
+Implementation Planning
+IWP
+Coding
+```
 
-Implementation Planning / IWP / Coding
-→ NOT AUTHORIZED
+Runtime roles may be architectural roles but MUST NOT be inferred as Product Components or semantic authorities merely from process/service placement.
+
+## Producing-session Maximum
+
+```text
+Runtime Responsibility Architecture / Batch 1
+→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ STOP
+→ RETURN TO GAC
 ```
 
 ## Unique Next Legal Action
 
 ```text
-GAC performs one independent Five-component Internal-boundary Exhaustion / Runtime Responsibility Readiness Assessment.
+Start one bounded Runtime Responsibility Architecture Batch 1 session under the authorized scope.
 ```
