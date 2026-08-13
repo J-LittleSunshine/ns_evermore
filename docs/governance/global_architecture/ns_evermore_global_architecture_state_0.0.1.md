@@ -1,19 +1,19 @@
 # ns_evermore Global Architecture State
 
-- **Status:** `CURRENT / GAC-EPOCH-0020`
+- **Status:** `CURRENT / GAC-EPOCH-0021`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-→ GAC-EPOCH-0020
+→ GAC-EPOCH-0021
 
 Current Branch
 → architecture/ns-evermore-genesis-0.0.1
 
 State Verified Through HEAD
-→ 10985fdf0875d3383a0d283d279dc7561d977a21
+→ 1dbd3bd8b9057b519c60e2cb746c57994f2d6cff
 
 Genesis Constitution
 → docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -24,7 +24,7 @@ Current Unified Governance
 → OWNER_DECIDED / GAC_RECOGNIZED / NORMATIVE
 
 Current Decision Registry
-→ docs/governance/decisions/ns_evermore_decision_registry_0.0.7.md
+→ docs/governance/decisions/ns_evermore_decision_registry_0.0.8.md
 → CURRENT / NORMATIVE
 
 Current Constraint Index
@@ -50,153 +50,29 @@ Accepted Project Architecture DAD
 Owner MDE
 → Z2-MDE-001..017
 → OWNER_DECIDED / PERSISTED / GAC_RECOGNIZED
-```
 
----
-
-# Z3 Batch 1 Current Governance Status
-
-Producing-session candidate:
-
-`docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md`
-
-Producing-session entry HEAD:
-
-`f4df0cdbbb1430ed16de0522a01198c264754d29`
-
-Producing-session final / frozen GAC review HEAD:
-
-`72aa856d874e21b6bd262d8b2d7ad349acc07c79`
-
-Independent GAC Review:
-
-`docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_global_acceptance_review_0.0.1.md`
-
-Review commit:
-
-`6998f2b3b2a93457a43b746d273853a7cd8d168b`
-
-Result:
-
-```text
-Five-component capability semantic coverage
-→ PASS
-
-Common capability candidate discovery / authority neutrality
-→ PASS
-
-Accepted Project Architecture preservation
-→ PASS
-
-New MDE required by selected capability semantics
-→ NONE FOUND
-
-Unauthorized downstream progression
-→ NONE FOUND
-
-Decision evidence completeness / independent traceability
-→ CORRECTION_REQUIRED
+Last Globally Accepted Phase
+→ NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1
+→ GLOBAL_ACCEPTED
 
 Z3 Batch 1 Global Acceptance
-→ NOT GRANTED
+→ docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_global_acceptance_0.0.1.md
 
-Accepted Component Capability Baseline
-→ NOT YET ESTABLISHED
+Z3 Batch 1 Global Acceptance Commit
+→ 29ef1618a14a754e275e637bbe710e271b7e2567
 
-Decision Registry synchronization for the 10 new Owner capability decisions
-→ NOT PERFORMED
-```
+Current Z3 Capability Baseline
+→ docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md
+→ GLOBAL_ACCEPTED / NORMATIVE Z3 UPSTREAM
 
-The 10 selected capability semantics are not rejected. They remain persisted Owner capability decisions pending correction of the Repository evidence package and later independent GAC acceptance of Batch 1.
+Z3 Owner Capability Baseline
+→ 3 pre-Batch clarifications + 10 Batch 1 Owner capability decisions
+→ OWNER_CAPABILITY_DECIDED / PERSISTED / GAC_RECOGNIZED
 
----
+Common Capability Candidate Inventory
+→ ACCEPTED AS DISCOVERY / CLASSIFICATION / PRESSURE BASELINE ONLY
+→ NOT Shared Foundation Architecture
 
-# Blocking Correction
-
-Current blocking item:
-
-```text
-OWNER_CAPABILITY_DECISION_EVIDENCE_COMPLETENESS
-```
-
-The correction is documentation/evidence remediation only.
-
-Required correction:
-
-```text
-1. audit all 10 Z3 Batch 1 Owner capability decision files against the Batch 1 Owner Capability Checkpoint evidence requirements;
-2. complete missing durable A/B/C alternatives, recommendation, rationale, benefits, costs and long-term-impact context where absent;
-3. specifically normalize the ns_node attended/unattended evidence so Repository authority independently explains the selected result:
-   ATTENDED_AND_UNATTENDED_LOCAL_EXECUTION_REQUIRED;
-4. complete the recommendation/tradeoff evidence for Agent dynamic Automation authoring;
-5. preserve currently selected semantic results unless a genuine contradiction is discovered;
-6. re-run documentation completeness and decision traceability audits;
-7. return corrected evidence and bounded correction review/handoff to GAC.
-```
-
-If a genuine semantic ambiguity is discovered during correction, the correction session must stop and surface exactly one material Owner question rather than inventing a result.
-
----
-
-# Current Authorized Phase
-
-```text
-NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1 Correction Remediation
-```
-
-Authorization Scope:
-
-```text
-FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY
-/ BATCH_1
-/ CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY
-```
-
-## Allowed Work
-
-```text
-Owner capability decision evidence normalization
-Decision traceability completion
-Documentation completeness remediation
-Candidate/evidence consistency verification
-Correction review / handoff evidence
-Git drift verification
-```
-
-## Strict Forbidden Scope
-
-```text
-new capability discovery
-new product capability expansion
-new Owner capability decision unless a real contradiction is discovered
-normative Five-component Internal Architecture Boundary synthesis
-Component Internal Design
-Runtime Responsibility Architecture
-Runtime Role / process / service / worker / container topology
-Shared Foundation Architecture
-Foundation Contract / Module / Provider Design
-API / schema / protocol design
-database / storage topology
-Implementation Planning
-IWP
-Coding
-```
-
-The correction session maximum state is:
-
-```text
-CORRECTION_COMPLETED / AWAITING_GLOBAL_REVIEW
-→ STOP
-→ RETURN TO GAC
-```
-
-It may not self-accept Batch 1 or authorize a later Batch.
-
----
-
-# Decision / Block State
-
-```text
 Open MDE
 → 0
 
@@ -207,65 +83,159 @@ Owner-reserved unresolved decision
 → 0
 
 Blocking Item
-→ OWNER_CAPABILITY_DECISION_EVIDENCE_COMPLETENESS
+→ NONE
 
 Known Drift
 → NONE
 
-Z3 Batch 2 Authorization
-→ NONE
-
-Z3 Batch 3 Authorization
+Current Authorized Phase
 → NONE
 ```
 
 ---
 
-# Future Sequencing Intent — NOT AUTHORIZED
+# Accepted Z3 Batch 1 Capability Baseline
 
-After Z3 Batch 1 correction is independently accepted and Batch 1 receives explicit Global Acceptance, current Project Owner sequencing intent is:
+Z3 Batch 1 establishes the current Product Component capability-scope baseline required before later internal-boundary synthesis.
+
+It covers:
 
 ```text
-Z3 Batch 2
-→ User / Operator / Developer Interaction Experience Capability Discovery + Owner Capability Checkpoint
+ns_server capability inventory
+ns_runtime capability inventory
+ns_node capability inventory
+ns_agent capability inventory
+ns_web capability inventory
+System-level SDK / Development Surface capability inventory
+Cross-component Common Capability Candidate Inventory
+Capability gap / overlap controls
+Owner Capability Checkpoint results
+```
 
-Z3 Batch 3
+Accepted capability classification semantics remain:
+
+```text
+INHERITED_REQUIRED
+DERIVED_REQUIRED
+OWNER_DECISION_REQUIRED / RESOLVED
+DEFERRED
+NON_GOAL
+```
+
+Z3 Batch 1 did not perform Five-component Internal Architecture Boundary decomposition.
+
+---
+
+# Accepted Owner Capability Requirements
+
+Current accepted capability requirements include:
+
+```text
+Agent → Node governed task delegation
+ns_server server-local long-running / time-triggered background work
+Automation complete SDK/source + ns_web visual dual authoring
+Agent complete SDK/source + ns_web visual dual authoring
+Business Application complete SDK/source + ns_web visual dual authoring
+Data / Knowledge / Foundational ETL complete SDK/source + ns_web visual dual authoring
+Native general Multi-Agent composition
+Native Multimodal Agent semantics
+Automation + Agent governed Human-in-the-loop
+Governed event-driven Automation triggering
+Reusable Automation-to-Automation composition
+Agent dynamic authoring of candidate Automation Definitions under normal Automation governance
+ns_node attended + unattended local execution
+```
+
+These do not move accepted Project Architecture Authority / SoT / Actual-state ownership.
+
+---
+
+# Common Capability Acceptance Boundary
+
+The common-capability inventory is not Shared Foundation Architecture.
+
+Potential later reusable pressure includes areas such as:
+
+```text
+configuration loading
+logging / diagnostics
+telemetry / observability
+time / temporal primitives
+serialization / representation
+cryptography / secret-reference primitives
+event / notification utilities
+health / lifecycle reporting
+operation / correlation / trace context
+compatibility / conformance support
+Tenant / Principal context carriers
+error / unknown / indeterminate status primitives
+```
+
+Permanent rules:
+
+```text
+Reuse != Product Authority
+Common Code != Shared Foundation automatically
+Shared Utility != Shared Semantic Ownership
+Generic Scheduler != Common Semantic Authority
+Generic Workflow Engine != Common Semantic Authority
+Generic IAM / Policy / Trust Authority != Shared Foundation Authority
+```
+
+Any later Shared Foundation capability requires its own explicit architecture admission and acceptance.
+
+---
+
+# Current GAC Gate
+
+Z3 Batch 1 acceptance does not automatically authorize another Batch.
+
+Current legal state:
+
+```text
+Current Authorized Phase
+→ NONE
+```
+
+Project Owner sequencing intent is recorded as:
+
+```text
+Planned Z3 Batch 2
+→ User / Operator / Developer Interaction Experience Capability Discovery
+→ Owner Capability Checkpoint for material interaction-capability choices
+
+Planned Z3 Batch 3
 → Five-component Internal Architecture Boundary Synthesis
 ```
 
-This is planning intent only and grants no authorization.
+Neither planned Batch is authorized by this acceptance state.
 
 ---
 
 # Current Required Read Set
 
-Minimum sufficient context for a fresh Batch 1 correction-remediation session:
+Minimum sufficient context for fresh GAC recovery / next authorization assessment:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
 2. docs/governance/ns_evermore_governance_0.0.2.md
 3. docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md
 4. docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md
-5. docs/governance/decisions/ns_evermore_decision_registry_0.0.7.md
+5. docs/governance/decisions/ns_evermore_decision_registry_0.0.8.md
 6. docs/ns_evermore_nse_constraints_index_0.0.5.md
-7. docs/nse_constraints/ns_evermore_nse_001_0.0.1.md through ns_evermore_nse_017_0.0.1.md
-8. docs/ns_evermore_project_architecture_0.0.3.md
-9. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md
-10. all 10 docs/governance/decisions/ns_evermore_z3_batch_1_*_owner_capability_decision_0.0.1.md files
-11. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_global_acceptance_review_0.0.1.md
-12. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md
-   → relevant tail only unless deeper history is required
+7. docs/ns_evermore_project_architecture_0.0.3.md
+8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md
+9. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_global_acceptance_0.0.1.md
+10. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md
+    → relevant tail only unless deeper history is required
 ```
+
+Read individual Z3 Owner capability decision evidence when exact decision alternatives/revalidation boundaries are material.
 
 ---
 
 # Unique Next Legal Action
 
 ```text
-Start one bounded Z3 Batch 1 correction-remediation session under:
-CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY
-
-Correct decision evidence completeness only,
-re-run decision/documentation audits,
-and return to GAC.
+GAC performs a separate explicit authorization transition for the next bounded Z3 Batch if Repository continuity remains clean.
 ```
