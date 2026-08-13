@@ -1,36 +1,20 @@
 # NGRP-001 Phase Z3 / Batch 1 — Native Agent Multimodal Owner Capability Decision
 
 - **Program / Phase:** `NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1`
-- **Authorization Scope:** `FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 / COMPONENT_AND_COMMON_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT`
-- **Repository:** `J-LittleSunshine/ns_evermore`
-- **Branch:** `architecture/ns-evermore-genesis-0.0.1`
-- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
 - **Decision Authority:** `PROJECT_OWNER / PRODUCT_CAPABILITY_CHECKPOINT`
+- **Capability Classification:** `OWNER_DECISION_REQUIRED`
+- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
+- **Evidence Correction Scope:** `CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY`
+- **Selected Semantics:** `UNCHANGED`
 - **Global Acceptance:** `NOT CLAIMED`
-
----
 
 ## 1. Material Capability Question
 
-Should the native `ns_agent` semantic domain remain text-centric with non-text inputs mediated only through tools/extensions, or should native Agent Definition / Context / Interaction semantics directly support multimodal content?
+Should the native `ns_agent` semantic domain remain text-centric with non-text inputs mediated only through tools/extensions, or should Native Agent Definition / Context / Interaction semantics directly support multimodal content?
 
-This is a product-significant capability question. It does not ask whether a particular model provider happens to support images/audio/video; provider capability cannot define Agent product semantics by placement.
+This is product-significant because it determines whether multimodality is a native Agent product semantic or merely an implementation/provider/tool convenience. A model provider's capabilities must not define the Agent architecture boundary by placement.
 
-Accepted upstream ownership remains unchanged:
-
-```text
-AI Agent Definition / Semantic Authority
-→ ns_agent
-
-AI Agent Canonical Definition SoT
-→ ns_agent
-
-Model / AI Provider
-→ bounded provider capability
-→ NOT Agent Semantic Authority
-```
-
-## 2. Classification
+## 2. Classification and MDE Boundary
 
 ```text
 Capability Classification
@@ -38,46 +22,70 @@ Capability Classification
 
 MDE
 → NO
-
-Reason
-→ Native multimodal semantics materially affect the Agent product boundary and developer/user experience.
-→ The decision does not move Authority, Source of Truth, Actual-state Ownership, Tenant, IAM, Policy, Trust, Artifact Acceptance or Execution Admission ownership.
 ```
 
-## 3. Durable Alternatives Presented
+Native multimodal semantics materially affect the Agent product boundary and experience, but do not move accepted Authority, SoT, Actual-state Ownership, Tenant, IAM, Policy, Trust, Artifact Acceptance or Execution Admission ownership.
 
-### Option A — Text-centric Native Agent
+## 3. Durable Mutually-exclusive Alternatives
+
+### A — Text-centric Native Agent
 
 Native Agent semantics remain text/structured-data oriented. Image/audio/video/media must first be processed by a Tool, `ns_node`, extension or external capability into text/structured facts before Agent consumption.
 
-### Option B — Native Multimodal Agent Semantics
+### B — Native Multimodal Agent Semantics
 
-Native Agent semantics directly permit applicable multimodal content as Agent context / interaction content, including text, image, audio, video/media where later supported, document/media content and structured data.
+Native Agent semantics directly permit applicable multimodal content as Agent context/interaction content, including text, image, audio, video/media where later supported, document/media content and structured data. Individual providers may support only a subset.
 
-Provider support remains capability-specific:
+### C — Multimodal only through Extension / Tool capability
 
-```text
-Native Agent supports modality X
-!= every Model Provider supports modality X
-```
-
-### Option C — Multimodal only through Extension / Tool capability
-
-The product formally supports multimodal Agent experiences, but non-text modalities remain represented only through Tool/Extension composition rather than as native Agent semantics.
+The product supports multimodal Agent experiences, but non-text modalities remain represented only through Tool/Extension composition rather than as native Agent semantics.
 
 ## 4. Recommendation Presented
 
-`B — Native Multimodal Agent Semantics`.
+```text
+Recommendation
+→ B — Native Multimodal Agent Semantics
+```
 
-Rationale:
+### Recommendation Rationale
 
-- AI Agent is a first-class capability domain and should not be permanently constrained by text-centric provider/API assumptions;
-- multimodal capability should remain provider-neutral and compatible with local/private/internet model support;
-- native multimodal semantics avoid forcing every provider-native image/audio/document capability through an artificial Tool-only abstraction;
-- `ns_node` OCR/local execution responsibilities remain independent and are not transferred to `ns_agent`;
-- offline/private correctness can still be preserved through local/private multimodal model or tool realizations.
+AI Agent is a first-class domain and should not be permanently constrained by text-centric API/provider assumptions. Option B makes multimodality provider-neutral, preserves direct use of provider-native capabilities where compatible, and avoids forcing all non-text semantics through artificial Tool mediation while leaving `ns_node` OCR/local-execution authority intact.
 
-## 5. Project Owner Decision
+## 5. Tradeoffs and Impact
+
+**Benefits**
+- supports native visual, voice, document and other applicable media Agent experiences;
+- preserves provider-neutral Agent semantics across local/private/Internet model providers;
+- avoids text-centric architectural lock-in and unnecessary Tool-only indirection.
+
+**Costs**
+- later compatibility/conformance must account for modality profiles and provider capability differences;
+- privacy, data-size, context and lifecycle concerns become broader than text-only Agent operation.
+
+**Risks / Complexity**
+- unsupported provider/modality combinations and unknown capability states must remain explicit;
+- fallback or conversion behavior can become ambiguous if later design does not distinguish native modality from mediated conversion;
+- media storage/streaming/context handling introduces significant later design pressure without being selected here.
+
+**Long-term Impact**
+- `ns_agent` remains a provider-neutral multimodal Agent platform rather than a text-first platform with permanent mediation constraints;
+- future provider evolution can add modality support without redefining Agent authority.
+
+**Compatibility / Migration Impact**
+- Agent/provider combinations require explicit supported/unsupported/unknown/incompatible semantics;
+- no concrete modality representation, negotiation protocol or migration guarantee is selected here.
+
+**Offline / Private Deployment Impact**
+- multimodal Agent capability must remain compatible with local/private models and locally available tool chains;
+- no mandatory public Internet, vendor SaaS or Internet AI provider is introduced.
+
+**Cross-component Impact**
+- `ns_agent` owns Agent semantics only;
+- `ns_node` retains OCR/local resource/device/protected-effect responsibility;
+- Data/Knowledge factual SoT remains unchanged;
+- model/tool providers do not gain Agent Authority.
+
+## 6. Project Owner Selected Result
 
 ```text
 Selected Option
@@ -96,149 +104,33 @@ AI Agent Canonical Definition SoT
 → ns_agent / UNCHANGED
 ```
 
-## 6. Normative Capability Consequences for Z3 Batch 1
+## 7. Normative Capability Consequence
 
-The Z3 Batch 1 capability baseline may consume the following Owner-decided capability:
+`ns_agent` must support Native Agent definitions/runtime semantics capable of applicable multimodal content. Provider support may be a subset and unsupported combinations must be explicit.
 
-```text
-ns_agent
-→ MUST support Native Agent definitions/runtime semantics that can operate over applicable multimodal content
-
-Applicable modalities
-→ may include text, image, audio, video/media, document/media content and structured data
-→ exact supported modality profile is later design/evolution
-
-Model / Provider capability
-→ may support a subset of native Agent modalities
-→ unsupported combinations must remain explicit
-```
-
-Permanent rules:
+## 8. Authority / SoT / Actual-state Preservation
 
 ```text
-Provider-native Multimodality
-!= Provider becomes Agent Semantic Authority
-
-Native Agent Multimodality
-!= ns_agent gains OCR/local-device authority
-
-Multimodal Context
-!= Data / Knowledge Source-of-Truth transfer
-
-Multimodal Agent
-!= Mandatory Internet Model
+Provider-native Multimodality != Provider becomes Agent Authority
+Native Agent Multimodality != ns_agent gains OCR/local-device authority
+Multimodal Context != Data/Knowledge SoT transfer
+Runtime Actual-state Ownership != changed by modality
 ```
 
-## 7. Explicit Non-implications / Deferred Mechanics
+## 9. Explicit Non-implications
 
-This capability decision does **not** decide:
+The decision does not require every provider to support every modality, does not select Internet models, does not transfer `ns_node` responsibility, and does not define media storage, transport, codecs, schema or streaming architecture.
 
-```text
-image schema
-media schema
-audio/video codec
-streaming model
-file representation
-media storage
-multimodal message format
-provider capability-negotiation protocol
-context-window strategy
-tokenization
-modality conversion pipeline
-transport
-runtime process topology
-provider selection
-```
+## 10. Deferred Mechanics / Named Later Authority
 
-Named later authority:
+Not decided here: image/media schema, audio/video codec, streaming model, file representation, media storage, multimodal message format, provider capability-negotiation protocol, context-window strategy, tokenization, conversion pipeline, transport, runtime topology or provider selection.
 
-```text
-Five-component Internal Architecture Boundary Synthesis
-→ only after separate GAC authorization
-
-Runtime Responsibility Architecture
-→ runtime actual-state / routing mechanics where applicable
-
-Component Internal Design
-→ component-local realization after authorization
-
-Foundation / Contract / Provider authorities
-→ reusable/stable cross-boundary semantics only if later admitted
-
-Project Owner / MDE
-→ if later design materially changes accepted Authority / SoT / Trust / major compatibility / stable identity / high-lock-in commitments
-```
-
-## 8. Offline / Private Deployment Consequence
-
-Native multimodal capability must remain compatible with accepted private/offline correctness.
-
-```text
-Multimodal Agent
-!= mandatory public Internet
-!= mandatory vendor SaaS
-!= mandatory Internet AI provider
-```
-
-Local/private models and locally available tool chains remain valid realization paths.
-
-## 9. Compatibility / Failure Consequence
-
-Later design must preserve explicit conditions such as:
-
-```text
-unsupported modality
-unsupported provider/modality combination
-unknown provider capability
-incompatible Agent/provider combination
-unavailable modality processing capability
-indeterminate multimodal interpretation where applicable
-```
-
-No silent downgrade to text-only semantics is implied by this capability decision.
-
-## 10. Preserved Invariants
-
-This decision preserves:
-
-- exactly five Product Components;
-- AI Agent as a first-class / parallel / non-subordinate domain;
-- `AI Agent Semantic Authority → ns_agent`;
-- `AI Agent Canonical Definition SoT → ns_agent`;
-- provider/model/tool non-authority;
-- `ns_node` OCR/local execution/source-effect responsibility independence;
-- Data/Knowledge factual SoT preservation;
-- Tenant/IAM/Policy/Trust/Artifact/Admission governance;
-- offline/private correctness;
-- extension/re-delivery governance;
-- no premature internal architecture, runtime architecture, Shared Foundation, Contract, Module, Provider or implementation design.
+These remain for separately authorized Five-component Internal Architecture Boundary work, Runtime Responsibility Architecture where applicable, Component Internal Design and later Contract/Foundation/Provider work if admitted. MDE-class changes return to Project Owner.
 
 ## 11. Revalidation Trigger
 
-Revalidate if the Project Owner later changes one or more of:
-
-- native multimodal Agent capability support;
-- the rule that multimodal capability is part of the native Agent semantic domain rather than Tool-only mediation;
-- AI Agent Semantic Authority or Canonical Definition SoT;
-- provider-neutrality of native Agent semantics.
-
-Changes in concrete media formats, model providers, codecs, storage, transport, schema, runtime processes or deployment topology do not by themselves revalidate this capability decision.
+Revalidate if the Project Owner removes native multimodal Agent support, makes multimodality Tool-only, changes Agent Authority/Definition SoT, or abandons provider-neutrality of Native Agent semantics.
 
 ## 12. Bounded-session Authority Limit
 
-This evidence records one Project Owner capability decision inside Z3 Batch 1.
-
-It does not:
-
-```text
-constitute GAC Global Acceptance
-advance GAC Epoch
-authorize Z3 Batch 2
-complete Z3 Batch 1
-start normative Five-component Internal Architecture Boundary synthesis
-start Component Internal Design
-start Runtime Responsibility Architecture
-start Shared Foundation Architecture
-start Foundation Contract / Module / Provider Design
-start Implementation Planning / IWP / coding
-```
+This evidence correction preserves the selected result and does not claim Global Acceptance, advance GAC state, authorize later batches or enter downstream architecture/design/implementation work.
