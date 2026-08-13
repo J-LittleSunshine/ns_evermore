@@ -1,39 +1,20 @@
 # NGRP-001 Phase Z3 / Batch 1 — Native Multi-Agent Composition Owner Capability Decision
 
 - **Program / Phase:** `NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1`
-- **Authorization Scope:** `FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 / COMPONENT_AND_COMMON_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT`
-- **Repository:** `J-LittleSunshine/ns_evermore`
-- **Branch:** `architecture/ns-evermore-genesis-0.0.1`
-- **Recovered Entry HEAD:** `f4df0cdbbb1430ed16de0522a01198c264754d29`
-- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
 - **Decision Authority:** `PROJECT_OWNER / PRODUCT_CAPABILITY_CHECKPOINT`
+- **Capability Classification:** `OWNER_DECISION_REQUIRED`
+- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
+- **Evidence Correction Scope:** `CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY`
+- **Selected Semantics:** `UNCHANGED`
 - **Global Acceptance:** `NOT CLAIMED`
-
----
 
 ## 1. Material Capability Question
 
-Should the native AI Agent capability domain support general multi-Agent composition as a first-class product capability, or should native Agent semantics remain limited to standalone Agents or a narrower hierarchical sub-Agent model?
+Should the native AI Agent capability domain support general Multi-Agent composition as a first-class product capability, or should Native Agent semantics remain limited to standalone Agents or a narrower hierarchical sub-Agent model?
 
-This question is product-significant because it determines whether `ns_agent` can natively express AI applications whose constituent Native Agents compose, reference, invoke, or delegate applicable work to other Native Agents without forcing AI-native collaboration into another first-class domain such as Automation or Business Application.
+This is product-significant because it determines whether `ns_agent` can natively express AI applications whose Native Agents compose, reference, invoke, or delegate applicable Agent-domain work to other Native Agents without forcing AI-native collaboration into another first-class domain.
 
-It does not reopen or change accepted Project Architecture ownership:
-
-```text
-AI Agent Definition / Semantic Authority
-→ ns_agent
-
-AI Agent Canonical Definition SoT
-→ ns_agent
-
-Tenant / IAM / Policy / Trust / Artifact Acceptance / Execution Admission
-→ accepted ns_server authority boundaries / unchanged
-
-Agent → Node governed delegation
-→ required / distinct capability
-```
-
-## 2. Classification
+## 2. Classification and MDE Boundary
 
 ```text
 Capability Classification
@@ -41,41 +22,67 @@ Capability Classification
 
 MDE
 → NO
-
-Reason
-→ Native Multi-Agent composition is a material product-capability boundary not explicitly fixed upstream.
-→ It does not move accepted Authority, Source of Truth, Actual-state Ownership, Trust, Tenant, IAM, Policy, Artifact Acceptance or Execution Admission ownership.
 ```
 
-## 3. Durable Alternatives Presented
+Native Multi-Agent composition materially changes what the Agent product domain can do, but the selected capability does not move accepted Authority, SoT, Actual-state Ownership, Trust, Tenant, IAM, Policy, Artifact Acceptance or Execution Admission ownership.
 
-### Option A — Standalone Native Agent only
+## 3. Durable Mutually-exclusive Alternatives
 
-Each Native Agent is an independent Agent-domain unit. Multi-Agent behavior, where required, is composed externally by another capability domain such as Business Application or Automation.
+### A — Standalone Native Agent only
 
-### Option B — Native general Multi-Agent composition
+Each Native Agent is an independent Agent-domain unit. Multi-Agent behavior, if needed, is composed externally by another capability domain such as Business Application or Automation.
 
-`ns_agent` natively supports Agent definitions that may compose, reference, invoke, or delegate applicable work to other Native Agent definitions.
+### B — Native general Multi-Agent composition
 
-Single-Agent and Multi-Agent composition are both native Agent-domain product capabilities.
+`ns_agent` natively supports Agent definitions that may compose, reference, invoke, or delegate applicable Agent-domain work to other Native Agent definitions. Single-Agent and Multi-Agent composition are both native product capabilities.
 
-### Option C — Native hierarchical sub-Agent delegation only
+### C — Native hierarchical sub-Agent delegation only
 
-Native Agent semantics support a bounded parent/coordinating-Agent to sub-Agent relationship, but do not commit to general peer-to-peer or general Agent-graph composition.
+Native Agent semantics support a bounded parent/coordinating-Agent → sub-Agent relationship but do not commit to general peer-to-peer or general Agent-graph composition.
 
 ## 4. Recommendation Presented
 
-`B — Native general Multi-Agent composition`.
+```text
+Recommendation
+→ B — Native general Multi-Agent composition
+```
 
-Rationale:
+### Recommendation Rationale
 
-- AI Agent is a first-class / parallel / non-subordinate principal capability domain;
-- native Agent workflow/reasoning, tool invocation and Agent-to-Node delegation do not automatically imply Agent-to-Agent composition;
-- a complete Agent platform should be able to express AI-native collaboration without requiring another principal capability domain to own the composition semantics;
-- the decision preserves Agent semantic authority and canonical definition ownership in `ns_agent` and does not select a concrete Multi-Agent framework or runtime topology;
-- the capability remains compatible with private/offline operation and local/private model deployments.
+AI Agent is a first-class, parallel, non-subordinate domain. A complete Agent platform should be able to express AI-native collaboration without requiring Business Application or Automation to own the composition semantics. Option B preserves Agent semantic authority in `ns_agent` while leaving the concrete Multi-Agent framework/topology entirely deferred.
 
-## 5. Project Owner Decision
+## 5. Tradeoffs and Impact
+
+**Benefits**
+- enables reusable specialist Agents and decomposition of complex Agent applications;
+- supports Agent-to-Agent composition without subordinating Agent semantics to another principal domain;
+- preserves both standalone and composed Agent use cases.
+
+**Costs**
+- later architecture must manage Agent dependency/revision compatibility and runtime coordination semantics;
+- conformance, diagnostics and lifecycle evidence become more complex for composed Agent executions.
+
+**Risks / Complexity**
+- recursive/cyclic composition, fan-out, failure propagation, context ownership and shared-state semantics require explicit later treatment;
+- poorly bounded composition could create hidden cross-domain authority assumptions if later designs do not preserve provenance.
+
+**Long-term Impact**
+- `ns_agent` becomes a composable Agent application/runtime platform rather than only a standalone Agent executor;
+- general Multi-Agent capability remains an Agent-domain semantic, not an Automation substitute.
+
+**Compatibility / Migration Impact**
+- composed Agent dependencies require explicit supported/unsupported/unknown/incompatible revision semantics;
+- exact binding, version constraints and migration policies remain deferred.
+
+**Offline / Private Deployment Impact**
+- Multi-Agent composition must remain valid with local/private Agent/model deployments and cannot require public Agent services, public model providers or vendor SaaS for core correctness.
+
+**Cross-component Impact**
+- other domains invoked by Agents retain their own authority and factual SoT;
+- Agent-to-Agent composition remains distinct from Agent→Node governed delegation;
+- `ns_server` governance authorities remain unchanged; `ns_runtime` participation, if any, is a later runtime-design matter.
+
+## 6. Project Owner Selected Result
 
 ```text
 Selected Option
@@ -97,160 +104,44 @@ AI Agent Canonical Definition SoT
 → ns_agent / UNCHANGED
 ```
 
-## 6. Normative Capability Consequences for Z3 Batch 1
-
-The Z3 Batch 1 capability baseline may consume the following Owner-decided product capability:
+## 7. Normative Capability Consequence
 
 ```text
 ns_agent
 → MUST support standalone Native Agents
 → MUST support Native general Multi-Agent composition
 
-Native Multi-Agent composition
-→ belongs to the AI Agent capability domain
+Multi-Agent Composition
+→ belongs to AI Agent semantic domain
 → remains governed by ns_agent Agent semantics
 ```
 
-Permanent non-transfer rules:
+## 8. Authority / SoT / Actual-state Preservation
+
+AI Agent Semantic Authority and Canonical Definition SoT remain `ns_agent`; invoked Business Application, Automation, Data/Knowledge, Policy, Trust and local-execution domains retain their own accepted authorities/SoTs; runtime actual-state remains partitioned by accepted architecture.
+
+## 9. Explicit Non-implications
 
 ```text
-Agent A invokes Agent B
-!= Agent B Authority transfer
-
-Multi-Agent Composition
-!= Automation Definition / Workflow Semantic Authority
-
-Agent-to-Agent Delegation
-!= Agent-to-Node Delegation
-
-Agent Collaboration
-!= Policy Authority
-
-Agent Collaboration
-!= Formal Artifact Acceptance Authority
-
-Agent Collaboration
-!= Formal Execution Admission Authority
-
-Agent Collaboration
-!= local protected-effect authority
+Agent A invokes Agent B != Authority transfer
+Multi-Agent Composition != Automation Authority
+Agent-to-Agent Delegation != Agent-to-Node Delegation
+Agent Collaboration != Policy Authority
+Agent Collaboration != Artifact Acceptance
+Agent Collaboration != Execution Admission
+Agent Collaboration != local protected-effect authority
 ```
 
-Other capability domains invoked by an Agent retain their own semantic authority and factual Source-of-Truth ownership.
+## 10. Deferred Mechanics / Named Later Authority
 
-## 7. Explicit Non-implications / Deferred Mechanics
+Not decided here: supervisor/coordinator topology, Agent graph, parent/child representation, peer protocol, handoff/message schema, shared context/memory algorithm, conversation protocol, routing, retry, parallelism, recursion/cycle handling, execution/admission evidence representation, process/worker/service topology, queue/broker, transport, Agent framework or deployment topology.
 
-This Owner capability decision does **not** decide:
-
-```text
-supervisor / coordinator topology
-Agent graph representation
-parent/child representation
-peer-to-peer protocol
-handoff schema
-Agent-to-Agent message schema
-shared-context algorithm
-shared-memory algorithm
-conversation protocol
-routing path
-whether ns_runtime participates in routing
-retry algorithm
-parallelism / concurrency model
-recursion / cycle handling algorithm
-execution token / admission evidence representation
-process / worker / service topology
-queue / broker
-transport
-Agent framework
-runtime deployment topology
-```
-
-Named later authority:
-
-```text
-Five-component Internal Architecture Boundary Synthesis
-→ only after separate GAC authorization
-
-Runtime Responsibility Architecture
-→ runtime coordination / actual-state / execution mechanics where applicable
-
-Component Internal Design
-→ component-local realization after explicit authorization
-
-Stable Contract / Foundation authorities
-→ only where later accepted architecture requires them
-
-Project Owner / MDE
-→ if a later proposal materially changes Authority / SoT / Trust / major compatibility / stable identity / major lock-in or material offline fail policy
-```
-
-## 8. Offline / Private Deployment Consequence
-
-Native Multi-Agent composition must remain compatible with accepted private/offline correctness.
-
-```text
-Multi-Agent Capability
-!= Mandatory Internet Agent Service
-!= Mandatory Public Model Provider
-!= Mandatory Vendor SaaS Control Plane
-```
-
-Native Agents using local or privately deployed models must remain eligible participants where their accepted capability/configuration permits it.
-
-## 9. Compatibility / Evolution Consequence
-
-Multi-Agent definitions must retain explicit dependency/revision compatibility semantics sufficient for later architecture to distinguish supported, unsupported, unknown and incompatible Agent dependencies without selecting the concrete representation in this Batch.
-
-```text
-Agent Composition Dependency
-!= Silent Latest-Version Binding automatically
-```
-
-Concrete revision constraints, migration, compatibility rules and historical interpretation remain for named later design authority; material externally visible compatibility commitments remain subject to GAC/MDE revalidation.
-
-## 10. Preserved Invariants
-
-This decision preserves:
-
-- exactly five Product Components;
-- AI Agent as a first-class / parallel / non-subordinate domain;
-- `AI Agent Semantic Authority → ns_agent`;
-- `AI Agent Canonical Definition SoT → ns_agent`;
-- Agent invocation does not transfer the authority of Business Application, Automation, Data/Knowledge, Policy, Trust or local execution domains;
-- Agent-to-Agent composition remains distinct from Agent-to-Node delegation;
-- Definition / Artifact / Admission / Runtime separation;
-- Tenant / IAM / Policy / Trust / Artifact / Admission governance;
-- runtime Actual-state ownership per bounded semantic partition;
-- offline/private correctness;
-- no premature Runtime Architecture, component internal module design, Shared Foundation design, Contract/Module/Provider design or implementation planning.
+These remain for separately authorized Five-component Internal Architecture Boundary work, Runtime Responsibility Architecture, Component Internal Design and later stable Contract/Foundation authorities if admitted. MDE-class changes return to Project Owner.
 
 ## 11. Revalidation Trigger
 
-Revalidate this Owner capability decision if the Project Owner later changes one or more of:
-
-- Native general Multi-Agent composition support;
-- the AI Agent capability-domain boundary;
-- AI Agent Semantic Authority or Canonical Definition SoT;
-- the rule that Agent composition does not transfer invoked-domain authority;
-- the distinction between Agent-to-Agent composition/delegation and Agent-to-Node governed delegation.
-
-Changes in concrete Multi-Agent framework, routing, process topology, transport, schema, provider, storage, queue/broker or deployment technology do not by themselves revalidate this capability decision.
+Revalidate if the Project Owner changes general Multi-Agent support, the AI Agent capability-domain boundary, Agent Authority/Definition SoT, the non-transfer rule, or the distinction between Agent-to-Agent composition and Agent→Node delegation.
 
 ## 12. Bounded-session Authority Limit
 
-This evidence records one Project Owner capability decision inside Z3 Batch 1.
-
-It does not:
-
-```text
-constitute GAC Global Acceptance
-advance GAC Epoch
-authorize Z3 Batch 2
-complete Z3 Batch 1
-start normative Five-component Internal Architecture Boundary synthesis
-start Component Internal Design
-start Runtime Responsibility Architecture
-start Shared Foundation Architecture
-start Foundation Contract / Module / Provider Design
-start Implementation Planning / IWP / coding
-```
+This correction preserves the already selected Owner result only. It does not claim Global Acceptance, advance GAC state, authorize later batches or enter internal/runtime/Foundation/implementation design.
