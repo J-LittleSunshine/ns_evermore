@@ -1,40 +1,20 @@
 # NGRP-001 Phase Z3 / Batch 1 — Data / Knowledge / Foundational ETL Dual Authoring Owner Capability Decision
 
 - **Program / Phase:** `NGRP-001 Phase Z3 — Five-component Internal Architecture Boundaries / Batch 1`
-- **Authorization Scope:** `FIVE_COMPONENT_INTERNAL_ARCHITECTURE_BOUNDARIES_ONLY / BATCH_1 / COMPONENT_AND_COMMON_CAPABILITY_DISCOVERY_OWNER_CHECKPOINT`
-- **Repository:** `J-LittleSunshine/ns_evermore`
-- **Branch:** `architecture/ns-evermore-genesis-0.0.1`
-- **Recovered Entry HEAD:** `f4df0cdbbb1430ed16de0522a01198c264754d29`
-- **Decision-predecessor HEAD:** `f4c5916f723b7389228a8bc9e081c642ab1e7f1f`
-- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
 - **Decision Authority:** `PROJECT_OWNER / PRODUCT_CAPABILITY_CHECKPOINT`
+- **Capability Classification:** `OWNER_DECISION_REQUIRED`
+- **Status:** `OWNER_CAPABILITY_DECIDED / PERSISTED`
+- **Evidence Correction Scope:** `CAPABILITY_DECISION_EVIDENCE_CORRECTION_ONLY`
+- **Selected Semantics:** `UNCHANGED`
 - **Global Acceptance:** `NOT CLAIMED`
-
----
 
 ## 1. Material Capability Question
 
-Should native Enterprise Data / Knowledge / Foundational ETL definitions support complete source-code / System-level SDK authoring in addition to `ns_web` visual construction, or should complete Data/ETL authoring be limited to one surface or a deliberately bounded visual subset?
+Should Native Enterprise Data / Knowledge / Foundational ETL definitions support complete source-code / System-level SDK authoring in addition to `ns_web` visual construction, or should complete authoring be limited to one surface or a deliberately bounded visual subset?
 
-This is product-significant because it determines whether the first-class Data / Knowledge / Foundational ETL domain supports complete Pro-code and Low-code authoring, affecting enterprise delivery, customer secondary development, source-controlled change, repeatable re-delivery and long-term product positioning.
+This is product-significant because it determines whether this first-class domain supports complete Pro-code and Low-code authoring, directly affecting enterprise delivery, customer secondary development, source-controlled change, repeatable re-delivery and long-term product positioning.
 
-Accepted ownership remains unchanged:
-
-```text
-Enterprise Data / Knowledge / Foundational ETL Semantic Authority
-→ ns_server
-
-Data / Knowledge factual SoT
-→ governed per bounded semantic partition
-
-Data / Knowledge UI
-→ ns_web
-
-System-level SDK / Development Surface
-→ complete-system development surface
-```
-
-## 2. Classification
+## 2. Classification and MDE Boundary
 
 ```text
 Capability Classification
@@ -42,47 +22,68 @@ Capability Classification
 
 MDE
 → NO
-
-Reason
-→ This is a material product capability / developer-and-delivery-experience boundary not explicitly fixed upstream.
-→ It does not move Authority, Source of Truth, Actual-state Ownership, Tenant, IAM, Policy, Trust, Artifact Acceptance or Execution Admission ownership.
 ```
 
-## 3. Durable Alternatives Presented
+The decision selects a material authoring capability boundary but does not change Enterprise Data/Knowledge/ETL Semantic Authority, bounded factual SoT topology, Actual-state Ownership, Tenant, IAM, Policy, Trust, Artifact Acceptance or Execution Admission ownership.
 
-### Option A — Source-first complete Data / ETL authoring
+## 3. Durable Mutually-exclusive Alternatives
 
-System-level SDK / source authoring provides complete native Data/ETL definition authoring. `ns_web` provides management, configuration, monitoring, visualization and related UI but not complete visual Data/ETL authoring.
+### A — Source-first complete Data / ETL authoring
 
-### Option B — Complete dual authoring
+System-level SDK/source authoring provides complete native Data/ETL definition authoring. `ns_web` provides management/configuration/monitoring/visualization but not complete visual Data/ETL authoring.
 
-Native Data / Knowledge / Foundational ETL definitions support both:
+### B — Complete dual authoring
 
-```text
-System-level SDK / Source-code Authoring
-AND
-ns_web Visual Data / ETL Authoring
-```
+Native Data / Knowledge / Foundational ETL definitions support complete System-level SDK/source authoring and complete `ns_web` visual authoring, both targeting the same governed native semantic domain.
 
-Both authoring surfaces converge on the same governed native Data / Knowledge / Foundational ETL semantic domain under `ns_server` authority.
-
-### Option C — Bounded visual subset + complete source authoring
+### C — Bounded visual subset + complete source authoring
 
 Common delivery-oriented Data/ETL cases are visually authorable, while advanced/unrestricted Data/ETL definitions remain source-only. Visual and source capability profiles are intentionally not complete peers.
 
 ## 4. Recommendation Presented
 
-`B — Complete dual authoring`.
+```text
+Recommendation
+→ B — Complete dual authoring
+```
 
-Rationale:
+### Recommendation Rationale
 
-- Enterprise Data / Knowledge / Foundational ETL is a first-class / parallel / non-subordinate product domain;
-- the complete product already includes a System-level SDK / Development Surface;
-- source-level extension, customer secondary development and customer re-delivery are accepted requirements;
-- private enterprise delivery benefits materially from visual composition for common integration/mapping/transformation work while advanced developers need full source-control and automation capability;
-- the same product may expose a practical two-layer mental model without making the visual Builder the only complete development route.
+Data / Knowledge / Foundational ETL is a first-class, parallel, non-subordinate product domain. Enterprise delivery benefits materially from complete visual composition, while advanced developers need complete source-control, automation and re-delivery. Option B preserves both without creating a permanent low-code subset as the only visual product boundary.
 
-## 5. Project Owner Decision
+## 5. Tradeoffs and Impact
+
+**Benefits**
+- complete visual enterprise delivery for ingestion/mapping/transformation/ETL composition where later semantics permit;
+- complete source workflows for Git, review, CI/CD, testing, templating and repeatable re-delivery;
+- consistent Pro-code + Low-code posture across first-class authorable domains.
+
+**Costs**
+- two complete authoring surfaces require conformance and compatibility maintenance;
+- complex data/ETL semantics must be communicated consistently to both developer and visual users.
+
+**Risks / Complexity**
+- advanced transformations may be difficult to represent visually without later UX/representation pressure;
+- source/visual feature skew could create semantic divergence;
+- users may assume round-trip guarantees that are not selected here.
+
+**Long-term Impact**
+- the Data/Knowledge/ETL domain remains a complete Pro-code + Low-code platform capability rather than source-only or visual-subset-only;
+- visual authoring does not become a separate semantic domain.
+
+**Compatibility / Migration Impact**
+- both authoring surfaces target one governed semantic domain;
+- concrete migration, source↔visual conversion and round-trip guarantees remain deferred.
+
+**Offline / Private Deployment Impact**
+- both authoring paths must remain usable under accepted private/offline lifecycle requirements without mandatory public authoring/control-plane services.
+
+**Cross-component Impact**
+- `ns_server` remains Data/Knowledge/ETL Semantic Authority;
+- Data/Knowledge factual SoT remains governed per bounded semantic partition, including external SoT preservation;
+- `ns_web` and SDK are authoring surfaces only.
+
+## 6. Project Owner Selected Result
 
 ```text
 Selected Option
@@ -105,140 +106,46 @@ Data / Knowledge Factual SoT Topology
 → governed per bounded semantic partition / UNCHANGED
 ```
 
-## 6. Normative Capability Consequences for Z3 Batch 1
+## 7. Normative Capability Consequence
 
-The Z3 Batch 1 capability baseline may consume:
+`ns_server` must support native Data/Knowledge/Foundational ETL semantics authorable through both complete source/SDK and complete visual surfaces; SDK must support complete source authoring; `ns_web` must support complete visual authoring/construction. Authoring or processing does not transfer factual SoT.
 
-```text
-ns_server
-→ MUST support native Data / Knowledge / Foundational ETL semantics that can be authored through both source-code/System-level SDK and ns_web visual authoring surfaces
-
-System-level SDK / Development Surface
-→ MUST support complete native Data / Knowledge / Foundational ETL source authoring
-
-ns_web
-→ MUST support complete native Data / Knowledge / Foundational ETL visual authoring / construction capability
-```
-
-Applicable product semantics may include, at capability level, authoring of source/ingestion intent, mapping, transformation, filtering, derivation, foundational ETL flow and dataset/knowledge-construction relationships where later accepted detailed semantics define them.
+## 8. Authority / SoT / Actual-state Preservation
 
 ```text
-Source Authoring
-!= separate Data / ETL Semantic Authority
+Data / Knowledge / ETL Semantic Authority
+→ ns_server
 
-Visual Authoring
-!= ns_web Data Authority
+Data / Knowledge factual SoT
+→ per accepted bounded semantic partition
 
-Authoring / Processing
-!= factual Source-of-Truth transfer
+ETL Output
+!= upstream Source Fact automatically
 
-ETL output
-!= upstream source fact automatically
+Runtime Actual-state Ownership
+→ unchanged per accepted bounded runtime partition
 ```
 
-## 7. Explicit Non-implications / Deferred Mechanics
-
-This decision does **not** decide:
+## 9. Explicit Non-implications
 
 ```text
-ETL DSL
-visual node taxonomy
-pipeline engine
-connector API
-SDK API
-visual schema
-source representation
-source-to-visual conversion
-visual-to-source generation
-lossless bidirectional round-trip
-whether every advanced source construct must be visually representable
-physical pipeline representation
-artifact/package format
-execution representation
-scheduler / worker / queue topology
-transport / protocol / schema
-specific database / warehouse / cache / vector / ETL / CDC technology
+Source Authoring != separate Data/ETL Authority
+Visual Authoring != ns_web Data Authority
+Authoring / Processing != factual SoT transfer
+Dual Authoring != lossless round-trip
+Dual Authoring != one mandatory physical pipeline representation
 ```
 
-Named later authority:
+## 10. Deferred Mechanics / Named Later Authority
 
-```text
-Five-component Internal Architecture Boundary Synthesis
-→ only after separate GAC authorization
+Not decided here: ETL DSL, visual node taxonomy, pipeline engine, connector API, SDK API, visual/source representation, conversion/generation, round-trip, package/artifact/execution representation, scheduler/worker/queue topology, transport/protocol/schema, database/warehouse/cache/vector/CDC technology.
 
-Runtime Responsibility Architecture
-→ runtime scheduling/execution partition semantics where applicable
-
-Component Internal Design
-→ component-local realization after explicit authorization
-
-Shared Foundation / Contract / Provider authorities
-→ only for later-admitted reusable stable boundaries
-
-Project Owner / MDE
-→ any later proposal materially changing accepted Authority / SoT / Trust / major compatibility / stable identity / high-lock-in commitments
-```
-
-## 8. Offline / Private Deployment Consequence
-
-Both complete authoring paths must remain compatible with accepted private/offline product lifecycle requirements and must not require mandatory public SaaS, public registry or Internet-only authoring/control-plane dependencies for core correctness.
-
-## 9. Compatibility / Evolution Consequence
-
-Both authoring surfaces target the same governed Data / Knowledge / Foundational ETL semantic domain across compatible evolution.
-
-```text
-Different Authoring Surface
-!= Different Final Data / ETL Semantics automatically
-```
-
-Concrete cross-surface compatibility, migration and round-trip guarantees remain for later named design authority and may require GAC/MDE revalidation if material externally observable commitments are proposed.
-
-## 10. Preserved Invariants
-
-This decision preserves:
-
-- exactly five Product Components;
-- Data / Knowledge / Foundational ETL as a first-class / parallel / non-subordinate domain;
-- `Data / Knowledge / ETL Semantic Authority → ns_server`;
-- governed bounded factual SoT federation;
-- `ns_web` editing/presentation not becoming Data Authority or factual SoT;
-- System-level SDK not becoming a sixth Product Component or universal Authority;
-- external bounded Source-of-Truth preservation;
-- Definition / Artifact / Admission / Runtime separation where applicable;
-- Tenant / IAM / Policy / Trust governance;
-- offline/private correctness;
-- extension/re-delivery governance;
-- no premature internal architecture, runtime architecture, Shared Foundation, Contract, Module, Provider or implementation design.
+These remain for separately authorized Five-component Internal Architecture Boundary work, Runtime Responsibility Architecture where applicable, Component Internal Design, and later Foundation/Contract/Provider work only if admitted. MDE-class changes return to Project Owner.
 
 ## 11. Revalidation Trigger
 
-Revalidate if the Project Owner later changes one or more of:
-
-- complete native Data / Knowledge / Foundational ETL source authoring support;
-- complete visual authoring support;
-- the requirement that both surfaces converge on the same governed semantic domain;
-- Data / Knowledge / ETL Semantic Authority;
-- factual SoT topology;
-- the System-level SDK/development-surface product requirement.
-
-Changes in concrete SDK syntax, visual schema, ETL engine, connector implementation, database, provider, package, code generator, runtime process or deployment topology do not by themselves revalidate this capability decision.
+Revalidate if the Project Owner changes complete source authoring, complete visual authoring, the shared governed semantic-domain rule, Data/Knowledge/ETL Semantic Authority, factual SoT topology, or the System-level SDK requirement.
 
 ## 12. Bounded-session Authority Limit
 
-This evidence records one Project Owner capability decision inside Z3 Batch 1.
-
-It does not:
-
-```text
-constitute GAC Global Acceptance
-advance GAC Epoch
-authorize Z3 Batch 2
-complete Z3 Batch 1
-start normative Five-component Internal Architecture Boundary synthesis
-start Component Internal Design
-start Runtime Responsibility Architecture
-start Shared Foundation Architecture
-start Foundation Contract / Module / Provider Design
-start Implementation Planning / IWP / coding
-```
+This evidence correction preserves the already selected result and does not claim Global Acceptance, advance GAC state, authorize later Z3 batches, or enter internal/runtime/Foundation/implementation design.
