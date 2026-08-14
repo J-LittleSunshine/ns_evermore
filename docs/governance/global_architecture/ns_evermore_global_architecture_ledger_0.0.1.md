@@ -228,4 +228,24 @@ ns_server Component Internal Design Global Closure → NOT DECLARED
 ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 2 ACCEPTANCE
 Current Authorized Phase → NONE
 Unique Next Legal Action → separate fresh-recovery GAC ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
+
+GAC-TR-0058 → GAC-EPOCH-0048
+Transition → post-Batch-2 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
+Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.2.md
+Assessment Commit → d0fb66a04654f50bdcc2eee2c9be77616536ae85
+Remaining Material ns_server Internal-design Pressure → PRESENT
+ns_server Internal Design Exhaustion → NOT_SATISFIED
+Remaining Boundaries → S5 / S7 / S10 / S11 / S12 / S13
+Immediate Next Batch Candidate → ns_server / Batch 3 / S5 Business Application Domain
+Proposed Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_3 / BUSINESS_APPLICATION_DOMAIN_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Batch-3 S5 Readiness → SATISFIED
+RCP-17 → S5 Business Application side only / full cross-domain closure remains later
+RCP-23 → S5/SV-R01 contribution only / full Server-native Runtime Evidence closure remains later
+S7 Future Owner-MDE Trigger → native Data/Knowledge/ETL Definition SoT must not be silently inferred if material to S7 design
+Open MDE required for current S5 entry → 0
+Unpersisted Owner Decision required for current S5 entry → 0
+Blocking Item → NONE
+Decision Registry → 0.0.17
+Current Authorized Phase → NONE
+Unique Next Legal Action → separate GAC authorization transition for ns_server Component Internal Design / Batch 3 / S5 Business Application Domain
 ```
