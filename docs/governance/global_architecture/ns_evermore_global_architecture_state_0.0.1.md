@@ -7,7 +7,7 @@
 
 ```text
 Current Global State Epoch → GAC-EPOCH-0042
-State Verified Through HEAD → c92c66ea9b876d72bd251d03c8a711d8b4c4a46b
+State Verified Through HEAD → fa348f067f22d8a75fad3ed9eb16c85b19d2580c
 
 Genesis Constitution → GLOBAL_ACCEPTED / NORMATIVE
 Unified Governance → 0.0.2 / NORMATIVE
@@ -231,7 +231,7 @@ Minimum sufficient Repository context for the next separate GAC Component Intern
 6. docs/ns_evermore_nse_constraints_index_0.0.5.md
 7. docs/ns_evermore_project_architecture_0.0.3.md
 8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md
-9. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_2_interaction_experience_capability_candidate_0.0.1.md
+9. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_2_interaction_experience_capability_discovery_candidate_0.0.1.md
 10. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_capability_exhaustion_internal_boundary_readiness_assessment_0.0.1.md
 11. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_five_component_internal_architecture_boundaries_candidate_0.0.1.md
 12. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_internal_boundary_exhaustion_runtime_responsibility_readiness_assessment_0.0.1.md
@@ -247,6 +247,10 @@ Minimum sufficient Repository context for the next separate GAC Component Intern
 ```
 
 Read exact Owner/MDE and accepted component-specific evidence when selecting or authorizing the first Component Internal Design scope.
+
+### GAC-EPOCH-0042 Continuity Note
+
+A prior State commit in this same epoch temporarily referenced the non-existent path `ns_evermore_ngrp_001_phase_z3_batch_2_interaction_experience_capability_candidate_0.0.1.md`. Repository tree verification found the actual accepted artifact is `ns_evermore_ngrp_001_phase_z3_batch_2_interaction_experience_capability_discovery_candidate_0.0.1.md`. This current State corrects that recovery metadata before handoff. No architecture semantics, readiness result, decision baseline or authorization changed.
 
 ## Stop / Exit Condition
 
