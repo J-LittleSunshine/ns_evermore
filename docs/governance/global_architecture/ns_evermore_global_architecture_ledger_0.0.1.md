@@ -271,4 +271,31 @@ Open MDE required for current S5 Batch → 0
 Unpersisted Owner Decision required for current S5 Batch → 0
 Blocking Item → NONE
 Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 3 / S5 Business Application Domain producing session
+
+GAC-TR-0060 → GAC-EPOCH-0050
+Transition → ns_server Component Internal Design / Batch 3 independent Global Acceptance
+Producing Final HEAD → 20aa27ad8bb90acc8173cd9c7679795ce25edb9e
+Global Acceptance Evidence → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_3_global_acceptance_0.0.1.md
+Result → GLOBAL_ACCEPT
+Accepted Boundary → S5 Business Application Definition Lifecycle
+Accepted Internal Module Count → 6
+Accepted DAD → CID-SV-B3-DAD-001..012
+Hard Internal SDD Graph → ACYCLIC
+Business Application Authority / Canonical Definition SoT → ns_server / PRESERVED
+Source↔Visual Semantic Interoperability → REQUIRED / PRESERVED / no silent semantic loss
+S7 Native Definition SoT Inference → 0
+SV-R01 Accepted Refinement → Business Application production semantic Operation/result/history + Trial semantic state/result
+RCP-17 Accepted Closure → Business Application side only / full cross-domain closure NOT CLAIMED
+RCP-23 Accepted Closure → S5/SV-R01 contribution only / full closure NOT CLAIMED / S7+S10 remain required
+Authority / SoT / Actual-state Transfer → 0
+Misclassified MDE → 0
+Decision Registry → 0.0.18
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Remaining ns_server Boundaries → S7 / S10 / S11 / S12 / S13
+ns_server Component Internal Design Global Closure → NOT DECLARED
+ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 3 ACCEPTANCE
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh-recovery GAC ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment; no downstream producing session is authorized automatically
 ```
