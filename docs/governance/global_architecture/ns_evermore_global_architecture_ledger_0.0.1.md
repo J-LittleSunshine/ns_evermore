@@ -248,4 +248,27 @@ Blocking Item → NONE
 Decision Registry → 0.0.17
 Current Authorized Phase → NONE
 Unique Next Legal Action → separate GAC authorization transition for ns_server Component Internal Design / Batch 3 / S5 Business Application Domain
+
+GAC-TR-0059 → GAC-EPOCH-0049
+Transition → separate ns_server Component Internal Design / Batch 3 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.2.md
+Authorized Phase → NGRP-001 — Component Internal Design / ns_server / Batch 3
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_3 / BUSINESS_APPLICATION_DOMAIN_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Boundary → S5 Business Application Definition Lifecycle
+Inherited Runtime Role → SV-R01 Business Application Runtime Participant
+Accepted Business Application Semantic Authority → ns_server
+Accepted Business Application Canonical Definition SoT → ns_server
+Dual Source/Visual Authoring → REQUIRED
+Bidirectional Semantic Interoperability → REQUIRED / silent semantic loss prohibited / lossless representation round-trip not required
+Governed Pre-production Trial → REQUIRED / universal fully isolated simulation not required
+RCP-17 Authorized Refinement → Business Application side only / full cross-domain closure NOT AUTHORIZED
+RCP-23 Authorized Refinement → S5/SV-R01 contribution only / full Server-native Runtime Evidence closure NOT AUTHORIZED
+S7 / S10 / S11 / S12 / S13 Internal Design → NOT AUTHORIZED
+S7 Native Definition SoT Future MDE Trigger → preserved / not consumable by S5
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Open MDE required for current S5 Batch → 0
+Unpersisted Owner Decision required for current S5 Batch → 0
+Blocking Item → NONE
+Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 3 / S5 Business Application Domain producing session
 ```
