@@ -40,4 +40,14 @@ Open MDE → 0
 Blocking Item → NONE
 Current Authorized Phase → NONE
 Unique Next Legal Action → separate Foundation Module Design / Batch 1 authorization transition
+
+GAC-TR-0047 → GAC-EPOCH-0037
+Transition → separate Foundation Module Design / Batch 1 authorization
+Authorized Phase → NGRP-001 — Foundation Module Design / Batch 1
+Scope → FOUNDATION_MODULE_DESIGN_ONLY / BATCH_1 / FOUNDATION_MODULE_BOUNDARY_DEPENDENCY_AND_CONTRACT_REALIZATION_SYNTHESIS
+Accepted Foundation Contracts → 15 / NORMATIVE UPSTREAM
+Open MDE → 0
+Blocking Item → NONE
+Foundation Provider Design → NOT AUTHORIZED
+Component Internal Design / Implementation → NOT AUTHORIZED
 ```
