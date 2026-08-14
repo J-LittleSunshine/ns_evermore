@@ -80,4 +80,16 @@ Unpersisted Owner Decision → 0
 Blocking Item → NONE
 Current Authorized Phase → NONE
 Unique Next Legal Action → separate Foundation Provider Design / Batch 1 authorization transition
+
+GAC-TR-0050 → GAC-EPOCH-0040
+Transition → separate Foundation Provider Design / Batch 1 authorization
+Authorized Phase → NGRP-001 — Foundation Provider Design / Batch 1
+Scope → FOUNDATION_PROVIDER_DESIGN_ONLY / BATCH_1 / PROVIDER_ABSTRACTION_BOUNDARY_LIFECYCLE_SELECTION_CONFORMANCE_AND_REPLACEMENT_SYNTHESIS
+Provider-bearing Pressure Handoff → 10 / 10
+Provider-less Foundation responsibilities → remain provider-less
+Concrete Provider / Vendor / Library Selection → NOT AUTHORIZED IN THIS BATCH
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Component Internal Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
 ```
