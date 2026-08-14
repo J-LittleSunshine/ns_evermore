@@ -1,13 +1,13 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0047`
+- Status: `CURRENT / GAC-EPOCH-0048`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
-Current Global State Epoch → GAC-EPOCH-0047
-State Verified Through HEAD → 86aaf13bb60854e60367d86e7263811e5be10252
+Current Global State Epoch → GAC-EPOCH-0048
+State Verified Through HEAD → ad6ee41cb97e238bc321223bd06f86917788c1a2
 
 Genesis Constitution → GLOBAL_ACCEPTED / NORMATIVE
 Unified Governance → 0.0.2 / NORMATIVE
@@ -30,9 +30,9 @@ Foundation Provider Design → GLOBAL_CLOSED / COMPLETE
 Foundation Provider Design Exhaustion → SATISFIED
 
 Accepted Foundation Capabilities → 14 / NORMATIVE
-Accepted Foundation Contracts → 15 / NORMATIVE CONTRACT UPSTREAM
-Accepted Foundation Modules → 14 / NORMATIVE MODULE UPSTREAM
-Accepted Foundation Provider Families → 10 / NORMATIVE PROVIDER UPSTREAM
+Accepted Foundation Contracts → 15 / NORMATIVE
+Accepted Foundation Modules → 14 / NORMATIVE
+Accepted Foundation Provider Families → 10 / NORMATIVE
 
 Component Internal Design Readiness → SATISFIED
 
@@ -40,31 +40,42 @@ ns_server Component Internal Design / Batch 1 → GLOBAL_ACCEPTED
 Accepted Batch-1 Boundaries → S1 / S2 / S3 / S4 / S8 / S9
 Accepted Batch-1 Internal Modules → 14
 Accepted Batch-1 DAD → CID-SV-B1-DAD-001..013
-RCP-01 Governance Context → CLOSED AT DESIGN-SEMANTIC LEVEL
-RCP-02 Admission Evidence → CLOSED AT DESIGN-SEMANTIC LEVEL
-RCP-19 Desired / Applied Config → CLOSED AT DESIGN-SEMANTIC LEVEL
+RCP-01 / RCP-02 / RCP-19 → CLOSED AT DESIGN-SEMANTIC LEVEL
 S8 Artifact Identity / Acceptance Evidence → CLOSED AT DESIGN-SEMANTIC LEVEL
 
 ns_server Component Internal Design / Batch 2 → GLOBAL_ACCEPTED
 Accepted Batch-2 Boundary → S6 Automation Definition, Trigger & Composition Lifecycle
 Accepted Batch-2 Internal Modules → 9
 Accepted Batch-2 DAD → CID-SV-B2-DAD-001..014
-Recognized Owner MDE → CID-SV-B2-MDE-001
-RCP-13 Automation Continuation → CLOSED AT DESIGN-SEMANTIC LEVEL
-RCP-14 Event Trigger Input / Evaluation → CLOSED AT DESIGN-SEMANTIC LEVEL
-RCP-15 Automation Composition → CLOSED AT DESIGN-SEMANTIC LEVEL
-RCP-16 Automation Source-side → CLOSED AT CURRENT DESIGN LEVEL / FULL CROSS-DOMAIN CLOSURE NOT CLAIMED
-RCP-17 Automation-side → CLOSED AT CURRENT DESIGN LEVEL / FULL CROSS-DOMAIN CLOSURE NOT CLAIMED
+Recognized Owner MDE → CID-SV-B2-MDE-001 / Recursive Automation-to-Automation Invocation NOT SUPPORTED
+RCP-13 / RCP-14 / RCP-15 → CLOSED AT DESIGN-SEMANTIC LEVEL
+RCP-16 Automation Source-side → CLOSED / FULL CROSS-DOMAIN CLOSURE NOT CLAIMED
+RCP-17 Automation-side → CLOSED / FULL CROSS-DOMAIN CLOSURE NOT CLAIMED
 
-Remaining accepted ns_server boundaries not internally designed
+Remaining ns_server Internal-design Boundaries
 → S5 / S7 / S10 / S11 / S12 / S13
 
-ns_server Component Internal Design Global Closure → NOT DECLARED
-ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 2 ACCEPTANCE
+Remaining Material ns_server Component Internal-design Pressure
+→ PRESENT
+
+ns_server Component Internal Design Exhaustion
+→ NOT_SATISFIED
+
+ns_server Component Internal Design Global Closure
+→ NOT_DECLARED
+
+Immediate Next Batch Candidate
+→ ns_server / Batch 3 / S5 Business Application Domain
+
+ns_server Batch-3 / S5 Readiness
+→ SATISFIED
+
+S7 Future Owner-MDE Trigger
+→ native Data/Knowledge/ETL Definition SoT MUST NOT be silently inferred if material to S7 design
 
 Decision Registry → 0.0.17 / CURRENT / NORMATIVE
-Open MDE → 0
-Unpersisted Owner Decision → 0
+Open MDE required for current S5 entry → 0
+Unpersisted Owner Decision required for current S5 entry → 0
 Blocking Item → NONE
 Known Working-branch Drift → NONE
 Repository Hygiene Item → refs/heads/temp-never-create / NONAUTHORITATIVE / NON_SEMANTIC / CLEANUP_ONLY
@@ -73,183 +84,185 @@ Current Authorized Phase → NONE
 Authorization Scope → NONE
 ```
 
-# ns_server Batch 2 Global Acceptance
+# Post-Batch-2 Remaining-pressure / Exhaustion Assessment
 
-Global Acceptance evidence:
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_global_acceptance_0.0.1.md`
+Assessment:
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.2.md`
 
-Frozen producing final HEAD:
-`8b8de02bb6207495377bea83950086b3ce4b69a1`
+Assessment commit:
+`d0fb66a04654f50bdcc2eee2c9be77616536ae85`
 
-Global Acceptance evidence commit:
-`9c8d8e911d5be94e2758d3b71f404cab5d70320e`
-
-## Accepted S6 Internal Architecture
+Formal result:
 
 ```text
-Automation Definition & Canonical Revision Governance
-Authoring Intake & Semantic Interoperability
-Definition Validation & Semantic Certification Evidence
-Initiation & Trigger Definition Governance
-Event Provenance & Trigger Evaluation
-Automation Composition & Revision Binding Governance
-Automation Operation & Semantic Continuation
-Automation HITL Wait & Response Applicability
-Automation Trial Semantics & Runtime Evidence
+REMAINING MATERIAL NS_SERVER COMPONENT INTERNAL DESIGN PRESSURE
+→ PRESENT
+
+NS_SERVER COMPONENT INTERNAL DESIGN EXHAUSTION
+→ NOT_SATISFIED
+
+NS_SERVER COMPONENT INTERNAL DESIGN GLOBAL CLOSURE
+→ NOT_DECLARED
+
+IMMEDIATE NEXT BATCH CANDIDATE
+→ ns_server / Batch 3 / S5 Business Application Domain
+
+NS_SERVER BATCH-3 / S5 READINESS
+→ SATISFIED
+
+OPEN MDE REQUIRED FOR CURRENT S5 ENTRY
+→ 0
+
+UNPERSISTED OWNER DECISION REQUIRED FOR CURRENT S5 ENTRY
+→ 0
+
+BLOCKING ITEM
+→ NONE
 ```
 
-`AU01..AU09` remain document-local navigation labels only; they are not physical implementation identities.
+This assessment is readiness/batching only and authorizes nothing.
+
+# Why S5 Is The Immediate Next Batch Candidate
+
+Accepted S5 upstream is complete enough for bounded internal design:
 
 ```text
-S6 Coverage → 1 / 1 / 100%
-Unowned S6 Responsibility → 0
-Duplicate Final Responsibility → 0
-God Module → NONE_FOUND
-Overfragmentation → NONE_FOUND
+Business Application Definition / Platform Semantic Authority
+→ ns_server / Owner-decided
+
+Business Application Canonical Definition SoT
+→ ns_server / Owner-decided by Z2-MDE-017
+
+Business Application
+→ FIRST_CLASS / PARALLEL / NON_SUBORDINATE
+
+Complete Source / SDK Authoring
+→ REQUIRED
+
+Complete ns_web Visual Builder Authoring
+→ REQUIRED
+
+Bidirectional Source↔Visual Semantic Interoperability
+→ REQUIRED
+
+Silent Semantic Loss
+→ PROHIBITED
+
+Governed Pre-production Trial
+→ REQUIRED
+
+SV-R01 Business Application Runtime Participant
+→ ACCEPTED
 ```
 
-## Recognized Owner MDE
+Batch-1 Governance Context / Acceptance / Admission / Managed Config contracts are already normative. Batch-2 S6 Automation semantics are also normative if S5 later composes/consumes Automation; consumption does not transfer Automation authority.
+
+S5 does not require S7 internals to establish its own Definition/Runtime semantics. Data/Knowledge remains a separately governed external first-class domain for S5 consumption until S7 is internally designed.
+
+# Proposed Future Batch 3 — NOT AUTHORIZED YET
 
 ```text
-CID-SV-B2-MDE-001
-Decision Authority → PROJECT OWNER / MDE
+NGRP-001 — Component Internal Design / ns_server / Batch 3
 
-Native Automation-to-Automation Recursive Invocation
-→ NOT SUPPORTED
-
-Reusable Automation-to-Automation Composition
-→ REQUIRED / PRESERVED
-
-Canonical Automation Composition Dependency
-→ ACYCLIC
+Proposed Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY
+  / NS_SERVER
+  / BATCH_3
+  / BUSINESS_APPLICATION_DOMAIN_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
-Permanent qualification:
+Primary design object:
 
 ```text
-Recursive Automation-to-Automation Invocation NOT SUPPORTED
-!= generic Automation loop / iteration prohibited
-!= repeated non-recursive callee invocation prohibited
-!= retry / re-entry prohibited
+S5
+→ Business Application Definition Lifecycle
+
+SV-R01
+→ Business Application Runtime Participant
 ```
 
-No DAG/graph/workflow-engine/call-stack/recursion-detection/state-machine implementation is implied.
-
-## Accepted Authority / SoT / Actual-state Preservation
+A future authorized Batch may close S5-owned design-semantic pressure for:
 
 ```text
-Automation Definition / Workflow Semantic Authority → ns_server
-Automation Canonical Definition SoT → ns_server
-Semantic Authority != Canonical Definition SoT
-Formal Artifact Acceptance Authority → S8 / ns_server
-Formal Execution Admission Authority → S8 / ns_server
-
-Trigger Evaluation Actual-state → S6 / SV-R02
-Automation Operation / Semantic Continuation Actual-state → S6 / SV-R02
-Automation HITL wait / response-applicability / semantic-resume Actual-state → S6 / SV-R02
-Automation Trial semantic state/result → S6 / SV-R02
-
-Scheduling / Routing / Dispatch → ns_runtime / R2
-Node Attempt → N2
-Node Protected Effect → N3
-Human Task Aggregation → S11
-Human response submission occurrence → W3 later design
-Agent Runtime → ns_agent / A2
-
-Authority Transfer → 0
-SoT Transfer → 0
-Actual-state Ownership Transfer → 0
+Business Application Definition identity / revision / canonical lifecycle
+Canonical Definition SoT custody under Z2-MDE-017
+source-authoring intake
+visual Builder authoring intake
+source↔visual semantic interoperability
+unsupported / non-editable / representation-limited semantics
+validation / semantic-certification participation
+candidate Artifact / Formal Acceptance / Admission relationship
+cross-domain composition/consumption without authority transfer
+SV-R01 Business Application runtime operation / result / history semantics
+Business Application Trial semantics
+history / provenance / offline / recovery
+compatibility / migration / conformance
+Foundation consumption
 ```
 
-Persistence remains semantic state/evidence custody only and does not create a new Project-level SoT through database/storage/cache/provider placement.
-
-## Accepted Stable Contract Baseline
+## RCP-17 boundary
 
 ```text
-RCP-13 Automation Continuation
-→ CLOSED AT DESIGN-SEMANTIC LEVEL
+RCP-17 Business Application side
+→ MAY be closed by a future S5 Batch
 
-RCP-14 Event Trigger Input / Evaluation
-→ CLOSED AT DESIGN-SEMANTIC LEVEL
-
-RCP-15 Automation Composition
-→ CLOSED AT DESIGN-SEMANTIC LEVEL
-
-RCP-16 Automation Source-side
-→ CLOSED AT CURRENT DESIGN LEVEL
-→ FULL CROSS-DOMAIN CLOSURE NOT CLAIMED
-
-RCP-17 Automation-side
-→ CLOSED AT CURRENT DESIGN LEVEL
-→ FULL CROSS-DOMAIN CLOSURE NOT CLAIMED
+RCP-17 Full Cross-domain Closure
+→ NOT AUTHORIZED / NOT CLAIMABLE by S5 alone
 ```
 
-RCP-15 current baseline requires stable exact historical caller/binding/callee revision resolution and prohibits silent `latest` rebinding. It does not freeze version-range syntax, a lockfile or an exclusive future selector model.
-
-## Permanent Batch-2 Invariants
+## RCP-23 boundary
 
 ```text
-Automation Definition != Validation != Certification != Candidate Artifact != Acceptance != Admission != Dispatch != Attempt != Effect
-Event Occurred != Trigger Matched != Execution Admitted
-Replay != Retroactive Admission
-Composition != Acceptance / Admission bypass
-Human Response Submitted != Response Applicable != Response Applied automatically
-Definition Valid != Trial Successful != Artifact Accepted / Production Admitted
-Dry-run != No Effect automatically
-Latest Definition / Trigger / Callee / Policy / Trust / Desired Config != historical applicable state automatically
-Offline != Local Authority Transfer
-Reconnect != Reconciled
-Sync != Authority Transfer
-Latest Timestamp != Canonical Winner
+RCP-23 S5 / SV-R01 contribution
+→ MAY be closed by a future S5 Batch
+
+RCP-23 Full Server-native Runtime Evidence closure
+→ NOT AUTHORIZED / NOT CLAIMABLE
+→ requires S7 / SV-R03 + S10 / SV-R06 sides
 ```
 
-## Source / Visual / Agent Authoring
+# S7 Future MDE Boundary
+
+S7 remains a mandatory high-fan-out later first-class domain. Accepted upstream freezes Data/Knowledge/ETL Semantic Authority and factual SoT federation, but GAC will not infer a canonical native Data/Knowledge/ETL Definition SoT from semantic authority or physical placement.
 
 ```text
-Complete Source / SDK Authoring → REQUIRED
-Complete ns_web Visual Authoring → REQUIRED
-Bidirectional Semantic Interoperability → REQUIRED
-Silent Semantic Loss → PROHIBITED
-Lossless Representation Round-trip → NOT REQUIRED
-Agent Dynamic Candidate Automation Authoring → REQUIRED under normal S6 governance
+Z2-MDE-017
+→ explicitly covers Business Application / Automation / AI Agent Definition SoTs
+→ does not explicitly assign a Data/Knowledge/ETL Definition SoT
 ```
 
-No AST/IR/DSL/visual schema/converter/code generator was selected.
-
-## Shared Foundation / Technology Boundary
-
-S6 consumes accepted Foundation through:
+Therefore:
 
 ```text
-Stable Entry
-→ Foundation Contract
-→ Foundation Module
-→ Provider Family where provider-bearing
-→ replaceable realization
+S7 Native Definition SoT
+→ NO SILENT INFERENCE
+
+If future S7 internal design materially requires a canonical Definition SoT assignment
+→ PROJECT OWNER / MDE
 ```
 
-Concrete Provider/vendor/library identity is not Automation architecture. Deferred `Cryptographic / Evidence-verification Helpers` and `Database Utility Primitives` remain deferred and were not created by Batch 2.
+This named future trigger does not block the independent S5 Batch candidate.
 
-No concrete broker/queue/topic/workflow engine/runtime worker/process/database/ORM/API/wire schema is accepted by Batch 2.
-
-# Acceptance Boundary / Remaining Pressure
+# Remaining S10-S13 Pressure
 
 ```text
-ns_server Batch 2 → GLOBAL_ACCEPTED
+S10 → SV-R06 / server-local Attempt/Progress/Outcome / RCP-23 contributor
+S11 → SV-R07 / Human Task aggregation / RCP-16 cross-domain participant
+S12 → SV-R08 / Notification lifecycle / RCP-18
+S13 → SV-R09 / Discovery projection / RCP-21
+```
 
-ns_server Component Internal Design Global Closure → NOT DECLARED
-ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 2 ACCEPTANCE
+Their future Batch grouping remains `NOT FROZEN` and must be re-derived from the then-current accepted producer designs.
 
-Remaining Boundaries
-→ S5 Business Application Definition Lifecycle
-→ S7 Enterprise Data / Knowledge / Foundational ETL Governance
-→ S10 Server-local Background Work & Server Actual-state
-→ S11 Unified Human Task Aggregation & Response Routing
-→ S12 Governed Notification & External Delivery Lifecycle
-→ S13 Cross-domain Resource Discovery Projection
+# Explicit Forbidden Scope Until Separate Authorization
 
-Another ns_server Batch → NOT AUTHORIZED
+```text
+S5 internal design → NOT YET AUTHORIZED
+S7 / S10 / S11 / S12 / S13 internal design → NOT AUTHORIZED
 Other Product Component Internal Design → NOT AUTHORIZED
+Full RCP-17 → NOT AUTHORIZED
+Full RCP-23 → NOT AUTHORIZED
+RCP-18 / RCP-21 → NOT AUTHORIZED
 System-level SDK Detailed Design → NOT AUTHORIZED
 Design-to-Implementation Readiness → NOT AUTHORIZED
 Implementation Planning / IWP / Coding → NOT AUTHORIZED
@@ -257,24 +270,22 @@ Implementation Planning / IWP / Coding → NOT AUTHORIZED
 
 # Entry / Recovery Rule
 
-The next GAC action must execute a fresh Repository recovery under Unified Governance before evaluating remaining pressure:
+The next GAC action must perform fresh recovery before any authorization transition:
 
 ```text
-1. resolve actual repository / branch / remote HEAD
-2. read Genesis Constitution + Unified Governance + current Global State
-3. consume Current Required Read Set below
-4. read Working State + Decision Registry + relevant Ledger
+1. resolve actual branch HEAD
+2. read Constitution + Unified Governance + current Global State
+3. consume Current Required Read Set
+4. read Working State + Registry + Ledger tail
 5. compare State Verified Through HEAD to actual HEAD
-6. classify every delta
-7. reconstruct accepted Batch-1 + Batch-2 baseline, remaining S-boundary/RCP pressure, Open MDE, blockers and drift
-8. only then perform remaining-pressure / exhaustion / batching assessment
+6. classify all deltas
+7. verify Batch-3 S5 readiness, Open MDE, blockers and drift
+8. only then authorize or stop
 ```
-
-Any `UNAUTHORIZED_PROGRESSION`, `UNEXPLAINED_DRIFT`, State/evidence conflict, unresolved Owner decision or blocker causes `STOP → DRIFT / CONTINUITY RECONCILIATION`.
 
 # Current Required Read Set
 
-Minimum sufficient Repository context for the next separate `ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment`:
+Minimum sufficient Repository context for the next separate `ns_server / Batch 3 / S5` authorization transition:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -284,49 +295,44 @@ Minimum sufficient Repository context for the next separate `ns_server Component
 5. docs/governance/decisions/ns_evermore_decision_registry_0.0.17.md
 6. docs/ns_evermore_nse_constraints_index_0.0.5.md
 7. docs/ns_evermore_project_architecture_0.0.3.md
-8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md
-9. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_2_interaction_experience_capability_discovery_candidate_0.0.1.md
-10. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_five_component_internal_architecture_boundaries_candidate_0.0.1.md
-11. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_internal_boundary_dad_evidence_0.0.1.md
-12. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_global_acceptance_0.0.1.md
-13. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_candidate_0.0.1.md
-14. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_dad_evidence_0.0.1.md
-15. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_global_acceptance_0.0.1.md
-16. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_exhaustion_component_internal_design_readiness_assessment_0.0.1.md
-17. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_candidate_0.0.1.md
-18. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_dad_evidence_0.0.1.md
-19. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_global_acceptance_0.0.1.md
-20. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.1.md
-21. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_candidate_0.0.1.md
-22. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_dad_evidence_0.0.1.md
-23. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_review_audit_0.0.1.md
-24. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_handoff_0.0.1.md
-25. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_global_acceptance_0.0.1.md
-26. docs/governance/decisions/ns_evermore_cid_sv_b2_mde_001_automation_recursive_invocation_owner_decision_0.0.1.md
-27. docs/governance/decisions/ns_evermore_z2_mde_011_business_application_platform_semantic_authority_owner_decision_0.0.1.md
-28. docs/governance/decisions/ns_evermore_z2_mde_012_data_knowledge_etl_semantic_authority_owner_decision_0.0.1.md
-29. docs/governance/decisions/ns_evermore_z2_mde_013_data_knowledge_factual_sot_topology_owner_decision_0.0.1.md
-30. docs/governance/decisions/ns_evermore_z2_mde_014_runtime_actual_state_ownership_topology_owner_decision_0.0.1.md
-31. docs/governance/decisions/ns_evermore_z2_mde_017_native_product_definition_canonical_sot_topology_owner_decision_0.0.1.md
-32. docs/governance/decisions/ns_evermore_z3_batch_1_business_application_dual_authoring_owner_capability_decision_0.0.1.md
-33. docs/governance/decisions/ns_evermore_z3_batch_1_data_etl_dual_authoring_owner_capability_decision_0.0.1.md
-34. docs/governance/decisions/ns_evermore_z3_batch_2_source_visual_interoperability_owner_capability_decision_0.0.1.md
-35. docs/governance/decisions/ns_evermore_z3_batch_2_governed_pre_production_trial_owner_capability_decision_0.0.1.md
-36. docs/governance/decisions/ns_evermore_z3_batch_2_unified_human_task_inbox_owner_capability_decision_0.0.1.md
-37. docs/governance/decisions/ns_evermore_z3_batch_2_governed_notification_external_delivery_owner_capability_decision_0.0.1.md
-38. docs/governance/decisions/ns_evermore_z3_batch_2_unified_resource_discovery_owner_capability_decision_0.0.1.md
-39. docs/governance/decisions/ns_evermore_z3_batch_2_governed_operation_intervention_owner_capability_decision_0.0.1.md
-40. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
+8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_five_component_internal_architecture_boundaries_candidate_0.0.1.md
+9. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_candidate_0.0.1.md
+10. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_global_acceptance_0.0.1.md
+11. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_global_acceptance_0.0.1.md
+12. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_global_acceptance_0.0.1.md
+13. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.2.md
+14. docs/governance/decisions/ns_evermore_z2_mde_011_business_application_platform_semantic_authority_owner_decision_0.0.1.md
+15. docs/governance/decisions/ns_evermore_z2_mde_014_runtime_actual_state_ownership_topology_owner_decision_0.0.1.md
+16. docs/governance/decisions/ns_evermore_z2_mde_017_native_product_definition_canonical_sot_topology_owner_decision_0.0.1.md
+17. docs/governance/decisions/ns_evermore_z3_batch_1_business_application_dual_authoring_owner_capability_decision_0.0.1.md
+18. docs/governance/decisions/ns_evermore_z3_batch_2_source_visual_interoperability_owner_capability_decision_0.0.1.md
+19. docs/governance/decisions/ns_evermore_z3_batch_2_governed_pre_production_trial_owner_capability_decision_0.0.1.md
+20. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
 ```
 
-Read exact additional Owner/MDE/capability evidence if the assessment materially evaluates another reserved capability or batching dimension.
+Read exact additional Owner/MDE evidence if proposed S5 authorization touches another reserved dimension.
 
 # Stop / Exit Condition
 
-This acceptance transition ends at the acceptance-only epoch seal. It does not itself perform the remaining-pressure assessment and does not authorize another producing session.
+```text
+ns_server Batch 3 / S5
+→ READINESS SATISFIED
+→ NOT AUTHORIZED
+
+Current Authorized Phase
+→ NONE
+```
 
 # Unique Next Legal Action
 
 ```text
-GAC performs a separate fresh-recovery ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment.
+GAC performs a separate authorization transition for:
+
+NGRP-001 — Component Internal Design / ns_server / Batch 3
+
+scope candidate:
+COMPONENT_INTERNAL_DESIGN_ONLY
+/ NS_SERVER
+/ BATCH_3
+/ BUSINESS_APPLICATION_DOMAIN_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
