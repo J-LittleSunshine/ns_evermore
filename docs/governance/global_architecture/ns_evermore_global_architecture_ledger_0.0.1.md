@@ -127,4 +127,19 @@ Unpersisted Owner Decision → 0
 Blocking Item → NONE
 Current Authorized Phase → NONE
 Unique Next Legal Action → separate Component Internal Design authorization transition with exact initial component/batch/scope
+
+GAC-TR-0053 → GAC-EPOCH-0043
+Transition → separate Component Internal Design initial authorization
+Authorized Phase → NGRP-001 — Component Internal Design / ns_server / Batch 1
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_1 / GOVERNANCE_CORE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Internal Boundaries → S1 / S2 / S3 / S4 / S8 / S9
+In-scope Runtime/Domain Contract Pressures → RCP-01 Governance Context / RCP-02 Admission Evidence / RCP-19 Desired-Applied Config
+Additional In-scope Contract Pressure → S8 Artifact Identity / Acceptance Evidence
+Batch-order Rationale → governance-context, acceptance/admission and managed-config producers are upstream dependencies for later server domains and downstream component internal designs
+Accepted Authority / SoT topology → unchanged / inherited from Z2-MDE-001..008,015,016
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 1 producing session under exact scope
 ```
