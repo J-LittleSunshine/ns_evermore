@@ -1,13 +1,13 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0035`
+- Status: `CURRENT / GAC-EPOCH-0036`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
-Current Global State Epoch → GAC-EPOCH-0035
-State Verified Through HEAD → ec28a55a9b6dbc6036c3ea21ef86671af04fe39e
+Current Global State Epoch → GAC-EPOCH-0036
+State Verified Through HEAD → 4e10e560a9d433168ecacd4cafcda9edca2fef19
 
 Genesis Constitution → GLOBAL_ACCEPTED / NORMATIVE
 Unified Governance → 0.0.2 / NORMATIVE
@@ -21,9 +21,10 @@ Accepted Foundation DAD → SFA-B1-DAD-001..010
 Foundation Contract Design / Batch 1 → GLOBAL_ACCEPTED
 Accepted Foundation Contracts → 15 / NORMATIVE CONTRACT UPSTREAM
 Accepted Foundation Contract DAD → FCD-B1-DAD-001..008
-14-capability Contract Coverage → 100%
-Stable Entry Semantic Coverage → 14 / 14
-Semantic-definition Dependency Cycle → 0
+Foundation Contract Design Exhaustion → SATISFIED
+Foundation Contract Design → GLOBAL_CLOSED / COMPLETE
+Remaining Material Foundation Contract Pressure → NONE_FOUND
+Foundation Module Design Readiness → SATISFIED
 
 Decision Registry → 0.0.13 / CURRENT / NORMATIVE
 Open MDE → 0
@@ -35,52 +36,35 @@ Repository Hygiene Item → refs/heads/temp-never-create / NON_AUTHORITATIVE / N
 Current Authorized Phase → NONE
 ```
 
-## Foundation Contract Batch 1 Global Acceptance
+## Foundation Contract Exhaustion / Module Readiness
 
-Global Acceptance evidence:
-`docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_global_acceptance_0.0.1.md`
+Assessment:
+`docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_exhaustion_foundation_module_readiness_assessment_0.0.1.md`
 
-Corrected producing final HEAD:
-`b617f83baa36f356813e4a79e559788c32ec2725`
-
-Accepted dependency semantics:
+The accepted 15-Contract baseline closes current Foundation Contract identity, Stable Entry, consumer-obligation, guarantee/non-guarantee, failure/unknown, security/privacy/secret, offline/private, compatibility/migration/conformance, provider-conformance, representation-independence and typed cross-Contract dependency semantics.
 
 ```text
-SDD  → semantic-definition dependency
-CASU → conditional/application-time semantic use
-SDCD → security/disclosure composition dependency
-EACD → external authority/context dependency
-Only SDD participates in recursive semantic-definition cycle analysis.
+Remaining Contract Identity Pressure → NONE_FOUND
+Coverage Gap → 0
+Stable Entry Gap → 0
+Cross-Contract Dependency Ambiguity → 0
+Open MDE → 0
+Foundation Module Design Readiness → SATISFIED
 ```
 
-The prior C11/C12/C13 correction blocker is closed:
+The two deferred Foundation candidates remain revalidation-triggered future pressures and are not current blockers:
 
 ```text
-Mutual SDD among C11/C12/C13 → NONE
-Recursive Semantic Definition → NONE
-Contract Identity Ambiguity → 0
-Independent Conformance C11/C12/C13 → PASS
+Cryptographic / Evidence-verification Helpers
+Database Utility Primitives
 ```
 
-Permanent Contract invariants include:
+## Acceptance / Readiness Boundary
 
 ```text
-Foundation Contract != Product Authority / Product SoT / Runtime Actual-state Owner
-Provider API != Foundation Contract
-Physical Representation != Semantic Contract
-Context Consumption != Context Authority
-Provider Replacement != Contract Semantic Change automatically
-Domain / Runtime Contracts may consume Foundation Contracts without semantic absorption
-```
-
-## Acceptance Boundary
-
-```text
-Foundation Contract Design / Batch 1 → GLOBAL_ACCEPTED
-Foundation Contract Design Global Closure → NOT DECLARED
-Foundation Contract Exhaustion → NOT YET ASSESSED AFTER ACCEPTANCE
-Foundation Module Design Readiness → NOT DECLARED
-Foundation Module Design → NOT AUTHORIZED
+Foundation Contract Design → GLOBAL_CLOSED / COMPLETE
+Foundation Module Design Readiness → SATISFIED
+Foundation Module Design → NOT YET AUTHORIZED
 Foundation Provider Design → NOT AUTHORIZED
 Component Internal Design → NOT AUTHORIZED
 Implementation Planning / IWP / Coding → NOT AUTHORIZED
@@ -88,7 +72,7 @@ Implementation Planning / IWP / Coding → NOT AUTHORIZED
 
 ## Current Required Read Set
 
-Minimum sufficient Repository context for the next GAC Foundation Contract remaining-pressure / exhaustion / Foundation Module readiness assessment:
+Minimum sufficient Repository context for the next GAC Foundation Module Design / Batch 1 authorization transition:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -101,19 +85,16 @@ Minimum sufficient Repository context for the next GAC Foundation Contract remai
 8. docs/ns_evermore_project_architecture_0.0.3.md
 9. docs/architecture_reviews/ns_evermore_ngrp_001_shared_foundation_architecture_batch_1_candidate_0.0.1.md
 10. docs/architecture_reviews/ns_evermore_ngrp_001_shared_foundation_architecture_batch_1_global_acceptance_0.0.1.md
-11. docs/architecture_reviews/ns_evermore_ngrp_001_shared_foundation_architecture_exhaustion_foundation_contract_readiness_assessment_0.0.1.md
-12. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_candidate_0.0.1.md
-13. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_dad_evidence_0.0.1.md
-14. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_review_audit_0.0.1.md
-15. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_handoff_0.0.1.md
-16. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_global_acceptance_0.0.1.md
-17. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
+11. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_candidate_0.0.1.md
+12. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_global_acceptance_0.0.1.md
+13. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_exhaustion_foundation_module_readiness_assessment_0.0.1.md
+14. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
 ```
 
-Read exact Owner/MDE evidence when the assessment materially touches an Owner-reserved dimension.
+Read exact Owner/MDE evidence if the authorization or later Module Design materially touches an Owner-reserved dimension.
 
 ## Unique Next Legal Action
 
 ```text
-GAC performs a separate Foundation Contract remaining-pressure / exhaustion / Foundation Module readiness assessment.
+GAC performs a separate Foundation Module Design / Batch 1 authorization transition.
 ```
