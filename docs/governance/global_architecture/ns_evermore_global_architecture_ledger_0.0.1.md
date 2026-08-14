@@ -185,4 +185,22 @@ Unpersisted Owner Decision → 0
 Blocking Item → NONE
 Current Authorized Phase → NONE
 Unique Next Legal Action → separate GAC authorization transition for ns_server Component Internal Design / Batch 2 / S6 Automation Domain
+
+GAC-TR-0056 → GAC-EPOCH-0046
+Transition → separate ns_server Component Internal Design / Batch 2 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.1.md
+Authorized Phase → NGRP-001 — Component Internal Design / ns_server / Batch 2
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_2 / AUTOMATION_DOMAIN_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Boundary → S6 Automation Definition, Trigger & Composition Lifecycle
+Inherited Runtime Role → SV-R02 Automation Runtime Semantic Participant
+Full Stable Contract Closure Authorized → RCP-13 Automation Continuation / RCP-14 Event Trigger Input-Evaluation / RCP-15 Automation Composition
+Partial Stable Contract Refinement Authorized → RCP-16 Automation source/wait/applicability side / RCP-17 Automation trial side only
+Full RCP-16 / RCP-17 Cross-component Closure → NOT AUTHORIZED
+S5 / S7 / S10 / S11 / S12 / S13 Internal Design → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 2 / S6 Automation Domain producing session
 ```
