@@ -1,21 +1,29 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0041`
+- Status: `CURRENT / GAC-EPOCH-0042`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
-Current Global State Epoch → GAC-EPOCH-0041
-State Verified Through HEAD → a1c18c39e18c3cf572387338588170d158754833
+Current Global State Epoch → GAC-EPOCH-0042
+State Verified Through HEAD → c92c66ea9b876d72bd251d03c8a711d8b4c4a46b
 
 Genesis Constitution → GLOBAL_ACCEPTED / NORMATIVE
 Unified Governance → 0.0.2 / NORMATIVE
 NSE-001..017 → GLOBAL_ACCEPTED / NORMATIVE
 Project Architecture → 0.0.3 / GLOBAL_ACCEPTED / CURRENT
-Runtime Responsibility Architecture → GLOBAL_CLOSED / COMPLETE
-Shared Foundation Architecture → GLOBAL_CLOSED / COMPLETE
 
+Five-component Product Capability Exhaustion → SATISFIED
+Five-component Internal Architecture Boundaries → GLOBAL_ACCEPTED / NORMATIVE
+Five-component Internal-boundary Exhaustion → SATISFIED
+Accepted Internal Boundaries → 34
+
+Runtime Responsibility Architecture → GLOBAL_CLOSED / COMPLETE
+Runtime Roles → 22
+Runtime/Domain Stable Contract Pressure → 24 / NAMED DOWNSTREAM DESIGN AUTHORITY
+
+Shared Foundation Architecture → GLOBAL_CLOSED / COMPLETE
 Accepted Foundation Capabilities → 14 / NORMATIVE
 Accepted Foundation DAD → SFA-B1-DAD-001..010
 
@@ -29,10 +37,13 @@ Foundation Module Design Exhaustion → SATISFIED
 Accepted Foundation Modules → 14 / NORMATIVE MODULE UPSTREAM
 Accepted Foundation Module DAD → FMD-B1-DAD-001..010
 
-Foundation Provider Design / Batch 1 → GLOBAL_ACCEPTED
+Foundation Provider Design → GLOBAL_CLOSED / COMPLETE
+Foundation Provider Design Exhaustion → SATISFIED
 Accepted Foundation Provider Families → 10 / NORMATIVE PROVIDER UPSTREAM
 Accepted Foundation Provider DAD → FPD-B1-DAD-001..011
 Provider Pressure Coverage → 10 / 10 / 100%
+
+Component Internal Design Readiness → SATISFIED
 
 Decision Registry → 0.0.15 / CURRENT / NORMATIVE
 Open MDE → 0
@@ -42,92 +53,174 @@ Known Working-branch Drift → NONE
 Repository Hygiene Item → refs/heads/temp-never-create / NONAUTHORITATIVE / NON_SEMANTIC / CLEANUP_ONLY
 
 Current Authorized Phase → NONE
+Authorization Scope → NONE
 ```
 
-## Foundation Provider Batch 1 Global Acceptance
+## Foundation Provider Exhaustion / Component Internal Design Readiness
 
-Global Acceptance evidence:
-`docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_design_batch_1_global_acceptance_0.0.1.md`
+Assessment:
+`docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_exhaustion_component_internal_design_readiness_assessment_0.0.1.md`
 
-Producing final HEAD:
-`3bc92fa3c3cdae8be258801eaf0756e419e53915`
-
-Accepted Provider families:
+Assessment commit:
+`872ccd90294d64951d513bde5571557d23b5ecef`
 
 ```text
-PF01 Bootstrap Configuration Source Provider Family
-PF02 Diagnostic Delivery Sink Provider Family
-PF03 Technical Observation Sink Provider Family
-PF04 Temporal Source Provider Family
-PF05 Semantic Representation Codec Provider Family
-PF06 Network Invocation Transport Provider Family
-PF07 Cache Backend Provider Family
-PF08 Durable Storage Backend Provider Family
-PF09 Secret-material Resolution Source Provider Family
-PF10 Localization Resource Provider Family
+Remaining Material Foundation Provider Architecture Pressure
+→ NONE_FOUND
+
+Provider Family / Contract / Module Mapping Gap
+→ 0
+
+Provider Lifecycle / Selection / Conformance Gap
+→ 0
+
+Provider Failure / Replacement / Migration Gap
+→ 0
+
+Offline / Security / Secret Boundary Gap
+→ 0
+
+Cross-provider Dependency Ambiguity
+→ 0
+
+Missing Foundation Capability / Contract / Module / Provider Architecture
+→ 0 / 0 / 0 / 0
+
+FOUNDATION PROVIDER DESIGN EXHAUSTION
+→ SATISFIED
+
+FOUNDATION PROVIDER DESIGN
+→ GLOBAL_CLOSED / COMPLETE
+
+COMPONENT INTERNAL DESIGN READINESS
+→ SATISFIED
 ```
 
-Accepted Provider architecture preserves:
+Provider implementation/product/library selection is not required for Provider Architecture closure. Concrete replaceable realization choices remain downstream and must obey Unified Governance technology/MDE rules.
+
+## Component Internal Design Entry Baseline
+
+The five Product Components remain exactly:
 
 ```text
-Provider Family Identity != Provider Realization Identity != conditional Provider Instance Identity
-Provider Registration / Discovery / Selection → conditional where applicable
-Selection Responsibility → owning Foundation Module when selection applies
-Provider Ready != Product Ready / Trusted / Admitted
-Provider-specific Optional Capability != Universal Foundation Semantics
+ns_server
+ns_runtime
+ns_node
+ns_agent
+ns_web
+```
+
+Accepted internal-boundary inventory:
+
+```text
+ns_server → 13
+ns_runtime → 4
+ns_node → 4
+ns_agent → 6
+ns_web → 7
+Total → 34
+```
+
+The Product capability baseline and Owner capability checkpoint pressure are already closed for the current accepted scope:
+
+```text
+Remaining Material Five-component Product Capability Pressure → NONE_FOUND
+Open OWNER_DECISION_REQUIRED → 0
+Owner-reserved unresolved capability blocker → 0
+```
+
+Component Internal Design must consume these accepted capabilities/boundaries; it may derive internal modules/contracts/detailed realization as DAD only inside accepted component/capability boundaries.
+
+## Runtime / Domain Contract Obligation
+
+Runtime Responsibility Architecture records 24 stable Runtime/Domain Contract pressure subjects (`RCP-01..024`). They are not Foundation Provider gaps and do not block Component Internal Design entry.
+
+They remain mandatory downstream design work under their named semantic owners. Component Internal Design / detailed-design sessions must close the applicable Runtime, Agent, Automation, HITL, Trial, Notification, Config, Recovery, Discovery, Diagnostics, Server Runtime and Cross-surface Contract subjects before Design-to-Implementation Readiness.
+
+```text
+24 Runtime/Domain Contract Pressures
+→ MUST NOT be skipped
+→ MUST NOT be invented by Implementation Planning / Codex
+→ ARE legitimate Component Internal Design / Modules / Contracts / Detailed Design obligations
+```
+
+## Foundation Consumption Invariants
+
+Component Internal Design inherits the complete accepted Shared Foundation stack:
+
+```text
+Stable Entry
+→ Foundation Contract
+→ Foundation Module
+→ Provider Family where provider-bearing
+```
+
+Permanent rules include:
+
+```text
+Foundation / Provider Placement != Product Authority / SoT / Runtime Actual-state Ownership
+Provider Selection / Readiness / Success != Trust / Policy / Admission / Domain Success
 Provider PASS != Module Contract PASS
-Provider-native Error != Foundation Contract Semantics
-Provider Replacement != Contract Semantic Change automatically
-Hard Cross-provider Dependency Graph → EMPTY
-Unresolved Provider Dependency Cycle → 0
+Provider API != Foundation Contract
+Concrete Provider identity != Product Component architecture identity
 ```
 
-Provider-less Foundation responsibilities remain provider-less:
+Provider-less responsibilities remain provider-less. Deferred `Cryptographic / Evidence-verification Helpers` and `Database Utility Primitives` remain outside the accepted Foundation baseline unless later revalidated.
+
+## Next-action Objective
+
+No Component Internal Design producing session is authorized yet.
+
+The next GAC action must establish the exact first bounded Component Internal Design authorization, including:
 
 ```text
-C05 Correlation & Provenance
-C10 Technical Status & Uncertainty
-C11 Governed Context
-C14 Compatibility & Conformance
-C13 Sensitive-data Redaction responsibility
+initial Product Component / Batch
+exact authorized internal-design pressure
+required capability/boundary/runtime/Foundation upstream
+explicit Runtime/Domain Contract subjects in scope, if any
+strict forbidden/deferred downstream scope
+MDE escalation boundary
+producing-session stop condition
+Current Required Read Set
 ```
 
-Deferred Foundation candidates remain outside the accepted Capability / Contract / Module / Provider baseline:
+The exact batching/order is not frozen by this readiness assessment.
+
+## Explicit Deferred / Forbidden Scope
+
+Until a separate authorization transition:
 
 ```text
-Cryptographic / Evidence-verification Helpers
-Database Utility Primitives
-```
-
-Permanent security/authority rules include:
-
-```text
-Provider != Product Authority / Product SoT / Runtime Actual-state Owner
-Provider Success != Trust / Policy / Admission / Domain Success
-Secret Reference != Secret Material
-Reference Possession != Permission to Resolve
-Material Resolution Success != Trusted Credential
-PF09 != Trust / Policy / IAM Authority
-Concrete Provider / Vendor / Product / Library Selection → 0
-Concrete Protocol / Storage Engine Selection → 0
-```
-
-## Acceptance Boundary
-
-```text
-Foundation Provider Design / Batch 1 → GLOBAL_ACCEPTED
-Foundation Provider Design Global Closure → NOT DECLARED
-Foundation Provider Exhaustion → NOT YET ASSESSED AFTER ACCEPTANCE
-Component Internal Design Readiness → NOT DECLARED
 Component Internal Design → NOT AUTHORIZED
 System-level SDK Detailed Design → NOT AUTHORIZED
 Design-to-Implementation Readiness → NOT AUTHORIZED
-Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Implementation Planning → NOT AUTHORIZED
+IWP → NOT AUTHORIZED
+Coding → NOT AUTHORIZED
 ```
+
+A future Component Internal Design session must stop and return to GAC if it discovers a missing Product capability, component boundary, Runtime responsibility, Foundation Contract/Module/Provider semantic, or Owner-reserved decision.
+
+## Entry / Recovery Rule
+
+The next GAC authorization action and every later bounded Component Internal Design session must perform fresh Repository recovery under Unified Governance:
+
+```text
+resolve actual HEAD
+→ read Constitution + Unified Governance + current Global State
+→ consume Current Required Read Set
+→ read Working State + relevant Ledger/acceptance/decision evidence
+→ compare State Verified Through HEAD to actual HEAD
+→ classify every delta
+→ reconstruct accepted baseline / Open MDE / blockers / current authorization
+→ only then act
+```
+
+Any `UNAUTHORIZED_PROGRESSION`, `UNEXPLAINED_DRIFT`, State/evidence conflict, unresolved Owner decision or blocking semantic gap causes `STOP → RETURN TO GAC`.
 
 ## Current Required Read Set
 
-Minimum sufficient Repository context for the next GAC Foundation Provider remaining-pressure / exhaustion / Component Internal Design readiness assessment:
+Minimum sufficient Repository context for the next separate GAC Component Internal Design authorization transition:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -136,31 +229,31 @@ Minimum sufficient Repository context for the next GAC Foundation Provider remai
 4. docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md
 5. docs/governance/decisions/ns_evermore_decision_registry_0.0.15.md
 6. docs/ns_evermore_nse_constraints_index_0.0.5.md
-7. docs/nse_constraints/ns_evermore_nse_012_0.0.1.md
-8. docs/ns_evermore_project_architecture_0.0.3.md
-9. docs/architecture_reviews/ns_evermore_ngrp_001_shared_foundation_architecture_batch_1_candidate_0.0.1.md
-10. docs/architecture_reviews/ns_evermore_ngrp_001_shared_foundation_architecture_batch_1_global_acceptance_0.0.1.md
-11. docs/architecture_reviews/ns_evermore_ngrp_001_shared_foundation_architecture_exhaustion_foundation_contract_readiness_assessment_0.0.1.md
-12. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_candidate_0.0.1.md
-13. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_dad_evidence_0.0.1.md
-14. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_global_acceptance_0.0.1.md
-15. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_exhaustion_foundation_module_readiness_assessment_0.0.1.md
-16. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_module_design_batch_1_candidate_0.0.1.md
-17. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_module_design_batch_1_dad_evidence_0.0.1.md
+7. docs/ns_evermore_project_architecture_0.0.3.md
+8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md
+9. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_2_interaction_experience_capability_candidate_0.0.1.md
+10. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_capability_exhaustion_internal_boundary_readiness_assessment_0.0.1.md
+11. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_five_component_internal_architecture_boundaries_candidate_0.0.1.md
+12. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_internal_boundary_exhaustion_runtime_responsibility_readiness_assessment_0.0.1.md
+13. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_candidate_0.0.1.md
+14. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_global_acceptance_0.0.1.md
+15. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_exhaustion_shared_foundation_readiness_assessment_0.0.1.md
+16. docs/architecture_reviews/ns_evermore_ngrp_001_shared_foundation_architecture_batch_1_global_acceptance_0.0.1.md
+17. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_global_acceptance_0.0.1.md
 18. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_module_design_batch_1_global_acceptance_0.0.1.md
-19. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_module_exhaustion_foundation_provider_readiness_assessment_0.0.1.md
-20. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_design_batch_1_candidate_0.0.1.md
-21. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_design_batch_1_dad_evidence_0.0.1.md
-22. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_design_batch_1_review_audit_0.0.1.md
-23. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_design_batch_1_handoff_0.0.1.md
-24. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_design_batch_1_global_acceptance_0.0.1.md
-25. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
+19. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_design_batch_1_global_acceptance_0.0.1.md
+20. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_exhaustion_component_internal_design_readiness_assessment_0.0.1.md
+21. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
 ```
 
-Read exact Owner/MDE evidence when the assessment materially touches Tenant, Principal, Policy, Trust, Authority/SoT/Actual-state, major identity, compatibility/migration, offline fail behavior or another Owner-reserved dimension.
+Read exact Owner/MDE and accepted component-specific evidence when selecting or authorizing the first Component Internal Design scope.
+
+## Stop / Exit Condition
+
+Current GAC readiness action is complete when this epoch is sealed. No producing Component Internal Design work begins in this transition.
 
 ## Unique Next Legal Action
 
 ```text
-GAC performs a separate Foundation Provider remaining-pressure / exhaustion / Component Internal Design readiness assessment.
+GAC performs a separate Component Internal Design authorization transition and establishes the exact initial Product Component / Batch / scope.
 ```
