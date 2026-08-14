@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0043`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0044`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 ```text
@@ -23,35 +23,38 @@ Runtime Responsibility Architecture → GLOBAL_CLOSED / COMPLETE
 Runtime Roles → 22
 Runtime/Domain Stable Contract Pressure → 24 / NAMED DOWNSTREAM DESIGN AUTHORITY
 
-Decision Registry → 0.0.15 / CURRENT / NORMATIVE
+ns_server Component Internal Design / Batch 1 → GLOBAL_ACCEPTED
+Accepted ns_server Governance Core Internal Modules → 14 / NORMATIVE INTERNAL DESIGN UPSTREAM
+Accepted Boundaries in Batch 1 → S1 / S2 / S3 / S4 / S8 / S9
+Accepted DAD → CID-SV-B1-DAD-001..013
+RCP-01 Governance Context → CLOSED AT DESIGN-SEMANTIC LEVEL
+RCP-02 Admission Evidence → CLOSED AT DESIGN-SEMANTIC LEVEL
+RCP-19 Desired / Applied Config → CLOSED AT DESIGN-SEMANTIC LEVEL
+S8 Artifact Identity / Acceptance Evidence → CLOSED AT DESIGN-SEMANTIC LEVEL
+
+Decision Registry → 0.0.16 / CURRENT / NORMATIVE
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
-
-Current Authorized Phase → NGRP-001 — Component Internal Design / ns_server / Batch 1
-Authorization Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_1 / GOVERNANCE_CORE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Current Authorized Phase → NONE
 ```
 
-Authorized `ns_server` boundaries:
-- S1 Tenant & Principal Identity Governance
-- S2 Organization Semantics & External Mapping Governance
-- S3 Policy & Authorization Governance
-- S4 Platform Trust & Security Governance
-- S8 Artifact Acceptance & Execution Admission Governance
-- S9 Managed Runtime Configuration Governance
+Global Acceptance:
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_global_acceptance_0.0.1.md`
 
-Explicit Runtime/Domain Contract pressures in scope:
-- RCP-01 Governance Context
-- RCP-02 Admission Evidence
-- RCP-19 Desired/Applied Config
-- S8-owned Artifact Identity / Acceptance Evidence contract pressure
+Persistence-custody clarification:
 
-Batch-order rationale: these six boundaries are the authority-bearing governance core consumed by later `ns_server` domains and by `ns_runtime`, `ns_node`, `ns_agent`, `ns_web`. Closing their internal decomposition and stable contracts first reduces downstream invention without moving any accepted Authority/SoT/Actual-state ownership.
+```text
+internal semantic state / decision-evidence persistence custody
+!= new Project-level SoT topology
+!= database/storage placement as Authority/SoT
+```
 
-Strictly outside this Batch: S5-S7, S10-S13; internal design of ns_runtime/ns_node/ns_agent/ns_web; System-level SDK Detailed Design; concrete auth/policy/PKI/KMS/artifact/admission/config protocol/provider/storage choices; concrete DB schema/API/wire/package/class layout; Implementation Planning/IWP/Coding.
+`ns_server` Component Internal Design global completion/exhaustion is NOT declared. `S5-S7` and `S10-S13` remain outside the accepted Batch 1 scope and their remaining design pressure must be assessed before any subsequent Batch authorization.
 
-Producing-session maximum: `COMPLETED / AWAITING_GLOBAL_ACCEPTANCE → STOP → RETURN TO GAC`.
+No other Product Component Internal Design, System-level SDK Detailed Design, Design-to-Implementation Readiness, Implementation Planning, IWP or Coding is authorized.
 
-Repository hygiene item `refs/heads/temp-never-create` remains `NON_AUTHORITATIVE / NON_SEMANTIC / CLEANUP_ONLY`.
+Repository hygiene item `refs/heads/temp-never-create` remains `NONAUTHORITATIVE / NON_SEMANTIC / CLEANUP_ONLY`.
 
-Unique next legal action: start one bounded `ns_server Component Internal Design / Batch 1` producing session under the exact current authorization.
+Unique next legal action:
+`GAC performs a separate ns_server / Component Internal Design remaining-pressure and batching assessment; only a later separate authorization transition may start another producing session.`
