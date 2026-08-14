@@ -1,13 +1,13 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0043`
+- Status: `CURRENT / GAC-EPOCH-0044`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
-Current Global State Epoch → GAC-EPOCH-0043
-State Verified Through HEAD → ba664a3e3d03a90e456f8ca72f7c649a69165e42
+Current Global State Epoch → GAC-EPOCH-0044
+State Verified Through HEAD → 34b61634342476aa88ddf77c9690d505d951dab1
 
 Genesis Constitution → GLOBAL_ACCEPTED / NORMATIVE
 Unified Governance → 0.0.2 / NORMATIVE
@@ -21,7 +21,7 @@ Accepted Internal Boundaries → 34
 
 Runtime Responsibility Architecture → GLOBAL_CLOSED / COMPLETE
 Runtime Roles → 22
-Runtime/Domain Stable Contract Pressure → 24 / NAMED DOWNSTREAM DESIGN AUTHORITY
+Runtime / Domain Stable Contract Pressure → 24 / NAMED DOWNSTREAM DESIGN AUTHORITY
 
 Shared Foundation Architecture → GLOBAL_CLOSED / COMPLETE
 Foundation Contract Design → GLOBAL_CLOSED / COMPLETE
@@ -36,276 +36,306 @@ Accepted Foundation Provider Families → 10 / NORMATIVE PROVIDER UPSTREAM
 
 Component Internal Design Readiness → SATISFIED
 
-Decision Registry → 0.0.15 / CURRENT / NORMATIVE
+ns_server Component Internal Design / Batch 1 → GLOBAL_ACCEPTED
+Accepted ns_server Governance Core Internal Modules → 14 / NORMATIVE INTERNAL DESIGN UPSTREAM
+Accepted Batch-1 Boundaries → S1 / S2 / S3 / S4 / S8 / S9
+Accepted ns_server Batch-1 DAD → CID-SV-B1-DAD-001..013
+RCP-01 Governance Context → CLOSED AT DESIGN-SEMANTIC LEVEL
+RCP-02 Admission Evidence → CLOSED AT DESIGN-SEMANTIC LEVEL
+RCP-19 Desired / Applied Config → CLOSED AT DESIGN-SEMANTIC LEVEL
+S8 Artifact Identity / Acceptance Evidence → CLOSED AT DESIGN-SEMANTIC LEVEL
+
+Decision Registry → 0.0.16 / CURRENT / NORMATIVE
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
 Known Working-branch Drift → NONE
 Repository Hygiene Item → refs/heads/temp-never-create / NONAUTHORITATIVE / NON_SEMANTIC / CLEANUP_ONLY
 
-Current Authorized Phase → NGRP-001 — Component Internal Design / ns_server / Batch 1
-Authorization Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_1 / GOVERNANCE_CORE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Current Authorized Phase → NONE
+Authorization Scope → NONE
 ```
 
-## Initial Component / Batch Selection
+## ns_server Component Internal Design / Batch 1 Global Acceptance
 
-The first Component Internal Design Batch is intentionally `ns_server` Governance Core rather than a downstream execution component.
+Global Acceptance evidence:
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_global_acceptance_0.0.1.md`
 
-Authorized accepted internal boundaries:
+Frozen producing final HEAD:
+`4457a1e69688eac4c845562437ca6712e3b54987`
+
+Global Acceptance evidence commit:
+`62dcdeed9c4eb9cee5fa7fc62d30f89b5c288ea8`
+
+Accepted internal architecture Modules:
 
 ```text
-S1 → Tenant & Principal Identity Governance
-S2 → Organization Semantics & External Mapping Governance
-S3 → Policy & Authorization Governance
-S4 → Platform Trust & Security Governance
-S8 → Artifact Acceptance & Execution Admission Governance
-S9 → Managed Runtime Configuration Governance
+Tenant Canonical Governance
+Principal & Native IAM Governance
+Authentication Evidence & External Identity Binding
+Organization Semantic Governance
+Organization Mapping & Reconciliation
+Policy Definition & Revision Governance
+Authorization Decision & Policy Evidence
+Trust State & Relationship Governance
+Trust Evidence Interpretation & Revocation Evidence
+Governance Context Composition
+Artifact Identity & Formal Acceptance Governance
+Execution Admission Decision & Evidence Governance
+Managed Configuration Desired-state Governance
+Configuration Application Evidence & Reconciliation
 ```
 
-Selection rationale:
+`G01..G14` remain producing-document navigation labels only; they are not normative physical package/class/service/process/table/deployment identifiers.
+
+## Accepted Internal Dependency Model
 
 ```text
-S1-S4
-→ produce the governance context consumed by all runtime roles and product components
-→ source pressure for RCP-01 Governance Context
+SDD → SEMANTIC_DEFINITION_DEPENDENCY
+ACD → APPLICATION_CONTEXT_DEPENDENCY
+EL  → EVIDENCE_LINKAGE
+HPL → HISTORICAL_PROVENANCE_LINKAGE
+XED → EXTERNAL_EVIDENCE_DEPENDENCY
 
-S8
-→ owns Formal Artifact Acceptance + Formal Execution Admission
-→ source pressure for RCP-02 Admission Evidence
-→ also owns Artifact Identity / Acceptance Evidence contract pressure
-
-S9
-→ owns Managed Runtime Configuration governance + Desired-state SoT
-→ source pressure for RCP-19 Desired / Applied Config
-
-Therefore these boundaries are upstream internal-design dependencies for later ns_server domains
-and for ns_runtime / ns_node / ns_agent / ns_web detailed design.
+Only SDD participates in recursive semantic-definition cycle analysis.
+Hard SDD Graph → ACYCLIC
+Unresolved Internal Dependency Cycle → 0
+Authority Cycle → NONE
 ```
 
-The batching decision is a GAC sequencing/bounded-scope decision. It does not redefine the six accepted boundaries or their Owner-decided Authority / SoT topology.
+The accepted SDD edges remain those persisted in the Candidate/Global Acceptance. Application-time Policy/Trust/administrative relationships, evidence linkage and historical references must not be reinterpreted as reverse semantic-definition dependencies.
 
-## Accepted Owner Authority Baseline For This Batch
+## Authority / SoT / Actual-state Preservation
 
-The producing session MUST consume without reopening:
+The accepted Batch does not modify the Owner-decided topology:
 
 ```text
-Z2-MDE-001 → Tenant Semantic Authority = ns_server
-Z2-MDE-002 → Native Tenant Canonical SoT = ns_server
-Z2-MDE-003 → Native IAM Semantic Authority = ns_server
-Z2-MDE-004 → Unified Policy Semantic Authority = ns_server
-Z2-MDE-005 → Native Organization Semantic Authority = ns_server
-Z2-MDE-006 → Organization factual SoT = exactly one final SoT per bounded semantic partition / Organization System; may be external
-Z2-MDE-007 → Formal Artifact Acceptance Authority = ns_server
-Z2-MDE-008 → Formal Execution Admission Authority = ns_server
-Z2-MDE-015 → Platform Security / Trust Semantic Authority = ns_server
-Z2-MDE-016 → Split bootstrap + central managed runtime configuration; Managed Config Authority + Desired-state SoT = ns_server; item meaning follows semantic owner; Applied state follows runtime actual-state owner
-Z2-MDE-014 → Runtime Actual-state = exactly one final owner per bounded runtime semantic assertion
+Tenant Semantic Authority → ns_server
+Native Tenant Canonical SoT → ns_server
+Native IAM Semantic Authority → ns_server
+Native Organization Semantic Authority → ns_server
+Organization factual SoT → exactly one final SoT per bounded semantic partition / Organization System; external final SoT permitted
+Unified Policy Semantic Authority → ns_server
+Platform Security / Trust Semantic Authority → ns_server
+Formal Artifact Acceptance Authority → ns_server
+Formal Execution Admission Authority → ns_server
+Managed Runtime Configuration Authority → ns_server
+Managed Runtime Configuration Desired-state SoT → ns_server
+Configuration Item Semantic Authority → configured capability semantic owner
+Applied Runtime Configuration Actual-state → applicable runtime Actual-state owner
+
+Authority Transfer → 0
+SoT Transfer → 0
+Actual-state Ownership Transfer → 0
 ```
 
-Permanent non-collapse rules include:
+Evidence/mapping/composition/reconciliation responsibilities do not become hidden final owners:
 
 ```text
-Tenant != Organization
-Authentication != IAM Semantic Authority
-IAM != Policy
-Policy Permit != Artifact Accepted
-Artifact Accepted != Execution Admitted
-Execution Admitted != Dispatched / Attempted
-Trust != Policy / IAM / Admission / Acceptance
-Cryptographically Valid != Trusted
-Desired != Applied != Observed
-Configuration != Secret
-Secret Reference != Secret Material
-Same ns_server placement != same semantic authority
+Authentication Evidence & External Identity Binding
+Organization Mapping & Reconciliation
+Trust Evidence Interpretation & Revocation Evidence
+Governance Context Composition
+Configuration Application Evidence & Reconciliation
+→ no hidden Product Authority / final factual SoT / runtime Applied Actual-state ownership
 ```
 
-## Authorized Design Work
+### Persistence-custody clarification
 
-The bounded session may derive architecture/internal-design DADs only inside S1-S4/S8/S9 and may define:
+Global Acceptance normatively interprets internal phrases such as `authoritative persistence responsibility`, `authoritative governance state` and `authoritative decision/evidence history` as:
 
 ```text
-internal module / responsibility decomposition inside the six accepted boundaries
-internal dependency direction and cohesion
-state/lifecycle custody and final-owner preservation
-semantic persistence responsibility without selecting physical schema/engine
-internal stable interface/contract responsibilities
-cross-boundary composition among S1/S2/S3/S4/S8/S9 without authority collapse
-governance evidence identity/revision/provenance/freshness obligations
-offline/degraded/recovery/reconciliation responsibilities
-security/privacy/secret-reference boundaries
-compatibility/migration/conformance responsibilities
-applicable Shared Foundation Contract/Module/Provider consumption
-explicit non-goals and downstream implementation freedom
+semantic state / decision-evidence persistence custody
+inside an already accepted authority boundary
+
+!= new Project-level Source-of-Truth topology
+!= storage/database placement becoming SoT
+!= external factual-source authority transfer
 ```
 
-The session MUST explicitly close these downstream stable contract pressures at design-semantic level:
+No new independent Project-level IAM, Policy or Trust SoT is established by Batch 1. A later proposal to make an internal persistence location, database, cache, Provider or internal Module a new final SoT not already accepted requires MDE / architecture revalidation.
+
+## Accepted Stable Contract Baseline
+
+The following are now normative downstream design inputs:
 
 ```text
 RCP-01 Governance Context
-→ S1-S4 → all governed consumers
-→ Tenant / Organization / Principal / Policy / Trust separation
-→ revision / provenance / freshness / unknown / security semantics
+→ revision-pinned / provenance-bearing composition of separate Tenant / Organization / Principal / Authentication / Policy / Trust subjects
+→ Context Presence != Authorization
+→ historical constituent references remain resolvable
+→ bounded offline consumption only under constituent applicability
+
+S8 Artifact Identity / Acceptance Evidence
+→ Definition != Certification != Formal Acceptance
+→ cryptographic/signature validity / registry presence / installation / loadability != Formal Acceptance
+→ Acceptance != Admission
 
 RCP-02 Admission Evidence
-→ S8/SV-R04 → ns_runtime / executors / governed consumers
-→ admission applicability / revision / revocation / stale / unknown / provenance semantics
-→ Admission != Policy Permit / Acceptance / Dispatch / Attempt
+→ Admission identity / target intent / prerequisite revision linkage / applicability / revocation / stale-unknown-indeterminate / replay bounds
+→ Policy Permit != Admission
+→ Acceptance != Admission
+→ Admission != Dispatch / Attempt / Effect
+→ possession != Admission Authority
 
 RCP-19 Desired / Applied Config
-→ S9 Desired → applicable runtime Actual-state owners
-→ revision / partial / stale / conflict / secret-reference separation
-→ Desired != Applied != Observed
-
-S8 Artifact Identity / Acceptance Evidence pressure
-→ candidate identity/revision/provenance
-→ semantic certification input != formal acceptance
-→ accepted/revoked/stale/unknown applicability semantics
-→ Acceptance != Admission
+→ Desired owner = S9 / ns_server
+→ Applied owner = applicable runtime Actual-state owner
+→ reconciliation/evidence does not transfer Applied ownership
+→ Desired != Distributed != Applied != Observed
+→ Configuration != Secret Material
 ```
 
-The session may create additional internal-only contract subjects only when strictly necessary to realize these six accepted boundaries and when they do not invent new Product Capability, Authority or cross-component semantic pressure. Any new material cross-component stable contract pressure outside the named scope requires stop-and-return to GAC.
+These contracts are accepted at design-semantic depth only. Concrete API, DTO, wire/schema, JWT/JSON/Protobuf, database representation, Python interface and transport bindings remain later authorized realization work.
 
-## Runtime / Foundation Relationship
-
-Relevant Runtime roles/pressures are inherited, not redesigned:
+## Historical / Offline / Recovery Invariants
 
 ```text
-SV-R04 → Execution Admission Gate Participant
-SV-R05 → Managed Configuration Desired-state Participant
-RCP-01 / RCP-02 / RCP-19 → in current scope
-Other RCP subjects → out of current Batch unless required only as named external dependency
+Current state != automatic historical reinterpretation
+Offline / Disconnected != Local Authority Transfer
+Reconnect != Reconciled
+Sync != Authority Transfer
+Replay != Retroactive Authorization
+Latest Timestamp != Canonical Winner
 ```
 
-Shared Foundation consumption is downstream of accepted Foundation semantics:
+No new material global fail-open or fail-closed policy was introduced.
+
+## Shared Foundation Consumption Invariants
 
 ```text
 Stable Entry
 → Foundation Contract
 → Foundation Module
 → Provider Family where provider-bearing
+→ replaceable downstream realization
+
+Foundation / Provider Placement != Product Authority / SoT / Runtime Actual-state Ownership
+Provider Ready != Trusted
+Provider Success != Policy Permit / Admission
+Storage Provider != Product SoT
+Secret-material Provider != Trust / Policy / IAM Authority
 ```
 
-A component internal module may consume these stable Foundation semantics, but MUST NOT expose a concrete Provider identity as Product architecture or transfer Authority/SoT/Actual-state to Foundation/Provider placement.
+Deferred `Cryptographic / Evidence-verification Helpers` and `Database Utility Primitives` remain outside the accepted Foundation baseline unless separately revalidated.
 
-## Strict Forbidden / Deferred Scope
-
-Not authorized in this Batch:
+## Acceptance Boundary / Remaining Pressure
 
 ```text
-ns_server S5 Business Application Definition Lifecycle
-ns_server S6 Automation Definition / Trigger / Composition Lifecycle
-ns_server S7 Data / Knowledge / ETL Governance
-ns_server S10 Server-local Background Work
-ns_server S11 Human Task Aggregation
-ns_server S12 Notification Lifecycle
-ns_server S13 Discovery Projection
+ns_server Component Internal Design / Batch 1
+→ GLOBAL_ACCEPTED
 
-ns_runtime internal design
-ns_node internal design
-ns_agent internal design
-ns_web internal design
+ns_server Component Internal Design Global Closure
+→ NOT DECLARED
+
+ns_server Internal Design Exhaustion
+→ NOT ASSESSED
+
+ns_server Boundaries not internally designed by Batch 1
+→ S5 / S6 / S7 / S10 / S11 / S12 / S13
+
+Other Runtime / Domain Stable Contract Pressure
+→ remains mandatory downstream design work under named later authority
+
+ns_server Batch 2
+→ NOT AUTHORIZED
+
+ns_runtime Internal Design
+→ NOT AUTHORIZED
+
+ns_node Internal Design
+→ NOT AUTHORIZED
+
+ns_agent Internal Design
+→ NOT AUTHORIZED
+
+ns_web Internal Design
+→ NOT AUTHORIZED
+
 System-level SDK Detailed Design
+→ NOT AUTHORIZED
 
-new Product capability or new Product Component
-change to accepted five-component topology or Runtime Role taxonomy
-change to Foundation Capability / Contract / Module / Provider semantics
+Design-to-Implementation Readiness
+→ NOT AUTHORIZED
 
-concrete authentication/federation protocol or IdP/provider selection
-concrete Policy engine/model/provider
-concrete PKI/KMS/HSM/cryptographic algorithm/trust-store selection
-concrete Artifact package/signing/digest/registry format
-concrete Admission token/grant/schema/protocol
-concrete configuration push/pull/watch/rollout protocol
-concrete database/storage/cache/broker/provider selection
-concrete DB schema / table model
-concrete REST/gRPC/WebSocket/wire/schema/DTO design
-concrete Django App/package/class/file layout as normative architecture
-Implementation Planning
-IWP
-Coding
+Implementation Planning / IWP / Coding
+→ NOT AUTHORIZED
 ```
 
-Concrete replaceable technology/library choices remain later delegated decisions only when they satisfy Unified Governance technology criteria and do not create material lock-in.
+The presence of remaining `ns_server` boundaries means a separate GAC remaining-pressure/batching assessment is required. This State does not assume the next Batch shape, scope or ordering.
 
-## MDE / Stop Boundary
+## Entry / Recovery Rule
 
-The producing session may decide ordinary internal module decomposition, dependency direction, internal semantic interfaces/contracts and bounded state responsibilities as DAD when fully derivable from accepted upstream.
-
-It MUST stop and return one material question at a time if a proposal changes or materially determines:
+The next GAC action must execute fresh Repository recovery under Unified Governance:
 
 ```text
-Tenant / Organization / Principal / IAM / Policy / Trust Authority
-Artifact Acceptance or Execution Admission Authority
-Managed Config Authority / Desired-state SoT / Applied-state topology
-Runtime Actual-state final ownership
-major identity namespace or historical interpretation commitment
-material offline fail-open / fail-closed behavior
-major protocol/provider/framework/storage/artifact-format lock-in
-high migration cost
-major externally observable compatibility commitment
-new Product capability
+1. resolve actual repository / branch / remote HEAD
+2. read Genesis Constitution + Unified Governance + current Global State
+3. consume the Current Required Read Set below
+4. read Working State + relevant Ledger / Decision Registry / acceptance evidence
+5. compare State Verified Through HEAD to actual HEAD
+6. classify all deltas
+7. reconstruct accepted ns_server Batch-1 baseline, remaining S-boundary/RCP pressure, Open MDE, blockers and drift
+8. only then assess remaining pressure / batching
 ```
 
-If classification is uncertain: `DEFAULT → MDE`.
-
-If a missing Product capability, component boundary, Runtime responsibility, Foundation semantic or upstream Contract is discovered: `STOP affected synthesis → RETURN TO GAC`.
-
-## Producing-session Maximum / Stop Condition
-
-```text
-NGRP-001 Component Internal Design / ns_server / Batch 1
-→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
-→ STOP
-→ RETURN TO GLOBAL ARCHITECTURE COORDINATOR
-```
-
-The producing session cannot self-accept, advance GAC epoch, declare `ns_server` Internal Design complete/exhausted, authorize another ns_server Batch or another Product Component, authorize SDK design, issue `DESIGN_TO_IMPLEMENTATION_READY`, begin Implementation Planning, create IWP or code.
+Any `UNAUTHORIZED_PROGRESSION`, `UNEXPLAINED_DRIFT`, State/evidence conflict, unresolved Owner decision or blocking semantic gap causes `STOP → DRIFT / CONTINUITY RECONCILIATION`.
 
 ## Current Required Read Set
 
-Minimum sufficient Repository context for this exact bounded session:
+Minimum sufficient Repository context for the next separate GAC `ns_server / Component Internal Design remaining-pressure and batching assessment`:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
 2. docs/governance/ns_evermore_governance_0.0.2.md
 3. docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md
 4. docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md
-5. docs/governance/decisions/ns_evermore_decision_registry_0.0.15.md
+5. docs/governance/decisions/ns_evermore_decision_registry_0.0.16.md
 6. docs/ns_evermore_nse_constraints_index_0.0.5.md
 7. docs/ns_evermore_project_architecture_0.0.3.md
 8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_1_capability_discovery_candidate_0.0.1.md
 9. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_2_interaction_experience_capability_discovery_candidate_0.0.1.md
-10. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_capability_exhaustion_internal_boundary_readiness_assessment_0.0.1.md
-11. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_five_component_internal_architecture_boundaries_candidate_0.0.1.md
-12. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_internal_boundary_dad_evidence_0.0.1.md
-13. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_global_acceptance_0.0.1.md
-14. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_internal_boundary_exhaustion_runtime_responsibility_readiness_assessment_0.0.1.md
-15. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_candidate_0.0.1.md
-16. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_dad_evidence_0.0.1.md
-17. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_global_acceptance_0.0.1.md
-18. docs/architecture_reviews/ns_evermore_ngrp_001_shared_foundation_architecture_batch_1_global_acceptance_0.0.1.md
-19. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_global_acceptance_0.0.1.md
-20. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_module_design_batch_1_global_acceptance_0.0.1.md
-21. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_design_batch_1_global_acceptance_0.0.1.md
-22. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_exhaustion_component_internal_design_readiness_assessment_0.0.1.md
-23. docs/governance/decisions/ns_evermore_z2_mde_001_tenant_semantic_authority_owner_decision_0.0.1.md
-24. docs/governance/decisions/ns_evermore_z2_mde_002_tenant_source_of_truth_owner_decision_0.0.1.md
-25. docs/governance/decisions/ns_evermore_z2_mde_003_iam_semantic_authority_owner_decision_0.0.1.md
-26. docs/governance/decisions/ns_evermore_z2_mde_004_policy_semantic_authority_owner_decision_0.0.1.md
-27. docs/governance/decisions/ns_evermore_z2_mde_005_organization_semantic_authority_owner_decision_0.0.1.md
-28. docs/governance/decisions/ns_evermore_z2_mde_006_organization_source_of_truth_topology_owner_decision_0.0.1.md
-29. docs/governance/decisions/ns_evermore_z2_mde_007_formal_artifact_acceptance_authority_owner_decision_0.0.1.md
-30. docs/governance/decisions/ns_evermore_z2_mde_008_formal_execution_admission_authority_owner_decision_0.0.1.md
-31. docs/governance/decisions/ns_evermore_z2_mde_014_runtime_actual_state_ownership_topology_owner_decision_0.0.1.md
-32. docs/governance/decisions/ns_evermore_z2_mde_015_platform_security_trust_semantic_authority_owner_decision_0.0.1.md
-33. docs/governance/decisions/ns_evermore_z2_mde_016_configuration_authority_topology_owner_decision_0.0.1.md
-34. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
+10. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_five_component_internal_architecture_boundaries_candidate_0.0.1.md
+11. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_internal_boundary_dad_evidence_0.0.1.md
+12. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_global_acceptance_0.0.1.md
+13. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_internal_boundary_exhaustion_runtime_responsibility_readiness_assessment_0.0.1.md
+14. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_candidate_0.0.1.md
+15. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_dad_evidence_0.0.1.md
+16. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_global_acceptance_0.0.1.md
+17. docs/architecture_reviews/ns_evermore_ngrp_001_shared_foundation_architecture_batch_1_global_acceptance_0.0.1.md
+18. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_contract_design_batch_1_global_acceptance_0.0.1.md
+19. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_module_design_batch_1_global_acceptance_0.0.1.md
+20. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_design_batch_1_global_acceptance_0.0.1.md
+21. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_exhaustion_component_internal_design_readiness_assessment_0.0.1.md
+22. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_candidate_0.0.1.md
+23. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_dad_evidence_0.0.1.md
+24. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_review_audit_0.0.1.md
+25. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_handoff_0.0.1.md
+26. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_global_acceptance_0.0.1.md
+27. docs/governance/decisions/ns_evermore_z2_mde_001_tenant_semantic_authority_owner_decision_0.0.1.md
+28. docs/governance/decisions/ns_evermore_z2_mde_002_tenant_source_of_truth_owner_decision_0.0.1.md
+29. docs/governance/decisions/ns_evermore_z2_mde_003_iam_semantic_authority_owner_decision_0.0.1.md
+30. docs/governance/decisions/ns_evermore_z2_mde_004_policy_semantic_authority_owner_decision_0.0.1.md
+31. docs/governance/decisions/ns_evermore_z2_mde_005_organization_semantic_authority_owner_decision_0.0.1.md
+32. docs/governance/decisions/ns_evermore_z2_mde_006_organization_source_of_truth_topology_owner_decision_0.0.1.md
+33. docs/governance/decisions/ns_evermore_z2_mde_007_formal_artifact_acceptance_authority_owner_decision_0.0.1.md
+34. docs/governance/decisions/ns_evermore_z2_mde_008_formal_execution_admission_authority_owner_decision_0.0.1.md
+35. docs/governance/decisions/ns_evermore_z2_mde_014_runtime_actual_state_ownership_topology_owner_decision_0.0.1.md
+36. docs/governance/decisions/ns_evermore_z2_mde_015_platform_security_trust_semantic_authority_owner_decision_0.0.1.md
+37. docs/governance/decisions/ns_evermore_z2_mde_016_configuration_authority_topology_owner_decision_0.0.1.md
+38. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
 ```
 
-Read exact additional NSE/Owner evidence only if the producing design materially touches another reserved dimension.
+Read exact additional NSE / Owner / capability evidence if the remaining-pressure assessment touches another reserved dimension or another candidate Batch scope.
+
+## Stop / Exit Condition
+
+This GAC acceptance transition ends at the acceptance-only epoch seal. It does not perform the next remaining-pressure assessment and does not authorize another producing session.
 
 ## Unique Next Legal Action
 
 ```text
-Start one bounded NGRP-001 Component Internal Design / ns_server / Batch 1 producing session under the exact current scope.
+GAC performs a separate ns_server / Component Internal Design remaining-pressure and batching assessment.
+
+Only after that assessment may GAC, in a separate transition, authorize an exact next bounded Component Internal Design scope.
 ```
