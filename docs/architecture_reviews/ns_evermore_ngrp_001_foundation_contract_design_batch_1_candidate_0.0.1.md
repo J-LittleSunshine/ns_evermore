@@ -3,42 +3,46 @@
 ## Authority Metadata
 
 - **Program / Phase:** `NGRP-001 — Foundation Contract Design / Batch 1`
-- **Authorization Scope:** `FOUNDATION_CONTRACT_DESIGN_ONLY / BATCH_1 / FOUNDATION_STABLE_ENTRY_AND_REUSABLE_CONTRACT_SEMANTICS_SYNTHESIS`
+- **Original Producing Scope:** `FOUNDATION_CONTRACT_DESIGN_ONLY / BATCH_1 / FOUNDATION_STABLE_ENTRY_AND_REUSABLE_CONTRACT_SEMANTICS_SYNTHESIS`
+- **Current Correction Scope:** `FOUNDATION_CONTRACT_DESIGN_ONLY / BATCH_1 / CROSS_CONTRACT_DEPENDENCY_SEMANTICS_CORRECTION_ONLY`
 - **Repository:** `J-LittleSunshine/ns_evermore`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
-- **Recovered Entry HEAD:** `e36d4c8cb48234983d4acca8ef6674025f711ded`
-- **Recovered Global State:** `GAC-EPOCH-0033`
-- **Producing-session Authority:** bounded Foundation Contract semantic design only
+- **Original Producing Entry HEAD:** `e36d4c8cb48234983d4acca8ef6674025f711ded`
+- **Original Producing Final HEAD:** `513692619b7d0d520c3ec412475e8d982f870571`
+- **Correction Entry HEAD:** `0ebd6bc613be2278b9f1cc9d15a802bfeefc0ab0`
+- **Current Global State:** `GAC-EPOCH-0034`
+- **Prior GAC Review Result:** `CORRECTION_REQUIRED`
+- **Producing-session Authority:** bounded Foundation Contract semantic correction only
 - **Global Acceptance Authority:** `NOT HELD`
-- **Candidate Status:** `COMPLETED / AWAITING_GLOBAL_ACCEPTANCE`
+- **Candidate Status:** `COMPLETED / AWAITING_GLOBAL_REVIEW`
 
-This artifact defines language-neutral Stable Entry semantics and reusable Foundation Contract semantics for the 14 globally accepted Shared Foundation capabilities. It does **not** define Foundation Modules, Provider interfaces, Provider selection, APIs, schemas, classes, packages, processes, services, deployment topology or implementation.
+This artifact defines language-neutral Stable Entry semantics and reusable Foundation Contract semantics for the 14 globally accepted Shared Foundation capabilities. The `GAC-EPOCH-0034` correction changes only cross-Contract dependency typing and the acyclicity/conformance proof for C11/C12/C13. It does **not** define Foundation Modules, Provider interfaces, Provider selection, APIs, schemas, classes, packages, processes, services, deployment topology or implementation.
 
 ---
 
 # 1. Repository Recovery
 
-## 1.1 Recovery Coordinates
+## 1.1 Original Producing Recovery Coordinates
 
 ```text
-Actual Branch HEAD at fresh recovery
+Original Actual Branch HEAD at producing recovery
 → e36d4c8cb48234983d4acca8ef6674025f711ded
 
-Current Global State
+Original Global State
 → GAC-EPOCH-0033
 
-State Verified Through HEAD
+Original State Verified Through HEAD
 → 4b889719b26571c1935bdf3f9944e4e89214505f
 
-State-to-HEAD Delta
+Original State-to-HEAD Delta
 → exactly 1 commit
 → e36d4c8cb48234983d4acca8ef6674025f711ded
 → docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md only
 
-Delta purpose
+Original Delta purpose
 → recovery-authority repair after GAC-EPOCH-0032 omitted mandatory Current Required Read Set
 
-Delta classification
+Original Delta classification
 → EXPECTED_GOVERNANCE
 
 Architecture semantic change
@@ -51,9 +55,9 @@ Unauthorized progression
 → NONE
 ```
 
-`GAC-TR-0043` confirms that the prior stopped Foundation Contract session made no producing mutation and that the same Contract Design authorization resumes unchanged.
+`GAC-TR-0043` confirms that the prior stopped Foundation Contract session made no producing mutation and that the same Contract Design authorization resumed unchanged.
 
-## 1.2 Recovery Gate
+## 1.2 Original Recovery Gate
 
 ```text
 Architecture Constraint Derivation
@@ -109,9 +113,9 @@ Recovery Gate
 → PASS
 ```
 
-## 1.3 Current Required Read Set Consumed
+## 1.3 Original Required Read Set Consumption
 
-The complete Repository-backed Current Required Read Set embedded in `GAC-EPOCH-0033` was consumed before design:
+The complete Repository-backed Current Required Read Set embedded in `GAC-EPOCH-0033` was consumed before original design:
 
 1. `docs/ns_evermore_genesis_constitution_0.0.1.md`
 2. `docs/governance/ns_evermore_governance_0.0.2.md`
@@ -132,6 +136,54 @@ The complete Repository-backed Current Required Read Set embedded in `GAC-EPOCH-
 17. `docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md`
 
 High-sensitivity exact evidence was additionally consumed for Tenant Authority/SoT, IAM, Policy, Organization Authority/SoT, Runtime Actual-state, Platform Trust, Configuration, Z3 configuration/Actual-state/SDK DAD, Runtime correlation DAD and the Internationalization/Localization Owner capability decision.
+
+## 1.4 GAC-EPOCH-0034 Correction Recovery
+
+A fresh Repository Recovery was independently executed for the correction and did not inherit the prior producing-session recovery state.
+
+```text
+Current Global State
+→ GAC-EPOCH-0034
+
+State Verified Through HEAD
+→ fdaa957c61a75539e6d886842619f717b2bb98ae
+
+Correction Actual Entry HEAD
+→ 0ebd6bc613be2278b9f1cc9d15a802bfeefc0ab0
+
+State-to-HEAD Delta
+→ exactly 1 commit
+→ Global State correction authorization only
+
+Delta Classification
+→ EXPECTED_GOVERNANCE
+
+Current Required Read Set
+→ PRESENT / CONSUMED
+
+Prior Producing Final HEAD
+→ 513692619b7d0d520c3ec412475e8d982f870571
+
+Prior GAC Review Result
+→ CORRECTION_REQUIRED
+
+Current Blocking Item
+→ FCD_B1_CROSS_CONTRACT_DEPENDENCY_SEMANTICS_CORRECTION
+
+Open MDE
+→ 0
+
+Unpersisted Owner Decision
+→ 0
+
+Known Working-branch Drift
+→ NONE
+
+Recovery Gate for Correction
+→ PASS
+```
+
+The GAC correction evidence, Working State and Ledger agree that the only authorized correction is cross-Contract dependency semantic typing. Exact Tenant/IAM/Policy/Organization/Trust and Secret/Redaction owner evidence was re-read. No Foundation Architecture gap or Owner MDE was discovered.
 
 ---
 
@@ -172,7 +224,7 @@ The 24 accepted Runtime Stable Contract pressures remain runtime/domain contract
 5. **Evidence preserves provenance without canonicalization.** Collection, transport, cache, storage or observation does not elevate evidence to Product truth.
 6. **Provider conformance is semantic.** Providers conform to the Contract; the Contract never inherits provider-specific optional behavior by default.
 7. **Offline/private is a Contract property.** Core semantics cannot require public Internet, public SaaS, public registries, cloud telemetry or public secret management.
-8. **Cross-contract reuse is explicit.** One Contract consumes another Contract's semantics instead of duplicating definitions.
+8. **Cross-contract reuse is typed.** Semantic-definition imports are distinguished from conditional application use, security/disclosure composition and external Authority/context dependencies.
 9. **Domain/runtime contracts stay external.** Foundation mechanics may support Admission, HITL, Notification, Trial, Node Effect, Discovery and other domain contracts without acquiring their meaning.
 10. **No implementation-defined escape.** Every material semantic question is closed here or delegated to a named downstream authority that is legally allowed to decide realization rather than semantics.
 
@@ -377,6 +429,21 @@ No Contract in this artifact guarantees or acquires:
 - business success;
 - source-fact canonicalization.
 
+## 8.6 Cross-Contract Dependency Type System
+
+The word `dependency` is not sufficient by itself. Every material relationship must be interpreted as one of the following semantic types:
+
+| Type | Meaning | Participates in semantic-definition cycle analysis? |
+|---|---|---|
+| `SEMANTIC_DEFINITION_DEPENDENCY (SDD)` | A imports normative meanings defined by B; A's own definition/baseline conformance cannot be completed without B | **YES** |
+| `CONDITIONAL_APPLICATION_SEMANTIC_USE (CASU)` | A consumes B only when the bounded application case contains the relevant subject/context | NO |
+| `SECURITY_DISCLOSURE_COMPOSITION_DEPENDENCY (SDCD)` | A must compose with B's disclosure/redaction semantics before protected content crosses an ordinary sink/presentation boundary where B applies | NO |
+| `EXTERNAL_AUTHORITY_CONTEXT_DEPENDENCY (EACD)` | A consumes authoritative context/permission/meaning owned outside Shared Foundation | NO; it is not a Foundation Contract definition edge |
+
+Only the `SDD` subgraph is used to determine recursive semantic definition. CASU and SDCD obligations remain normative for declared supported cases, but they do not make one Contract part of another Contract's stable identity. EACD preserves upstream authority rather than importing it into Foundation.
+
+This taxonomy is semantic only and MUST NOT be interpreted as a Module import graph, class/interface graph, provider graph, process call graph or deployment topology.
+
 ---
 
 # 9. Per-Contract Semantic Definitions
@@ -396,7 +463,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** a local/private source path must be possible; mandatory central/public configuration service is prohibited for bootstrap correctness.
 - **Compatibility/Migration/Conformance:** source/provider replacement is conformance-only when stable semantics remain; source interpretation/state migration is explicit where required.
 - **Provider Pressure:** configuration acquisition/source provider must preserve provenance, support/failure mapping and offline path; no provider API selected.
-- **Dependencies:** C04 temporal where freshness applies; C05 provenance/correlation where an operation exists; C10 status; C11 governed context; C12 secret-reference carriage; C13 redaction.
+- **Dependencies:** existing C01 semantics are unchanged by this correction; C10 is the common status SDD; C04/C05/C11/C12 are consumed only when their bounded subjects apply; C13 is a disclosure composition obligation where sensitive output crosses an ordinary sink/presentation boundary.
 - **Representation Independence:** no YAML/TOML/INI/.env/schema/library is Contract identity.
 - **Non-goals / Downstream:** push/pull/watch/rollout/module/provider API → Foundation Module/Provider Design or component config authorities as applicable.
 - **Revalidation:** Foundation becomes Config Authority/Desired SoT, bootstrap independence is removed or a public-only source becomes mandatory.
@@ -415,7 +482,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** local diagnostic path required; cloud logging optional only.
 - **Compatibility/Conformance:** category/provenance/correlation/redaction meaning must remain interpretable across sink/provider replacement.
 - **Provider Pressure:** diagnostic sink/provider conforms to occurrence/delivery separation and redaction; no logger/backend API selected.
-- **Dependencies:** C04, C05, C10, C11, C13.
+- **Dependencies:** existing C02 semantics are unchanged; C10 is the common status SDD; C04/C05/C11 are consumed when their subjects apply; C13 is SDCD before protected diagnostic output crosses an ordinary sink boundary.
 - **Representation Independence:** no log line/JSON/logger class/backend format is Contract identity.
 - **Downstream/Revalidation:** Module/Provider Design handles sink bindings; revalidate if diagnostics become Audit/source-fact/runtime authority.
 
@@ -433,7 +500,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** locally operable/private sink path; mandatory cloud telemetry prohibited.
 - **Compatibility/Conformance:** observation/health categories and provenance/freshness interpretation survive provider changes.
 - **Provider Pressure:** telemetry/health sink/collector must not canonicalize source state and must preserve evidence/failure semantics.
-- **Dependencies:** C04, C05, C10, C11, C13.
+- **Dependencies:** C04 and C10 are semantic-definition imports for freshness/common status; C05/C11 are conditional application use; C13 is SDCD before protected observation output crosses a sink/presentation boundary.
 - **Representation Independence:** no OTel/metrics/trace SDK/schema is Contract identity.
 - **Revalidation:** collector/aggregator proposed as final component/runtime Actual-state owner.
 
@@ -451,7 +518,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** local/private time source path; public NTP/cloud time not mandatory.
 - **Compatibility:** semantic units/relationships/freshness meaning remain stable; physical timestamp/timezone representation may evolve.
 - **Provider Pressure:** time-source provider must expose uncertainty/availability needed by the semantic Contract and cannot become source-time authority.
-- **Dependencies:** C10 only for common status semantics; other Contracts depend on C04, not vice versa.
+- **Dependencies:** SDD → C10 only; other Contracts depend on C04, not vice versa.
 - **Representation Independence:** no timestamp format/time library/NTP/database-clock choice.
 - **Revalidation:** time becomes conflict/authority winner or public time service becomes correctness dependency.
 
@@ -469,7 +536,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** no public identity/correlation service requirement.
 - **Compatibility/Migration:** lineage meaning is compatibility-sensitive; physical ID replacement is conformance-only only when identity relationships remain interpretable; major permanent namespace commitment requires revalidation/MDE.
 - **Provider Pressure:** no external provider required; replaceable implementation seam only.
-- **Dependencies:** C04 where temporal evidence applies; C10; C11 for governance context separation.
+- **Dependencies:** C10 is the common status SDD; C04/C11 are conditional semantic use when temporal/governance context applies. C05 and C11 remain separate semantic identities.
 - **Representation Independence:** no UUID/Snowflake/database ID/PID/host/URL/trace format.
 - **Revalidation:** Foundation becomes operation owner or a major external identity namespace is frozen.
 
@@ -487,7 +554,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** required representations/codecs locally usable; no online conversion service.
 - **Compatibility/Migration:** semantic compatibility precedes representation compatibility; persisted/external representation transitions may require explicit migration.
 - **Provider Pressure:** codec/representation provider must preserve declared semantics and explicit support/failure evidence.
-- **Dependencies:** C10, C13; may carry C05/C11 semantics but does not redefine them.
+- **Dependencies:** C10 is the common status SDD; C05/C11 may be carried conditionally; C13 is SDCD where protected representation crosses a disclosure boundary.
 - **Representation Independence:** no JSON/Protobuf/MessagePack/Avro/Pydantic/dataclass/schema technology selected.
 - **Revalidation:** one physical form becomes canonical Product semantics or major irreversible format commitment is introduced.
 
@@ -505,7 +572,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** private/local targets/providers first-class; public Internet optional by domain only.
 - **Compatibility:** provider/transport change is conformance-only only if stable client semantics remain; domain protocol changes remain owner-governed.
 - **Provider Pressure:** network/transport provider must map its failures/support to Contract semantics without leaking provider API identity.
-- **Dependencies:** C04, C05, C10, C11, C13.
+- **Dependencies:** C04 and C10 are SDD for deadline/common status semantics; C05/C11 are CASU as applicable; C13 is SDCD for protected diagnostic/output disclosure.
 - **Representation Independence:** no HTTP method/REST/gRPC/WebSocket/httpx/aiohttp/requests selection.
 - **Revalidation:** provider/transport becomes semantic authority or mandatory public connectivity enters core correctness.
 
@@ -523,7 +590,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** local/private cache backend possible; cloud cache not mandatory.
 - **Compatibility/Migration:** provider replacement may discard/rebuild cache if owner policy permits; any data transition is explicit; source semantics never migrate into cache authority.
 - **Provider Pressure:** backend must preserve HIT/MISS/stale/unavailable distinctions and isolation semantics.
-- **Dependencies:** C04, C10, C11, C13; C05 where operation correlation is used.
+- **Dependencies:** C04 and C10 are SDD for freshness/common status; C11/C05 are CASU as applicable; C13 is SDCD for protected diagnostic/output disclosure.
 - **Representation Independence:** no Redis/Valkey/Memcached/key/value/schema design.
 - **Revalidation:** cache becomes correctness SoT/current-truth authority or public cache becomes mandatory.
 
@@ -541,7 +608,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** locally deployable provider required; public cloud object/database service optional.
 - **Compatibility/Migration:** provider/data migration explicit when durable state cannot transparently move; migration must preserve original semantic authority/provenance.
 - **Provider Pressure:** backend must expose enough evidence to distinguish success, absence, partial/indeterminate and availability states without imposing provider transaction semantics.
-- **Dependencies:** C04 where temporal, C05 where correlation, C10, C11, C13.
+- **Dependencies:** C10 is SDD; C04/C05/C11 are CASU as applicable; C13 is SDCD for protected output/disclosure.
 - **Representation Independence:** no ORM/SQL/table/object-key/filesystem-path/S3/MinIO/transaction model.
 - **Revalidation:** persistence placement is used to claim Product authority or material storage lock-in becomes Contract identity.
 
@@ -559,7 +626,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** fully local semantics.
 - **Compatibility:** existing common meanings cannot be narrowed/reinterpreted by compatible evolution; adding a new universal status requires Contract revision review and may require architecture revalidation if it changes cross-domain interpretation.
 - **Provider Pressure:** none external; replaceable implementation only.
-- **Dependencies:** no semantic dependency on another Foundation Contract; other Contracts depend on C10.
+- **Dependencies:** no SDD/CASU/SDCD on another Foundation Contract is required for C10's stable definition; external domain interpretation remains EACD where applicable.
 - **Representation Independence:** no exception hierarchy/numeric code/HTTP status mapping.
 - **Revalidation:** common status is promoted into domain/authorization/trust authority or an existing meaning is changed incompatibly.
 
@@ -577,7 +644,8 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** locally usable carriage and locally verifiable evidence only where upstream owner semantics permit; no public IdP dependency is introduced.
 - **Compatibility/Migration:** governance subject meaning/revision provenance preserved; major identity namespace changes follow owner/MDE/revalidation paths.
 - **Provider Pressure:** no external provider required.
-- **Dependencies:** C04 for applicability/freshness, C10; C13 for disclosure. C05 remains separate and must not become governance identity.
+- **Typed Dependencies:** `SDD → C04, C10`; `SDCD → C13` only when C11-carried sensitive context/evidence crosses an ordinary disclosure/sink/presentation boundary; `EACD → Tenant, Organization, IAM/Principal, Policy, Trust authorities`; `NO SDD → C12 or C13`. C05 remains a distinct Contract identity and is not governance identity.
+- **Independent Conformance:** C11 base conformance is evaluated from subject separation, carriage, provenance, scope/applicability, Tenant isolation and imported C04/C10 meanings. C13 is evaluated only for a declared disclosure composition case and is not needed to define C11 identity.
 - **Representation Independence:** no JWT/OAuth/OIDC/session cookie/token/credential schema.
 - **Revalidation:** carried context becomes Authority/self-authenticating truth or Tenant/Principal/Policy/Trust ownership moves.
 
@@ -591,11 +659,12 @@ No Contract in this artifact guarantees or acquires:
 - **Non-guarantees:** secret material custody/lifecycle, credential format, encryption, rotation, Trust decision, authorization to resolve/use material.
 - **Result/Evidence:** reference handling and optional resolution-request/result evidence are bounded technical evidence; resolved material itself is outside the Contract's stable exposed semantics and must not become ordinary result evidence.
 - **Failure/Unknown:** `MISSING`, `UNMAPPED`, `UNAVAILABLE`, `UNREACHABLE`, `UNVERIFIED`, `UNSUPPORTED`, `INDETERMINATE` as applicable; these do not equal Trust/Policy denial automatically.
-- **Security:** references may themselves be sensitive; C13 applies to disclosure; cross-Tenant reference confusion prohibited.
+- **Security:** references may themselves be sensitive; disclosure composition with C13 applies when such metadata/evidence crosses an ordinary sink/presentation boundary; cross-Tenant reference confusion prohibited.
 - **Offline/Private:** a future local/private material-source path must be possible; public secret manager cannot be mandatory.
 - **Compatibility/Migration:** reference semantics remain stable while material provider/credential technology changes; provider/credential migration is explicit where state transitions.
 - **Provider Pressure:** conditional secret-material source/resolution provider must preserve reference scope/provenance and bounded failure semantics; no provider interface/store selected.
-- **Dependencies:** C04, C10, C11, C13.
+- **Typed Dependencies:** `SDD → C10`; `CASU → C04` when temporal applicability/freshness is part of the bounded reference/resolution case; `CASU → C11` when governance context is transported through C11; `SDCD → C13` for applicable secret-reference metadata/evidence or material-sensitive disclosure; `EACD → applicable Tenant/Principal/Policy/Trust/secret-material custody authorities`; `NO SDD → C11 or C13`.
+- **Independent Conformance:** C12 base conformance is evaluated from Ref!=Material, scope/provenance, resolution-evidence non-authority, provider neutrality and C10 meanings. C11/C13 composition is required only for declared supported cases where those subjects are used.
 - **Representation Independence:** no Vault/KMS/HSM URI/credential/reference format.
 - **Revalidation:** Foundation acquires Trust/secret-material lifecycle authority or reference is collapsed into material.
 
@@ -613,7 +682,8 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** fully local redaction semantics; no public DLP/classification SaaS dependency.
 - **Compatibility:** exact wording/mask may evolve; sensitivity meaning and non-disclosure obligations cannot be weakened by compatible evolution.
 - **Provider Pressure:** no external redaction provider required by architecture; sinks/providers must receive only Contract-permitted disclosure.
-- **Dependencies:** C10, C11; C12 distinction when secret references/material are involved; C04/C05 only when preserving temporal/provenance evidence.
+- **Typed Dependencies:** `SDD → C10`; `CASU → C11` when owner-provided disclosure/governance context is carried through C11; `CASU → C12` only when the input case contains secret reference/material semantics and the C12 distinction is relevant; `CASU → C04/C05` only when temporal/provenance evidence must be preserved; `EACD → applicable Policy/Privacy/Trust/semantic owner for sensitivity/disclosure constraints`; `NO SDD → C11 or C12`.
+- **Independent Conformance:** C13 base conformance is evaluated from sensitivity/redaction/non-disclosure semantics plus C10 meanings using owner-provided constraints abstractly. C11 is not the only possible carrier of those constraints and C12 is irrelevant to non-secret sensitivity cases.
 - **Representation Independence:** no masking syntax/logger filter/UI component selected.
 - **Revalidation:** redaction layer becomes Policy/Privacy/Trust Authority or accepted non-disclosure baseline changes.
 
@@ -631,7 +701,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** core conformance/compatibility evaluation cannot require public registry/service.
 - **Migration:** represents owner-established migration requirement; never authorizes execution of migration.
 - **Provider Pressure:** no external provider required; replaceable implementation only.
-- **Dependencies:** C10, C13; may consume C04/C05 for evidence provenance/applicability.
+- **Dependencies:** C10 is SDD; C13 is SDCD for protected conformance evidence; C04/C05 are CASU where evidence provenance/applicability needs them.
 - **Representation Independence:** no SemVer/package/tag/schema-version field/migration engine.
 - **Revalidation:** Foundation becomes universal compatibility authority or creates a major permanent external version commitment.
 
@@ -649,7 +719,7 @@ No Contract in this artifact guarantees or acquires:
 - **Offline/Private:** supported resources locally deployable; online translation SaaS is not core correctness.
 - **Compatibility/Migration:** machine semantic identity is stable; exact wording/translation/resources may evolve compatibly; resource/provider migration must not redefine semantic identity.
 - **Provider Pressure:** localization resource/provider must preserve identity/effective-context/missing-support semantics; no gettext/resource format/provider selected.
-- **Dependencies:** C10, C13; C04 is independent for timezone/temporal presentation and must not be inferred from locale.
+- **Dependencies:** C10 is SDD; C13 is SDCD before protected presentation; C04 remains independent of locale identity and may be CASU only for separately governed temporal presentation.
 - **Representation Independence:** no locale code format/resource/template/pluralization engine selected.
 - **Revalidation:** localized text becomes machine semantic identity, public translation becomes mandatory or localization becomes domain-message authority.
 
@@ -742,6 +812,35 @@ Cache/Storage placement != Data Authority
 
 C12 and C13 are separate Contracts under one accepted capability so that secret-reference/provider semantics can evolve without turning redaction into secret custody, and redaction/disclosure semantics can evolve without making a secret provider the Privacy/Policy authority.
 
+Their relationship is conditional/compositional, not recursive definition:
+
+```text
+C12 --SDCD→ C13
+→ when reference/material-sensitive output crosses a disclosure boundary
+
+C13 --CASU→ C12
+→ only when the redaction input contains secret-reference/material semantics
+
+C12 SDD C13
+→ NONE
+
+C13 SDD C12
+→ NONE
+```
+
+Likewise C11 and C13 do not recursively define each other:
+
+```text
+C11 --SDCD→ C13
+→ protected governed-context disclosure
+
+C13 --CASU→ C11
+→ owner context carried through C11 when that application path is used
+
+Mutual SDD
+→ NONE
+```
+
 Generic cryptographic/evidence-verification helpers remain `DEFERRED_FOR_LATER_FOUNDATION_ASSESSMENT`; no cryptographic Contract is created by this Batch.
 
 ---
@@ -816,46 +915,105 @@ Provider API design, registry, selection, fallback, factory, lifecycle and defau
 
 # 18. Cross-Contract Dependency Graph
 
-Semantic dependency direction:
+## 18.1 Typed semantic relationships
+
+The graph is split by dependency type. **Only SDD edges participate in semantic-definition cycle analysis.** CASU/SDCD/EACD are independently normative but are not recursive-definition edges.
+
+### A. Semantic-definition dependency graph (`SDD`)
+
+Conceptual arrows below mean `consumer Contract → imported semantic definition`:
 
 ```text
 C10 Technical Status & Uncertainty
   ↑
-C04 Temporal & Freshness
-  ↑
-C05 Correlation/Provenance       C11 Governed Context
-  ↑                               ↑
-C12 Secret Reference → C13 Sensitive-data Redaction
+C04 Temporal & Freshness ─────────────→ C10
 
-C01 Config ─────────────┐
-C02 Diagnostics ────────┤
-C03 Telemetry/Health ───┤
-C06 Representation ─────┤ consume applicable lower-level semantics
-C07 Network ────────────┤
-C08 Cache ──────────────┤
-C09 Storage ────────────┤
-C14 Compatibility ──────┤
-C15 Localization ───────┘
+C01 Bootstrap Config ─────────────────→ C10
+C02 Diagnostics ──────────────────────→ C10
+C03 Telemetry/Health ─────────────────→ C04, C10
+C05 Correlation/Provenance ───────────→ C10
+C06 Representation ───────────────────→ C10
+C07 Network ──────────────────────────→ C04, C10
+C08 Cache ────────────────────────────→ C04, C10
+C09 Storage ──────────────────────────→ C10
+C11 Governed Context ─────────────────→ C04, C10
+C12 Secret Reference ─────────────────→ C10
+C13 Sensitive-data Redaction ─────────→ C10
+C14 Compatibility ────────────────────→ C10
+C15 Localization ─────────────────────→ C10
 ```
 
-The diagram is semantic, not Module dependency architecture. Precise dependencies are listed per Contract.
+No SDD edge points from C10 to another Foundation Contract. C04 imports only C10. No SDD edge exists among C11, C12 and C13.
 
-Rules:
-
-- C10 is the single common definition of common uncertainty; other Contracts do not redefine it.
-- C04 is the single temporal/freshness semantic definition where applicable.
-- C05 operation lineage and C11 governance context stay separate.
-- C12 does not depend on C13 for secret identity; C13 may consume C12's reference/material distinction.
-- C02/C03 consume C13 rather than redefining redaction.
-- C15 remains independent of C04 for locale/timezone identity even when temporal presentation later consumes time semantics.
+Therefore:
 
 ```text
-Semantic Dependency Cycle Creating Ambiguity
+Recursive Semantic Definition
+→ NONE
+
+Semantic-definition Cycle Creating Ambiguity
+→ 0
+```
+
+### B. Correction-sensitive conditional/application composition
+
+```text
+C11 --SDCD→ C13
+  when C11-carried protected context/evidence crosses an ordinary disclosure boundary
+
+C12 --CASU→ C11
+  when applicable governance context is transported through C11
+
+C12 --CASU→ C04
+  when temporal applicability/freshness exists in the bounded secret-reference case
+
+C12 --SDCD→ C13
+  when secret-reference metadata/evidence or material-sensitive output crosses disclosure
+
+C13 --CASU→ C11
+  when owner-provided disclosure/governance context is carried through C11
+
+C13 --CASU→ C12
+  only when input contains secret-reference/material semantics
+
+C13 --CASU→ C04/C05
+  only when temporal/provenance evidence must be preserved
+```
+
+These edges may produce bidirectional **use/composition** relationships, but they do not define Contract identity and do not participate in SDD cycle analysis.
+
+### C. External Authority/context dependencies
+
+```text
+C11 --EACD→ Tenant / Organization / IAM-Principal / Policy / Trust authorities
+C12 --EACD→ applicable Tenant / Principal / Policy / Trust / secret-material custody authorities
+C13 --EACD→ applicable Policy / Privacy / Trust / semantic owner
+```
+
+C11 may carry external authority context. Carrying does not convert EACD into C11 semantic authority and does not make the external authority a Foundation Contract.
+
+## 18.2 Independent conformance closure
+
+C11, C12 and C13 remain independently conformable:
+
+- C11 can be evaluated from its carriage/non-collapse/provenance/scope/applicability/isolation obligations plus SDD imports C04/C10. C13 is required only for an applicable supported disclosure composition case.
+- C12 can be evaluated from Ref!=Material, scope/provenance, resolution-evidence non-authority and provider neutrality plus C10. C11/C13/C04 are conditional application/composition cases.
+- C13 can be evaluated from sensitivity/redaction/non-disclosure semantics plus C10 using abstract owner-provided constraints. It does not require C11 as the only carrier and does not require C12 for non-secret sensitivity cases.
+- If a realization declares support for a CASU or SDCD case, that composite case must conform; failure of that case does not turn the two Contracts into a recursive definition.
+
+```text
+Contract Identity Ambiguity from C11/C12/C13 relationships
 → 0
 
-God Contract
-→ NONE_FOUND
+Independent Conformance Evaluation
+→ PASS / C11
+→ PASS / C12
+→ PASS / C13
 ```
+
+## 18.3 Non-Module interpretation
+
+This graph is semantic only. It does not select or imply package imports, one Contract per Module, shared facade, call graph, class dependency, provider interface, registry/factory, process/service topology or deployment topology.
 
 ---
 
@@ -915,7 +1073,8 @@ Concrete SDK language binding/package/API/CLI shape remains later authorized des
 - Temporal, Correlation, Status and Governed Context remain separate per accepted DAD.
 - Representation/Serialization stays one Contract because encode/decode support and semantic preservation share one consumer purpose.
 - Network/Cache/Storage remain independent client-mechanics Contracts because their result/failure/SoT non-guarantees differ materially.
-- Secret Reference and Redaction split at Contract level because provider/custody pressure belongs only to the reference/material side, while disclosure/redaction obligations have a distinct consumer/sink security boundary. They remain one capability and share one Stable Entry pressure.
+- Secret Reference and Redaction remain split at Contract level because provider/custody pressure belongs only to the reference/material side, while disclosure/redaction obligations have a distinct consumer/sink security boundary. The typed dependency correction proves this split does not create recursive definition: their interaction is CASU/SDCD, not mutual SDD.
+- Governed Context remains independent from Redaction: C11 defines context carriage while C13 defines disclosure/redaction. Their bidirectional application/composition cases do not merge identity or conformance.
 - Compatibility/Conformance remains one mechanics Contract; final domain judgement stays external.
 - Localization remains presentation-only and does not merge with Representation or Temporal.
 
@@ -928,6 +1087,9 @@ Duplicate Contract Semantics
 
 God Contract
 → NONE_FOUND
+
+C11/C12/C13 Contract Identity Ambiguity
+→ 0
 ```
 
 ---
@@ -938,17 +1100,20 @@ Foundation Module Design later receives realization pressure for all 15 Contract
 
 Foundation Provider Design later receives explicit pressure only for the provider-bearing subjects listed in §17. It must derive interfaces/selection/lifecycle from accepted Contract semantics and may not reverse the dependency.
 
-No package/module/class/facade/manager/registry/factory/adapter structure is selected here.
+The dependency types in §8.6/§18 are **not** Module design. No package/module/class/facade/manager/registry/factory/adapter structure, import direction or implementation call graph is selected here.
 
 ---
 
 # 23. DAD / MDE Summary
 
-Material delegated design decisions are persisted separately as `FCD-B1-DAD-001..008`.
+Material delegated design decisions remain `FCD-B1-DAD-001..008`; `FCD-B1-DAD-007` is corrected under `GAC-EPOCH-0034`.
 
 ```text
 Producing-session DAD
 → 8
+
+Corrected DAD
+→ FCD-B1-DAD-007
 
 New MDE
 → 0
@@ -961,6 +1126,9 @@ Unpersisted Owner Decision
 
 Missing Foundation Architecture
 → 0
+
+Shared Foundation Architecture Reopen
+→ NO
 ```
 
 No Contract moves Product Authority/SoT/Actual-state ownership, changes Tenant/Principal/Policy/Trust semantics, chooses a material provider/protocol/storage/format lock-in, selects a material offline fail-open/fail-closed policy or creates a major external identity/version commitment.
@@ -999,11 +1167,11 @@ No Contract moves Product Authority/SoT/Actual-state ownership, changes Tenant/P
 | Migration | explicit triggers and owner preservation | CLOSED |
 | Conformance | conforming/non-conforming/unknown model | CLOSED |
 | Provider Conformance | 10 provider-bearing pressures mapped to Contract subjects | CLOSED |
-| Cross-Contract Dependency | explicit acyclic semantic graph | CLOSED |
+| Cross-Contract Dependency | typed SDD/CASU/SDCD/EACD model; only SDD used for recursive-definition analysis; C11/C12/C13 independently conformable | CLOSED / CORRECTED |
 | Domain Contract Relationship | consumption only; no absorption | CLOSED |
 | Runtime Contract Relationship | 24 RCP preserved external | CLOSED |
 | SDK Relationship | consumer/binding only; no authority | CLOSED |
-| Decision Traceability | NSE/Z2/Z3/RRA/SFA + FCD DAD evidence | CLOSED |
+| Decision Traceability | NSE/Z2/Z3/RRA/SFA + FCD DAD + GAC-EPOCH-0034 correction evidence | CLOSED |
 | Revalidation Trigger | common + per-Contract triggers | CLOSED |
 
 ```text
@@ -1018,7 +1186,7 @@ Implementation-defined Escape
 
 # 25. Candidate Audit Summary
 
-Detailed audits are persisted separately. Candidate-level result:
+Detailed correction audits are persisted separately. Candidate-level result after correction:
 
 ```text
 Contract Inventory → COMPLETE
@@ -1043,8 +1211,9 @@ Provider Conformance Pressure → CLOSED
 Provider API Absorption → 0
 Domain Contract Absorption → 0
 Runtime Contract Absorption → 0
-Cross-Contract Dependency → CLOSED
-Semantic Dependency Cycle → 0
+Cross-Contract Dependency → CLOSED / TYPED
+Semantic-definition Dependency Cycle Creating Ambiguity → 0
+C11/C12/C13 Independent Conformance → PASS
 Contract Overfragmentation → NONE_FOUND
 God Contract → NONE_FOUND
 Authority Transfer → 0
@@ -1066,8 +1235,8 @@ Implementation Planning Leakage → 0
 # 26. Candidate Status / Stop Rule
 
 ```text
-NGRP-001 Foundation Contract Design / Batch 1
-→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+NGRP-001 Foundation Contract Design / Batch 1 Correction
+→ COMPLETED / AWAITING_GLOBAL_REVIEW
 
 Global Acceptance
 → NOT CLAIMED
@@ -1088,4 +1257,4 @@ Implementation Authorization
 → NONE
 ```
 
-After Candidate, DAD evidence, Review/Audit evidence and Handoff evidence are persisted, this producing session stops and returns to the Global Architecture Coordinator.
+After corrected Candidate, DAD evidence, Review/Audit evidence and Handoff evidence are persisted, this bounded correction session stops and returns to the Global Architecture Coordinator.
