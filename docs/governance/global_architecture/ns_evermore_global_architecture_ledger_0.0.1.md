@@ -203,4 +203,29 @@ Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
 Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 2 / S6 Automation Domain producing session
+
+GAC-TR-0057 → GAC-EPOCH-0047
+Transition → ns_server Component Internal Design / Batch 2 independent Global Acceptance
+Producing Final HEAD → 8b8de02bb6207495377bea83950086b3ce4b69a1
+Global Acceptance Evidence Commit → 9c8d8e911d5be94e2758d3b71f404cab5d70320e
+Result → GLOBAL_ACCEPT
+Accepted Boundary → S6 Automation Definition, Trigger & Composition Lifecycle
+Accepted Internal Module Count → 9
+Accepted DAD → CID-SV-B2-DAD-001..014
+Recognized Owner MDE → CID-SV-B2-MDE-001 / Recursive Automation-to-Automation Invocation NOT SUPPORTED
+Reusable Automation Composition → REQUIRED / PRESERVED
+Canonical Automation Composition Dependency → ACYCLIC
+Accepted Full Stable Contract Closure → RCP-13 / RCP-14 / RCP-15
+Accepted Partial Closure → RCP-16 Automation Source-side / RCP-17 Automation-side
+Full RCP-16 / RCP-17 Cross-domain Closure → NOT CLAIMED
+Authority / SoT / Actual-state Transfer → 0
+Concrete DSL/AST/IR/Broker/Workflow-engine/DB/API/Process leakage → 0
+Decision Registry → 0.0.17
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+ns_server Component Internal Design Global Closure → NOT DECLARED
+ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 2 ACCEPTANCE
+Current Authorized Phase → NONE
+Unique Next Legal Action → separate fresh-recovery GAC ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
 ```
