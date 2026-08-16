@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0052`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0053`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 ```text
@@ -12,46 +12,23 @@ Five-component Internal-boundary Exhaustion → SATISFIED
 Accepted Internal Boundaries → 34
 Runtime Responsibility Architecture → GLOBAL_CLOSED / COMPLETE
 Runtime Roles → 22
-Runtime/Domain Stable Contract Pressure → 24 / NAMED DOWNSTREAM DESIGN AUTHORITY
-
 Shared Foundation Architecture → GLOBAL_CLOSED / COMPLETE
 Foundation Contract Design → GLOBAL_CLOSED / COMPLETE
 Foundation Module Design → GLOBAL_CLOSED / COMPLETE
 Foundation Provider Design → GLOBAL_CLOSED / COMPLETE
-Foundation Provider Design Exhaustion → SATISFIED
-Accepted Foundation Capabilities → 14 / NORMATIVE
-Accepted Foundation Contracts → 15 / NORMATIVE
-Accepted Foundation Modules → 14 / NORMATIVE
-Accepted Foundation Provider Families → 10 / NORMATIVE
 Component Internal Design Readiness → SATISFIED
 
-ns_server Component Internal Design / Batch 1 → GLOBAL_ACCEPTED
-Accepted Batch-1 Boundaries → S1 / S2 / S3 / S4 / S8 / S9
-Accepted Batch-1 DAD → CID-SV-B1-DAD-001..013
-RCP-01 / RCP-02 / RCP-19 → CLOSED AT DESIGN-SEMANTIC LEVEL
-S8 Artifact Identity / Acceptance Evidence → CLOSED AT DESIGN-SEMANTIC LEVEL
-
-ns_server Component Internal Design / Batch 2 → GLOBAL_ACCEPTED
-Accepted Batch-2 Boundary → S6
-Accepted Batch-2 DAD → CID-SV-B2-DAD-001..014
-Recognized Owner MDE → CID-SV-B2-MDE-001
-RCP-13 / RCP-14 / RCP-15 → CLOSED AT DESIGN-SEMANTIC LEVEL
-RCP-16 Automation Source-side → CLOSED AT CURRENT DESIGN LEVEL
-RCP-17 Automation-side → CLOSED AT CURRENT DESIGN LEVEL
-
-ns_server Component Internal Design / Batch 3 → GLOBAL_ACCEPTED
-Accepted Batch-3 Boundary → S5 Business Application Definition Lifecycle
-Accepted Batch-3 DAD → CID-SV-B3-DAD-001..012
-RCP-17 Business Application side → CLOSED AT CURRENT DESIGN LEVEL
-RCP-23 S5/SV-R01 contribution → CLOSED AT CURRENT DESIGN LEVEL
+ns_server Batch 1 → GLOBAL_ACCEPTED
+ns_server Batch 2 → GLOBAL_ACCEPTED
+ns_server Batch 3 → GLOBAL_ACCEPTED
 
 Remaining ns_server Internal-design Boundaries
 → S7 / S10 / S11 / S12 / S13
 
-Remaining Material ns_server Component Internal-design Pressure
+Remaining Material ns_server Internal-design Pressure
 → PRESENT
 
-ns_server Component Internal Design Exhaustion
+ns_server Internal Design Exhaustion
 → NOT_SATISFIED
 
 ns_server Component Internal Design Global Closure
@@ -60,75 +37,70 @@ ns_server Component Internal Design Global Closure
 Decision Registry
 → 0.0.19 / CURRENT / NORMATIVE
 
-Recognized Owner MDE
-→ CID-SV-B4-MDE-001
-→ S7 Native Data / Knowledge / ETL Canonical Definition SoT Topology
+CID-SV-B4-MDE-001
 → OWNER_DECIDED / PERSISTED
+→ Option A
+→ Native S7 Canonical Definition SoT = ns_server
 
-Open MDE
-→ 0
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
 
-Unpersisted Owner Decision
-→ 0
-
-Blocking Item
-→ NONE_FOR_S7_SOT_DECISION
+ns_server Batch-4 / S7 Entry Readiness
+→ SATISFIED
 
 Current Authorized Phase
 → NONE
 ```
 
-## CID-SV-B4-MDE-001 Owner Result
+Readiness evidence:
 
-Owner Decision evidence:
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_4_s7_entry_readiness_assessment_0.0.1.md`
 
-`docs/governance/decisions/ns_evermore_cid_sv_b4_mde_001_s7_native_definition_sot_owner_decision_0.0.1.md`
+## Ready Candidate
 
 ```text
-Selected Option
-→ A
+NGRP-001 — Component Internal Design / ns_server / Batch 4
 
+Candidate Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY
+  / NS_SERVER
+  / BATCH_4
+  / DATA_KNOWLEDGE_ETL_DOMAIN_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+
+Primary Boundary
+→ S7 Enterprise Data / Knowledge / Foundational ETL Governance
+
+Inherited Runtime Role
+→ SV-R03 Data / Knowledge / ETL Runtime Participant
+```
+
+Readiness is not authorization.
+
+## S7 Normative Entry Baseline
+
+```text
 Native Data / Knowledge / Foundational ETL Semantic Authority
-→ ns_server / UNCHANGED
+→ ns_server
 
 Native S7 Canonical Definition SoT
 → ns_server
 
-Data / Knowledge Factual SoT
-→ unchanged / one final SoT per bounded semantic partition
-→ external factual SoTs remain permitted
-```
-
-Permanent distinctions:
-
-```text
 Semantic Authority
 != Canonical Definition SoT
 
-Native S7 Definition SoT
+Factual Data / Knowledge SoT
+→ one final SoT per bounded semantic partition
+→ external final factual SoTs remain permitted
+
+Native Definition SoT
 != Factual Data / Knowledge SoT
-
-Storage / Database / ETL / Index / Cache / Vector / Projection
-!= SoT automatically
-```
-
-## Current S7 Upstream
-
-```text
-Native S7 Semantic Authority
-→ ns_server
-
-Native S7 Canonical Definition SoT
-→ ns_server
 
 Complete Source / SDK Authoring
 → REQUIRED
 
 Complete ns_web Visual Authoring
 → REQUIRED
-
-Both Surfaces
-→ same governed S7 semantics
 
 Bidirectional Source↔Visual Semantic Interoperability
 → REQUIRED
@@ -143,46 +115,48 @@ Governed Pre-production Trial
 → REQUIRED
 
 SV-R03
-→ Data / Knowledge / ETL Runtime Participant
+→ ACCEPTED
 ```
 
-The Owner decision does not predefine S7 internal modules, concrete native definition families, DSL/AST/IR, visual schema, storage, connector, ETL engine, provider, protocol, artifact format or runtime process topology.
+## Future Batch-4 Allowed Pressure
 
-## Remaining Pressure Ordering
+A separately authorized Batch 4 may derive S7 internal architecture for native definition identity/revision/lifecycle, native SoT custody, mutable authoring candidates, dual-authoring interoperability, validation/certification participation, factual-SoT binding/provenance, external-source mapping/derivation semantics, ETL/Knowledge/query-aggregation semantics where S7-owned, SV-R03 runtime semantics, S7 Trial semantics, historical/offline/recovery and compatibility/conformance.
 
-The post-Batch-3 assessment remains controlling for batching order:
-
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.3.md`
+It may close at current design level:
 
 ```text
-Highest-pressure remaining boundary
-→ S7 Enterprise Data / Knowledge / Foundational ETL Governance
+RCP-17 S7 side
+→ MAY close
+→ full RCP-17 MUST NOT be claimed
 
-Prospective next Batch candidate
-→ ns_server / Batch 4 / S7
-
-Batch 4 Authorization
-→ NOT YET GRANTED
+RCP-23 S7 / SV-R03 contribution
+→ MAY close
+→ full RCP-23 MUST NOT be claimed
+→ S10 / SV-R06 remains required
 ```
 
-S10/S11/S12/S13 remain unauthorized. S13 continues to depend on stable S7 resource identity/revision semantics; full RCP-23 still requires S7/SV-R03 and S10/SV-R06.
-
-## Explicit Forbidden / Deferred Scope
+## Forbidden Scope
 
 ```text
-ns_server Batch 4 / S7 → NOT AUTHORIZED BY OWNER DECISION ALONE
-S10 / S11 / S12 / S13 Internal Design → NOT AUTHORIZED
-Other Product Component Internal Design → NOT AUTHORIZED
-System-level SDK Detailed Design → NOT AUTHORIZED
-Design-to-Implementation Readiness → NOT AUTHORIZED
-Implementation Planning / IWP / Coding → NOT AUTHORIZED
+S10 / S11 / S12 / S13 internal design
+other Product Component Internal Design
+full RCP-17
+full RCP-23
+RCP-18 Notification / Delivery
+RCP-21 Discovery
+System-level SDK Detailed Design
+concrete DSL/AST/IR/visual schema/query language
+concrete database/warehouse/lake/search/vector/ETL/CDC technology
+concrete protocol/API/schema/provider/vendor/library
+runtime process/worker/scheduler topology
+Django App / Python package / class layout as normative architecture
+Implementation Planning / IWP / Coding
 ```
 
 ## Unique Next Legal Action
 
 ```text
-Fresh GAC Repository recovery
-→ verify CID-SV-B4-MDE-001 + Registry 0.0.19 synchronization
-→ reassess S7 Batch-entry readiness
-→ if readiness is SATISFIED, perform a separate Batch-4 authorization transition
+Fresh GAC recovery
+→ perform separate ns_server Batch 4 / S7 authorization transition
+→ do not start producing work until that transition is sealed
 ```
