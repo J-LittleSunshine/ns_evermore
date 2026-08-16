@@ -353,4 +353,23 @@ ns_server Batch-4 / S7 Entry Readiness → SATISFIED
 Batch 4 Authorization → NOT GRANTED BY READINESS ASSESSMENT
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh GAC recovery then separate Batch-4 / S7 authorization transition
+
+GAC-TR-0064 → GAC-EPOCH-0054
+Transition → separate ns_server Component Internal Design / Batch 4 / S7 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_4_s7_entry_readiness_assessment_0.0.1.md
+Authorized Phase → NGRP-001 — Component Internal Design / ns_server / Batch 4
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_4 / DATA_KNOWLEDGE_ETL_DOMAIN_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Boundary → S7 Enterprise Data / Knowledge / Foundational ETL Governance
+Inherited Runtime Role → SV-R03 Data / Knowledge / ETL Runtime Participant
+CID-SV-B4-MDE-001 → REQUIRED NORMATIVE INPUT / Option A / Native S7 Canonical Definition SoT = ns_server
+Factual Data / Knowledge SoT topology → per bounded semantic partition / external final factual SoT permitted / PRESERVED
+RCP-17 Authorized Refinement → S7 Data-Knowledge-ETL side only / full cross-domain closure NOT AUTHORIZED
+RCP-23 Authorized Refinement → S7/SV-R03 contribution only / full Server-native Runtime Evidence closure NOT AUTHORIZED / S10-SV-R06 remains required
+S10 / S11 / S12 / S13 Internal Design → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Open MDE required for current S7 Batch → 0
+Unpersisted Owner Decision required for current S7 Batch → 0
+Blocking Item → NONE
+Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 4 / S7 producing session
 ```
