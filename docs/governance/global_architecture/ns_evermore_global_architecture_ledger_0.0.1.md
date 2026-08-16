@@ -316,4 +316,22 @@ Batch 4 Authorization → NOT GRANTED
 Required Read Set Continuity Defect → two GAC-EPOCH-0050 S7 decision path references corrected in Epoch 0051 State / semantic evidence unchanged
 Current Authorized Phase → NONE
 Unique Next Legal Action → Project Owner decides exactly one S7 Native Definition SoT option A/B/C; persist decision before any S7 authorization
+
+GAC-TR-0062 → GAC-EPOCH-0052
+Transition → persist and recognize Project Owner S7 Native Definition Canonical SoT decision
+Owner Decision Evidence → docs/governance/decisions/ns_evermore_cid_sv_b4_mde_001_s7_native_definition_sot_owner_decision_0.0.1.md
+Owner Decision Evidence Commit → dd2984322e2f230ec179ccb7ebf7ec89fd913bdb
+Decision ID → CID-SV-B4-MDE-001
+Selected Option → A
+Native S7 Data / Knowledge / Foundational ETL Semantic Authority → ns_server / UNCHANGED
+Native S7 Canonical Definition SoT → ns_server
+Native Definition SoT != Factual Data / Knowledge SoT → PRESERVED
+Data / Knowledge factual SoT federation → UNCHANGED / per bounded semantic partition / external final factual SoT permitted
+Decision Registry → 0.0.19
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE_FOR_S7_SOT_DECISION
+Batch 4 Authorization → NOT GRANTED BY OWNER DECISION
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh GAC recovery and explicit S7 Batch-entry readiness reassessment
 ```
