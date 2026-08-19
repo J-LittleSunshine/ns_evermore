@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0058`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0059`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 ```text
@@ -27,21 +27,6 @@ ns_server Batch 5 → GLOBAL_ACCEPTED
 Decision Registry
 → 0.0.21 / CURRENT / NORMATIVE
 
-Accepted Batch-5 Boundary
-→ S10 Server-local Background Work & Server Actual-state
-
-Accepted Batch-5 Runtime Role Input
-→ SV-R06 Server-local Background Execution Participant
-
-Accepted Batch-5 Internal Modules
-→ 7
-
-Accepted Batch-5 DAD
-→ CID-SV-B5-DAD-001..015
-
-RCP-23 S10 / SV-R06 contribution
-→ CLOSED AT CURRENT DESIGN LEVEL
-
 RCP-23 Full Server-native Runtime Evidence
 → CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
 
@@ -49,13 +34,28 @@ Remaining ns_server Internal-design Boundaries
 → S11 / S12 / S13
 
 Remaining Material ns_server Component Internal-design Pressure
-→ PRESENT / MUST BE REASSESSED
+→ PRESENT
 
 ns_server Internal Design Exhaustion
-→ NOT YET REASSESSED AFTER BATCH 5 ACCEPTANCE
+→ NOT_SATISFIED
 
 ns_server Component Internal Design Global Closure
 → NOT_DECLARED
+
+Post-Batch-5 Assessment
+→ docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.5.md
+
+Highest-pressure Next Boundary
+→ S12 Governed Notification & External Delivery Lifecycle
+
+S12 Runtime Role
+→ SV-R08 Notification Lifecycle & External Delivery Participant
+
+S12 Entry Readiness
+→ SATISFIED
+
+Potential RCP-18 Notification / Delivery Closure
+→ ELIGIBLE IN LATER SEPARATELY AUTHORIZED BATCH 6
 
 Open MDE
 → 0
@@ -76,183 +76,178 @@ Authorization Scope
 → NONE
 ```
 
-Batch-5 Global Acceptance evidence:
+## Assessment Basis
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_5_global_acceptance_0.0.1.md`
-
-## Accepted S10 / SV-R06 Baseline
+Fresh recovery established:
 
 ```text
-S10 Product Semantic Authority Added
+Assessment Entry HEAD
+→ 9e3a531fa0217ef00bc3cb3a344e44f7bc473302
+
+GAC Epoch at Entry
+→ GAC-EPOCH-0058
+
+State Verified Through HEAD
+→ 0ded95f51a309af91a2b7d6860963e99d5aa359b
+
+State-to-HEAD Delta
+→ exactly one Global State acceptance-seal commit
+→ EXPECTED_GOVERNANCE
+
+Unexpected Drift
 → NONE
 
-SV-R06 final Actual-state/source-fact owner
-→ server-local Attempt
-→ server-local progress
-→ server-local outcome
-→ genuine server-local source facts
+Unauthorized Progression
+→ NONE
+```
 
-Same bounded runtime assertion
-→ exactly one final Actual-state owner
+## Why S12 Is Next
+
+```text
+S11 / SV-R07
+→ own aggregation/routing side remains valid later
+→ full RCP-16 still spans SV-R02 + AG-R01 + SV-R07 + WB-R01
+→ ns_agent/ns_web Component Internal Design not yet available
+
+S12 / SV-R08
+→ Owner capability/MDE already decided and persisted
+→ Notification Actual-state partition already accepted
+→ channel-neutral core + pluggable external delivery REQUIRED
+→ private/offline core correctness REQUIRED
+→ RCP-18 responsibility topology already accepted
+→ highest entry-clean dependency-unlocking pressure
+
+S13 / SV-R09
+→ unified Discovery remains required
+→ Discovery may include Human Tasks + Notifications
+→ S11/S12 source-category internals remain unresolved
+→ premature S13 design risks inventing those contribution semantics
+```
+
+## Accepted S12 Owner Baseline
+
+```text
+Unified Governed Notification Capability
+→ REQUIRED
+
+In-product Notification Discovery / History
+→ REQUIRED
+
+Channel-neutral Core Notification Semantics
+→ REQUIRED
+
+Pluggable External Notification Delivery
+→ REQUIRED
+
+External Platform Push
+→ REQUIRED AS PRODUCT CAPABILITY
+
+Initial Target Directions
+→ Feishu
+→ WeCom / Enterprise WeChat
+→ SMS
+
+Mandatory Fixed Omnichannel Provider Set
+→ NOT REQUIRED
+
+Public Internet / Public SaaS Core-correctness Dependency
+→ PROHIBITED
 ```
 
 Permanent non-collapse:
 
 ```text
-Background Operation != Attempt
-Operation Identity != Attempt Identity
-Attempt != Progress != Outcome
-Retry != historical Attempt mutation
-Retry / Re-entry != same Attempt automatically
-S10 Attempt != S5 / S6 / S7 semantic runtime state
-S10 Attempt != Node Attempt / Effect
-S10 Attempt != Agent Runtime
-S10 Attempt != RT Scheduling / Routing / Dispatch
+Notification
+!= Human Task
+!= Source Fact
+!= Runtime Current State
+
+Notification Delivered
+!= User Observed
+
+Notification Read
+!= Problem Resolved
+
+Notification Acknowledged
+!= Policy Approved
+
+Provider
+!= Product Authority
 ```
 
-## Accepted S10 Internal Responsibilities
+## Accepted S12 / SV-R08 Runtime Baseline
 
 ```text
-BG01 Background Operation Identity & Initiation Context
-BG02 Time-trigger & Continuous-availability Semantics
-BG03 Attempt Lifecycle & Lineage Custody
-BG04 Progress, Outcome & Server-local Source-fact Custody
-BG05 Intervention & Retry/Re-entry Applicability
-BG06 Recovery, Reconciliation & Historical Qualification
-BG07 Runtime Governance & Applied Configuration Binding
+SV-R08 Final Actual-state Owner
+→ Notification lifecycle
+→ applicable Delivery Attempt facts
+
+Underlying Source Condition
+→ originating source owner
+
+Human Awareness Projection
+→ WB-R01 only
+
+External Provider Evidence
+→ consumed evidence only
+→ provider never becomes Product Authority
 ```
 
-`BG01..BG07` are architecture-semantic responsibility labels only and do not imply packages, services, workers, schedulers, queues, database objects or deployment units.
-
-## Accepted Identity / Retry / Intervention Semantics
+Accepted generic journey:
 
 ```text
-Background Operation
-→ representation-neutral logical server-local work subject
-
-Operation → Attempts
-→ 0..N
-
-Attempt
-→ one bounded semantic execution try
+Source fact owner
+→ Notification creation intent / correlation
+→ SV-R08 Notification lifecycle
+→ SV-R08 Delivery Attempt
+→ external provider evidence
+→ SV-R08 Delivery-attempt state
+→ WB-R01 awareness projection
 ```
 
+## Candidate Batch 6 Shape
+
 ```text
-new retry execution try
-→ new Attempt identity + retry lineage
+NGRP-001 — Component Internal Design / ns_server / Batch 6
 
-Re-entry
-→ same Attempt only when continuity is proven
-→ otherwise new Attempt + re-entry lineage
+Candidate Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY
+  / NS_SERVER
+  / BATCH_6
+  / GOVERNED_NOTIFICATION_AND_EXTERNAL_DELIVERY_LIFECYCLE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 
-Duplicate technical invocation
-→ neither same nor new Attempt automatically
+Candidate Boundary
+→ S12 Governed Notification & External Delivery Lifecycle
+
+Inherited Runtime Role
+→ SV-R08 Notification Lifecycle & External Delivery Participant
+
+Potential Stable Contract Closure
+→ RCP-18 Notification / Delivery
+→ MAY be authorized at current design-semantic level in a separate transition
 ```
 
-No exactly-once, at-most-once, at-least-once, deterministic replay or latest-wins guarantee is accepted.
+This checkpoint does **not** authorize Batch 6.
+
+## Explicit Deferred / Forbidden Scope
 
 ```text
-Intervention Requested
-!= Applicable
-!= Accepted
-!= Action Started
-!= Achieved
-!= Effects Reversed
-```
-
-No universal cancellation, pause/resume, retry, rollback or compensation policy is accepted.
-
-## Server-local / Cross-component Boundary
-
-```text
-Pure server-local S10 work
-→ does not require ns_runtime merely because asynchronous / delayed / periodic / time-triggered / long-running
-
-Cross-component execution
-→ applicable Admission
-→ RT-R02 / RT-R03 where genuinely required
-→ remote executor retains Attempt / Effect / source facts
-```
-
-S10 may correlate remote evidence but does not absorb remote Actual-state.
-
-## Recovery / Offline / Configuration
-
-```text
-Reconnect != Reconciled
-Recovery != Authority Transfer
-Replay != Retroactive Authorization
-Latest Timestamp != Canonical Winner
-Local Persistence != Actual-state Ownership
-Restart != Same Attempt automatically
-Restart != New Attempt automatically
-```
-
-Explicit uncertainty/recovery states remain available as applicable, including `UNKNOWN`, `UNAVAILABLE`, `STALE`, `PARTIAL`, `INDETERMINATE`, `CONFLICTING`, `RECONCILIATION_PENDING`, `RECOVERING`.
-
-```text
-Managed Desired Configuration → S9
-S10 Applied Runtime Evidence → S10 / SV-R06 where applicable
-Observed Projection → derived
-Desired != Distributed != Applied != Observed
-```
-
-No global fail-open/fail-closed or conflict-winner rule is accepted.
-
-## RCP-23 Full Closure
-
-```text
-S5 / SV-R01 → Business Application semantic Runtime Evidence
-S7 / SV-R03 → Data / Knowledge / ETL semantic Runtime Evidence
-S10 / SV-R06 → Server-local Background Runtime Evidence
-```
-
-```text
-RCP-23 Full Server-native Runtime Evidence
-→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
-```
-
-Common contract semantics do not merge producer ownership:
-
-```text
-SV-R01 != SV-R03 != SV-R06
-Common Contract != Common Authority != Common Actual-state Owner
-Universal Server Runtime Actual-state SoT → NOT CREATED
-```
-
-Accepted S5 and S7 internals remain unchanged.
-
-## Foundation / Provider Neutrality
-
-```text
-Foundation != S10 Authority
-Provider != S10 Authority
-Time Source != Scheduler Authority
-Storage Placement != Actual-state Ownership
-Telemetry Aggregation != Runtime SoT
-Provider Success != S10 Semantic Success
-```
-
-No new Foundation capability or Provider family is introduced.
-
-## Explicit Forbidden / Deferred Scope
-
-```text
-S11 / S12 / S13 Internal Design → NOT AUTHORIZED
+S11 / S13 Internal Design → NOT AUTHORIZED
 Other Product Component Internal Design → NOT AUTHORIZED
 Full RCP-16 → NOT CLOSED
 Full RCP-17 → NOT CLOSED
-RCP-18 Notification / Delivery → NOT CLOSED
 RCP-21 Discovery → NOT CLOSED
 System-level SDK Detailed Design → NOT AUTHORIZED
 Design-to-Implementation Readiness → NOT AUTHORIZED
-Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Implementation Planning → NOT AUTHORIZED
+IWP → NOT AUTHORIZED
+Coding → NOT AUTHORIZED
 ```
 
 ## Unique Next Legal Action
 
 ```text
 Fresh Repository recovery
-→ perform ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment after Batch 5 acceptance
-→ do not auto-authorize another Batch
+→ separate GAC authorization transition for ns_server Component Internal Design / Batch 6 / S12
+→ do not start producing work until authorization is separately sealed
 ```
