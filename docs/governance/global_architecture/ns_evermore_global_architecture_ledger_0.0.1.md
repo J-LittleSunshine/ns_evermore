@@ -401,7 +401,7 @@ Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
 Remaining ns_server Boundaries → S10 / S11 / S12 / S13
-ns_server Component Internal Design Global Closure → NOT DECLARED
+ns_server Component Internal Design Global Closure → NOT_DECLARED
 ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 4 ACCEPTANCE
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment; no downstream producing session is authorized automatically
@@ -506,4 +506,27 @@ Blocking Item → NONE
 Batch 6 Authorization → NOT GRANTED
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh Repository recovery then separate GAC authorization transition for ns_server Component Internal Design / Batch 6 / S12
+
+GAC-TR-0070 → GAC-EPOCH-0060
+Transition → separate ns_server Component Internal Design / Batch 6 / S12 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.5.md
+Authorized Phase → NGRP-001 — Component Internal Design / ns_server / Batch 6
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_6 / GOVERNED_NOTIFICATION_AND_EXTERNAL_DELIVERY_LIFECYCLE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Boundary → S12 Governed Notification & External Delivery Lifecycle
+Inherited Runtime Role → SV-R08 Notification Lifecycle & External Delivery Participant
+Owner Capability / MDE Baseline → Option B / channel-neutral core + pluggable external delivery / external push required / Feishu-WeCom-SMS target directions
+S12 Actual-state Ownership → Notification lifecycle + Delivery Attempt facts / underlying source facts remain source-owned
+RCP-18 Notification / Delivery → FULL DESIGN-SEMANTIC CLOSURE AUTHORIZED
+Human Task / Notification Separation → MUST BE PRESERVED
+Provider / Channel Authority Transfer → PROHIBITED
+Public SaaS Core-correctness Dependency → PROHIBITED
+S11 / S13 Internal Design → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Concrete Feishu / WeCom / SMS Provider/API/SDK Selection → NOT AUTHORIZED
+Concrete Queue / Broker / Retry-engine / Template / Recipient-schema / DB / API Selection → NOT AUTHORIZED
+Open MDE required for current S12 Batch → 0
+Unpersisted Owner Decision required for current S12 Batch → 0
+Blocking Item → NONE
+Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 6 / S12 producing session
 ```
