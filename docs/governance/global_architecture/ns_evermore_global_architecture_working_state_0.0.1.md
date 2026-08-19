@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0057`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0058`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 ```text
@@ -22,26 +22,45 @@ ns_server Batch 1 → GLOBAL_ACCEPTED
 ns_server Batch 2 → GLOBAL_ACCEPTED
 ns_server Batch 3 → GLOBAL_ACCEPTED
 ns_server Batch 4 → GLOBAL_ACCEPTED
+ns_server Batch 5 → GLOBAL_ACCEPTED
 
 Decision Registry
-→ 0.0.20 / CURRENT / NORMATIVE
+→ 0.0.21 / CURRENT / NORMATIVE
+
+Accepted Batch-5 Boundary
+→ S10 Server-local Background Work & Server Actual-state
+
+Accepted Batch-5 Runtime Role Input
+→ SV-R06 Server-local Background Execution Participant
+
+Accepted Batch-5 Internal Modules
+→ 7
+
+Accepted Batch-5 DAD
+→ CID-SV-B5-DAD-001..015
+
+RCP-23 S10 / SV-R06 contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-23 Full Server-native Runtime Evidence
+→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
 
 Remaining ns_server Internal-design Boundaries
-→ S10 / S11 / S12 / S13
+→ S11 / S12 / S13
 
 Remaining Material ns_server Component Internal-design Pressure
-→ PRESENT
+→ PRESENT / MUST BE REASSESSED
 
 ns_server Internal Design Exhaustion
-→ NOT_SATISFIED
+→ NOT YET REASSESSED AFTER BATCH 5 ACCEPTANCE
 
 ns_server Component Internal Design Global Closure
 → NOT_DECLARED
 
-Open MDE required for current S10 Batch
+Open MDE
 → 0
 
-Unpersisted Owner Decision required for current S10 Batch
+Unpersisted Owner Decision
 → 0
 
 Blocking Item
@@ -51,47 +70,27 @@ Known Working-branch Drift
 → NONE
 
 Current Authorized Phase
-→ NGRP-001 — Component Internal Design / ns_server / Batch 5
+→ NONE
 
 Authorization Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY
-  / NS_SERVER
-  / BATCH_5
-  / SERVER_LOCAL_BACKGROUND_WORK_AND_ACTUAL_STATE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+→ NONE
 ```
 
-Authorization basis:
+Batch-5 Global Acceptance evidence:
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.4.md`
-
-## Exact Authorized Design Object
-
-```text
-S10
-→ Server-local Background Work & Server Actual-state
-
-SV-R06
-→ Server-local Background Execution Participant
-→ inherited Runtime Role / Actual-state responsibility input
-→ Runtime Role taxonomy itself is NOT reopened
-```
-
-No other `ns_server` boundary is authorized for internal decomposition in this Batch.
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_5_global_acceptance_0.0.1.md`
 
 ## Accepted S10 / SV-R06 Baseline
 
 ```text
-S10 Purpose
-→ continuously available server-local long-running / time-triggered / background responsibilities intrinsic to ns_server
+S10 Product Semantic Authority Added
+→ NONE
 
-Owned Product Semantic Authority
-→ NONE NEW
-
-SV-R06 Owned Actual-state / Source Facts
-→ server-local attempt / progress / outcome / genuine server-local source facts
-
-Pure server-local background work
-→ does NOT require ns_runtime merely because it is time-triggered or long-running
+SV-R06 final Actual-state/source-fact owner
+→ server-local Attempt
+→ server-local progress
+→ server-local outcome
+→ genuine server-local source facts
 
 Same bounded runtime assertion
 → exactly one final Actual-state owner
@@ -100,238 +99,160 @@ Same bounded runtime assertion
 Permanent non-collapse:
 
 ```text
-Server-local Background Work
-!= Automation Semantic State
-!= Business Application Semantic State
-!= Data / Knowledge / ETL Semantic State
-!= Cross-component Scheduling / Routing / Dispatch
-!= Node Attempt / Effect
-!= Agent Runtime
+Background Operation != Attempt
+Operation Identity != Attempt Identity
+Attempt != Progress != Outcome
+Retry != historical Attempt mutation
+Retry / Re-entry != same Attempt automatically
+S10 Attempt != S5 / S6 / S7 semantic runtime state
+S10 Attempt != Node Attempt / Effect
+S10 Attempt != Agent Runtime
+S10 Attempt != RT Scheduling / Routing / Dispatch
+```
 
-Time-triggered
-!= universal scheduler authority
+## Accepted S10 Internal Responsibilities
 
-Long-running
-!= universal worker subsystem
+```text
+BG01 Background Operation Identity & Initiation Context
+BG02 Time-trigger & Continuous-availability Semantics
+BG03 Attempt Lifecycle & Lineage Custody
+BG04 Progress, Outcome & Server-local Source-fact Custody
+BG05 Intervention & Retry/Re-entry Applicability
+BG06 Recovery, Reconciliation & Historical Qualification
+BG07 Runtime Governance & Applied Configuration Binding
+```
 
-Retry / Re-entry
-!= same Attempt automatically
+`BG01..BG07` are architecture-semantic responsibility labels only and do not imply packages, services, workers, schedulers, queues, database objects or deployment units.
 
-Attempt Success
-!= Business / Domain Semantic Success automatically
+## Accepted Identity / Retry / Intervention Semantics
 
+```text
+Background Operation
+→ representation-neutral logical server-local work subject
+
+Operation → Attempts
+→ 0..N
+
+Attempt
+→ one bounded semantic execution try
+```
+
+```text
+new retry execution try
+→ new Attempt identity + retry lineage
+
+Re-entry
+→ same Attempt only when continuity is proven
+→ otherwise new Attempt + re-entry lineage
+
+Duplicate technical invocation
+→ neither same nor new Attempt automatically
+```
+
+No exactly-once, at-most-once, at-least-once, deterministic replay or latest-wins guarantee is accepted.
+
+```text
 Intervention Requested
-!= Intervention Achieved
+!= Applicable
+!= Accepted
+!= Action Started
+!= Achieved
+!= Effects Reversed
 ```
 
-## RCP-23 Authorized Closure
+No universal cancellation, pause/resume, retry, rollback or compensation policy is accepted.
 
-Accepted producer set:
+## Server-local / Cross-component Boundary
 
 ```text
-S5 / SV-R01
-→ contribution GLOBAL_ACCEPTED
+Pure server-local S10 work
+→ does not require ns_runtime merely because asynchronous / delayed / periodic / time-triggered / long-running
 
-S7 / SV-R03
-→ contribution GLOBAL_ACCEPTED
-
-S10 / SV-R06
-→ contribution AUTHORIZED FOR CURRENT BATCH
+Cross-component execution
+→ applicable Admission
+→ RT-R02 / RT-R03 where genuinely required
+→ remote executor retains Attempt / Effect / source facts
 ```
 
-This Batch MAY synthesize:
+S10 may correlate remote evidence but does not absorb remote Actual-state.
+
+## Recovery / Offline / Configuration
 
 ```text
-RCP-23 S10 / SV-R06 Contribution
-→ MAY close at current design level
-
-RCP-23 Full Server-native Runtime Evidence Closure
-→ MAY close at current design-semantic level
+Reconnect != Reconciled
+Recovery != Authority Transfer
+Replay != Retroactive Authorization
+Latest Timestamp != Canonical Winner
+Local Persistence != Actual-state Ownership
+Restart != Same Attempt automatically
+Restart != New Attempt automatically
 ```
 
-Conditions:
-
-- accepted S5/SV-R01 and S7/SV-R03 semantics are normative upstream and MUST NOT be reopened;
-- full RCP-23 closure must preserve each producer partition's exact source/Actual-state ownership;
-- consumer obligations must preserve operation/revision/provenance/temporal/private-offline semantics;
-- full RCP-23 closure does not imply one universal server runtime Actual-state owner;
-- full RCP-23 closure does not authorize a concrete schema/API/message envelope/storage model.
-
-## Authorized S10 Internal-design Pressure
-
-The producing session may derive architecture-semantic DADs for:
+Explicit uncertainty/recovery states remain available as applicable, including `UNKNOWN`, `UNAVAILABLE`, `STALE`, `PARTIAL`, `INDETERMINATE`, `CONFLICTING`, `RECONCILIATION_PENDING`, `RECOVERING`.
 
 ```text
-internal responsibility / Module decomposition
-server-local background Operation identity
-server-local Attempt identity
-Operation vs Attempt vs progress vs outcome
-long-running / continuously-available semantics
-time-triggered initiation semantics
-retry / re-entry / duplicate-attempt / supersession relationships
-parent / child / correlation / provenance relationships where applicable
-source Definition / governance / Admission / configuration references where applicable
-server-local vs cross-component execution boundary
-intervention request / applicability / actual outcome relationship
-failure / partial / unknown / stale / indeterminate states
-history / temporal interpretation
-recovery / reconciliation / reconnect semantics
-private / offline / continuous-availability behavior
-compatibility / migration / conformance
-applicable Shared Foundation consumption
-RCP-23 S10 / SV-R06 producer evidence
-RCP-23 full Server-native Runtime Evidence synthesis across accepted S5/S7/S10 producer partitions
+Managed Desired Configuration → S9
+S10 Applied Runtime Evidence → S10 / SV-R06 where applicable
+Observed Projection → derived
+Desired != Distributed != Applied != Observed
 ```
 
-Internal Module remains architecture-semantic:
+No global fail-open/fail-closed or conflict-winner rule is accepted.
+
+## RCP-23 Full Closure
 
 ```text
-Internal Module
-!= Django App
-!= Python Package
-!= Class
-!= Service
-!= Process
-!= Worker
-!= Scheduler
-!= Queue
-!= Table
-!= Database Schema
-!= Deployment Unit
+S5 / SV-R01 → Business Application semantic Runtime Evidence
+S7 / SV-R03 → Data / Knowledge / ETL semantic Runtime Evidence
+S10 / SV-R06 → Server-local Background Runtime Evidence
 ```
-
-## Runtime / Authority Boundary
-
-S10/SV-R06 MUST NOT absorb:
 
 ```text
-Formal Execution Admission → S8 / SV-R04
-Scheduling / Routing / Dispatch → RT-R02 when cross-component coordination applies
-Cross-component continuation / intervention coordination → RT-R03 where applicable
-Business Application semantic runtime → S5 / SV-R01
-Automation semantic runtime → S6 / SV-R02
-Data / Knowledge / ETL semantic runtime → S7 / SV-R03
-Node Attempt / Effect → ND-R02 / ND-R03
-Agent Runtime → applicable ns_agent role
-Human Task aggregation → S11 / SV-R07
-Notification lifecycle → S12 / SV-R08
-Discovery projection → S13 / SV-R09
+RCP-23 Full Server-native Runtime Evidence
+→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
 ```
 
-If S10 work remains wholly server-local, `ns_runtime` is not inserted merely because work is asynchronous, delayed, periodic or long-running.
-
-If S10 initiates or participates in cross-component work, existing Admission / RT coordination / remote executor boundaries remain authoritative for their own assertions.
-
-## Retry / Recovery / Offline Boundary
-
-Permanent:
+Common contract semantics do not merge producer ownership:
 
 ```text
-Retry
-!= historical Attempt mutation
-
-New Attempt
-!= same Attempt automatically
-
-Reconnect
-!= Reconciled
-
-Recovery
-!= Authority Transfer
-
-Replay
-!= Retroactive Authorization
-
-Latest Timestamp
-!= Canonical Winner
-
-Offline
-!= Authority Transfer
+SV-R01 != SV-R03 != SV-R06
+Common Contract != Common Authority != Common Actual-state Owner
+Universal Server Runtime Actual-state SoT → NOT CREATED
 ```
 
-No global fail-open/fail-closed, latest-wins, local-wins, central-wins or universal retry/cancellation/rollback algorithm is authorized.
+Accepted S5 and S7 internals remain unchanged.
 
-## Shared Foundation Consumption
-
-S10 may consume only accepted authority-neutral Foundation semantics through the accepted Stable Entry → Contract → Module → Provider path where applicable.
-
-Applicable mechanics may include time, diagnostics/logging, telemetry/health, operation/correlation/provenance, configuration loading, status/uncertainty, serialization, storage/cache client mechanics, governed context propagation, secret-reference/redaction and compatibility/conformance.
+## Foundation / Provider Neutrality
 
 ```text
 Foundation != S10 Authority
 Provider != S10 Authority
-Storage / Queue / Scheduler Provider != Runtime Actual-state Owner
-Provider Success != S10 Semantic Success automatically
+Time Source != Scheduler Authority
+Storage Placement != Actual-state Ownership
+Telemetry Aggregation != Runtime SoT
+Provider Success != S10 Semantic Success
 ```
 
-No new Foundation capability may be silently invented.
+No new Foundation capability or Provider family is introduced.
 
 ## Explicit Forbidden / Deferred Scope
 
 ```text
-S11 / S12 / S13 Internal Design
-ns_runtime / ns_node / ns_agent / ns_web Internal Design
-full RCP-16
-full RCP-17
-RCP-18 Notification / Delivery
-RCP-21 Discovery
-System-level SDK Detailed Design
-concrete scheduler / worker / daemon / process topology
-concrete queue / broker / cron / timer technology
-concrete retry / cancellation / rollback engine
-concrete API / protocol / message envelope
-concrete database / storage / cache schema
-concrete Provider / Vendor / Library selection
-Django App / Python package / class / repository layout as normative architecture
-Design-to-Implementation Readiness
-Implementation Planning
-IWP
-Coding
-```
-
-## MDE / Stop Boundary
-
-The producing session MUST stop and return to GAC / Project Owner if it proposes to determine/change materially:
-
-```text
-Product Component topology
-Runtime Actual-state ownership topology
-S10 / SV-R06 source-fact ownership
-Admission / Policy / Trust / IAM / Tenant authority
-one universal scheduler / worker authority
-material exactly-once / deterministic / rollback guarantee
-material global retry / cancellation policy
-material fail-open / fail-closed or conflict-winner rule
-major externally observable compatibility commitment
-major provider / protocol / framework / storage lock-in
-high migration-cost commitment
-new Product capability
-```
-
-If classification is uncertain:
-
-```text
-DEFAULT → MDE
+S11 / S12 / S13 Internal Design → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+Full RCP-16 → NOT CLOSED
+Full RCP-17 → NOT CLOSED
+RCP-18 Notification / Delivery → NOT CLOSED
+RCP-21 Discovery → NOT CLOSED
+System-level SDK Detailed Design → NOT AUTHORIZED
+Design-to-Implementation Readiness → NOT AUTHORIZED
+Implementation Planning / IWP / Coding → NOT AUTHORIZED
 ```
 
 ## Unique Next Legal Action
 
 ```text
-Start exactly one bounded:
-
-NGRP-001 — Component Internal Design / ns_server / Batch 5
-
-Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY
-  / NS_SERVER
-  / BATCH_5
-  / SERVER_LOCAL_BACKGROUND_WORK_AND_ACTUAL_STATE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
-
-Boundary
-→ S10
-
-Runtime Role
-→ SV-R06
+Fresh Repository recovery
+→ perform ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment after Batch 5 acceptance
+→ do not auto-authorize another Batch
 ```
-
-The bounded producing session may reach only `COMPLETED / AWAITING_GLOBAL_ACCEPTANCE`; it cannot self-accept or authorize any next Batch.
