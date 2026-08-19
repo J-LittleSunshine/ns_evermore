@@ -405,4 +405,28 @@ ns_server Component Internal Design Global Closure → NOT DECLARED
 ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 4 ACCEPTANCE
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment; no downstream producing session is authorized automatically
+
+GAC-TR-0066 → GAC-EPOCH-0056
+Transition → post-Batch-4 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
+Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.4.md
+Assessment Commit → cec43d44232e799aa37ea40af88fc255fb9d8035
+Remaining Material ns_server Internal-design Pressure → PRESENT
+ns_server Internal Design Exhaustion → NOT_SATISFIED
+Remaining Boundaries → S10 / S11 / S12 / S13
+Highest-pressure Next Boundary → S10 Server-local Background Work & Server Actual-state
+S10 Runtime Role → SV-R06 Server-local Background Execution Participant
+S10 Entry Readiness → SATISFIED
+RCP-23 Producer State → S5/SV-R01 ACCEPTED + S7/SV-R03 ACCEPTED + S10/SV-R06 REMAINING
+Immediate Next Batch Candidate → ns_server / Batch 5 / S10 / CANDIDATE ONLY
+Proposed Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_5 / SERVER_LOCAL_BACKGROUND_WORK_AND_ACTUAL_STATE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Potential Full RCP-23 Closure → eligible in a later authorized Batch 5 after S10/SV-R06 design / NOT CLAIMED BY THIS ASSESSMENT
+S11 → own side possible / full RCP-16 still depends on Agent/Web internal-design sides
+S12 → entry-clean in principle / RCP-18 side later / lower dependency-unlocking value
+S13 → prior S7 blocker removed / several source-category internals remain downstream / lower immediate priority
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Batch 5 Authorization → NOT GRANTED
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh Repository recovery then separate GAC authorization transition for ns_server Component Internal Design / Batch 5 / S10
 ```
