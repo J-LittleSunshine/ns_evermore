@@ -429,4 +429,25 @@ Blocking Item → NONE
 Batch 5 Authorization → NOT GRANTED
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh Repository recovery then separate GAC authorization transition for ns_server Component Internal Design / Batch 5 / S10
+
+GAC-TR-0067 → GAC-EPOCH-0057
+Transition → separate ns_server Component Internal Design / Batch 5 / S10 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.4.md
+Authorized Phase → NGRP-001 — Component Internal Design / ns_server / Batch 5
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_5 / SERVER_LOCAL_BACKGROUND_WORK_AND_ACTUAL_STATE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Boundary → S10 Server-local Background Work & Server Actual-state
+Inherited Runtime Role → SV-R06 Server-local Background Execution Participant
+S10 Actual-state Ownership → server-local attempt / progress / outcome / genuine server-local source facts / PRESERVED
+Pure Server-local Work → ns_runtime NOT automatically required merely because time-triggered / delayed / asynchronous / long-running
+RCP-23 Authorized Refinement → S10/SV-R06 contribution
+RCP-23 Full Server-native Runtime Evidence Closure → AUTHORIZED AT CURRENT DESIGN-SEMANTIC LEVEL using accepted S5/SV-R01 + S7/SV-R03 + current S10/SV-R06 / accepted S5-S7 internals MUST NOT be reopened
+Full RCP-16 / Full RCP-17 → NOT AUTHORIZED
+S11 / S12 / S13 Internal Design → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Concrete Scheduler / Worker / Process / Queue / Broker / Timer / Retry-engine Selection → NOT AUTHORIZED
+Open MDE required for current S10 Batch → 0
+Unpersisted Owner Decision required for current S10 Batch → 0
+Blocking Item → NONE
+Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 5 / S10 producing session
 ```
