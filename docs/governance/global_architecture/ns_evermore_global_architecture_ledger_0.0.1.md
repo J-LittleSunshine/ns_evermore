@@ -294,7 +294,7 @@ Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
 Remaining ns_server Boundaries → S7 / S10 / S11 / S12 / S13
-ns_server Component Internal Design Global Closure → NOT DECLARED
+ns_server Component Internal Design Global Closure → NOT_DECLARED
 ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 3 ACCEPTANCE
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment; no downstream producing session is authorized automatically
@@ -365,9 +365,9 @@ CID-SV-B4-MDE-001 → REQUIRED NORMATIVE INPUT / Option A / Native S7 Canonical 
 Factual Data / Knowledge SoT topology → per bounded semantic partition / external final factual SoT permitted / PRESERVED
 RCP-17 Authorized Refinement → S7 Data-Knowledge-ETL side only / full cross-domain closure NOT AUTHORIZED
 RCP-23 Authorized Refinement → S7/SV-R03 contribution only / full Server-native Runtime Evidence closure NOT AUTHORIZED / S10-SV-R06 remains required
-S10 / S11 / S12 / S13 Internal Design → NOT AUTHORIZED
-Other Product Component Internal Design → NOT AUTHORIZED
-System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+S10 / S11 / S12 / S13 Internal Design → NOT_AUTHORIZED
+Other Product Component Internal Design → NOT_AUTHORIZED
+System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT_AUTHORIZED
 Open MDE required for current S7 Batch → 0
 Unpersisted Owner Decision required for current S7 Batch → 0
 Blocking Item → NONE
@@ -441,11 +441,11 @@ S10 Actual-state Ownership → server-local attempt / progress / outcome / genui
 Pure Server-local Work → ns_runtime NOT automatically required merely because time-triggered / delayed / asynchronous / long-running
 RCP-23 Authorized Refinement → S10/SV-R06 contribution
 RCP-23 Full Server-native Runtime Evidence Closure → AUTHORIZED AT CURRENT DESIGN-SEMANTIC LEVEL using accepted S5/SV-R01 + S7/SV-R03 + current S10/SV-R06 / accepted S5-S7 internals MUST NOT be reopened
-Full RCP-16 / Full RCP-17 → NOT AUTHORIZED
-S11 / S12 / S13 Internal Design → NOT AUTHORIZED
-Other Product Component Internal Design → NOT AUTHORIZED
-System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
-Concrete Scheduler / Worker / Process / Queue / Broker / Timer / Retry-engine Selection → NOT AUTHORIZED
+Full RCP-16 / Full RCP-17 → NOT_AUTHORIZED
+S11 / S12 / S13 Internal Design → NOT_AUTHORIZED
+Other Product Component Internal Design → NOT_AUTHORIZED
+System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT_AUTHORIZED
+Concrete Scheduler / Worker / Process / Queue / Broker / Timer / Retry-engine Selection → NOT_AUTHORIZED
 Open MDE required for current S10 Batch → 0
 Unpersisted Owner Decision required for current S10 Batch → 0
 Blocking Item → NONE
@@ -481,8 +481,29 @@ Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
 Remaining ns_server Boundaries → S11 / S12 / S13
-ns_server Component Internal Design Global Closure → NOT DECLARED
+ns_server Component Internal Design Global Closure → NOT_DECLARED
 ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 5 ACCEPTANCE
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment; no downstream producing session is authorized automatically
+
+GAC-TR-0069 → GAC-EPOCH-0059
+Transition → post-Batch-5 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
+Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.5.md
+Assessment Commit → 60aa35e8aad8a31a0fa705904d662d7c9a4924be
+Remaining Material ns_server Internal-design Pressure → PRESENT
+ns_server Internal Design Exhaustion → NOT_SATISFIED
+Remaining Boundaries → S11 / S12 / S13
+Highest-pressure Next Boundary → S12 Governed Notification & External Delivery Lifecycle
+S12 Runtime Role → SV-R08 Notification Lifecycle & External Delivery Participant
+S12 Owner Capability / MDE → OWNER_DECIDED / PERSISTED / Option B / channel-neutral core + pluggable external delivery
+S12 Entry Readiness → SATISFIED
+Potential RCP-18 Notification / Delivery Closure → ELIGIBLE IN LATER SEPARATELY AUTHORIZED BATCH 6
+S11 → own side possible / full RCP-16 still spans Automation + Agent + Human Task + Web participation
+S13 → deferred until Human Task / Notification contribution semantics are further stabilized
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Batch 6 Authorization → NOT GRANTED
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh Repository recovery then separate GAC authorization transition for ns_server Component Internal Design / Batch 6 / S12
 ```
