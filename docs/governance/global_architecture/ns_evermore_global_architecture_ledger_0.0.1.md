@@ -450,4 +450,39 @@ Open MDE required for current S10 Batch → 0
 Unpersisted Owner Decision required for current S10 Batch → 0
 Blocking Item → NONE
 Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 5 / S10 producing session
+
+GAC-TR-0068 → GAC-EPOCH-0058
+Transition → ns_server Component Internal Design / Batch 5 independent Global Acceptance
+Producing Final HEAD → 6083c842b9582b4e40bcbf29478bfea2974197aa
+Global Acceptance Evidence → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_5_global_acceptance_0.0.1.md
+Result → GLOBAL_ACCEPT
+Accepted Boundary → S10 Server-local Background Work & Server Actual-state
+Accepted Runtime Role Input → SV-R06 Server-local Background Execution Participant
+Accepted Internal Module Count → 7
+Accepted DAD → CID-SV-B5-DAD-001..015
+Hard Internal SDD Graph → ACYCLIC
+S10 Actual-state / Source-fact Ownership → server-local Attempt / progress / outcome / genuine server-local source facts / PRESERVED
+Operation / Attempt Identity → DISTINCT / representation-neutral
+Retry / Re-entry Historical Mutation → 0
+Universal Scheduler / Worker Authority → 0
+Exactly-once / Deterministic Replay / Rollback Guarantee → 0
+Global Retry / Cancellation / Conflict-winner Policy → 0
+RCP-23 S10 / SV-R06 Contribution → CLOSED AT CURRENT DESIGN LEVEL
+RCP-23 Full Server-native Runtime Evidence → CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
+RCP-23 Producer Partitions → S5/SV-R01 + S7/SV-R03 + S10/SV-R06 / ownership preserved
+Universal Server Runtime Actual-state SoT → NOT CREATED
+S5 Internals Reopened → 0
+S7 Internals Reopened → 0
+Authority / SoT / Actual-state Transfer → 0
+Concrete Scheduler/Worker/Queue/DB/API/Provider/Process leakage → 0
+Misclassified MDE → 0
+Decision Registry → 0.0.21
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Remaining ns_server Boundaries → S11 / S12 / S13
+ns_server Component Internal Design Global Closure → NOT DECLARED
+ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 5 ACCEPTANCE
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh-recovery GAC ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment; no downstream producing session is authorized automatically
 ```
