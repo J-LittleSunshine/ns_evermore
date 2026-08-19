@@ -372,4 +372,37 @@ Open MDE required for current S7 Batch → 0
 Unpersisted Owner Decision required for current S7 Batch → 0
 Blocking Item → NONE
 Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 4 / S7 producing session
+
+GAC-TR-0065 → GAC-EPOCH-0055
+Transition → ns_server Component Internal Design / Batch 4 independent Global Acceptance
+Producing Final HEAD → 439a97b464100a40adfc3f4fcf88c8397dbbbc51
+Global Acceptance Evidence → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_4_global_acceptance_0.0.1.md
+Result → GLOBAL_ACCEPT
+Accepted Boundary → S7 Enterprise Data / Knowledge / Foundational ETL Governance
+Accepted Runtime Role Input → SV-R03 Data / Knowledge / ETL Runtime Participant
+Accepted Internal Module Count → 10
+Accepted DAD → CID-SV-B4-DAD-001..015
+Recognized Owner MDE → CID-SV-B4-MDE-001 / Option A / Native S7 Canonical Definition SoT = ns_server
+S7 Semantic Authority / Native Definition SoT → ns_server / PRESERVED
+Factual Data / Knowledge SoT Federation → PRESERVED / exactly one final SoT per bounded partition / external final factual SoTs permitted
+Strategic Concrete Factual Partition Assignment → 0
+Hard Internal SDD Graph → ACYCLIC
+RCP-17 Accepted Closure → S7 Data-Knowledge-ETL side only / full cross-domain closure NOT CLAIMED
+RCP-23 Accepted Closure → S7/SV-R03 contribution only / S5/SV-R01 preserved / full closure NOT CLAIMED / S10-SV-R06 remains required
+Authority / Definition-SoT / Factual-SoT / Actual-state Transfer → 0
+External Schema Auto-canonicalization → 0
+Source/Derived Fact Collapse → 0
+ETL Definition/Runtime/Output Collapse → 0
+Knowledge/Index/Vector/Embedding Collapse → 0
+Concrete DSL/Query-language/DB/ETL-engine/Vector-provider/API/Process leakage → 0
+Misclassified MDE → 0
+Decision Registry → 0.0.20
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Remaining ns_server Boundaries → S10 / S11 / S12 / S13
+ns_server Component Internal Design Global Closure → NOT DECLARED
+ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 4 ACCEPTANCE
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh-recovery GAC ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment; no downstream producing session is authorized automatically
 ```
