@@ -199,8 +199,8 @@ Full RCP-16 / RCP-17 Cross-component Closure → NOT AUTHORIZED
 S5 / S7 / S10 / S11 / S12 / S13 Internal Design → NOT AUTHORIZED
 Other Product Component Internal Design → NOT AUTHORIZED
 System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
-Open MDE → 0
-Unpersisted Owner Decision → 0
+Open MDE required for current S6 Batch → 0
+Unpersisted Owner Decision required for current S6 Batch → 0
 Blocking Item → NONE
 Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 2 / S6 Automation Domain producing session
 
@@ -557,4 +557,50 @@ ns_server Component Internal Design Global Closure → NOT_DECLARED
 ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 6 ACCEPTANCE
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC post-Batch-6 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment; no downstream producing session is authorized automatically
+
+GAC-TR-0072 → GAC-EPOCH-0062
+Transition → post-Batch-6 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
+Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.6.md
+Assessment Commit → 03b7e17b4b29393fd48c164b1fdc85100e86502a
+Remaining Material ns_server Internal-design Pressure → PRESENT
+ns_server Internal Design Exhaustion → NOT_SATISFIED
+Remaining Boundaries → S11 / S13
+Highest-pressure Next Boundary → S11 Unified Human Task Aggregation & Response Routing
+S11 Runtime Role → SV-R07 Human Task Aggregation & Response Routing Participant
+S11 Entry Readiness → SATISFIED
+RCP-16 S11 / SV-R07 Contribution → ELIGIBLE IN LATER SEPARATELY AUTHORIZED BATCH 7
+RCP-16 Full Cross-component Closure → NOT YET ELIGIBLE
+S13 → deferred until S11 Human Task contribution semantics are stabilized
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Batch 7 Authorization → NOT GRANTED BY ASSESSMENT
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh Repository recovery then separate GAC authorization transition for ns_server Component Internal Design / Batch 7 / S11
+
+GAC-TR-0073 → GAC-EPOCH-0063
+Transition → separate ns_server Component Internal Design / Batch 7 / S11 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.6.md
+Authorized Phase → NGRP-001 — Component Internal Design / ns_server / Batch 7
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_7 / UNIFIED_HUMAN_TASK_AGGREGATION_RESPONSE_ROUTING_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Boundary → S11 Unified Human Task Aggregation & Response Routing
+Inherited Runtime Role → SV-R07 Human Task Aggregation & Response Routing Participant
+Human Task Owner Capability → Option B / Unified Governed Human Task Inbox / cross-session rediscovery required
+S11 Actual-state Ownership → aggregation/projection/freshness/correlation/response-routing state only
+Automation Source-side → S6 / SV-R02 / accepted
+Agent Source-side → AG-R01 / not yet internally designed
+Human Response Submission Occurrence → WB-R01 / not yet internally designed
+RCP-16 S11 / SV-R07 Contribution → AUTHORIZED FOR CURRENT DESIGN-LEVEL CLOSURE
+RCP-16 Full Cross-component Closure → NOT AUTHORIZED
+Human Task / Notification Separation → MUST BE PRESERVED
+Canonical Cross-domain Human Task Source SoT → MUST NOT BE CREATED
+Source Response-applicability Authority Transfer → PROHIBITED
+S13 Internal Design / RCP-21 Closure → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Concrete Assignment/Escalation/Timeout/Queue/DB/API/UI Selection → NOT AUTHORIZED
+Open MDE required for current S11 Batch → 0
+Unpersisted Owner Decision required for current S11 Batch → 0
+Blocking Item → NONE
+Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 7 / S11 producing session
 ```
