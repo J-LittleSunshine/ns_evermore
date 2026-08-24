@@ -1,13 +1,13 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0069`
+- Status: `CURRENT / GAC-EPOCH-0070`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
-Current Global State Epoch → GAC-EPOCH-0069
-State Verified Through HEAD → 96d6382ddfad957a2a42ffd85ce992db40f952d9
+Current Global State Epoch → GAC-EPOCH-0070
+State Verified Through HEAD → 7412b644a07ec55350ddde3616a930db99027432
 
 Genesis Constitution → GLOBAL_ACCEPTED / NORMATIVE
 Unified Governance → 0.0.2 / NORMATIVE
@@ -71,11 +71,11 @@ ns_runtime Component Internal Design Entry Readiness
 Recommended ns_runtime Batch Shape
 → MULTIPLE / 3 architecture-derived batches
 
-Proposed ns_runtime Batch 1 Exact Internal Boundaries
-→ R1 / R2
+ns_runtime Component Internal Design / Batch 1
+→ AUTHORIZED
 
-Proposed ns_runtime Batch 1 Exact Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_1 / PRESENCE_AND_GOVERNED_DISPATCH_COORDINATION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized ns_runtime Batch 1 Exact Internal Boundaries
+→ R1 / R2
 
 Decision Registry
 → 0.0.25 / CURRENT / NORMATIVE
@@ -93,10 +93,10 @@ Known Working-branch Drift
 → NONE
 
 Current Authorized Phase
-→ NONE
+→ NGRP-001 — Component Internal Design / ns_runtime / Batch 1
 
 Authorization Scope
-→ NONE
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_1 / PRESENCE_AND_GOVERNED_DISPATCH_COORDINATION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
 # ns_server Global Closure Evidence
@@ -145,13 +145,13 @@ Assessment:
 Assessment Commit
 → 14d6731aee587b1e1dcccabc289c2f56a57042f5
 
-Working State Commit
+Assessment Working State Commit
 → e2beb89bb7bced4fcb1d1fedcabd3c0872519970
 
-GAC Transition
+Assessment GAC Transition
 → GAC-TR-0079 → GAC-EPOCH-0069
 
-Ledger Commit
+Assessment Ledger Commit
 → 96d6382ddfad957a2a42ffd85ce992db40f952d9
 ```
 
@@ -174,12 +174,6 @@ Batch 1 Exact Boundary Candidate
 Batch 1 Exact Scope Candidate
 → COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_1 / PRESENCE_AND_GOVERNED_DISPATCH_COORDINATION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 
-Batch 1 Primary RCP Candidate Scope
-→ RCP-03 / RT-R01 owner-coordinator side
-→ RCP-05 / RT-R02 producer-coordinator side
-→ RCP-02 / runtime consumer-side refinement only
-→ RCP-04 / runtime consumer expectation only
-
 Open MDE Required for Entry
 → 0
 
@@ -188,12 +182,95 @@ Unpersisted Owner Decision
 
 Blocking Semantic Gap
 → NONE
-
-Authorization
-→ NOT GRANTED BY ASSESSMENT ITSELF
 ```
 
-This assessment chooses only the next Product Component. It does not globally freeze the later ordering among `ns_node`, `ns_agent` and `ns_web`.
+The assessment chooses only the immediate next Product Component. It does not globally freeze the later ordering among `ns_node`, `ns_agent` and `ns_web`.
+
+# ns_runtime Component Internal Design / Batch 1 Authorization
+
+Authorization basis:
+
+`docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_server_component_internal_design_next_component_sequencing_ns_runtime_entry_readiness_assessment_0.0.1.md`
+
+```text
+Authorization Working State Commit
+→ 80434044fb67c6a83d8ecceccd45c9c3b1a2fbe8
+
+Authorization GAC Transition
+→ GAC-TR-0080 → GAC-EPOCH-0070
+
+Authorization Ledger Commit
+→ 7412b644a07ec55350ddde3616a930db99027432
+```
+
+Exact authorization:
+
+```text
+Authorized Phase
+→ NGRP-001 — Component Internal Design / ns_runtime / Batch 1
+
+Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_1 / PRESENCE_AND_GOVERNED_DISPATCH_COORDINATION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+
+Authorized Internal Boundaries
+→ R1 / Connection / Participant Presence Coordination
+→ R2 / Governed Routing / Scheduling / Dispatch Coordination
+
+Inherited Runtime Roles in authorized scope
+→ RT-R01 / Participant Presence Coordinator
+→ RT-R02 / Governed Routing / Scheduling / Dispatch Coordinator
+```
+
+Authorized RCP closure/refinement:
+
+```text
+RCP-03 / Presence
+→ RT-R01 owner/coordinator-side semantic closure and stable contract synthesis AUTHORIZED
+→ full cross-component closure NOT AUTHORIZED by inference
+
+RCP-05 / Dispatch Evidence
+→ RT-R02 producer/coordinator-side semantic closure and stable contract synthesis AUTHORIZED
+→ full cross-component closure NOT AUTHORIZED by inference
+
+RCP-02 / Admission Evidence
+→ runtime consumer-side applicability/refinement only
+→ accepted ns_server producer closure remains normative and MUST NOT be reopened
+
+RCP-04 / Node Readiness
+→ runtime consumer expectation/refinement only
+→ ns_node / ND-R01 owner-side semantics remain downstream
+→ full RCP-04 closure NOT AUTHORIZED
+```
+
+Explicitly outside Batch 1 full closure:
+
+```text
+RCP-03 beyond the authorized RT-R01 contribution
+RCP-04
+RCP-05 beyond the authorized RT-R02 contribution
+RCP-06 / Continuation / Intervention
+RCP-12 / Agent Delegation
+RCP-13 beyond accepted ns_server Automation semantics
+RCP-15 beyond accepted ns_server Automation semantics
+RCP-16 / Human Task full cross-component closure
+RCP-20 / Recovery / Reconciliation
+RCP-21 / Discovery full cross-component closure
+```
+
+Accepted-but-not-authorized `ns_runtime` boundaries:
+
+```text
+R3 / Operation Continuation / Delegation / Intervention Coordination
+R4 / Coordination Recovery / Reconciliation / Diagnostics
+```
+
+Maximum legal bounded-session state:
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+```
+
+The bounded producing session may not self-grant Global Acceptance, advance GAC Epoch, close `ns_runtime` Component Internal Design globally, declare `ns_runtime` Internal Design Exhaustion, authorize a later Batch, authorize another Product Component, or enter downstream phases.
 
 # Accepted ns_server Component Internal Design Coverage
 
@@ -304,7 +381,7 @@ Remaining Cross-component Contract Work
 != Remaining ns_server Component Internal-design Pressure
 ```
 
-# ns_runtime Accepted Architecture Baseline for Later Authorization
+# ns_runtime Accepted Architecture Baseline
 
 Accepted internal boundaries:
 
@@ -340,51 +417,102 @@ Latest Timestamp != Canonical Winner
 Requested Intervention != Achieved Outcome
 ```
 
-No universal workflow, job, execution, retry, cancellation, scheduling or recovery-truth authority is granted to `ns_runtime`.
+Batch 1-specific authority preservation:
+
+```text
+R1 / RT-R01
+→ owns connection / participant-presence / reachability coordination actual-state arising in ns_runtime only
+→ Presence != Trust Authority
+
+R2 / RT-R02
+→ owns routing / scheduling / dispatch coordination actual-state arising in ns_runtime only
+→ consumes already-governed/admitted work plus applicable capability/readiness evidence
+→ Dispatch != Formal Execution Admission
+→ Dispatch != Attempt
+
+Formal Execution Admission Authority
+→ ns_server / PRESERVED
+
+Node readiness owner-side semantics / local readiness actual-state
+→ ns_node / downstream / PRESERVED
+
+Local Attempt / protected-effect / source facts
+→ applicable executor/source owner / PRESERVED
+```
+
+`ns_runtime` is not authorized to become a universal workflow, job, execution, retry, cancellation, scheduler-semantic or recovery-truth authority.
+
+# Offline / Private / Recovery Compatibility
+
+Batch 1 must preserve:
+
+```text
+private/offline deployment core correctness
+no mandatory public Internet/SaaS dependency
+explicit disconnected / unreachable / unknown / stale coordination state
+connected != trusted != admitted
+reachable != ready
+reconnect != reconciled
+replay != retroactive authorization
+presence/reachability observations do not transfer Trust, Admission or source-fact authority
+```
+
+R4 recovery/reconciliation internal design is not authorized in Batch 1. R1/R2 design may only preserve compatibility for later recovery/reconciliation semantics.
+
+# MDE Stop Boundary for Authorized Batch
+
+Open MDE at authorization: `0`.
+
+A bounded producing session must stop and escalate exactly one Material Decision Question if it materially requires an unresolved durable commitment about:
+
+```text
+universal scheduling semantics
+global scheduling priority law
+global fairness law
+global retry policy
+global cancellation semantics
+global rollback semantics
+exactly-once universal guarantee
+at-most-once / at-least-once universal guarantee
+global conflict-winner law
+latest-wins policy
+universal routing authority
+universal operation ownership
+cross-Tenant coordination semantics
+mandatory broker / queue / scheduler technology
+mandatory public service dependency
+provider / protocol / framework / storage lock-in
+major new identity namespace
+new Product capability
+other high-migration-cost durable commitment not already decided by Repository authority
+```
+
+The producing session may recommend but may not select the Owner result.
 
 # ns_server Global Closure Qualification
 
-`ns_server Component Internal Design → GLOBAL_CLOSED / COMPLETE` means:
-
-```text
-all accepted ns_server boundaries have accepted internal architecture
-no material server-internal responsibility remains unnamed
-no server-internal Authority / SoT / Actual-state ambiguity remains at this design level
-no mandatory missing Shared Foundation semantic is required to close ns_server
-```
-
-It does **not** mean:
-
-```text
-all Product Components internally designed
-all RCP-01..24 fully cross-component closed
-System-level SDK Detailed Design complete
-Design-to-Implementation Readiness satisfied
-Implementation Planning authorized
-IWP authorized
-Coding authorized
-```
+`ns_server Component Internal Design → GLOBAL_CLOSED / COMPLETE` does not mean all Product Components are internally designed or all RCPs are fully cross-component closed.
 
 # Remaining Product Component Internal Design
 
 ```text
 ns_runtime
 → 4 accepted internal boundaries
-→ NEXT PRODUCT COMPONENT
-→ ENTRY READINESS SATISFIED
-→ Component Internal Design NOT YET AUTHORIZED / NOT YET ACCEPTED
+→ Batch 1 / R1 + R2 AUTHORIZED
+→ R3 / R4 NOT AUTHORIZED
+→ Component Internal Design NOT YET GLOBALLY ACCEPTED / NOT GLOBALLY CLOSED
 
 ns_node
 → 4 accepted internal boundaries
-→ Component Internal Design NOT YET AUTHORIZED / NOT YET ACCEPTED
+→ Component Internal Design NOT AUTHORIZED / NOT ACCEPTED
 
 ns_agent
 → 6 accepted internal boundaries
-→ Component Internal Design NOT YET AUTHORIZED / NOT YET ACCEPTED
+→ Component Internal Design NOT AUTHORIZED / NOT ACCEPTED
 
 ns_web
 → 7 accepted internal boundaries
-→ Component Internal Design NOT YET AUTHORIZED / NOT YET ACCEPTED
+→ Component Internal Design NOT AUTHORIZED / NOT ACCEPTED
 ```
 
 Therefore:
@@ -397,12 +525,11 @@ Five-component Component Internal Design Global Closure
 # Explicitly Not Authorized
 
 ```text
-ns_runtime Component Internal Design producing work until separate authorization transition
-ns_runtime R3 / R4 internal design
+ns_runtime R3 / R4 Component Internal Design
 ns_node Component Internal Design
 ns_agent Component Internal Design
 ns_web Component Internal Design
-RCP-03 / RCP-04 / RCP-05 full cross-component closure by inference
+RCP-03 / RCP-04 / RCP-05 full cross-component closure by inference beyond authorized runtime contributions
 RCP-06 / RCP-12 / RCP-13 beyond accepted server semantics / RCP-15 beyond accepted server semantics / RCP-16 / RCP-20 / RCP-21 full closure by inference
 System-level SDK Detailed Design
 Design-to-Implementation Readiness
@@ -411,9 +538,11 @@ IWP
 Coding
 ```
 
+Concrete implementation selections remain unauthorized, including mandatory broker, queue, scheduler framework, database/storage engine, REST/gRPC/concrete WebSocket wire protocol, DTO/schema, worker/process/thread, container and deployment topology.
+
 # Current Required Read Set
 
-Minimum sufficient Repository context for fresh recovery and the separate `ns_runtime` Batch 1 authorization transition:
+Minimum sufficient Repository context for the authorized `ns_runtime` Component Internal Design / Batch 1 bounded producing session:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -438,18 +567,19 @@ Minimum sufficient Repository context for fresh recovery and the separate `ns_ru
 20. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_7_global_acceptance_0.0.1.md
 21. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_8_global_acceptance_0.0.1.md
 22. docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_server_component_internal_design_next_component_sequencing_ns_runtime_entry_readiness_assessment_0.0.1.md
-23. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
+23. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail including GAC-TR-0078..0080
 ```
 
-Read exact Owner/MDE evidence additionally if a proposed authorization would materially touch a reserved dimension.
+Read exact Owner/MDE evidence additionally if the bounded design materially touches a reserved dimension.
 
 # Unique Next Legal Action
 
 ```text
-Fresh Repository recovery
-→ verify GAC-EPOCH-0069 / GAC-TR-0079 / Decision Registry 0.0.25 / ns_runtime Entry Readiness SATISFIED
-→ verify Open MDE = 0 / Unpersisted Owner Decision = 0 / Blocking Item = NONE / Known Drift = NONE
-→ if still eligible, perform a separate GAC ns_runtime Component Internal Design / Batch 1 authorization transition
-→ exact Batch 1 boundaries R1 + R2 and exact scope must match the persisted assessment
-→ do not begin bounded producing work from this assessment-only Global State
+Start exactly one bounded producing session:
+→ NGRP-001 — Component Internal Design / ns_runtime / Batch 1
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_1 / PRESENCE_AND_GOVERNED_DISPATCH_COORDINATION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+→ exact authorized internal boundaries R1 + R2
+→ produce Candidate / DAD / mandatory Review Audit / GAC Handoff evidence only within scope
+→ maximum legal bounded-session state COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ return to Global Architecture Coordinator for independent review
 ```
