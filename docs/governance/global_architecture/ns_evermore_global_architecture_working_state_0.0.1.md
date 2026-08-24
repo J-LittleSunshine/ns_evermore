@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0064`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0065`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 ```text
@@ -48,10 +48,10 @@ Remaining ns_server Internal-design Boundaries
 → S13
 
 Remaining Material ns_server Component Internal-design Pressure
-→ PRESENT / MUST BE REASSESSED
+→ PRESENT
 
 ns_server Internal Design Exhaustion
-→ NOT YET REASSESSED AFTER BATCH 7 ACCEPTANCE
+→ NOT_SATISFIED
 
 ns_server Component Internal Design Global Closure
 → NOT_DECLARED
@@ -75,152 +75,191 @@ Authorization Scope
 → NONE
 ```
 
-Batch-7 Global Acceptance evidence:
+## Post-Batch-7 Remaining-pressure / S13 Entry Assessment
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_7_global_acceptance_0.0.1.md`
+Assessment:
 
-## Accepted S11 / SV-R07 Baseline
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.7.md`
+
+Assessment commit:
 
 ```text
-S11
-→ Unified Human Task Aggregation & Response Routing
-
-SV-R07
-→ Human Task Aggregation & Response Routing Participant
-
-Accepted Internal Responsibilities
-→ HT01..HT08
-
-Accepted DAD
-→ CID-SV-B7-DAD-001..021
-
-Hard Internal SDD Graph
-→ ACYCLIC
+5fddd2b3af76cdd888b3c7d458de65271f3b6f70
 ```
 
-Accepted internal responsibilities:
+Formal result:
 
 ```text
-HT01 Human-action Source Contribution & Authority Binding Intake
-HT02 Human Task Projection Identity, Correlation & Historical Lineage Custody
-HT03 Participant Applicability, Authorization & Disclosure Qualification
-HT04 Projection Freshness, Staleness, Supersession & Re-observation Qualification
-HT05 Human Response Submission Correlation & Provenance Qualification
-HT06 Response Routing Lifecycle, Attempt & Evidence Custody
-HT07 Offline Recovery, Reconciliation & Historical Currentness Qualification
-HT08 Stable Contract, Compatibility & Discovery-contribution Governance
+Remaining Boundaries
+→ S13
+
+Highest-pressure Next Boundary
+→ S13 Cross-domain Resource Discovery Projection
+
+S13 Runtime Role
+→ SV-R09 Discovery Projection Participant
+
+S13 Entry Readiness
+→ SATISFIED
+
+RCP-21 S13 / SV-R09 Contribution
+→ ELIGIBLE IN A LATER SEPARATELY AUTHORIZED BATCH 8
+
+RCP-21 Full Cross-component Closure
+→ NOT YET ELIGIBLE
+
+Open MDE required for S13 entry
+→ 0
+
+Unpersisted Owner Decision required for S13 entry
+→ 0
+
+Blocking Item
+→ NONE
+
+Batch 8 Authorization
+→ NOT GRANTED BY ASSESSMENT
 ```
 
-## Accepted S11 Ownership
+## Accepted S13 Owner / Product Baseline
 
 ```text
-Automation Human-action Requirement / Wait / response applicability / semantic resume
-→ S6 / SV-R02
+Unified Governed Cross-domain Resource Discovery
+→ REQUIRED
 
-Agent Human-action Requirement / Wait / response applicability / continuation
-→ ns_agent / AG-R01
+Authorization-aware Discovery
+→ REQUIRED
 
-Human Response Submission occurrence
-→ ns_web / WB-R01
+Tenant-aware Discovery
+→ REQUIRED
 
-S11 / SV-R07
-→ Human Task Projection identity / existence / history
-→ projection freshness / staleness / currentness
-→ source correlation state
-→ response-routing Attempt / state / evidence
-→ S11 recovery / reconciliation qualification
+Private / Offline-capable Core Discovery
+→ REQUIRED
+
+Domain Identity Preservation
+→ REQUIRED
+
+Discovery Projection / Index as Canonical SoT
+→ PROHIBITED
+
+Universal AI / Semantic Search Across Everything
+→ NOT IMPLIED / NOT REQUIRED
 ```
 
 Permanent:
 
 ```text
-Human Task Projection != Source Human-action Requirement / Wait State
-Human Task Projection != Source semantic applicability
-Aggregation != Canonicalization
-Projection != Source SoT
-Inbox entry != Source state
+Discovery Result != Resource SoT
+Discovery Projection / Index != Canonical Resource Registry
+Fresh Discovery Result != Guaranteed Current Resource Actual-state
+Searchable != Authorized To Discover
+Technically Indexed != Authorized To Reveal
 ```
 
-## Accepted Projection / Response Semantics
+Unauthorized existence must not leak through results, snippets, counts, relationship hints or similar discovery metadata.
+
+## Accepted S13 / SV-R09 Boundary
 
 ```text
-Human Task Projection Identity
-→ durable / session-independent / representation-neutral
+S13 / SV-R09 final owned partition
+→ discovery projection/index freshness
+→ completeness / partiality
+→ rebuild state
+→ staleness / availability / uncertainty
+
+Resource semantic authority / Definition SoT / Runtime Actual-state / Source Facts
+→ originating resource owner
 ```
 
+Permanent:
+
 ```text
-Projection Identity
-!= Source Requirement Identity automatically
-!= Execution / Operation Identity
-!= Response Submission Identity
-!= Routing Attempt Identity
-!= Correlation Identity automatically
-!= Database PK / Browser Session / Message ID automatically
+Projection / Aggregation != Source Authority
+Index Placement != Resource SoT
+Discovery Result != Authorization Grant
+Missing Result != Resource Does Not Exist automatically
+Rebuild Complete != Source Resources Globally Current automatically
 ```
 
-Projection currentness may be expressed through orthogonal `CURRENT / STALE / UNKNOWN / PARTIAL / UNAVAILABLE / SUPERSEDED / EXPIRED / WITHDRAWN / INDETERMINATE / CONFLICTING / RECONCILIATION_PENDING / RECOVERING` qualifications where applicable. These are not a universal source Human Task lifecycle state machine.
+## S11 / S12 Dependency Closure for S13
+
+Batch 7 now supplies future S13 Human Task contribution semantics:
 
 ```text
-Response Submitted
-!= Response Valid
-!= Response Applicable
-!= Response Accepted
-!= Response Applied
-!= Source Wait Resolved
-!= Execution Resumed
+Human Task Projection Identity / resource identity
+origin domain/type
+Source Owner Reference
+source Human-action Requirement correlation
+Tenant / Organization / Principal applicability metadata
+freshness / staleness / uncertainty
+history / provenance
+privacy / redaction
+navigation / correlation reference
 ```
 
-Wrong-context/stale/expired/superseded/conflicting responses preserve original provenance/context. No universal response winner, dedup rule, assignment/claim/ownership strategy, timeout/escalation policy or exactly-once routing guarantee is accepted.
-
-## RCP-16 Current State
+Batch 6 supplies stable Notification identity/history/provenance contribution semantics.
 
 ```text
-Automation Source-side
-→ CLOSED AT CURRENT DESIGN LEVEL
+Known ns_server source-category blocker for S13
+→ NONE
+```
 
-S11 / SV-R07 Contribution
-→ CLOSED AT CURRENT DESIGN LEVEL
+## RCP-21 Current State
 
-AG-R01 Agent Contribution
-→ NOT YET INTERNALLY DESIGNED
+```text
+RCP-21
+→ resource owners → SV-R09 / WB-R01
+→ Discovery
 
-WB-R01 Web Contribution
-→ NOT YET INTERNALLY DESIGNED
+S13 / SV-R09 Contribution
+→ NOT YET DESIGNED
+
+Non-server Resource-owner Component Internal Design contributions
+→ NOT YET AVAILABLE
+
+WB-R01 Discovery interaction Component Internal Design contribution
+→ NOT YET AVAILABLE
 
 Full Cross-component Closure
-→ NOT CLOSED
+→ NOT YET ELIGIBLE
 ```
 
-## Human Task / Notification Non-collapse
+A later separately authorized Batch 8 may close only the S13 / SV-R09 current-design-level contribution and may state producer/consumer obligations without designing other Product Component internals.
+
+## Candidate Batch 8 Scope
 
 ```text
-Human Task → needs human action
-Notification → needs human awareness
-Human Task Inbox != Notification Center
-Human Response != Notification Acknowledgement
+NGRP-001 — Component Internal Design / ns_server / Batch 8
+
+Candidate Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY
+  / NS_SERVER
+  / BATCH_8
+  / CROSS_DOMAIN_RESOURCE_DISCOVERY_PROJECTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+
+Boundary
+→ S13 Cross-domain Resource Discovery Projection
+
+Runtime Role
+→ SV-R09 Discovery Projection Participant
 ```
 
-Batch 6 S12/RCP-18 remains unchanged.
-
-## S13 Dependency State
-
-S11 now supplies future projection-eligible Human Task identity/origin/source/Tenant/Principal/freshness/history/provenance/redaction/navigation semantics required by S13 without transferring Human Task source authority.
-
-```text
-S13 Internal Design
-→ NOT AUTHORIZED
-
-RCP-21 Discovery Closure
-→ NOT AUTHORIZED
-```
+This is a candidate only. No Batch-8 producing authority exists at this checkpoint.
 
 ## Explicit Forbidden / Deferred Scope
 
 ```text
-S13 Internal Design
+Batch 8 producing work before separate authorization
 other Product Component Internal Design
-Full RCP-16 Closure
-RCP-21 Discovery Closure
+Full RCP-21 Cross-component Closure
+S13 as universal Resource Authority / SoT / Registry Authority
+universal AI / semantic-search guarantee
+mandatory embedding/vector architecture
+mandatory search/index engine
+mandatory ranking model / query language
+cross-Tenant discovery
+authorization bypass
+public SaaS correctness dependency
 System-level SDK Detailed Design
 Design-to-Implementation Readiness
 Implementation Planning
@@ -232,7 +271,23 @@ Coding
 
 ```text
 Fresh Repository recovery
-→ perform post-Batch-7 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
-→ determine S13 entry readiness from current Repository authority
-→ no downstream producing session is authorized automatically
+→ separate GAC authorization transition for:
+
+NGRP-001 — Component Internal Design / ns_server / Batch 8
+
+Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY
+  / NS_SERVER
+  / BATCH_8
+  / CROSS_DOMAIN_RESOURCE_DISCOVERY_PROJECTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+
+Boundary
+→ S13 Cross-domain Resource Discovery Projection
+
+Runtime Role
+→ SV-R09 Discovery Projection Participant
+
+RCP-21
+→ S13 / SV-R09 contribution closure only
+→ Full Cross-component Closure NOT authorized
 ```
