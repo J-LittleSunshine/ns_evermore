@@ -682,4 +682,36 @@ Open MDE required for current S13 Batch → 0
 Unpersisted Owner Decision required for current S13 Batch → 0
 Blocking Item → NONE
 Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 8 / S13 producing session under exact authorized scope
+
+GAC-TR-0077 → GAC-EPOCH-0067
+Transition → ns_server Component Internal Design / Batch 8 independent Global Acceptance
+Producing Final HEAD → 2a9b77c0bde767b08ca5fa33dbbf93964b25c6fa
+Global Acceptance Evidence Commit → 913a4a788176c13ab750c64356323df606c16e5d
+Result → GLOBAL_ACCEPT
+Accepted Boundary → S13 Cross-domain Resource Discovery Projection
+Accepted Runtime Role Input → SV-R09 Discovery Projection Participant
+Accepted Internal Module Count → 9
+Accepted DAD → CID-SV-B8-DAD-001..023
+Hard Internal SDD Graph → ACYCLIC
+RCP-21 S13 / SV-R09 Contribution → CLOSED AT CURRENT DESIGN LEVEL
+RCP-21 Full Cross-component Closure → NOT CLOSED / NOT CLAIMED
+S13 Actual-state Ownership → Projection Entry lifecycle/currentness + projection freshness/staleness + bounded completeness/partiality + Projection Generation/rebuild state/coverage + availability/uncertainty + S13 reconciliation qualification
+Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating applicable owners / PRESERVED
+Universal Resource Registry / Identity Authority → 0
+Cross-Tenant Discovery / Authorization Bypass → 0
+Unauthorized Resource-existence Leakage Design Gap → 0
+AI / Semantic-search Product Guarantee → 0
+Concrete Search/Index/Vector/Embedding/Provider/DB/API/Process/UI leakage → 0
+Other Product Component / WB-R01 Internal-design Leakage → 0
+Authority / SoT / Actual-state Transfer → 0
+Misclassified MDE → 0
+Decision Registry → 0.0.24
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Remaining accepted ns_server boundaries without Component Internal Design → NONE
+ns_server Component Internal Design Global Closure → NOT_DECLARED
+ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 8 ACCEPTANCE
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh-recovery GAC post-Batch-8 ns_server Component Internal Design remaining-pressure / exhaustion / global-closure assessment; no other Product Component or downstream phase is authorized automatically
 ```
