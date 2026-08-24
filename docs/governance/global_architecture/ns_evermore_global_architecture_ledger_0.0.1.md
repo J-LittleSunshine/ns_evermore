@@ -760,4 +760,32 @@ Decision Registry → 0.0.25 / unchanged
 Current Authorized Phase → NONE
 Authorization → NOT GRANTED BY ASSESSMENT
 Unique Next Legal Action → write Global State seal, fresh Repository recovery, then if eligibility remains satisfied perform separate ns_runtime Component Internal Design / Batch 1 authorization transition
+
+GAC-TR-0080 → GAC-EPOCH-0070
+Transition → separate ns_runtime Component Internal Design / Batch 1 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_server_component_internal_design_next_component_sequencing_ns_runtime_entry_readiness_assessment_0.0.1.md
+Authorized Phase → NGRP-001 — Component Internal Design / ns_runtime / Batch 1
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_1 / PRESENCE_AND_GOVERNED_DISPATCH_COORDINATION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Internal Boundaries → R1 Connection / Participant Presence Coordination + R2 Governed Routing / Scheduling / Dispatch Coordination
+Inherited Runtime Roles → RT-R01 Participant Presence Coordinator + RT-R02 Governed Routing / Scheduling / Dispatch Coordinator
+RCP-03 Authorized → RT-R01 owner/coordinator-side semantic closure and stable contract synthesis
+RCP-05 Authorized → RT-R02 producer/coordinator-side semantic closure and stable contract synthesis
+RCP-02 Authorized Refinement → runtime consumer-side applicability only / accepted ns_server producer closure preserved
+RCP-04 Authorized Refinement → runtime consumer expectation only / ns_node ND-R01 owner-side semantics remain downstream
+Full RCP-03 / RCP-04 / RCP-05 Cross-component Closure → NOT AUTHORIZED beyond stated runtime-side contribution
+RCP-06 / RCP-12 / RCP-13 beyond accepted server semantics / RCP-15 beyond accepted server semantics / RCP-16 / RCP-20 / RCP-21 Full Closure → NOT AUTHORIZED
+R3 / R4 Internal Design → NOT AUTHORIZED
+Authority / SoT / Actual-state Topology → unchanged / coordination-only runtime ownership preserved
+Admission / Scheduling / Routing / Dispatch / Attempt / Effect Non-collapse → REQUIRED
+Connected / Trusted / Admitted and Reachable / Ready Non-collapse → REQUIRED
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Concrete Broker / Queue / Scheduler / DB / API / Wire Protocol / DTO / Worker / Process / Container / Deployment Selection → NOT AUTHORIZED
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Decision Registry → 0.0.25 / unchanged
+Current Authorized Phase → NGRP-001 — Component Internal Design / ns_runtime / Batch 1
+Maximum Legal Bounded-session State → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Unique Next Legal Action → start exactly one bounded ns_runtime Component Internal Design / Batch 1 producing session under the exact authorized scope, then return to GAC for independent review
 ```
