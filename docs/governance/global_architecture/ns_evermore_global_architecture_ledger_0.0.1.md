@@ -656,4 +656,30 @@ Blocking Item → NONE
 Batch 8 Authorization → NOT GRANTED BY ASSESSMENT
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh Repository recovery then separate GAC authorization transition for ns_server Component Internal Design / Batch 8 / S13
+
+GAC-TR-0076 → GAC-EPOCH-0066
+Transition → separate ns_server Component Internal Design / Batch 8 / S13 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.7.md
+Authorized Phase → NGRP-001 — Component Internal Design / ns_server / Batch 8
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_SERVER / BATCH_8 / CROSS_DOMAIN_RESOURCE_DISCOVERY_PROJECTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Boundary → S13 Cross-domain Resource Discovery Projection
+Inherited Runtime Role → SV-R09 Discovery Projection Participant
+Owner Capability Baseline → Unified Governed Cross-domain Resource Discovery / authorization-aware / Tenant-aware / private-offline-capable / domain identity preserved
+Discovery Projection / Index as Resource Authority or Canonical SoT → PROHIBITED
+S13 Actual-state Ownership → projection freshness/completeness/partiality/rebuild/staleness/availability/uncertainty only
+Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating resource owners / PRESERVED
+RCP-21 S13 / SV-R09 Contribution → AUTHORIZED FOR CURRENT DESIGN-LEVEL CLOSURE
+RCP-21 Full Cross-component Closure → NOT AUTHORIZED
+S11 Human Task / S12 Notification Contribution Semantics → accepted upstream / may be consumed / internals MUST NOT be reopened
+Non-server Resource-owner and WB-R01 Internal Design → NOT AUTHORIZED
+Unauthorized Resource-existence Leakage → PROHIBITED
+Cross-Tenant Discovery / Authorization Bypass → PROHIBITED
+Universal AI / Semantic-search Guarantee → NOT AUTHORIZED
+Mandatory Search/Index/Vector/Embedding Provider or Technology → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Open MDE required for current S13 Batch → 0
+Unpersisted Owner Decision required for current S13 Batch → 0
+Blocking Item → NONE
+Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 8 / S13 producing session under exact authorized scope
 ```
