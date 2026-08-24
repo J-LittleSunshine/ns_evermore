@@ -1,13 +1,13 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0067`
+- Status: `CURRENT / GAC-EPOCH-0068`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
-Current Global State Epoch → GAC-EPOCH-0067
-State Verified Through HEAD → beed56d2438ba56673861a51d2496e0d1399a84d
+Current Global State Epoch → GAC-EPOCH-0068
+State Verified Through HEAD → f65ad79f16a98f6308adb8fc6f35cea5dbbbbbc5
 
 Genesis Constitution → GLOBAL_ACCEPTED / NORMATIVE
 Unified Governance → 0.0.2 / NORMATIVE
@@ -44,41 +44,23 @@ ns_server Component Internal Design / Batch 6 → GLOBAL_ACCEPTED
 ns_server Component Internal Design / Batch 7 → GLOBAL_ACCEPTED
 ns_server Component Internal Design / Batch 8 → GLOBAL_ACCEPTED
 
-RCP-23 Full Server-native Runtime Evidence
-→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
-
-RCP-18 Notification / Delivery
-→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
-
-RCP-16 Automation Source-side
-→ CLOSED AT CURRENT DESIGN LEVEL
-
-RCP-16 S11 / SV-R07 Contribution
-→ CLOSED AT CURRENT DESIGN LEVEL
-
-RCP-16 Full Cross-component Closure
-→ NOT CLOSED / remains downstream
-
-RCP-21 S13 / SV-R09 Contribution
-→ CLOSED AT CURRENT DESIGN LEVEL
-
-RCP-21 Full Cross-component Closure
-→ NOT CLOSED / remains downstream
+ns_server Accepted Internal-design Boundary Coverage
+→ 13 / 13 / 100%
 
 Remaining accepted ns_server boundaries without Component Internal Design
 → NONE
 
 Remaining Material ns_server Component Internal-design Pressure
-→ MUST BE REASSESSED AFTER BATCH 8 ACCEPTANCE
+→ NONE_FOUND
 
-ns_server Component Internal Design Exhaustion
-→ NOT YET REASSESSED AFTER BATCH 8 ACCEPTANCE
+ns_server Internal Design Exhaustion
+→ SATISFIED
 
-ns_server Component Internal Design Global Closure
-→ NOT_DECLARED
+ns_server Component Internal Design
+→ GLOBAL_CLOSED / COMPLETE
 
 Decision Registry
-→ 0.0.24 / CURRENT / NORMATIVE
+→ 0.0.25 / CURRENT / NORMATIVE
 
 Open MDE
 → 0
@@ -99,381 +81,229 @@ Authorization Scope
 → NONE
 ```
 
-# Batch-8 Global Acceptance
+# ns_server Global Closure Evidence
 
-Global Acceptance evidence:
+Assessment:
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_8_global_acceptance_0.0.1.md`
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.8.md`
 
 ```text
-Producing Entry HEAD
-→ b4edbd3d6f344c875e43ffaa37c08ac910b3bbf8
+Assessment Commit
+→ 2c6f2b33a9a9387cc6ffdbd293afa100cbd1b42a
 
-Producing Final HEAD
-→ 2a9b77c0bde767b08ca5fa33dbbf93964b25c6fa
+Decision Registry 0.0.25 Commit
+→ 5d07643baceef3cc11fa63e3ef01f7002ea8e38f
 
-Global Acceptance Evidence Commit
-→ 913a4a788176c13ab750c64356323df606c16e5d
+Working State Closure Commit
+→ b364e7fab7f682d6af3f9235113f44d3eb63616d
 
-Decision Registry 0.0.24 Commit
-→ 94b7666266532a9b3e79744658420256163cab5a
+GAC Transition
+→ GAC-TR-0078 → GAC-EPOCH-0068
 
-Working State Commit
-→ 7aa4727ba37fa91220184a4c33b67a0dd5716fbe
-
-GAC Ledger Transition
-→ GAC-TR-0077 → GAC-EPOCH-0067
-
-GAC Ledger Commit
-→ beed56d2438ba56673861a51d2496e0d1399a84d
-
-Result
-→ GLOBAL_ACCEPT
+Ledger Commit
+→ f65ad79f16a98f6308adb8fc6f35cea5dbbbbbc5
 ```
 
-# Accepted S13 / SV-R09 Internal Architecture
+Assessment result:
 
 ```text
-S13
-→ Cross-domain Resource Discovery Projection
+Remaining Material ns_server Component Internal-design Pressure
+→ NONE_FOUND
 
-SV-R09
-→ Discovery Projection Participant
+ns_server Internal Design Exhaustion
+→ SATISFIED
 
-Accepted Internal Module Count
-→ 9
-
-Accepted DAD
-→ CID-SV-B8-DAD-001..023
-
-Hard Internal SDD Graph
-→ ACYCLIC
+ns_server Component Internal Design
+→ GLOBAL_CLOSED / COMPLETE
 ```
 
-Accepted architecture-semantic responsibilities:
+# Accepted ns_server Component Internal Design Coverage
+
+The accepted `ns_server` boundary set is exactly:
 
 ```text
-DP01 Discovery Contribution Intake & Source Authority Binding
-DP02 Contribution Identity, Lineage & Source Correlation Custody
-DP03 Discoverability Eligibility & Category Applicability Qualification
-DP04 Tenant / Principal / Policy / Trust / Privacy Disclosure Qualification
-DP05 Projection Entry Lifecycle, Freshness & Currentness Custody
-DP06 Projection Generation, Rebuild Coverage & Reconciliation Custody
-DP07 Governed Query Context & Projection Evaluation
-DP08 Result Projection, Aggregate/Relationship Disclosure & Source Navigation
-DP09 Recovery, Historical Interpretation, Compatibility & Contract Conformance
+S1  Tenant & Principal Identity Governance
+S2  Organization Semantics & External Mapping Governance
+S3  Policy & Authorization Governance
+S4  Platform Trust & Security Governance
+S5  Business Application Definition Lifecycle
+S6  Automation Definition, Trigger & Composition Lifecycle
+S7  Enterprise Data / Knowledge / Foundational ETL Governance
+S8  Artifact Acceptance & Execution Admission Governance
+S9  Managed Runtime Configuration Governance
+S10 Server-local Background Work & Server Actual-state
+S11 Unified Human Task Aggregation & Response Routing
+S12 Governed Notification & External Delivery Lifecycle
+S13 Cross-domain Resource Discovery Projection
 ```
 
-These are architecture-semantic responsibility boundaries only and do not imply packages, services, processes, workers, databases, indexes, search engines, APIs, UI structures or deployment units.
-
-# Accepted S13 Authority / Actual-state Boundary
+All thirteen have Global-Accepted Component Internal Design.
 
 ```text
-Resource Semantic Authority
-→ originating resource owner
-
-Resource Definition SoT
-→ originating resource owner
-
-Resource Runtime Actual-state
-→ applicable originating runtime owner
-
-Resource Source Facts
-→ originating source owner
-
-S13 Product Semantic Authority over source resources
-→ NONE
+Batch 1 → S1 / S2 / S3 / S4 / S8 / S9
+Batch 2 → S6
+Batch 3 → S5
+Batch 4 → S7
+Batch 5 → S10
+Batch 6 → S12
+Batch 7 → S11
+Batch 8 → S13
 ```
 
-```text
-SV-R09 final owned partition
-→ Projection Entry lifecycle/currentness
-→ projection freshness/staleness
-→ bounded completeness/partiality
-→ Projection Generation/rebuild state and coverage evidence
-→ projection availability/uncertainty
-→ S13 reconciliation qualification
-```
+No additional accepted `ns_server` internal boundary is unresolved.
 
-Permanent:
+# ns_server Runtime-role Coverage
+
+Accepted server Runtime Roles:
 
 ```text
-Projection / Aggregation != Source Authority
-Discovery Projection / Index != Resource SoT
-Discovery Projection / Index != Canonical Resource Registry
-Query Result != Source Resource
-Query Result != Resource Actual-state
-Projection persistence / index placement != Authority
-```
-
-For the same bounded Actual-state assertion, exactly one final owner remains required.
-
-# Accepted Identity / Correlation Semantics
-
-```text
-Source Resource Identity / Reference
-→ originating resource owner / preserved
-
-Source Resource Owner Reference
-→ preserved
-
-Origin Domain / Resource Type
-→ preserved
-
-Discovery Contribution Identity / Reference
-→ distinct contribution-lineage subject
-
-Discovery Projection Entry Identity
-→ distinct where S13 projection lifecycle/history requires it
-
-Projection Generation / Rebuild Evidence Identity
-→ distinct where generation/history requires it
-
-Query Correlation Identity / Reference
-→ distinct architecture subject
-
-Result Correlation Identity / Reference
-→ distinct architecture subject
-```
-
-Permanent:
-
-```text
-Discovery Contribution Identity != Resource Identity automatically
-Projection Entry Identity != Source Resource Identity automatically
-Projection Generation Identity != Resource Revision
-Query Identity != Resource Identity
-Result Identity != Resource Identity
-Index-document ID != Architecture Identity automatically
-Database PK != Architecture Identity automatically
+SV-R01 ← S5
+SV-R02 ← S6
+SV-R03 ← S7
+SV-R04 ← S8 + S1-S4 context
+SV-R05 ← S9
+SV-R06 ← S10
+SV-R07 ← S11
+SV-R08 ← S12
+SV-R09 ← S13
 ```
 
 ```text
-Universal Resource Identity Namespace
-→ NOT CREATED
-
-Canonical Universal Resource Registry Authority
-→ NOT CREATED
+Missing accepted ns_server Runtime-role source-boundary design
+→ 0
 ```
 
-# Accepted Freshness / Completeness / Rebuild Semantics
+This does not imply process/service/container realization.
 
-Applicable S13 projection/currentness qualifications may include where appropriate:
+# Stable Contract Closure State
+
+Accepted server/native closures remain:
 
 ```text
-CURRENT
-STALE
-PARTIAL
-UNKNOWN
-UNAVAILABLE
-REBUILDING
-INDETERMINATE
-CONFLICTING
-RECONCILIATION_PENDING
-RECOVERING
+RCP-01 Governance Context
+RCP-02 Admission Evidence
+RCP-13 Automation Continuation
+RCP-14 Event Trigger Input / Evaluation
+RCP-15 Automation Composition
+RCP-18 Notification / Delivery
+RCP-19 Desired / Applied Config
+RCP-23 Full Server-native Runtime Evidence
+→ CLOSED at their recorded current design-semantic levels
 ```
 
-Completeness is valid only as:
+Accepted server-side/domain-side contributions include:
 
 ```text
-COMPLETE_FOR_SCOPE
-```
-
-with an explicit bounded scope such as applicable Tenant, supported category set, known contributing producer set, projection generation and contribution/source-observation frontier.
-
-Permanent:
-
-```text
-Fresh Projection != Fresh Source automatically
-Projection Complete != Universal Resource Universe complete
-Projection Stale != Source Resource Stale automatically
-Missing Contribution != Resource Missing
-Missing Projection Entry != Resource Missing
-No Result != Resource Does Not Exist
-Unknown != Absent
-Rebuild Started != Prior Projection invalid automatically
-Rebuild Finished != Source Truth Fresh
-Rebuild Finished != Source Owners globally synchronized
-Latest Timestamp != active/canonical winner automatically
-Reconnect != Reconciled
-```
-
-No universal TTL/freshness duration, rebuild algorithm, global cutover/conflict winner or replay authority is accepted.
-
-# Accepted Query / Result / Security / Privacy Semantics
-
-```text
-Query Submitted != Resource Exists
-Query Submitted != Search Authorized
-Query Result != Source Resource
-Query Result != Resource Actual-state
-No Result != Resource Does Not Exist
-Rank / Score != Semantic Authority
-Snippet != Canonical Source Representation
-Navigation Target != Authorization Grant
-```
-
-S13 remains:
-
-```text
-Tenant-aware
-Organization-aware where applicable
-Principal-aware
-Policy-aware
-Trust-aware
-Privacy / redaction-aware
-```
-
-Permanent:
-
-```text
-Resource Exists != every Principal may discover it
-Searchable != Authorized To Discover
-Technically Indexed != Authorized To Reveal
-Discovery Result != Authorization Grant
-```
-
-Unauthorized protected resource existence MUST NOT leak through result rows, snippets, counts, facets/categories, relationship/navigation hints, suggestion-equivalent metadata, error semantics, rebuild/partiality metadata or equivalent discovery metadata.
-
-```text
-Cross-Tenant Discovery
-→ PROHIBITED
-
-Authorization Bypass
-→ PROHIBITED
-```
-
-Counts/facets/aggregates/relationship hints remain disclosure-sensitive derived projection metadata; none becomes source authority.
-
-# Accepted Offline / Recovery / History Boundary
-
-```text
-Private / Offline-capable Core Discovery
-→ REQUIRED / PRESERVED
-
-Mandatory Public SaaS/Search/Embedding/AI Dependency
-→ NONE
-```
-
-Permanent:
-
-```text
-Offline Projection != Source Authority
-Local Index != Resource SoT
-Local Cache != Canonical Registry
-Reconnect != Reconciled
-Replay / Rebuild != Retroactive Authorization
-Cached authorization evidence != perpetual authorization automatically
-Latest Timestamp != conflict winner
-```
-
-Historical discovery evidence preserves source, contribution, projection, generation, query/result and applicable governance/disclosure provenance. Current source/resource, Policy/Trust or projection state does not silently rewrite historical interpretation.
-
-# S11 / S12 / Other-component Non-preemption
-
-```text
-S11 Human Task accepted contribution semantics
-→ CONSUMED / internals NOT REOPENED
-
-S12 Notification accepted contribution semantics
-→ CONSUMED / internals NOT REOPENED
-
-Non-server Resource-owner Component Internal Design
-→ NOT ENTERED
-
-WB-R01 / ns_web Discovery Internal Design
-→ NOT ENTERED
-```
-
-Future non-server resource owners and future consumers receive only representation-neutral RCP-21 obligations until separately authorized Component Internal Design exists.
-
-# RCP-21 — Accepted Current Closure
-
-```text
-RCP-21 S13 / SV-R09 Contribution
+RCP-16 Automation Source-side
 → CLOSED AT CURRENT DESIGN LEVEL
 
-Non-server Resource-owner Component Internal Design contributions
-→ NOT YET INTERNALLY DESIGNED / ACCEPTED
+RCP-16 S11 / SV-R07 Contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
 
-WB-R01 / ns_web Discovery interaction contribution
-→ NOT YET INTERNALLY DESIGNED / ACCEPTED
+RCP-17 accepted ns_server domain contributions
+→ CLOSED AT CURRENT DESIGN LEVEL where recorded
 
-RCP-21 Full Cross-component Closure
-→ NOT CLOSED
+RCP-21 S13 / SV-R09 Contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
 ```
 
-Full RCP-21 closure remains downstream and cannot be inferred from Batch-8 acceptance.
-
-# AI / Search / Foundation Non-preemption
+Still downstream:
 
 ```text
-Unified Governed Discovery
-!= Universal AI Semantic Search
-!= Mandatory Embedding / Vector Retrieval
-!= Natural-language Answer Synthesis
-```
-
-```text
-Universal AI / Semantic Search Guarantee
-→ NOT CREATED
-
-Mandatory Search / Index Engine
-→ NOT SELECTED
-
-Mandatory Embedding / Vector Provider
-→ NOT SELECTED
-
-Mandatory Public SaaS
-→ NOT CREATED
-```
-
-Shared Foundation remains authority-neutral and is consumed only through accepted Stable Entry → Contract → Module → Provider paths where applicable.
-
-# Explicitly Not Authorized / Not Yet Declared
-
-```text
-ns_server Internal Design Exhaustion
-→ NOT YET REASSESSED
-
-ns_server Component Internal Design Global Closure
-→ NOT DECLARED
-
-RCP-21 Full Cross-component Closure
-→ NOT CLOSED
-
 RCP-16 Full Cross-component Closure
 → NOT CLOSED
 
-Other Product Component Internal Design
-→ NOT AUTHORIZED
+RCP-21 Full Cross-component Closure
+→ NOT CLOSED
+```
 
+Other multi-party RCP closure remains governed by later non-server Component Internal Design / Contract / SDK work where applicable.
+
+Permanent:
+
+```text
+Remaining Cross-component Contract Work
+!= Remaining ns_server Component Internal-design Pressure
+```
+
+# ns_server Global Closure Qualification
+
+`ns_server Component Internal Design → GLOBAL_CLOSED / COMPLETE` means:
+
+```text
+all accepted ns_server boundaries have accepted internal architecture
+no material server-internal responsibility remains unnamed
+no server-internal Authority / SoT / Actual-state ambiguity remains at this design level
+no mandatory missing Shared Foundation semantic is required to close ns_server
+```
+
+It does **not** mean:
+
+```text
+all Product Components internally designed
+all RCP-01..24 fully cross-component closed
+System-level SDK Detailed Design complete
+Design-to-Implementation Readiness satisfied
+Implementation Planning authorized
+IWP authorized
+Coding authorized
+```
+
+# Remaining Product Component Internal Design
+
+The following Product Components have accepted architecture-level internal boundaries and runtime responsibilities but have not yet entered Component Internal Design:
+
+```text
+ns_runtime
+→ 4 accepted internal boundaries
+→ Component Internal Design NOT YET AUTHORIZED / NOT YET ACCEPTED
+
+ns_node
+→ 4 accepted internal boundaries
+→ Component Internal Design NOT YET AUTHORIZED / NOT YET ACCEPTED
+
+ns_agent
+→ 6 accepted internal boundaries
+→ Component Internal Design NOT YET AUTHORIZED / NOT YET ACCEPTED
+
+ns_web
+→ 7 accepted internal boundaries
+→ Component Internal Design NOT YET AUTHORIZED / NOT YET ACCEPTED
+```
+
+Therefore:
+
+```text
+Five-component Component Internal Design Global Closure
+→ NOT DECLARED
+```
+
+# Explicitly Not Authorized
+
+```text
+ns_runtime Component Internal Design
+ns_node Component Internal Design
+ns_agent Component Internal Design
+ns_web Component Internal Design
+RCP-16 Full Cross-component Closure by inference
+RCP-21 Full Cross-component Closure by inference
 System-level SDK Detailed Design
-→ NOT AUTHORIZED
-
 Design-to-Implementation Readiness
-→ NOT AUTHORIZED
-
 Implementation Planning
-→ NOT AUTHORIZED
-
 IWP
-→ NOT AUTHORIZED
-
 Coding
-→ NOT AUTHORIZED
 ```
 
 # Current Required Read Set
 
-Minimum sufficient Repository context for the next GAC post-Batch-8 remaining-pressure / exhaustion / global-closure assessment:
+Minimum sufficient Repository context for the next GAC next-component sequencing / entry-readiness assessment:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
 2. docs/governance/ns_evermore_governance_0.0.2.md
 3. docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md
 4. docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md
-5. docs/governance/decisions/ns_evermore_decision_registry_0.0.24.md
+5. docs/governance/decisions/ns_evermore_decision_registry_0.0.25.md
 6. docs/ns_evermore_nse_constraints_index_0.0.5.md
 7. docs/ns_evermore_project_architecture_0.0.3.md
 8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_five_component_internal_architecture_boundaries_candidate_0.0.1.md
@@ -481,29 +311,26 @@ Minimum sufficient Repository context for the next GAC post-Batch-8 remaining-pr
 10. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_candidate_0.0.1.md
 11. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_global_acceptance_0.0.1.md
 12. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_exhaustion_component_internal_design_readiness_assessment_0.0.1.md
-13. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_global_acceptance_0.0.1.md
-14. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_global_acceptance_0.0.1.md
-15. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_3_global_acceptance_0.0.1.md
-16. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_4_global_acceptance_0.0.1.md
-17. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_5_global_acceptance_0.0.1.md
-18. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_6_global_acceptance_0.0.1.md
-19. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_7_global_acceptance_0.0.1.md
-20. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_8_global_acceptance_0.0.1.md
-21. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.7.md
-22. docs/governance/decisions/ns_evermore_z3_batch_2_unified_resource_discovery_owner_capability_decision_0.0.1.md
-23. docs/governance/decisions/ns_evermore_z2_mde_014_runtime_actual_state_ownership_topology_owner_decision_0.0.1.md
-24. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
+13. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.8.md
+14. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_global_acceptance_0.0.1.md
+15. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_global_acceptance_0.0.1.md
+16. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_3_global_acceptance_0.0.1.md
+17. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_4_global_acceptance_0.0.1.md
+18. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_5_global_acceptance_0.0.1.md
+19. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_6_global_acceptance_0.0.1.md
+20. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_7_global_acceptance_0.0.1.md
+21. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_8_global_acceptance_0.0.1.md
+22. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
 ```
 
-Read additional exact Owner/MDE evidence if the assessment materially touches a reserved dimension.
+Read exact Owner/MDE evidence additionally when a candidate component materially touches a reserved dimension.
 
 # Unique Next Legal Action
 
 ```text
 Fresh Repository recovery
-→ perform post-Batch-8 ns_server Component Internal Design remaining-pressure / exhaustion / global-closure assessment
-→ determine whether Remaining Material ns_server Component Internal-design Pressure = NONE_FOUND
-→ determine whether ns_server Internal Design Exhaustion = SATISFIED
-→ determine whether ns_server Component Internal Design Global Closure may be declared
-→ do not authorize another Product Component or downstream phase automatically
+→ perform GAC next-Product-Component Component Internal Design sequencing / remaining-pressure / entry-readiness assessment
+→ compare ns_runtime / ns_node / ns_agent / ns_web against current accepted dependency and stable-contract pressure
+→ identify one next highest-value architecture-safe component/batch candidate
+→ do not authorize that component automatically from this Global State
 ```
