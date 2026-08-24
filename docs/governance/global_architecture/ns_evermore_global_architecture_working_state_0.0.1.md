@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0067`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0068`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 ```text
@@ -16,6 +16,7 @@ Shared Foundation Architecture → GLOBAL_CLOSED / COMPLETE
 Foundation Contract Design → GLOBAL_CLOSED / COMPLETE
 Foundation Module Design → GLOBAL_CLOSED / COMPLETE
 Foundation Provider Design → GLOBAL_CLOSED / COMPLETE
+Foundation Provider Design Exhaustion → SATISFIED
 Component Internal Design Readiness → SATISFIED
 
 ns_server Batch 1 → GLOBAL_ACCEPTED
@@ -27,20 +28,23 @@ ns_server Batch 6 → GLOBAL_ACCEPTED
 ns_server Batch 7 → GLOBAL_ACCEPTED
 ns_server Batch 8 → GLOBAL_ACCEPTED
 
-Decision Registry
-→ 0.0.24 / CURRENT / NORMATIVE
+ns_server Component Internal Design Coverage
+→ 13 / 13 / 100%
 
 Remaining accepted ns_server boundaries without Component Internal Design
 → NONE
 
 Remaining Material ns_server Component Internal-design Pressure
-→ MUST BE REASSESSED AFTER BATCH 8 ACCEPTANCE
+→ NONE_FOUND
 
 ns_server Internal Design Exhaustion
-→ NOT YET REASSESSED AFTER BATCH 8 ACCEPTANCE
+→ SATISFIED
 
-ns_server Component Internal Design Global Closure
-→ NOT DECLARED
+ns_server Component Internal Design
+→ GLOBAL_CLOSED / COMPLETE
+
+Decision Registry
+→ 0.0.25 / CURRENT / NORMATIVE
 
 Open MDE
 → 0
@@ -61,155 +65,46 @@ Authorization Scope
 → NONE
 ```
 
-Batch-8 Global Acceptance evidence:
+## ns_server Global Closure Basis
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_8_global_acceptance_0.0.1.md`
+Assessment:
 
-## Accepted S13 / SV-R09 Baseline
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.8.md`
 
 ```text
-S13
-→ Cross-domain Resource Discovery Projection
+Assessment Result
+→ Remaining Material ns_server Component Internal-design Pressure = NONE_FOUND
+→ ns_server Internal Design Exhaustion = SATISFIED
+→ ns_server Component Internal Design = GLOBAL_CLOSED / COMPLETE
 
-SV-R09
-→ Discovery Projection Participant
+Accepted Boundary Count
+→ 13
 
-Accepted Internal Responsibilities
-→ DP01..DP09
+Accepted Internal-design Coverage
+→ 13 / 13 / 100%
 
-Accepted DAD
-→ CID-SV-B8-DAD-001..023
+Missing ns_server Runtime-role source-boundary design
+→ 0
 
-Hard Internal SDD Graph
-→ ACYCLIC
+Remaining ns_server Authority / SoT / Actual-state ambiguity
+→ 0
+
+Mandatory missing Shared Foundation semantic
+→ 0
+
+Implementation-defined Component Architecture Escape
+→ 0
 ```
 
-Accepted internal responsibilities:
+## Stable Contract State Preserved
 
 ```text
-DP01 Discovery Contribution Intake & Source Authority Binding
-DP02 Contribution Identity, Lineage & Source Correlation Custody
-DP03 Discoverability Eligibility & Category Applicability Qualification
-DP04 Tenant / Principal / Policy / Trust / Privacy Disclosure Qualification
-DP05 Projection Entry Lifecycle, Freshness & Currentness Custody
-DP06 Projection Generation, Rebuild Coverage & Reconciliation Custody
-DP07 Governed Query Context & Projection Evaluation
-DP08 Result Projection, Aggregate/Relationship Disclosure & Source Navigation
-DP09 Recovery, Historical Interpretation, Compatibility & Contract Conformance
-```
+RCP-23 Full Server-native Runtime Evidence
+→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
 
-## Accepted S13 Ownership
+RCP-18 Notification / Delivery
+→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
 
-```text
-Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts
-→ originating applicable owner
-
-S13 / SV-R09
-→ Projection Entry lifecycle/currentness
-→ projection freshness/staleness
-→ bounded completeness/partiality
-→ Projection Generation/rebuild state and coverage evidence
-→ projection availability/uncertainty
-→ S13 reconciliation qualification
-```
-
-Permanent:
-
-```text
-Projection / Aggregation != Source Authority
-Discovery Projection / Index != Resource SoT
-Discovery Projection / Index != Canonical Resource Registry
-Projection persistence / index placement != Authority
-```
-
-## Accepted Identity / Freshness / Completeness
-
-```text
-Source Resource Identity / Owner / Origin Domain / Type
-→ preserved
-
-Discovery Contribution Identity
-→ distinct from Source Resource Identity
-
-Projection Entry Identity
-→ distinct where lifecycle/history requires it
-
-Projection Generation Identity
-→ distinct from Resource Revision
-
-Query / Result Correlation Identity
-→ distinct architecture subjects
-```
-
-```text
-Universal Resource Identity Namespace
-→ NOT CREATED
-
-Canonical Universal Resource Registry Authority
-→ NOT CREATED
-```
-
-Completeness is valid only as `COMPLETE_FOR_SCOPE` with explicit bounded scope.
-
-```text
-Fresh Projection != Fresh Source automatically
-Projection Complete != Universal Resource Universe complete
-Missing Projection Entry != Resource Missing
-No Result != Resource Does Not Exist
-Rebuild Finished != Source Truth Fresh / globally synchronized
-```
-
-## Accepted Disclosure / Privacy Boundary
-
-S13 remains Tenant-aware, Organization-aware where applicable, Principal-aware, Policy-aware, Trust-aware, privacy-aware and redaction-aware.
-
-```text
-Searchable != Authorized To Discover
-Technically Indexed != Authorized To Reveal
-Discovery Result != Authorization Grant
-Cross-Tenant Discovery → PROHIBITED
-Authorization Bypass → PROHIBITED
-```
-
-Unauthorized protected existence must not leak through result rows, snippets, counts, facets/categories, relation/navigation hints, suggestion-equivalent metadata, error semantics or rebuild/partiality metadata.
-
-## Offline / Technology Neutrality
-
-```text
-Private / Offline-capable Core Discovery → REQUIRED / PRESERVED
-Offline Projection != Source Authority
-Local Index != Resource SoT
-Reconnect != Reconciled
-Replay / Rebuild != Retroactive Authorization
-Cached authorization evidence != perpetual authorization automatically
-```
-
-```text
-Universal AI / Semantic Search Guarantee → NOT CREATED
-Mandatory Embedding / Vector Retrieval → NOT CREATED
-Mandatory Search / Index Engine → NOT SELECTED
-Mandatory Public SaaS → NOT CREATED
-```
-
-## RCP-21 Current State
-
-```text
-RCP-21 S13 / SV-R09 Contribution
-→ CLOSED AT CURRENT DESIGN LEVEL
-
-Non-server Resource-owner contributions
-→ NOT YET INTERNALLY DESIGNED / ACCEPTED
-
-WB-R01 / ns_web Discovery contribution
-→ NOT YET INTERNALLY DESIGNED / ACCEPTED
-
-RCP-21 Full Cross-component Closure
-→ NOT CLOSED
-```
-
-## Preserved Downstream Contract State
-
-```text
 RCP-16 Automation Source-side
 → CLOSED AT CURRENT DESIGN LEVEL
 
@@ -219,21 +114,52 @@ RCP-16 S11 / SV-R07 Contribution
 RCP-16 Full Cross-component Closure
 → NOT CLOSED
 
-RCP-18 Notification / Delivery
-→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
+RCP-21 S13 / SV-R09 Contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
 
-RCP-23 Full Server-native Runtime Evidence
-→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
+RCP-21 Full Cross-component Closure
+→ NOT CLOSED
+```
+
+Remaining multi-party Contract closure is downstream and does not reopen `ns_server` Component Internal Design.
+
+## Closure Qualification
+
+```text
+ns_server GLOBAL_CLOSED / COMPLETE
+!= all Product Components internally designed
+
+ns_server GLOBAL_CLOSED / COMPLETE
+!= all RCPs fully cross-component closed
+
+ns_server GLOBAL_CLOSED / COMPLETE
+!= System-level SDK Detailed Design complete
+
+ns_server GLOBAL_CLOSED / COMPLETE
+!= Design-to-Implementation Readiness
+```
+
+Other Product Component Internal Design remains unstarted/unaccepted at this stage:
+
+```text
+ns_runtime Component Internal Design
+→ NOT AUTHORIZED
+
+ns_node Component Internal Design
+→ NOT AUTHORIZED
+
+ns_agent Component Internal Design
+→ NOT AUTHORIZED
+
+ns_web Component Internal Design
+→ NOT AUTHORIZED
 ```
 
 ## Explicitly Not Authorized
 
 ```text
-ns_server Internal Design Exhaustion declaration
-ns_server Component Internal Design Global Closure
-other Product Component Internal Design
-RCP-21 Full Cross-component Closure
-RCP-16 Full Cross-component Closure
+other Product Component Internal Design producing work
+full RCP-16 / RCP-21 cross-component closure by inference
 System-level SDK Detailed Design
 Design-to-Implementation Readiness
 Implementation Planning
@@ -245,8 +171,8 @@ Coding
 
 ```text
 Fresh Repository recovery
-→ perform post-Batch-8 ns_server Component Internal Design remaining-pressure / exhaustion / global-closure assessment
-→ determine whether Remaining Material ns_server Component Internal-design Pressure = NONE_FOUND
-→ only after that assessment may GAC determine whether ns_server Exhaustion / Global Closure is satisfied
-→ do not authorize another Product Component or downstream phase automatically
+→ perform GAC next-Product-Component Component Internal Design sequencing / remaining-pressure / entry-readiness assessment
+→ compare ns_runtime / ns_node / ns_agent / ns_web from current accepted architecture and contract pressure
+→ identify one next highest-value architecture-safe candidate
+→ do not authorize that component automatically from this checkpoint
 ```
