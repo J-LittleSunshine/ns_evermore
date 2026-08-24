@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0060`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0061`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 ```text
@@ -23,29 +23,33 @@ ns_server Batch 2 → GLOBAL_ACCEPTED
 ns_server Batch 3 → GLOBAL_ACCEPTED
 ns_server Batch 4 → GLOBAL_ACCEPTED
 ns_server Batch 5 → GLOBAL_ACCEPTED
+ns_server Batch 6 → GLOBAL_ACCEPTED
 
 Decision Registry
-→ 0.0.21 / CURRENT / NORMATIVE
+→ 0.0.22 / CURRENT / NORMATIVE
 
 RCP-23 Full Server-native Runtime Evidence
 → CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
 
+RCP-18 Notification / Delivery
+→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
+
 Remaining ns_server Internal-design Boundaries
-→ S11 / S12 / S13
+→ S11 / S13
 
 Remaining Material ns_server Component Internal-design Pressure
-→ PRESENT
+→ PRESENT / MUST BE REASSESSED
 
 ns_server Internal Design Exhaustion
-→ NOT_SATISFIED
+→ NOT YET REASSESSED AFTER BATCH 6 ACCEPTANCE
 
 ns_server Component Internal Design Global Closure
 → NOT_DECLARED
 
-Open MDE required for current S12 Batch
+Open MDE
 → 0
 
-Unpersisted Owner Decision required for current S12 Batch
+Unpersisted Owner Decision
 → 0
 
 Blocking Item
@@ -55,20 +59,17 @@ Known Working-branch Drift
 → NONE
 
 Current Authorized Phase
-→ NGRP-001 — Component Internal Design / ns_server / Batch 6
+→ NONE
 
 Authorization Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY
-  / NS_SERVER
-  / BATCH_6
-  / GOVERNED_NOTIFICATION_AND_EXTERNAL_DELIVERY_LIFECYCLE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+→ NONE
 ```
 
-Authorization basis:
+Batch-6 Global Acceptance evidence:
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.5.md`
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_6_global_acceptance_0.0.1.md`
 
-## Exact Authorized Design Object
+## Accepted S12 / SV-R08 Baseline
 
 ```text
 S12
@@ -76,395 +77,166 @@ S12
 
 SV-R08
 → Notification Lifecycle & External Delivery Participant
-→ inherited Runtime Role / Actual-state responsibility input
-→ Runtime Role taxonomy itself is NOT reopened
+
+Accepted Internal Responsibilities
+→ NT01..NT08
+
+Accepted DAD
+→ CID-SV-B6-DAD-001..019
+
+Hard Internal SDD Graph
+→ ACYCLIC
 ```
 
-No other `ns_server` boundary is authorized for internal decomposition in this Batch.
-
-## Accepted Owner Capability / MDE Baseline
-
-The producing session MUST consume without reopening:
+Accepted internal responsibilities:
 
 ```text
-Unified Governed Notification Capability
-→ REQUIRED
-
-In-product Notification Discovery / History
-→ REQUIRED
-
-Channel-neutral Core Notification Semantics
-→ REQUIRED
-
-Pluggable External Notification Delivery
-→ REQUIRED
-
-External Platform Push
-→ REQUIRED AS PRODUCT CAPABILITY
-
-Representative / Initial Target Directions
-→ Feishu
-→ WeCom / Enterprise WeChat
-→ SMS
-
-Mandatory Fixed Omnichannel Provider Set
-→ NOT REQUIRED
-
-Public Internet / Public SaaS Dependency for Core Correctness
-→ PROHIBITED
+NT01 Notification Creation Intent & Source Correlation Intake
+NT02 Audience Applicability, Authorization & Disclosure Governance
+NT03 Notification Identity, Existence & Lifecycle History Custody
+NT04 Delivery Intent & Channel Applicability Governance
+NT05 Delivery Attempt Lifecycle & Lineage Custody
+NT06 Provider Evidence Interpretation & Channel-neutral Normalization
+NT07 Awareness Interaction Evidence & Notification History Interpretation
+NT08 Recovery, Reconciliation & Historical Qualification
 ```
 
-The target channel directions are Product-level intent only. This Batch does not select a provider, protocol, SDK, API, adapter implementation or shipped provider set.
-
-## Accepted S12 / SV-R08 Actual-state Boundary
+## Accepted S12 Ownership
 
 ```text
-S12 Product Authority Over Underlying Source Condition
-→ NONE
-
-SV-R08 Final Actual-state Owner
-→ Notification existence / lifecycle / history
-→ applicable external Delivery Attempt facts
-
 Underlying Source Fact / Source Condition
 → originating source owner
 
-WB-R01
-→ Human awareness / history projection only
+NT03 / SV-R08
+→ Notification existence / lifecycle / history
+
+NT05 / SV-R08
+→ Delivery Attempt Actual-state
+
+NT06
+→ provider evidence interpretation only
 
 External Provider
-→ delivery evidence source only
-→ not Product Authority
+→ evidence source only / NOT Product Authority
+
+WB-R01
+→ awareness projection / interaction evidence source only where applicable
 ```
 
-Same bounded runtime assertion continues to require exactly one final Actual-state owner.
-
-Permanent non-collapse:
+Permanent:
 
 ```text
-Notification
-!= Human Task
-!= Source Fact
-!= Runtime Current State
-!= Audit Record automatically
-!= Diagnostic Finding automatically
-!= Policy Decision
-!= Artifact Acceptance
-!= Execution Admission
-
-Notification Created
-!= External Delivery Succeeded
-
-Delivery Attempt Accepted
-!= Recipient Observed
-
-Notification Delivered
-!= User Observed
-
-Notification Read
-!= Problem Resolved
-
-Notification Acknowledged
-!= Policy Approved
-
-Delivery Failed
-!= Underlying Operation Failed
-
-External Channel Unreachable
-!= Notification Lost
+Notification != Source Fact
+Notification != Runtime Current State
+Notification != Human Task
+Notification History != Current Source State
+Provider != Product Authority
+Projection != Actual-state Owner
 ```
 
-## RCP-18 Authorized Contract Synthesis
-
-Accepted runtime pressure:
+## Accepted Identity / Delivery Semantics
 
 ```text
-RCP-18
-→ Notification / Delivery
+Notification Identity
+!= Source Fact Identity automatically
+!= Creation Intent Identity
+!= Delivery Intent Identity
+!= Delivery Attempt Identity
+!= Provider Request / Message ID
+!= Correlation Identity
+!= Database PK automatically
 
-Producer / Consumer Topology
-→ source owner
-→ SV-R08
-→ external provider evidence where configured
-→ WB-R01 projection
+Notification → 0..N Delivery Intents
+Delivery Intent → 0..N Delivery Attempts
+Delivery Attempt → one bounded semantic delivery try
 ```
-
-This Batch MAY close:
 
 ```text
-RCP-18 Notification / Delivery
-→ MAY close at current design-semantic level
+retry
+→ new Delivery Attempt under same Delivery Intent
+→ explicit retry-of lineage
+
+re-delivery with renewed / changed objective, channel or target applicability
+→ new correlated Delivery Intent
+→ explicit re-delivery-of lineage where applicable
 ```
 
-Full RCP-18 closure must preserve:
+No universal exactly-once / at-most-once / at-least-once, retry/backoff/dead-letter/fallback or latest-attempt-wins guarantee is accepted.
 
-```text
-source-owner identity / source correlation
-Notification identity / history
-Tenant / audience / Principal applicability
-Notification lifecycle Actual-state ownership
-Delivery Intent vs Delivery Attempt distinction
-Delivery Attempt identity / result / history
-channel-neutral core semantics
-provider evidence vs Product semantic result separation
-privacy / redaction / Secret Reference boundaries
-offline / unavailable / pending / failed / indeterminate delivery semantics
-compatibility / migration / conformance
-producer / consumer obligations
-```
-
-It must not create one universal source-fact authority or one provider-specific semantic model.
-
-## Authorized S12 Internal-design Pressure
-
-The producing session may derive architecture-semantic DADs for:
-
-```text
-internal responsibility / Module decomposition
-Notification identity
-Notification occurrence / lifecycle / history semantics
-source correlation and source-owner preservation
-Notification creation intent / acceptance / existence separation
-Tenant / Organization / Principal / audience applicability
-classification / severity semantics only if derivable without new Product commitment
-in-product discovery/history semantics within S12
-Delivery Intent identity
-Delivery Attempt identity
-Delivery Intent vs Attempt vs provider evidence vs delivery result
-channel-neutral delivery capability semantics
-provider evidence normalization boundary without provider lock-in
-read / unread / acknowledgement / observation / resolution distinctions where applicable
-external channel unavailable / unreachable / unsupported / failed / pending / indeterminate semantics
-retry/re-delivery semantic relationships without selecting universal policy
-privacy / redaction / Secret Reference / credential boundary
-history / temporal / provenance / correlation
-recovery / reconciliation / offline / private behavior
-compatibility / migration / conformance
-applicable Shared Foundation consumption
-RCP-18 full design-semantic synthesis
-S12-owned resource identity/revision semantics required for later S13 contribution
-```
-
-Internal Module remains architecture-semantic:
-
-```text
-Internal Module
-!= Django App
-!= Python Package
-!= Class
-!= Service
-!= Process
-!= Worker
-!= Queue
-!= Provider Adapter
-!= Table
-!= Database Schema
-!= Deployment Unit
-```
-
-## Human Task Non-collapse
-
-S12 may correlate a Notification to a Human Task where an upstream source establishes such relationship, but:
+## Human Task / Notification Non-collapse
 
 ```text
 Human Task Inbox
-!= Notification Center
+→ What needs my action?
 
-Needs Human Action
-!= Needs Human Awareness
+Notification / Awareness
+→ What happened that I should know about?
 
-Human Response
-!= Notification Acknowledgement
-
-Human Task Source State
-→ remains S6 / ns_agent applicable source owner
-
-S11 / SV-R07
-→ remains Human Task aggregation/routing boundary
-→ NOT designed in this Batch
+Human Task Inbox != Notification Center
+Human Response != Notification Acknowledgement
 ```
 
-S12 MUST NOT invent S11 internal identity, assignment, routing or lifecycle semantics.
+No S11 internals were designed by Batch 6.
 
-## Source / Projection Boundary
-
-Accepted runtime journey:
+## Awareness / Source-state Non-collapse
 
 ```text
-Source fact owner
-→ Notification creation intent / correlation
-→ SV-R08 Notification lifecycle
-→ SV-R08 Delivery Attempt
-→ external provider evidence
-→ SV-R08 Delivery-attempt state
-→ WB-R01 awareness projection
+Projected / Visible != Observed
+Observed != Read automatically
+Read != Acknowledged automatically
+Acknowledged != Resolved
+Acknowledged != Policy Approved
+Delivery Succeeded != Recipient Observed
 ```
 
-Permanent:
+`Resolved` remains source-owned where applicable.
+
+## Channel-neutral / Offline Boundary
 
 ```text
-Source Fact Changed
-!= Notification automatically unless governed Notification semantics establish it
-
-Notification History
-!= Current Source State
-
-WB Projection
-!= Notification Actual-state Owner
-
-Provider Receipt
-!= User Observation
+Channel-neutral Core Notification Semantics → REQUIRED / PRESERVED
+Pluggable External Delivery → REQUIRED / PRESERVED
+Feishu / WeCom / SMS → target directions / not semantic authorities
+Public Internet / Public SaaS Core-correctness Dependency → PROHIBITED / PRESERVED
 ```
 
-## Retry / Re-delivery Boundary
-
-The Batch may define architecture-level lineage/identity semantics for re-delivery where needed, but MUST NOT establish:
+Notification existence/history remains valid while an external channel is unavailable, unreachable, unsupported, failed, pending or indeterminate.
 
 ```text
-universal retry cadence
-universal retry count
-universal backoff policy
-exactly-once delivery
-at-most-once delivery
-at-least-once delivery
-universal dead-letter model
-universal rollback / compensation
-latest-attempt-wins
+Reconnect != Reconciled
+Retry after reconnect != Retroactive Authorization
+Replay != proof of historical permission
+Latest Timestamp != conflict winner
 ```
 
-A material Product-wide delivery guarantee or retry policy requires MDE.
-
-## Offline / Private Boundary
-
-Core Notification lifecycle correctness MUST remain valid in private/offline deployments.
+## RCP-18 Closure
 
 ```text
-Notification may exist
-while
-External Channel is UNAVAILABLE / UNREACHABLE / UNSUPPORTED / FAILED / PENDING / INDETERMINATE
+RCP-18 Notification / Delivery
+→ CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
 ```
 
-External channel failure does not erase the Notification or transfer source authority.
+Stable obligations preserve source ownership/correlation, Notification identity/history, Tenant/audience/privacy, Creation Intent vs existence, Delivery Intent/Attempt identity and lineage, provider evidence interpretation, channel neutrality, awareness non-collapse, offline/failure/recovery, compatibility/migration/conformance and producer/consumer/source-owner obligations.
 
-No public SaaS channel is mandatory for core correctness.
-
-## Shared Foundation Consumption
-
-S12 may consume only accepted Shared Foundation semantics through:
-
-```text
-Product Component Internal Responsibility
-→ Stable Entry
-→ Foundation Contract
-→ Foundation Module
-→ Provider Family where provider-bearing
-→ replaceable realization
-```
-
-Applicable authority-neutral mechanics may include:
-
-```text
-configuration loading
-diagnostics/logging
-telemetry/health
-temporal/freshness
-operation/correlation/provenance
-representation/serialization
-network client mechanics
-technical status/uncertainty
-Tenant/Principal governed context propagation
-Secret Reference / redaction
-compatibility/conformance
-```
-
-Permanent:
-
-```text
-Foundation != S12 Authority
-Provider Family != Notification Authority
-HTTP Client != Delivery Authority
-Storage != Notification Actual-state Owner by placement
-Provider Success != Notification Semantic Success automatically
-```
-
-No new Foundation capability may be silently invented.
+No wire/schema/provider/database/queue/process implementation is frozen.
 
 ## Explicit Forbidden / Deferred Scope
 
 ```text
-S11 / S13 Internal Design
-ns_runtime / ns_node / ns_agent / ns_web Internal Design
-Full RCP-16
-Full RCP-17
-RCP-21 Discovery
-System-level SDK Detailed Design
-
-Feishu API details
-WeCom API details
-SMS provider selection/details
-fixed external provider set
-provider SDK/library selection
-provider adapter implementation architecture
-universal template language
-universal recipient/group addressing schema
-universal retry/backoff/count policy
-queue/broker/dead-letter implementation
-REST / RPC / gRPC / WebSocket / message envelope
-concrete database/table/ORM/storage layout
-Django App / Python package / class / repository layout
-
-Design-to-Implementation Readiness
-Implementation Planning
-IWP
-Coding
-```
-
-## MDE / Stop Boundary
-
-The producing session MUST stop and return exactly one material question to GAC / Project Owner if it proposes to determine/change materially:
-
-```text
-Human Task vs Notification separation
-Notification projection vs source/current-state authority
-S12 / SV-R08 Actual-state ownership
-Channel-neutral core Notification guarantee
-Required pluggable external-delivery capability
-Private/offline core correctness
-Feishu / WeCom / SMS target integration intent
-Tenant / Principal / privacy boundaries
-material universal delivery guarantee
-material global retry/re-delivery policy
-material fail-open/fail-closed or conflict-winner rule
-major notification identity/history compatibility commitment beyond accepted capability
-major provider / protocol / framework / storage lock-in
-high migration-cost commitment
-new Product capability
-```
-
-If classification is uncertain:
-
-```text
-DEFAULT → MDE
+S11 Internal Design → NOT AUTHORIZED
+S13 Internal Design → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+Full RCP-16 → NOT CLOSED
+RCP-21 Discovery → NOT CLOSED
+System-level SDK Detailed Design → NOT AUTHORIZED
+Design-to-Implementation Readiness → NOT AUTHORIZED
+Implementation Planning / IWP / Coding → NOT AUTHORIZED
 ```
 
 ## Unique Next Legal Action
 
 ```text
-Start exactly one bounded:
-
-NGRP-001 — Component Internal Design / ns_server / Batch 6
-
-Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY
-  / NS_SERVER
-  / BATCH_6
-  / GOVERNED_NOTIFICATION_AND_EXTERNAL_DELIVERY_LIFECYCLE_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
-
-Boundary
-→ S12 Governed Notification & External Delivery Lifecycle
-
-Runtime Role
-→ SV-R08 Notification Lifecycle & External Delivery Participant
+Fresh Repository recovery
+→ perform post-Batch-6 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
+→ do not auto-authorize another Batch
 ```
-
-The bounded producing session may reach only `COMPLETED / AWAITING_GLOBAL_ACCEPTANCE`; it cannot self-accept, advance GAC Epoch, declare ns_server Internal Design Exhaustion/global closure or authorize any next phase.
