@@ -1,13 +1,13 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0063`
+- Status: `CURRENT / GAC-EPOCH-0064`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
-Current Global State Epoch → GAC-EPOCH-0063
-State Verified Through HEAD → 057b91a2fbf086e85caa334f0c5459a446d3e606
+Current Global State Epoch → GAC-EPOCH-0064
+State Verified Through HEAD → 048bada575db557e47e93d7f44b3e314baefedd5
 
 Genesis Constitution → GLOBAL_ACCEPTED / NORMATIVE
 Unified Governance → 0.0.2 / NORMATIVE
@@ -41,6 +41,7 @@ ns_server Component Internal Design / Batch 3 → GLOBAL_ACCEPTED
 ns_server Component Internal Design / Batch 4 → GLOBAL_ACCEPTED
 ns_server Component Internal Design / Batch 5 → GLOBAL_ACCEPTED
 ns_server Component Internal Design / Batch 6 → GLOBAL_ACCEPTED
+ns_server Component Internal Design / Batch 7 → GLOBAL_ACCEPTED
 
 RCP-23 Full Server-native Runtime Evidence
 → CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
@@ -48,25 +49,34 @@ RCP-23 Full Server-native Runtime Evidence
 RCP-18 Notification / Delivery
 → CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
 
+RCP-16 Automation Source-side
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-16 S11 / SV-R07 Contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-16 Full Cross-component Closure
+→ NOT CLOSED / remains downstream
+
 Remaining ns_server Internal-design Boundaries
-→ S11 / S13
+→ S13
 
 Remaining Material ns_server Component Internal-design Pressure
-→ PRESENT
+→ PRESENT / MUST BE REASSESSED
 
 ns_server Component Internal Design Exhaustion
-→ NOT_SATISFIED
+→ NOT YET REASSESSED AFTER BATCH 7 ACCEPTANCE
 
 ns_server Component Internal Design Global Closure
 → NOT_DECLARED
 
 Decision Registry
-→ 0.0.22 / CURRENT / NORMATIVE
+→ 0.0.23 / CURRENT / NORMATIVE
 
-Open MDE required for current S11 Batch
+Open MDE
 → 0
 
-Unpersisted Owner Decision required for current S11 Batch
+Unpersisted Owner Decision
 → 0
 
 Blocking Item
@@ -76,77 +86,45 @@ Known Working-branch Drift
 → NONE
 
 Current Authorized Phase
-→ NGRP-001 — Component Internal Design / ns_server / Batch 7
+→ NONE
 
 Authorization Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY
-  / NS_SERVER
-  / BATCH_7
-  / UNIFIED_HUMAN_TASK_AGGREGATION_RESPONSE_ROUTING_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
-```
-
-# Post-Batch-6 Assessment
-
-Assessment:
-
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.6.md`
-
-Assessment commit:
-
-```text
-03b7e17b4b29393fd48c164b1fdc85100e86502a
-```
-
-Formal result:
-
-```text
-Remaining Boundaries
-→ S11 / S13
-
-Highest-pressure Next Boundary
-→ S11 Unified Human Task Aggregation & Response Routing
-
-S11 Runtime Role
-→ SV-R07 Human Task Aggregation & Response Routing Participant
-
-S11 Entry Readiness
-→ SATISFIED
-
-RCP-16 S11 / SV-R07 Contribution
-→ ELIGIBLE FOR CURRENT DESIGN-LEVEL CLOSURE
-
-RCP-16 Full Cross-component Closure
-→ NOT YET ELIGIBLE
-
-S13
-→ deferred until S11 Human Task contribution semantics are stabilized
-
-Open MDE
-→ 0
-
-Blocking Item
 → NONE
 ```
 
-The assessment itself did not authorize Batch 7. A fresh authorization-precondition recovery compared the prior GAC-EPOCH-0061 State seal to the branch and found exactly one later file: assessment `0.0.6`. That delta was classified `EXPECTED_PHASE_EVIDENCE`; no drift or unauthorized progression was present.
+# Batch-7 Global Acceptance
 
-# GAC Transitions
+Global Acceptance evidence:
+
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_7_global_acceptance_0.0.1.md`
 
 ```text
-GAC-TR-0072 → GAC-EPOCH-0062
-→ post-Batch-6 remaining-pressure / exhaustion / batching assessment
+Producing Entry HEAD
+→ 5d4bf7553ee81c0b8f9901d92e3006f0d38762de
 
-GAC-TR-0073 → GAC-EPOCH-0063
-→ separate ns_server Component Internal Design / Batch 7 / S11 authorization
+Producing Final HEAD
+→ bfc6391969292bc06a99e5b730f3cd6008ea593b
 
-Working State Authorization Commit
-→ 304128cce26bb8250ef82a9ffb08a427b6f840ac
+Global Acceptance Evidence Commit
+→ e985128ca967106e4a31b9bd5ac4542908eb8ab9
+
+Decision Registry 0.0.23 Commit
+→ 8efba2c12901f8deda3af1e691a0b63dcfec9b82
+
+Working State Commit
+→ c987a7c93839021ca605fd33237fbb0c38f0ea95
+
+GAC Ledger Transition
+→ GAC-TR-0074 → GAC-EPOCH-0064
 
 GAC Ledger Commit
-→ 057b91a2fbf086e85caa334f0c5459a446d3e606
+→ 048bada575db557e47e93d7f44b3e314baefedd5
+
+Result
+→ GLOBAL_ACCEPT
 ```
 
-# Exact Authorized Design Object
+# Accepted S11 / SV-R07 Internal Architecture
 
 ```text
 S11
@@ -154,326 +132,261 @@ S11
 
 SV-R07
 → Human Task Aggregation & Response Routing Participant
-→ inherited Runtime Role / Actual-state responsibility input
-→ Runtime Role taxonomy itself is NOT reopened
+
+Accepted Internal Module Count
+→ 8
+
+Accepted DAD
+→ CID-SV-B7-DAD-001..021
+
+Hard Internal SDD Graph
+→ ACYCLIC
 ```
 
-No S13 or other Product Component internal boundary is authorized in this Batch.
-
-# Accepted Human Task Owner Capability Baseline
+Accepted architecture-semantic responsibilities:
 
 ```text
-Unified Governed Human Task Inbox
-→ REQUIRED
-
-Applicable Sources
-→ Automation HITL
-→ Agent HITL
-
-Cross-session Re-discovery / Re-observation
-→ REQUIRED where applicable
-
-Generic Notification Center
-→ NOT IMPLIED
-
-Universal Enterprise Attention Center
-→ NOT IMPLIED
+HT01 Human-action Source Contribution & Authority Binding Intake
+HT02 Human Task Projection Identity, Correlation & Historical Lineage Custody
+HT03 Participant Applicability, Authorization & Disclosure Qualification
+HT04 Projection Freshness, Staleness, Supersession & Re-observation Qualification
+HT05 Human Response Submission Correlation & Provenance Qualification
+HT06 Response Routing Lifecycle, Attempt & Evidence Custody
+HT07 Offline Recovery, Reconciliation & Historical Currentness Qualification
+HT08 Stable Contract, Compatibility & Discovery-contribution Governance
 ```
 
-The product question remains:
+These are architecture-semantic responsibility boundaries only; they do not imply packages, services, workers, queues, databases, tables, APIs or deployment units.
+
+# Accepted S11 Authority / Actual-state Boundary
 
 ```text
-Human Task Inbox
-→ What needs my action?
-
-Notification / Awareness
-→ What happened that I should know about?
-```
-
-Permanent:
-
-```text
-Human Task Inbox != Notification Center
-Human Response != Notification Acknowledgement
-```
-
-# Accepted S11 / SV-R07 Actual-state Boundary
-
-```text
-S11 / SV-R07 final owned partition
-→ unified Human Task aggregation/projection state
-→ freshness / staleness qualification
-→ correlation state
-→ response-routing state/evidence
-
-Automation HITL wait / response applicability / semantic resume
+Automation Human-action Requirement / Wait / response applicability / semantic resume
 → S6 / SV-R02
 
-Agent HITL wait / response applicability / semantic resume
+Agent Human-action Requirement / Wait / response applicability / continuation
 → ns_agent / AG-R01
 
-Human response submission occurrence
+Human Response Submission occurrence
 → ns_web / WB-R01
 
-Policy / Artifact Acceptance / Execution Admission
-→ existing owners / unchanged
+HT02 / SV-R07
+→ Human Task Projection Identity / existence / history
+
+HT04 / SV-R07
+→ projection freshness / staleness / currentness
+
+HT05 / SV-R07
+→ response-to-projection/source correlation qualification
+
+HT06 / SV-R07
+→ Response Routing Attempt / routing state / evidence
+
+HT07 / SV-R07
+→ S11 recovery / reconciliation qualification
 ```
-
-Same bounded runtime assertion continues to require exactly one final Actual-state owner.
-
-Permanent non-collapse:
-
-```text
-Human Task Projection
-!= Automation Wait State
-!= Agent Wait State
-!= Source Response Applicability
-!= Human Response Submission Occurrence
-!= Policy Permit
-!= Artifact Acceptance
-!= Execution Admission
-!= Runtime Outcome
-
-Response Requested
-!= Response Submitted
-!= Response Routed
-!= Source Received automatically
-!= Source Accepted / Applicable
-!= Applied / Resume Achieved
-```
-
-S11 may aggregate, correlate and route evidence; it cannot become the originating Automation/Agent semantic wait/resume owner.
-
-# Human Task Identity / Authority Boundary
-
-The Batch may derive representation-neutral S11-owned identities/references needed for aggregation/projection/routing, including aggregate/projection identity, source task/wait references, origin execution/revision correlation and response-routing identity/evidence.
 
 Permanent:
 
 ```text
-S11 Human Task Aggregate / Projection Identity
-!= source Automation/Agent Human Action Requirement Identity automatically
+Human Task Projection != Source Human-action Requirement / Wait State
+Human Task Projection != Source semantic applicability
+Human Task Projection != Policy Permit / Artifact Acceptance / Execution Admission / Runtime outcome
+Aggregation != Canonicalization
+Projection != Source SoT
+Inbox entry != Source state
+```
 
+Same bounded runtime assertion retains exactly one final Actual-state owner.
+
+# Accepted Projection Identity / Freshness / Cross-session Semantics
+
+```text
+Human Task Projection Identity
+→ durable
+→ session-independent
+→ representation-neutral
+→ S11-owned identity for one projection lineage
+```
+
+Permanent:
+
+```text
 Projection Identity
-!= Source Wait-state Authority
-
-Response Routing Identity
-!= Response Applicability Authority
-
-Human Task persistence/index placement
-!= source Task/Wait SoT
+!= Source Requirement Identity automatically
+!= Execution Identity
+!= Operation Identity
+!= Human Response Submission Identity
+!= Response Routing Attempt Identity
+!= Correlation Identity automatically
+!= Policy Decision Identity
+!= Database PK / Browser Session / Web Form / Queue Message ID automatically
 ```
 
-Creating one canonical cross-domain Human Task source SoT or transferring source response applicability to S11 requires MDE / return to GAC.
+Source revision/context continuity is evidence-driven. No silent latest-revision/timestamp rebinding or ambiguous identity merge is accepted.
 
-# RCP-16 Authorized Contract Synthesis
-
-Runtime pressure:
+S11 may express orthogonal projection currentness/uncertainty qualifications where applicable:
 
 ```text
-RCP-16
-→ Human Task
-→ SV-R02 / AG-R01 ↔ SV-R07 / WB-R01
-```
-
-Current partition state:
-
-```text
-Automation / S6 / SV-R02 Source-side
-→ CLOSED AT CURRENT DESIGN LEVEL
-
-S11 / SV-R07 Contribution
-→ AUTHORIZED FOR CURRENT DESIGN-LEVEL SYNTHESIS
-
-Agent / AG-R01 Contribution
-→ NOT YET INTERNALLY DESIGNED
-
-Web / WB-R01 Contribution
-→ NOT YET INTERNALLY DESIGNED
-```
-
-This Batch MAY close:
-
-```text
-RCP-16 S11 / SV-R07 Contribution
-→ MAY close at current design level
-```
-
-This Batch MUST NOT claim:
-
-```text
-RCP-16 Full Cross-component Closure
-→ NOT AUTHORIZED
-```
-
-Stable S11 obligations may cover:
-
-```text
-source Human Action Requirement / task reference
-aggregate/projection identity
-origin domain / operation / execution / revision correlation
-Tenant / Organization / Principal applicability
-freshness / staleness / expiration where source semantics establish it
-unknown / partial / conflicting / unavailable qualification
-cross-session rediscovery / re-observation
-response submission correlation
-response routing identity / evidence
-Submitted vs Routed vs Source-accepted vs Applied non-collapse
-history / provenance / temporal semantics
-offline / degraded / reconciliation semantics
-compatibility / migration / conformance
-producer / consumer / source-owner obligations
-future S13 Human Task contribution semantics
-```
-
-No Agent/Web internal semantics are authorized.
-
-# Tenant / Principal / Privacy Boundary
-
-S11 must preserve applicable Tenant, Organization, Principal, Policy, Trust, privacy/redaction and originating execution-context semantics.
-
-```text
-Task exists != every Principal may discover it
-Inbox projection != authorization grant
-Principal sees task != Principal is authorized to respond
-Response submitted != response applicable
-Task correlation != cross-Tenant visibility
-```
-
-Human-facing presentation or technical routing cannot create governance authority.
-
-# Offline / Degraded / Recovery Boundary
-
-Applicable qualifications may include:
-
-```text
-UNKNOWN
-UNAVAILABLE
+CURRENT
 STALE
-EXPIRED where source evidence establishes expiry
+UNKNOWN
 PARTIAL
+UNAVAILABLE
+SUPERSEDED
+EXPIRED
+WITHDRAWN
 INDETERMINATE
 CONFLICTING
 RECONCILIATION_PENDING
 RECOVERING
 ```
 
+These do not form a universal Human Task source lifecycle state machine. No universal TTL, timeout or escalation policy is accepted.
+
+Cross-session rediscovery is based on durable Projection Identity + source binding/re-observation, not browser/session state.
+
+# Accepted Principal / Response / Routing Semantics
+
+```text
+Task Exists != every Principal may see it
+Principal may discover projection != Principal may submit response
+Principal may submit response != response semantically applicable
+UI affordance visible != Policy Permit
+source participant display != S11 assignment Authority
+```
+
+```text
+Human Response Submission occurrence
+→ WB-R01
+
+S11 / HT05
+→ correlation / provenance / wrong-context-stale-expired-superseded-conflict qualification
+
+Originating source owner
+→ response semantic applicability / acceptance / application
+→ source wait resolution
+→ Automation/Agent continuation
+```
+
 Permanent:
 
 ```text
-Offline possession != Authority Transfer
+Response Submitted
+!= Response Valid
+!= Response Applicable
+!= Response Accepted
+!= Response Applied
+!= Source Wait Resolved
+!= Execution Resumed
+```
+
+No universal assignment/claim/ownership/delegation model or response conflict winner is accepted.
+
+Response routing:
+
+```text
+Response Routing Attempt Identity
+→ one bounded S11 routing try
+→ retry creates new routing Attempt with lineage
+```
+
+```text
+Response Routed / Delivery Evidenced != Response Applicable
+Response Delivered != Source Owner Accepted
+Source Owner Received != Response Applied
+Response Applied != Source Wait Resolved automatically
+```
+
+No exactly-once/at-most-once/at-least-once, universal retry/backoff/dead-letter or workflow/broker guarantee is accepted.
+
+# Offline / Recovery Boundary
+
+```text
+Offline != Authority Transfer
+Local Task Copy != Source Wait Authority
+Offline Response Possession != Response Applied
 Reconnect != Reconciled
-Delayed Response != Retroactive Applicability
-Replay != proof of historical permission
-Latest Timestamp != canonical winner
-Local Inbox State != Source Wait State
+Replay != Retroactive Authorization
+Retry != semantic applicability proof
+Latest Timestamp != conflict winner
 ```
 
-No generic fail-open/fail-closed, auto-apply, local-wins, central-wins or latest-wins policy is authorized.
+RT-R03/RT-R04 remain accepted coordination/recovery roles only; no runtime internal design is introduced.
 
-# S13 Non-preemption
-
-S11 may establish only S11-owned projection-eligible Human Task contribution semantics for future S13, such as identity/reference, resource type/origin, Tenant/Principal applicability metadata, source correlation, freshness/staleness/uncertainty, history/provenance and redacted projection metadata.
-
-Permanent:
+# RCP-16 — Accepted Current Closure
 
 ```text
-S13 Discovery Projection
-!= Human Task Source Authority
+RCP-16 Automation Source-side
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-16 S11 / SV-R07 Contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-16 Agent / AG-R01 Contribution
+→ NOT YET INTERNALLY DESIGNED
+
+RCP-16 Web / WB-R01 Contribution
+→ NOT YET INTERNALLY DESIGNED
+
+RCP-16 Full Cross-component Closure
+→ NOT CLOSED
 ```
 
-No S13 internal module/index/query/ranking/search/storage or RCP-21 closure is authorized.
+Full RCP-16 closure remains downstream and cannot be inferred from Batch 7 acceptance.
 
-# Shared Foundation Consumption
-
-The Batch may consume only accepted Shared Foundation semantics through:
+# Human Task / Notification Non-collapse
 
 ```text
-Product Component Internal Responsibility
-→ Stable Entry
-→ Foundation Contract
-→ Foundation Module
-→ Provider Family where provider-bearing
-→ replaceable realization
+Human Task → needs human action
+Notification → needs human awareness
+Human Task Inbox != Notification Center
+Human Response != Notification Acknowledgement
+Task/source resolution != Notification Read
 ```
 
-Applicable authority-neutral mechanics may include governed context propagation, temporal/freshness, correlation/provenance, representation, status/uncertainty, diagnostics/telemetry, Secret Reference/redaction, compatibility/conformance and network mechanics where genuinely required.
+S12 / RCP-18 remains unchanged.
+
+# S13 Dependency State
+
+S11 now supplies future projection-eligible Human Task identity/origin/source/Tenant/Principal/freshness/history/provenance/redaction/navigation semantics required by S13 while preserving source authority.
 
 ```text
-Foundation != Human Task Authority
-Storage Placement != Source Task/Wait Authority
-Projection Cache != Source Actual-state Owner
-Transport Success != Response Applicability
+S13 Internal Design
+→ NOT AUTHORIZED
+
+RCP-21 Discovery Closure
+→ NOT AUTHORIZED
 ```
 
-No new Foundation capability may be silently invented.
+Batch-7 Global Acceptance does not itself establish S13 entry readiness; that must be assessed from current Repository authority.
 
 # Explicit Forbidden / Deferred Scope
 
 ```text
-S13 Internal Design
-ns_runtime / ns_node / ns_agent / ns_web Internal Design
-Full RCP-16 Closure
-RCP-21 Discovery Closure
-System-level SDK Detailed Design
-
-Agent HITL internal architecture
-WB-R01 Human Task interaction internal architecture
-source response-applicability rules outside accepted S6 semantics
-canonical cross-domain Human Task source SoT
-universal assignment authority
-universal assignment / escalation / timeout policy
-universal response auto-application policy
-generic fail-open / fail-closed policy
-
-REST / RPC / gRPC / WebSocket / message envelope
-concrete database / table / ORM / persistence layout
-queue / broker / event bus
-Django App / Python package / class / repository layout
-process / worker / container topology
-
-Design-to-Implementation Readiness
-Implementation Planning
-IWP
-Coding
+S13 Internal Design → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+RCP-16 Full Cross-component Closure → NOT CLOSED
+RCP-21 Discovery Closure → NOT AUTHORIZED
+System-level SDK Detailed Design → NOT AUTHORIZED
+Design-to-Implementation Readiness → NOT AUTHORIZED
+Implementation Planning → NOT AUTHORIZED
+IWP → NOT AUTHORIZED
+Coding → NOT AUTHORIZED
 ```
 
-# MDE / Stop Boundary
-
-The producing session MUST stop and return exactly one material question to GAC / Project Owner if it proposes to determine/change materially:
-
-```text
-Human Task vs Notification separation
-S11 projection/routing vs source Automation/Agent wait-state authority
-response applicability ownership
-one canonical cross-domain Human Task source SoT
-Tenant / Principal / privacy boundaries
-universal assignment authority/model
-material global escalation / timeout policy
-material response auto-application guarantee
-material fail-open / fail-closed or conflict-winner rule
-major stable Human Task identity/history compatibility commitment beyond accepted projection semantics
-provider/protocol/framework/storage lock-in
-high migration-cost commitment
-new Product capability
-```
-
-If classification is uncertain:
-
-```text
-DEFAULT → MDE
-```
+Batch-7 Global Acceptance does not itself establish ns_server Component Internal Design Exhaustion or global closure.
 
 # Current Required Read Set
 
-Minimum sufficient Repository context for the Batch-7 / S11 bounded producing session:
+Minimum sufficient Repository context for the next GAC remaining-pressure / exhaustion / batching assessment:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
 2. docs/governance/ns_evermore_governance_0.0.2.md
 3. docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md
 4. docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md
-5. docs/governance/decisions/ns_evermore_decision_registry_0.0.22.md
+5. docs/governance/decisions/ns_evermore_decision_registry_0.0.23.md
 6. docs/ns_evermore_nse_constraints_index_0.0.5.md
 7. docs/ns_evermore_project_architecture_0.0.3.md
 8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_five_component_internal_architecture_boundaries_candidate_0.0.1.md
@@ -481,30 +394,28 @@ Minimum sufficient Repository context for the Batch-7 / S11 bounded producing se
 10. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_candidate_0.0.1.md
 11. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_global_acceptance_0.0.1.md
 12. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_exhaustion_component_internal_design_readiness_assessment_0.0.1.md
-13. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_global_acceptance_0.0.1.md
-14. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_6_global_acceptance_0.0.1.md
-15. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.6.md
-16. docs/governance/decisions/ns_evermore_z3_batch_2_unified_human_task_inbox_owner_capability_decision_0.0.1.md
-17. docs/governance/decisions/ns_evermore_z3_batch_2_governed_notification_external_delivery_owner_capability_decision_0.0.1.md
-18. docs/governance/decisions/ns_evermore_z2_mde_014_runtime_actual_state_ownership_topology_owner_decision_0.0.1.md
-19. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
+13. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_1_global_acceptance_0.0.1.md
+14. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_2_global_acceptance_0.0.1.md
+15. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_3_global_acceptance_0.0.1.md
+16. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_4_global_acceptance_0.0.1.md
+17. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_5_global_acceptance_0.0.1.md
+18. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_6_global_acceptance_0.0.1.md
+19. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_batch_7_global_acceptance_0.0.1.md
+20. docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.6.md
+21. docs/governance/decisions/ns_evermore_z3_batch_2_unified_human_task_inbox_owner_capability_decision_0.0.1.md
+22. docs/governance/decisions/ns_evermore_z3_batch_2_governed_notification_external_delivery_owner_capability_decision_0.0.1.md
+23. docs/governance/decisions/ns_evermore_z3_batch_2_unified_resource_discovery_owner_capability_decision_0.0.1.md
+24. docs/governance/decisions/ns_evermore_z2_mde_014_runtime_actual_state_ownership_topology_owner_decision_0.0.1.md
+25. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
 ```
 
-Read additional exact Owner/MDE evidence if the producing design materially touches another reserved dimension.
-
-# Producing-session Maximum / Stop Condition
-
-```text
-NGRP-001 Component Internal Design / ns_server / Batch 7 / S11
-→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
-→ STOP
-→ RETURN TO GLOBAL ARCHITECTURE COORDINATOR
-```
-
-The producing session cannot self-accept, advance GAC Epoch, declare ns_server Internal Design Exhaustion/global closure, authorize S13 or another Product Component, close full RCP-16, authorize SDK Detailed Design, or enter implementation.
+Read additional exact Owner/MDE evidence when the assessment materially touches another reserved dimension.
 
 # Unique Next Legal Action
 
 ```text
-Start exactly one bounded ns_server Component Internal Design / Batch 7 / S11 producing session under the exact authorized scope.
+Fresh Repository recovery
+→ perform post-Batch-7 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
+→ determine whether S13 is entry-ready and whether remaining material ns_server internal-design pressure is exactly S13
+→ do not auto-authorize another Batch
 ```
