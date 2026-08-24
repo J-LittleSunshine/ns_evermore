@@ -714,4 +714,27 @@ ns_server Component Internal Design Global Closure → NOT_DECLARED
 ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 8 ACCEPTANCE
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC post-Batch-8 ns_server Component Internal Design remaining-pressure / exhaustion / global-closure assessment; no other Product Component or downstream phase is authorized automatically
+
+GAC-TR-0078 → GAC-EPOCH-0068
+Transition → post-Batch-8 ns_server Component Internal Design remaining-pressure / exhaustion / global-closure assessment
+Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.8.md
+Assessment Commit → 2c6f2b33a9a9387cc6ffdbd293afa100cbd1b42a
+Result → GLOBAL_CLOSURE
+Accepted ns_server Boundary Coverage → 13 / 13 / 100%
+Remaining accepted ns_server boundaries without Component Internal Design → NONE
+Remaining Material ns_server Component Internal-design Pressure → NONE_FOUND
+ns_server Internal Design Exhaustion → SATISFIED
+ns_server Component Internal Design → GLOBAL_CLOSED / COMPLETE
+Missing ns_server Runtime-role source-boundary design → 0
+Remaining ns_server Authority / SoT / Actual-state ambiguity → 0
+Mandatory missing Shared Foundation semantic → 0
+Implementation-defined Component Architecture Escape → 0
+RCP-16 Full Cross-component Closure → NOT CLOSED / remains downstream
+RCP-21 Full Cross-component Closure → NOT CLOSED / remains downstream
+Decision Registry → 0.0.25
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh-recovery GAC next-Product-Component Component Internal Design sequencing / remaining-pressure / entry-readiness assessment; no other Product Component or downstream phase is authorized automatically
 ```
