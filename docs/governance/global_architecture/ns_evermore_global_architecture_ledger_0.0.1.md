@@ -529,4 +529,32 @@ Open MDE required for current S12 Batch → 0
 Unpersisted Owner Decision required for current S12 Batch → 0
 Blocking Item → NONE
 Unique Next Legal Action → start one bounded ns_server Component Internal Design / Batch 6 / S12 producing session
+
+GAC-TR-0071 → GAC-EPOCH-0061
+Transition → ns_server Component Internal Design / Batch 6 independent Global Acceptance
+Producing Final HEAD → 47d4a60e986a9fb35150e2a548fe7a3f7453723f
+Global Acceptance Evidence Commit → 0c3d38eb5a06311bed7dd26765de20f270de25bd
+Result → GLOBAL_ACCEPT
+Accepted Boundary → S12 Governed Notification & External Delivery Lifecycle
+Accepted Runtime Role Input → SV-R08 Notification Lifecycle & External Delivery Participant
+Accepted Internal Module Count → 8
+Accepted DAD → CID-SV-B6-DAD-001..019
+Hard Internal SDD Graph → ACYCLIC
+RCP-18 Notification / Delivery → CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
+S12 Actual-state Ownership → Notification existence/lifecycle/history + Delivery Attempt facts / source facts remain source-owned
+Provider Authority Escalation → 0
+Human Task / Notification Collapse → 0
+Universal Delivery / Retry / Fallback Guarantee → 0
+Authority / SoT / Actual-state Transfer → 0
+Concrete Provider/API/Queue/DB/Process Leakage → 0
+Misclassified MDE → 0
+Decision Registry → 0.0.22
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Remaining ns_server Boundaries → S11 / S13
+ns_server Component Internal Design Global Closure → NOT_DECLARED
+ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 6 ACCEPTANCE
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh-recovery GAC post-Batch-6 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment; no downstream producing session is authorized automatically
 ```
