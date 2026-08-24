@@ -1,13 +1,13 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0065`
+- Status: `CURRENT / GAC-EPOCH-0066`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
-Current Global State Epoch → GAC-EPOCH-0065
-State Verified Through HEAD → 9c83028c05bcb1ebec2bade7787176db9eb642f4
+Current Global State Epoch → GAC-EPOCH-0066
+State Verified Through HEAD → 15adf11729de68985717fbb10795a6f9095e5bd6
 
 Genesis Constitution → GLOBAL_ACCEPTED / NORMATIVE
 Unified Governance → 0.0.2 / NORMATIVE
@@ -69,10 +69,10 @@ ns_server Component Internal Design Global Closure
 Decision Registry
 → 0.0.23 / CURRENT / NORMATIVE
 
-Open MDE
+Open MDE required for current S13 Batch
 → 0
 
-Unpersisted Owner Decision
+Unpersisted Owner Decision required for current S13 Batch
 → 0
 
 Blocking Item
@@ -82,13 +82,16 @@ Known Working-branch Drift
 → NONE
 
 Current Authorized Phase
-→ NONE
+→ NGRP-001 — Component Internal Design / ns_server / Batch 8
 
 Authorization Scope
-→ NONE
+→ COMPONENT_INTERNAL_DESIGN_ONLY
+  / NS_SERVER
+  / BATCH_8
+  / CROSS_DOMAIN_RESOURCE_DISCOVERY_PROJECTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
-# Post-Batch-7 Remaining-pressure / S13 Entry Assessment
+# Post-Batch-7 Assessment / Authorization Chain
 
 Assessment:
 
@@ -98,15 +101,31 @@ Assessment:
 Assessment Commit
 → 5fddd2b3af76cdd888b3c7d458de65271f3b6f70
 
-Working State Assessment Commit
+Assessment Working State Commit
 → 97728b9810160fc65dae3fd3d82bb5dbd97d196c
 
-GAC Transition
+Assessment Transition
 → GAC-TR-0075 → GAC-EPOCH-0065
 
-Ledger Commit
+Assessment Ledger Commit
 → 9c83028c05bcb1ebec2bade7787176db9eb642f4
 
+GAC-EPOCH-0065 State Seal
+→ 220e3e45fcead7ff5cdf534c3435679affc98032
+
+Batch-8 Authorization Working State Commit
+→ 36927781228a53047ff9e7965d6c797f75e8f0e6
+
+Authorization Transition
+→ GAC-TR-0076 → GAC-EPOCH-0066
+
+Authorization Ledger Commit
+→ 15adf11729de68985717fbb10795a6f9095e5bd6
+```
+
+Assessment result preserved:
+
+```text
 Remaining Boundaries
 → S13
 
@@ -120,16 +139,36 @@ S13 Entry Readiness
 → SATISFIED
 
 RCP-21 S13 / SV-R09 Contribution
-→ ELIGIBLE IN A LATER SEPARATELY AUTHORIZED BATCH 8
+→ ELIGIBLE / NOW AUTHORIZED FOR CURRENT DESIGN-LEVEL SYNTHESIS
 
 RCP-21 Full Cross-component Closure
-→ NOT YET ELIGIBLE
+→ NOT YET ELIGIBLE / NOT AUTHORIZED
 
-Batch 8 Authorization
-→ NOT GRANTED BY ASSESSMENT
+Open MDE
+→ 0
+
+Unpersisted Owner Decision
+→ 0
+
+Blocking Item
+→ NONE
 ```
 
-# S13 Owner / Product Baseline
+# Exact Authorized Design Object
+
+```text
+S13
+→ Cross-domain Resource Discovery Projection
+
+SV-R09
+→ Discovery Projection Participant
+→ inherited Runtime Role / Actual-state responsibility input
+→ Runtime Role taxonomy itself is NOT reopened
+```
+
+No other Product Component boundary is authorized for internal decomposition in Batch 8.
+
+# Accepted S13 Owner / Product Baseline
 
 ```text
 Unified Governed Cross-domain Resource Discovery
@@ -164,7 +203,7 @@ Discovery Projection / Index
 != Canonical Resource Registry
 
 Fresh Discovery Result
-!= guaranteed current Resource Actual-state
+!= Guaranteed Current Resource Actual-state
 
 Searchable
 != Authorized To Discover
@@ -179,32 +218,67 @@ Rebuild Complete
 != Source Resources Globally Current automatically
 ```
 
-Unauthorized resource existence must not leak through results, snippets, counts, relationship hints or equivalent discovery metadata.
+Unauthorized resource existence MUST NOT leak through results, snippets, counts, category/facet metadata where applicable, relationship hints, navigation hints, error behavior or equivalent discovery metadata.
 
-# S13 / SV-R09 Accepted Boundary
+# S13 / SV-R09 Actual-state Boundary
 
 ```text
-S13
-→ Cross-domain Resource Discovery Projection
-
-SV-R09
-→ Discovery Projection Participant
-
-SV-R09 final owned partition
+S13 / SV-R09 final owned partition
 → discovery projection/index freshness
 → completeness / partiality
 → rebuild state
 → staleness / availability / uncertainty
 
-Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts
+Resource Semantic Authority
+Resource Definition SoT
+Resource Runtime Actual-state
+Resource Source Facts
 → originating resource owner
 ```
 
-Projection, aggregation, indexing, persistence, query handling and UI placement do not transfer resource authority.
+Permanent:
 
-# Source-category Dependency State
+```text
+Projection / Aggregation != Source Authority
+Index Placement != Resource SoT
+Discovery Result != Authorization Grant
+Projection persistence != Authority
+Query handling != Resource Authority
+UI placement != Resource Authority
+```
 
-Batch 7 now supplies stable Human Task contribution semantics required by S13:
+For the same bounded Actual-state assertion, exactly one final owner remains required.
+
+# Projection / Contribution Identity Pressure
+
+Batch 8 may architecture-semantically derive representation-neutral identities/references required by S13, including where genuinely necessary:
+
+```text
+Discovery Contribution Identity / Reference
+Source Resource Owner Reference
+Origin Domain / Resource Type
+Source Resource Identity / Reference
+Source Revision / Runtime-context Reference where applicable
+Discovery Projection Entry Identity where distinct
+Projection correlation / provenance references
+Query / Result correlation references at architecture level
+Rebuild / projection-generation evidence identity where materially required
+```
+
+Permanent:
+
+```text
+Projection Entry Identity != Source Resource Identity automatically
+Discovery Contribution Identity != Resource Identity automatically
+Index-document ID != Architecture Identity automatically
+Search-engine ID != Architecture Identity automatically
+```
+
+No physical identifier format or universal Resource Identity namespace is authorized.
+
+# Source-category Dependency Baseline
+
+Batch 7 globally accepted S11 Human Task contribution semantics required by S13:
 
 ```text
 Human Task Projection Identity / resource identity
@@ -218,81 +292,283 @@ privacy / redaction
 navigation / correlation reference
 ```
 
-Batch 6 supplies stable Notification identity/history/provenance contribution semantics.
+Batch 6 globally accepted S12 Notification contribution semantics required by S13.
 
-Previously accepted ns_server batches provide stable server-owned domain/resource identity, revision and runtime-evidence semantics where applicable.
+Accepted ns_server domain batches provide stable server-owned resource identity/revision/runtime-evidence semantics where applicable.
 
 ```text
 Known ns_server source-category blocker for S13
 → NONE
 ```
 
-# RCP-21 Current State
+S11/S12 internals are normative upstream and MUST NOT be reopened by Batch 8.
+
+# RCP-21 Authorized Contract Synthesis
 
 ```text
 RCP-21
 → resource owners → SV-R09 / WB-R01
 → Discovery
+```
 
-S13 / SV-R09 Contribution
-→ NOT YET DESIGNED
+Batch 8 MAY close:
 
+```text
+RCP-21 S13 / SV-R09 Contribution
+→ MAY close at current design level
+```
+
+Batch 8 MUST NOT claim:
+
+```text
+RCP-21 Full Cross-component Closure
+→ NOT AUTHORIZED
+```
+
+Reason:
+
+```text
 Non-server Resource-owner Component Internal Design contributions
 → NOT YET AVAILABLE
 
 WB-R01 Discovery interaction Component Internal Design contribution
 → NOT YET AVAILABLE
-
-RCP-21 Full Cross-component Closure
-→ NOT YET ELIGIBLE
 ```
 
-A later separately authorized Batch 8 may close the S13/SV-R09 contribution at current design level and may define representation-neutral producer/projector/consumer obligations without designing other Product Component internals.
-
-# Candidate Batch 8
+A bounded S13 contribution may establish stable representation-neutral architecture-semantic obligations for:
 
 ```text
-NGRP-001 — Component Internal Design / ns_server / Batch 8
+resource-owner contribution identity/reference
+origin domain / resource type / source identity preservation
+Tenant / Organization / Principal applicability
+authorization / privacy / redaction qualification
+projection contribution qualification
+projection freshness / completeness / partiality / staleness
+rebuild / recovery / reconciliation state
+query/result projection semantics without query-language lock-in
+result-to-source navigation/correlation
+missing-result / stale-result / partial-result uncertainty
+counts/snippets/relationship metadata non-leakage
+history / provenance / temporal interpretation
+offline / degraded semantics
+compatibility / migration / conformance
+producer / projector / future consumer obligations
+```
 
-Candidate Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY
-  / NS_SERVER
-  / BATCH_8
-  / CROSS_DOMAIN_RESOURCE_DISCOVERY_PROJECTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+It MUST NOT define other Product Component internals or WB-R01 internal interaction architecture.
 
-Candidate Boundary
-→ S13 Cross-domain Resource Discovery Projection
+# Query / Result Non-collapse
 
-Inherited Runtime Role
-→ SV-R09 Discovery Projection Participant
+Permanent:
 
-Batch 8 Authorization
-→ NOT GRANTED AT GAC-EPOCH-0065
+```text
+Query Submitted != Resource Exists
+Query Result != Source Resource
+Query Result != Resource Actual-state
+No Result != Resource Does Not Exist
+Result Rank / Score != Semantic Authority
+Result Snippet != Source Canonical Representation
+Navigation Target != Authorization Grant
+```
+
+Batch 8 may define only architecture-level query/result projection responsibilities required for governed discovery. Query language, ranking/relevance algorithm, search provider, API/wire schema and physical pagination representation are downstream.
+
+# Freshness / Completeness / Rebuild Boundary
+
+S13 must explicitly preserve applicable projection/currentness conditions such as:
+
+```text
+CURRENT
+STALE
+PARTIAL
+UNKNOWN
+UNAVAILABLE
+REBUILDING
+INDETERMINATE
+CONFLICTING
+RECONCILIATION_PENDING
+RECOVERING
+```
+
+These are not universal source-resource lifecycle states.
+
+Permanent:
+
+```text
+Fresh Projection != Fresh Source automatically
+Projection Complete != Global Resource Universe complete absolutely
+Rebuild Started != Prior Projection invalid automatically
+Rebuild Finished != Source Owners globally synchronized automatically
+Latest Timestamp != Canonical Winner
+Reconnect != Reconciled
+```
+
+No universal TTL/freshness duration, rebuild algorithm, latest-wins or conflict-winner policy is authorized.
+
+# Security / Tenant / Principal / Privacy Boundary
+
+S13 must remain:
+
+```text
+Tenant-aware
+Organization-aware where applicable
+Principal-aware
+Policy-aware
+Trust-aware
+Privacy / redaction-aware
+```
+
+Permanent:
+
+```text
+Resource Exists != every Principal may discover it
+Searchable != Authorized To Discover
+Technically Indexed != Authorized To Reveal
+Discovery Result != Authorization Grant
+```
+
+Cross-Tenant discovery and authorization bypass are prohibited.
+
+# Discoverable-category Non-preemption
+
+The Owner decision deferred exact discoverable-category registry realization.
+
+Batch 8 may define architecture-level:
+
+```text
+resource contribution eligibility
+origin category/domain/type preservation
+category-specific metadata applicability
+producer conformance / onboarding obligations
+unsupported / partial category behavior
+```
+
+It MUST NOT create:
+
+```text
+Universal Resource Authority
+Universal Resource SoT
+Canonical Resource Registry Authority
+mandatory exhaustive Product category list beyond accepted product need
+cross-Tenant category visibility
+```
+
+A material new universal category authority or broad Product capability expansion requires STOP → MDE / RETURN TO GAC.
+
+# AI / Semantic Search Non-preemption
+
+Permanent:
+
+```text
+Unified Governed Discovery
+!= Universal AI Semantic Search
+!= Mandatory Embedding / Vector Retrieval
+!= Natural-language Synthesized Diagnosis
+```
+
+Batch 8 MUST NOT select or require an embedding model, vector database, semantic-search provider, LLM provider, AI answer synthesis or public search SaaS as core S13 semantics/core-correctness dependency.
+
+# Offline / Private Boundary
+
+Core S13 correctness must remain valid in private, isolated and offline deployments.
+
+Projection may remain locally observable while source owners are unavailable, but:
+
+```text
+Offline Projection != Source Authority
+Local Index != Resource SoT
+Reconnect != Reconciled
+Replay / Rebuild != Retroactive Authorization
+```
+
+No public SaaS/search/embedding service may become mandatory for core correctness.
+
+# Shared Foundation Consumption
+
+S13 may consume only accepted Shared Foundation semantics through:
+
+```text
+Product Component Internal Responsibility
+→ Stable Entry
+→ Foundation Contract
+→ Foundation Module
+→ Provider Family where provider-bearing
+→ replaceable realization
+```
+
+Authority-neutral mechanics may include Tenant/Principal context, temporal/freshness, correlation/provenance, representation, status/uncertainty, redaction, diagnostics/telemetry, network/storage-neutral mechanics and compatibility/conformance.
+
+Foundation/provider/storage/index mechanics never become Resource Authority.
+
+# MDE / Stop Boundary
+
+The Batch-8 producing session MUST stop and return exactly one material question to GAC / Project Owner if it proposes to determine or change materially:
+
+```text
+Discovery Projection / Index becoming authoritative
+canonical universal Resource Registry / Resource SoT
+cross-Tenant discovery or changed privacy boundary
+material authorization-bypass / fail-open policy
+mandatory universal discoverable-category authority
+universal AI / semantic-search Product guarantee
+mandatory embedding / vector / search provider or technology
+material global ranking / relevance semantics with high compatibility cost
+major universal Resource Identity commitment
+conflict winner / latest-wins policy
+public SaaS core-correctness dependency
+provider / protocol / framework / storage lock-in
+high migration-cost commitment
+new Product capability
+```
+
+If classification is uncertain:
+
+```text
+DEFAULT → MDE
 ```
 
 # Explicit Forbidden / Deferred Scope
 
 ```text
-Batch 8 producing work before separate authorization
-other Product Component Internal Design
+Other Product Component Internal Design
+WB-R01 / ns_web Internal Design
 RCP-21 Full Cross-component Closure
-universal Resource Authority / SoT / canonical Registry Authority
-cross-Tenant discovery
-authorization bypass
-universal AI / semantic-search guarantee
-mandatory search/index/vector/embedding provider or technology
-mandatory ranking model / query language
-public SaaS correctness dependency
 System-level SDK Detailed Design
+
+search/index engine selection
+Elasticsearch / OpenSearch / Algolia / Meilisearch / SQLite-FTS or equivalent selection
+embedding/vector database/model selection
+AI semantic-search or answer-synthesis guarantee
+ranking/relevance algorithm
+query language
+pagination wire contract
+REST / RPC / gRPC / WebSocket
+message envelope / DTO
+concrete database / table / ORM / index schema
+queue / broker / event bus
+process / worker / container topology
+UI page / component / frontend state
+
 Design-to-Implementation Readiness
 Implementation Planning
 IWP
 Coding
 ```
 
+# Producing-session Maximum / Stop Condition
+
+```text
+NGRP-001 Component Internal Design / ns_server / Batch 8 / S13
+→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ STOP
+→ RETURN TO GLOBAL ARCHITECTURE COORDINATOR
+```
+
+The producing session cannot self-accept, advance GAC Epoch, declare ns_server Internal Design Exhaustion/global closure, authorize another Product Component, close full RCP-21, authorize SDK Detailed Design or enter implementation.
+
 # Current Required Read Set
 
-Minimum sufficient Repository context for separate Batch-8 authorization and the later producing-session recovery:
+Minimum sufficient Repository context for Batch-8 fresh-session recovery:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -319,30 +595,13 @@ Minimum sufficient Repository context for separate Batch-8 authorization and the
 22. docs/governance/decisions/ns_evermore_z3_batch_2_unified_human_task_inbox_owner_capability_decision_0.0.1.md
 23. docs/governance/decisions/ns_evermore_z3_batch_2_governed_notification_external_delivery_owner_capability_decision_0.0.1.md
 24. docs/governance/decisions/ns_evermore_z2_mde_014_runtime_actual_state_ownership_topology_owner_decision_0.0.1.md
-25. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail
+25. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md → relevant tail through GAC-TR-0076
 ```
+
+Read additional exact Owner/MDE evidence if the producing design materially touches another reserved dimension.
 
 # Unique Next Legal Action
 
 ```text
-Fresh Repository recovery
-→ separate GAC authorization transition for:
-
-NGRP-001 — Component Internal Design / ns_server / Batch 8
-
-Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY
-  / NS_SERVER
-  / BATCH_8
-  / CROSS_DOMAIN_RESOURCE_DISCOVERY_PROJECTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
-
-Boundary
-→ S13 Cross-domain Resource Discovery Projection
-
-Runtime Role
-→ SV-R09 Discovery Projection Participant
-
-RCP-21
-→ S13 / SV-R09 contribution closure only
-→ Full Cross-component Closure NOT authorized
+Start exactly one bounded ns_server Component Internal Design / Batch 8 / S13 producing session under the exact authorized scope.
 ```
