@@ -886,4 +886,42 @@ Decision Registry → 0.0.26 / unchanged
 Current Authorized Phase → NGRP-001 — Component Internal Design / ns_runtime / Batch 2
 Maximum Legal Bounded-session State → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 Unique Next Legal Action → write GAC-EPOCH-0073 Global State seal, then start exactly one bounded ns_runtime Component Internal Design / Batch 2 / R3 producing session under the exact authorized scope
+
+GAC-TR-0084 → GAC-EPOCH-0074
+Transition → ns_runtime Component Internal Design / Batch 2 / R3 independent Global Acceptance
+Producing Entry HEAD → b2f9f970432d395d6ea341674c9af8bde211016b
+Producing Final HEAD → 87afedac42b0ce194b9bd78418ea6d72390b8c6a
+Global Acceptance Evidence → docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_2_global_acceptance_0.0.1.md
+Global Acceptance Evidence Commit → 6428c35609ff1764c4e8f044a9baf20962d3f08f
+Result → GLOBAL_ACCEPT
+Accepted Internal Boundary → R3 Operation Continuation / Delegation / Intervention Coordination
+Accepted Runtime Role Input → RT-R03 Operation Continuation / Delegation / Intervention Coordinator
+Accepted Internal Responsibility Count → 9
+Accepted DAD → CID-RT-B2-DAD-001..018
+Hard Internal SDD Graph → ACYCLIC
+RCP-06 RT-R03 Contribution → CLOSED AT CURRENT DESIGN LEVEL / full cross-component closure NOT CLOSED
+RCP-13 RT-R03 Coordination-side Refinement → CLOSED AT CURRENT DESIGN LEVEL / accepted S6 source semantics preserved
+RCP-15 RT-R03 Coordination-side Refinement → CLOSED AT CURRENT DESIGN LEVEL / accepted S6 composition semantics preserved
+RCP-16 RT-R03 Contribution → CLOSED AT CURRENT DESIGN LEVEL / full cross-component closure NOT CLOSED
+RCP-12 RT-R03 Consumer Expectation → CLOSED AT CURRENT DESIGN LEVEL / full closure NOT CLOSED
+RCP-24 RT-R03 Receiving Expectation → CLOSED AT CURRENT DESIGN LEVEL / full closure NOT CLOSED
+RCP-07 / RCP-08 / RCP-09 → reference / consumer expectations only / owner-side internals remain downstream
+RCP-20 / R4 → NOT DESIGNED / NOT CLOSED
+Authority / SoT / Final Actual-state Transfer → 0
+Universal Operation / Runtime / Workflow / Saga / Retry / Cancellation / Rollback / Compensation Authority → NOT CREATED
+Major Universal Identity Namespace → NOT CREATED
+Concrete Broker / Queue / Workflow Engine / DB / API / Wire / Process / Deployment Leakage → 0
+Misclassified MDE → 0
+Decision Registry → 0.0.27
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Unexpected Drift → NONE
+Unauthorized Progression → NONE
+Accepted ns_runtime Boundary Coverage → 3 / 4 / 75%
+Remaining accepted ns_runtime boundary without Component Internal Design → R4
+ns_runtime Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 2 ACCEPTANCE
+ns_runtime Component Internal Design Global Closure → NOT DECLARED
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh-recovery GAC post-Batch-2 ns_runtime Component Internal Design remaining-pressure / exhaustion / batching assessment; do not authorize Batch 3 automatically from this acceptance
 ```
