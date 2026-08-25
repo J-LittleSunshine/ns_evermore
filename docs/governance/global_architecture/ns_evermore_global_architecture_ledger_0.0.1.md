@@ -788,4 +788,38 @@ Decision Registry → 0.0.25 / unchanged
 Current Authorized Phase → NGRP-001 — Component Internal Design / ns_runtime / Batch 1
 Maximum Legal Bounded-session State → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 Unique Next Legal Action → start exactly one bounded ns_runtime Component Internal Design / Batch 1 producing session under the exact authorized scope, then return to GAC for independent review
+
+GAC-TR-0081 → GAC-EPOCH-0071
+Transition → ns_runtime Component Internal Design / Batch 1 independent Global Acceptance
+Producing Entry HEAD → a4f538f803abd8d3f6135908f80529ccd40b42b7
+Producing Final HEAD → 186283b1224d586c642428879deb8a96b4d8ef0a
+Global Acceptance Evidence → docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_1_global_acceptance_0.0.1.md
+Global Acceptance Evidence Commit → 6e505db59e69c2d70d4d1b3354f68cca96e847c5
+Result → GLOBAL_ACCEPT
+Accepted Internal Boundaries → R1 Connection / Participant Presence Coordination + R2 Governed Routing / Scheduling / Dispatch Coordination
+Accepted Runtime Role Inputs → RT-R01 Participant Presence Coordinator + RT-R02 Governed Routing / Scheduling / Dispatch Coordinator
+Accepted Internal Responsibility Count → 11
+Accepted DAD → CID-RT-B1-DAD-001..012
+Hard Internal SDD Graph → ACYCLIC
+RCP-03 RT-R01 Contribution → CLOSED AT CURRENT DESIGN LEVEL / full cross-component closure NOT CLOSED
+RCP-05 RT-R02 Contribution → CLOSED AT CURRENT DESIGN LEVEL / full cross-component closure NOT CLOSED
+RCP-02 Runtime Consumer Refinement → CLOSED AT CURRENT DESIGN LEVEL / accepted ns_server producer semantics preserved
+RCP-04 Runtime Consumer Expectation → CLOSED AT CURRENT DESIGN LEVEL / ND-R01 owner-side and full closure remain downstream
+Authority / SoT / Actual-state Transfer → 0
+Universal Runtime SoT / Scheduler / Workflow / Job Authority → NOT CREATED
+Global Priority / Fairness / Retry / Cancellation / Rollback Law → NOT CREATED
+Concrete Broker / Queue / Scheduler / DB / API / Wire / Process / Deployment Leakage → 0
+Misclassified MDE → 0
+Decision Registry → 0.0.26
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Unexpected Drift → NONE
+Unauthorized Progression → NONE
+Accepted ns_runtime Boundary Coverage → 2 / 4 / 50%
+Remaining accepted ns_runtime boundaries without Component Internal Design → R3 / R4
+ns_runtime Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 1 ACCEPTANCE
+ns_runtime Component Internal Design Global Closure → NOT DECLARED
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh-recovery GAC post-Batch-1 ns_runtime Component Internal Design remaining-pressure / exhaustion / batching assessment; do not authorize Batch 2 automatically from this acceptance
 ```
