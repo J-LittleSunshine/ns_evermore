@@ -213,8 +213,8 @@ Accepted Boundary → S6 Automation Definition, Trigger & Composition Lifecycle
 Accepted Internal Module Count → 9
 Accepted DAD → CID-SV-B2-DAD-001..014
 Recognized Owner MDE → CID-SV-B2-MDE-001 / Recursive Automation-to-Automation Invocation NOT SUPPORTED
-Reusable Automation-to-Automation Composition → REQUIRED / PRESERVED
-Canonical Composition Dependency → ACYCLIC
+Reusable Automation Composition → REQUIRED / PRESERVED
+Canonical Automation Composition Dependency → ACYCLIC
 Accepted Full Stable Contract Closure → RCP-13 / RCP-14 / RCP-15
 Accepted Partial Closure → RCP-16 Automation Source-side / RCP-17 Automation-side
 Full RCP-16 / RCP-17 Cross-domain Closure → NOT CLAIMED
@@ -524,7 +524,7 @@ S11 / S13 Internal Design → NOT AUTHORIZED
 Other Product Component Internal Design → NOT AUTHORIZED
 System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
 Concrete Feishu / WeCom / SMS Provider/API/SDK Selection → NOT AUTHORIZED
-Concrete Queue / Broker / Retry-engine / Template / Recipient-schema / DB / API Selection → NOT_AUTHORIZED
+Concrete Queue / Broker / Retry-engine / Template / Recipient-schema / DB / API Selection → NOT AUTHORIZED
 Open MDE required for current S12 Batch → 0
 Unpersisted Owner Decision required for current S12 Batch → 0
 Blocking Item → NONE
@@ -591,14 +591,14 @@ Automation Source-side → S6 / SV-R02 / accepted
 Agent Source-side → AG-R01 / not yet internally designed
 Human Response Submission Occurrence → WB-R01 / not yet internally designed
 RCP-16 S11 / SV-R07 Contribution → AUTHORIZED FOR CURRENT DESIGN-LEVEL CLOSURE
-RCP-16 Full Cross-component Closure → NOT_AUTHORIZED
-Human Task / Notification Separation → MUST_BE_PRESERVED
-Canonical Cross-domain Human Task Source SoT → MUST_NOT_BE_CREATED
+RCP-16 Full Cross-component Closure → NOT AUTHORIZED
+Human Task / Notification Separation → MUST BE PRESERVED
+Canonical Cross-domain Human Task Source SoT → MUST NOT BE CREATED
 Source Response-applicability Authority Transfer → PROHIBITED
-S13 Internal Design / RCP-21 Closure → NOT_AUTHORIZED
-Other Product Component Internal Design → NOT_AUTHORIZED
-System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT_AUTHORIZED
-Concrete Assignment/Escalation/Timeout/Queue/DB/API/UI Selection → NOT_AUTHORIZED
+S13 Internal Design / RCP-21 Closure → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Concrete Assignment/Escalation/Timeout/Queue/DB/API/UI Selection → NOT AUTHORIZED
 Open MDE required for current S11 Batch → 0
 Unpersisted Owner Decision required for current S11 Batch → 0
 Blocking Item → NONE
@@ -649,11 +649,11 @@ S13 Entry Readiness → SATISFIED
 S11 Human Task Contribution Dependency → SATISFIED BY BATCH 7 GLOBAL ACCEPTANCE
 S12 Notification Contribution Dependency → SATISFIED BY BATCH 6 GLOBAL ACCEPTANCE
 RCP-21 S13 / SV-R09 Contribution → ELIGIBLE IN LATER SEPARATELY AUTHORIZED BATCH 8
-RCP-21 Full Cross-component Closure → NOT_YET_ELIGIBLE
+RCP-21 Full Cross-component Closure → NOT YET ELIGIBLE
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
-Batch 8 Authorization → NOT_GRANTED_BY_ASSESSMENT
+Batch 8 Authorization → NOT GRANTED BY ASSESSMENT
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh Repository recovery then separate GAC authorization transition for ns_server Component Internal Design / Batch 8 / S13
 
@@ -668,16 +668,16 @@ Owner Capability Baseline → Unified Governed Cross-domain Resource Discovery /
 Discovery Projection / Index as Resource Authority or Canonical SoT → PROHIBITED
 S13 Actual-state Ownership → projection freshness/completeness/partiality/rebuild/staleness/availability/uncertainty only
 Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating resource owners / PRESERVED
-RCP-21 S13 / SV-R09 Contribution → AUTHORIZED_FOR_CURRENT_DESIGN_LEVEL_CLOSURE
-RCP-21 Full Cross-component Closure → NOT_AUTHORIZED
-S11 Human Task / S12 Notification Contribution Semantics → accepted upstream / may be consumed / internals MUST_NOT_BE_REOPENED
-Non-server Resource-owner and WB-R01 Internal Design → NOT_AUTHORIZED
+RCP-21 S13 / SV-R09 Contribution → AUTHORIZED FOR CURRENT DESIGN-LEVEL CLOSURE
+RCP-21 Full Cross-component Closure → NOT AUTHORIZED
+S11 Human Task / S12 Notification Contribution Semantics → accepted upstream / may be consumed / internals MUST NOT be reopened
+Non-server Resource-owner and WB-R01 Internal Design → NOT AUTHORIZED
 Unauthorized Resource-existence Leakage → PROHIBITED
 Cross-Tenant Discovery / Authorization Bypass → PROHIBITED
-Universal AI / Semantic-search Guarantee → NOT_AUTHORIZED
-Mandatory Search/Index/Vector/Embedding Provider or Technology → NOT_AUTHORIZED
-Other Product Component Internal Design → NOT_AUTHORIZED
-System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT_AUTHORIZED
+Universal AI / Semantic-search Guarantee → NOT AUTHORIZED
+Mandatory Search/Index/Vector/Embedding Provider or Technology → NOT AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT AUTHORIZED
 Open MDE required for current S13 Batch → 0
 Unpersisted Owner Decision required for current S13 Batch → 0
 Blocking Item → NONE
@@ -693,8 +693,8 @@ Accepted Runtime Role Input → SV-R09 Discovery Projection Participant
 Accepted Internal Module Count → 9
 Accepted DAD → CID-SV-B8-DAD-001..023
 Hard Internal SDD Graph → ACYCLIC
-RCP-21 S13 / SV-R09 Contribution → CLOSED_AT_CURRENT_DESIGN_LEVEL
-RCP-21 Full Cross-component Closure → NOT_CLOSED / NOT_CLAIMED
+RCP-21 S13 / SV-R09 Contribution → CLOSED AT CURRENT DESIGN LEVEL
+RCP-21 Full Cross-component Closure → NOT CLOSED / NOT CLAIMED
 S13 Actual-state Ownership → Projection Entry lifecycle/currentness + projection freshness/staleness + bounded completeness/partiality + Projection Generation/rebuild state/coverage + availability/uncertainty + S13 reconciliation qualification
 Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating applicable owners / PRESERVED
 Universal Resource Registry / Identity Authority → 0
@@ -711,7 +711,7 @@ Unpersisted Owner Decision → 0
 Blocking Item → NONE
 Remaining accepted ns_server boundaries without Component Internal Design → NONE
 ns_server Component Internal Design Global Closure → NOT_DECLARED
-ns_server Internal Design Exhaustion → NOT_YET_REASSESSED_AFTER_BATCH_8_ACCEPTANCE
+ns_server Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 8 ACCEPTANCE
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC post-Batch-8 ns_server Component Internal Design remaining-pressure / exhaustion / global-closure assessment; no other Product Component or downstream phase is authorized automatically
 
@@ -729,8 +729,8 @@ Missing ns_server Runtime-role source-boundary design → 0
 Remaining ns_server Authority / SoT / Actual-state ambiguity → 0
 Mandatory missing Shared Foundation semantic → 0
 Implementation-defined Component Architecture Escape → 0
-RCP-16 Full Cross-component Closure → NOT_CLOSED / remains downstream
-RCP-21 Full Cross-component Closure → NOT_CLOSED / remains downstream
+RCP-16 Full Cross-component Closure → NOT CLOSED / remains downstream
+RCP-21 Full Cross-component Closure → NOT CLOSED / remains downstream
 Decision Registry → 0.0.25
 Open MDE → 0
 Unpersisted Owner Decision → 0
@@ -749,16 +749,16 @@ Recommended Batch Shape → MULTIPLE / 3 architecture-derived batches
 Proposed Batch 1 Internal Boundaries → R1 / R2
 Proposed Batch 1 Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_1 / PRESENCE_AND_GOVERNED_DISPATCH_COORDINATION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 Proposed Batch 1 Primary RCP Scope → RCP-03 RT-R01 owner/coordinator-side closure / RCP-05 RT-R02 producer/coordinator-side closure / RCP-02 runtime consumer-side refinement only / RCP-04 runtime consumer expectation only
-Full RCP-03 / RCP-04 / RCP-05 Cross-component Closure → NOT_AUTHORIZED_BY_ASSESSMENT
-RCP-06 / RCP-12 / RCP-13 beyond accepted server semantics / RCP-15 beyond accepted server semantics / RCP-16 / RCP-20 / RCP-21 Full Closure → NOT_AUTHORIZED_BY_ASSESSMENT
-Remaining Product Component Order after ns_runtime → NOT_FROZEN
+Full RCP-03 / RCP-04 / RCP-05 Cross-component Closure → NOT AUTHORIZED BY ASSESSMENT
+RCP-06 / RCP-12 / RCP-13 beyond accepted server semantics / RCP-15 beyond accepted server semantics / RCP-16 / RCP-20 / RCP-21 Full Closure → NOT AUTHORIZED BY ASSESSMENT
+Remaining Product Component Order after ns_runtime → NOT FROZEN
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Semantic Gap → NONE
 Blocking Item → NONE
 Decision Registry → 0.0.25 / unchanged
 Current Authorized Phase → NONE
-Authorization → NOT_GRANTED_BY_ASSESSMENT
+Authorization → NOT GRANTED BY ASSESSMENT
 Unique Next Legal Action → write Global State seal, fresh Repository recovery, then if eligibility remains satisfied perform separate ns_runtime Component Internal Design / Batch 1 authorization transition
 
 GAC-TR-0080 → GAC-EPOCH-0070
@@ -772,15 +772,15 @@ RCP-03 Authorized → RT-R01 owner/coordinator-side semantic closure and stable 
 RCP-05 Authorized → RT-R02 producer/coordinator-side semantic closure and stable contract synthesis
 RCP-02 Authorized Refinement → runtime consumer-side applicability only / accepted ns_server producer closure preserved
 RCP-04 Authorized Refinement → runtime consumer expectation only / ns_node ND-R01 owner-side semantics remain downstream
-Full RCP-03 / RCP-04 / RCP-05 Cross-component Closure → NOT_AUTHORIZED beyond stated runtime-side contribution
-RCP-06 / RCP-12 / RCP-13 beyond accepted server semantics / RCP-15 beyond accepted server semantics / RCP-16 / RCP-20 / RCP-21 Full Closure → NOT_AUTHORIZED
-R3 / R4 Internal Design → NOT_AUTHORIZED
+Full RCP-03 / RCP-04 / RCP-05 Cross-component Closure → NOT AUTHORIZED beyond stated runtime-side contribution
+RCP-06 / RCP-12 / RCP-13 beyond accepted server semantics / RCP-15 beyond accepted server semantics / RCP-16 / RCP-20 / RCP-21 Full Closure → NOT AUTHORIZED
+R3 / R4 Internal Design → NOT AUTHORIZED
 Authority / SoT / Actual-state Topology → unchanged / coordination-only runtime ownership preserved
 Admission / Scheduling / Routing / Dispatch / Attempt / Effect Non-collapse → REQUIRED
 Connected / Trusted / Admitted and Reachable / Ready Non-collapse → REQUIRED
-Other Product Component Internal Design → NOT_AUTHORIZED
-System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT_AUTHORIZED
-Concrete Broker / Queue / Scheduler / DB / API / Wire Protocol / DTO / Worker / Process / Container / Deployment Selection → NOT_AUTHORIZED
+Other Product Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Concrete Broker / Queue / Scheduler / DB / API / Wire Protocol / DTO / Worker / Process / Container / Deployment Selection → NOT AUTHORIZED
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
@@ -801,13 +801,13 @@ Accepted Runtime Role Inputs → RT-R01 Participant Presence Coordinator + RT-R0
 Accepted Internal Responsibility Count → 11
 Accepted DAD → CID-RT-B1-DAD-001..012
 Hard Internal SDD Graph → ACYCLIC
-RCP-03 RT-R01 Contribution → CLOSED_AT_CURRENT_DESIGN_LEVEL / full cross-component closure NOT_CLOSED
-RCP-05 RT-R02 Contribution → CLOSED_AT_CURRENT_DESIGN_LEVEL / full cross-component closure NOT_CLOSED
-RCP-02 Runtime Consumer Refinement → CLOSED_AT_CURRENT_DESIGN_LEVEL / accepted ns_server producer semantics preserved
-RCP-04 Runtime Consumer Expectation → CLOSED_AT_CURRENT_DESIGN_LEVEL / ND-R01 owner-side and full closure remain downstream
+RCP-03 RT-R01 Contribution → CLOSED AT CURRENT DESIGN LEVEL / full cross-component closure NOT CLOSED
+RCP-05 RT-R02 Contribution → CLOSED AT CURRENT DESIGN LEVEL / full cross-component closure NOT CLOSED
+RCP-02 Runtime Consumer Refinement → CLOSED AT CURRENT DESIGN LEVEL / accepted ns_server producer semantics preserved
+RCP-04 Runtime Consumer Expectation → CLOSED AT CURRENT DESIGN LEVEL / ND-R01 owner-side and full closure remain downstream
 Authority / SoT / Actual-state Transfer → 0
-Universal Runtime SoT / Scheduler / Workflow / Job Authority → NOT_CREATED
-Global Priority / Fairness / Retry / Cancellation / Rollback Law → NOT_CREATED
+Universal Runtime SoT / Scheduler / Workflow / Job Authority → NOT CREATED
+Global Priority / Fairness / Retry / Cancellation / Rollback Law → NOT CREATED
 Concrete Broker / Queue / Scheduler / DB / API / Wire / Process / Deployment Leakage → 0
 Misclassified MDE → 0
 Decision Registry → 0.0.26
@@ -818,8 +818,8 @@ Unexpected Drift → NONE
 Unauthorized Progression → NONE
 Accepted ns_runtime Boundary Coverage → 2 / 4 / 50%
 Remaining accepted ns_runtime boundaries without Component Internal Design → R3 / R4
-ns_runtime Internal Design Exhaustion → NOT_YET_REASSESSED_AFTER_BATCH_1_ACCEPTANCE
-ns_runtime Component Internal Design Global Closure → NOT_DECLARED
+ns_runtime Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 1 ACCEPTANCE
+ns_runtime Component Internal Design Global Closure → NOT DECLARED
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC post-Batch-1 ns_runtime Component Internal Design remaining-pressure / exhaustion / batching assessment; do not authorize Batch 2 automatically from this acceptance
 
@@ -837,9 +837,9 @@ R3 Entry Readiness → SATISFIED
 Immediate Next Batch Candidate → ns_runtime / Batch 2 / R3
 Proposed Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_2 / OPERATION_CONTINUATION_DELEGATION_INTERVENTION_COORDINATION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 Proposed Primary RCP Scope → RCP-06 RT-R03 owner/coordinator-side closure + RCP-13/RCP-15 runtime coordination-side consumption/refinement + RCP-16 RT-R03 applicability/refinement + RCP-12 runtime consumer expectation + RCP-24 runtime receiving-side expectation
-RCP-06 Full Cross-component Closure → NOT_AUTHORIZED_BY_ASSESSMENT
-RCP-12 / RCP-16 / RCP-24 Full Closure → NOT_AUTHORIZED_BY_ASSESSMENT
-RCP-20 / R4 → DEFERRED / NOT_AUTHORIZED
+RCP-06 Full Cross-component Closure → NOT AUTHORIZED BY ASSESSMENT
+RCP-12 / RCP-16 / RCP-24 Full Closure → NOT AUTHORIZED BY ASSESSMENT
+RCP-20 / R4 → DEFERRED / NOT AUTHORIZED
 R4 sequencing rationale → recovery/reconciliation should consume stabilized R1-R3 coordination evidence; R3 must be stabilized first
 Authority / SoT / Actual-state Topology → unchanged
 Open MDE → 0
@@ -848,6 +848,6 @@ Blocking Semantic Gap → NONE
 Blocking Item → NONE
 Decision Registry → 0.0.26 / unchanged
 Current Authorized Phase → NONE
-Batch 2 Authorization → NOT_GRANTED_BY_ASSESSMENT
+Batch 2 Authorization → NOT GRANTED BY ASSESSMENT
 Unique Next Legal Action → write Global State seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_runtime Component Internal Design / Batch 2 / R3 authorization transition
 ```
