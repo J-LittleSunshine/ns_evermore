@@ -850,4 +850,40 @@ Decision Registry → 0.0.26 / unchanged
 Current Authorized Phase → NONE
 Batch 2 Authorization → NOT GRANTED BY ASSESSMENT
 Unique Next Legal Action → write Global State seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_runtime Component Internal Design / Batch 2 / R3 authorization transition
+
+GAC-TR-0083 → GAC-EPOCH-0073
+Transition → separate ns_runtime Component Internal Design / Batch 2 / R3 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.1.md
+Assessment Seal → 7f1ee33a69720d3f8469765a2b49bef10f796e3b
+Authorization Working State Commit → 167996794ed4f8e6f1139140cd8b3ca660900882
+Authorized Phase → NGRP-001 — Component Internal Design / ns_runtime / Batch 2
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_2 / OPERATION_CONTINUATION_DELEGATION_INTERVENTION_COORDINATION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Internal Boundary → R3 Operation Continuation / Delegation / Intervention Coordination
+Inherited Runtime Role → RT-R03 Operation Continuation / Delegation / Intervention Coordinator
+RCP-06 Authorized → RT-R03 owner/coordinator-side semantic closure and stable contract synthesis / full cross-component closure NOT AUTHORIZED by inference
+RCP-13 Authorized Refinement → RT-R03 coordination-side applicability/correlation only / accepted S6 Automation continuation semantics preserved
+RCP-15 Authorized Refinement → RT-R03 composition coordination-side applicability/correlation only / accepted S6 composition semantics preserved
+RCP-16 Authorized Refinement → RT-R03 cross-component resume/intervention coordination applicability only / full closure NOT AUTHORIZED
+RCP-12 Authorized Refinement → RT-R03 consumer/coordination expectation only / AG-R04 owner-side and full closure downstream
+RCP-24 Authorized Refinement → RT-R03 receiving/correlation/applicability expectation only / WB-SDK source-side and full closure downstream
+RCP-07 / RCP-08 / RCP-09 → owner-side design NOT AUTHORIZED / reference-consumer expectations only if materially required
+RCP-20 / R4 → NOT AUTHORIZED
+R3 Actual-state Ownership → continuation/delegation/intervention coordination-stage facts genuinely originating in ns_runtime only
+Automation semantic continuation → S6/SV-R02 PRESERVED
+Agent semantic continuation / delegation source facts → applicable ns_agent owners downstream PRESERVED
+Node Attempt / Effect → applicable ns_node owners downstream PRESERVED
+Formal Admission → ns_server/S8 PRESERVED
+Routing/Scheduling/Dispatch → R2/RT-R02 PRESERVED
+Universal Operation / Workflow / Saga / Retry / Cancellation / Rollback / Compensation Authority → NOT CREATED
+Request / Outcome Non-collapse → REQUIRED
+Private / Offline Core Correctness → REQUIRED
+Mandatory Public SaaS / Workflow Engine / Broker Dependency → PROHIBITED
+Concrete Broker / Queue / Workflow Engine / DB / API / Wire / DTO / Process / Deployment Selection → NOT AUTHORIZED
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Decision Registry → 0.0.26 / unchanged
+Current Authorized Phase → NGRP-001 — Component Internal Design / ns_runtime / Batch 2
+Maximum Legal Bounded-session State → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Unique Next Legal Action → write GAC-EPOCH-0073 Global State seal, then start exactly one bounded ns_runtime Component Internal Design / Batch 2 / R3 producing session under the exact authorized scope
 ```
