@@ -1077,4 +1077,38 @@ Current Authorized Phase → NONE
 ns_node / ns_agent / ns_web Component Internal Design → NOT AUTHORIZED
 System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT AUTHORIZED
 Unique Next Legal Action → write GAC-EPOCH-0079 Global State closure seal, fresh Repository recovery, then perform next-Product-Component Component Internal Design sequencing / remaining-pressure / entry-readiness assessment; do not authorize the next component automatically
+
+GAC-TR-0090 → GAC-EPOCH-0080
+Transition → post-ns_runtime next-Product-Component sequencing / ns_node Component Internal Design entry-readiness assessment
+Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_runtime_component_internal_design_next_component_sequencing_ns_node_entry_readiness_assessment_0.0.1.md
+Assessment Commit → 3d152f3c1526fbba5dd92fa821ada4939495688f
+Working State Commit → f548bebf5c3dbbe5e9463667546039dcdf5d7278
+Result → COMPLETED
+Next Product Component → ns_node
+ns_node Component Internal Design Entry Readiness → SATISFIED
+Recommended Batch Shape → MULTIPLE / 2
+Immediate Next Batch Candidate → ns_node / Batch 1 / N1 + N2 + N3
+Proposed Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_NODE / BATCH_1 / LOCAL_READINESS_GOVERNED_EXECUTION_PROTECTED_EFFECT_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Proposed RCP-04 → ND-R01 owner/source-side closure + stable contract synthesis
+Proposed RCP-07 → ND-R02 owner/source-side closure + stable contract synthesis
+Proposed RCP-08 → ND-R03 owner/source-side closure + stable contract synthesis
+RCP-02 / RCP-05 → Node executor consumer-side applicability refinement only
+RCP-03 → Node participant-side contribution where N1 materially participates
+RCP-12 → Node target/receiving-side expectation only / AG-R04 source side downstream
+RCP-13 / RCP-15 → Node executor-side expectations only / accepted Automation semantics preserved
+RCP-17 → Node trial executor/effect contribution only / Full Trial closure not inferred
+RCP-19 → Node Applied-config contribution / S9 Desired authority preserved
+RCP-22 → N1/N2/N3 fact-owner provenance obligations only / complete Node diagnostics deferred to N4
+RCP-24 → Node intervention target/outcome-side expectation only where applicable
+RCP-20 comprehensive Node recovery participation → DEFERRED TO N4 / BATCH 2
+N4 / ND-R04 → FUTURE BATCH 2 / NOT AUTHORIZED
+ns_agent / ns_web → NOT AUTHORIZED
+Decision Registry → 0.0.29 / unchanged
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Semantic Gap → NONE
+Blocking Item → NONE
+Current Authorized Phase → NONE
+ns_node Batch 1 Authorization → NOT GRANTED BY ASSESSMENT
+Unique Next Legal Action → write GAC-EPOCH-0080 Global State assessment seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_node Component Internal Design / Batch 1 authorization transition
 ```
