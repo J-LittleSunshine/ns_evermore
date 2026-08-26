@@ -986,4 +986,40 @@ Current Authorized Phase → NGRP-001 — Component Internal Design / ns_runtime
 Maximum Legal Bounded-session State → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 Post-Batch-3 Exhaustion / Global Closure → MUST be separately reassessed after future Global Acceptance
 Unique Next Legal Action → write GAC-EPOCH-0076 Global State seal, then start exactly one bounded ns_runtime Component Internal Design / Batch 3 / R4 producing session under the exact authorized scope
+
+GAC-TR-0087 → GAC-EPOCH-0077
+Transition → ns_runtime Component Internal Design / Batch 3 / R4 independent Global Acceptance
+Producing Entry HEAD → 62f84a8bd38d6a49240d6b44f5151f88875f3d79
+Producing Final HEAD → 877ced0c48422a9f99a701fe4dcff629e1ffde8e
+Global Acceptance Evidence → docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_3_global_acceptance_0.0.1.md
+Global Acceptance Evidence Commit → 99107506287e26330a88df5e05f1b238157b3e4f
+Result → GLOBAL_ACCEPT
+Accepted Internal Boundary → R4 Coordination Recovery / Reconciliation / Diagnostics
+Accepted Runtime Role Input → RT-R04 Coordination Recovery / Reconciliation Participant
+Accepted Internal Responsibility Count → 9
+Accepted DAD → CID-RT-B3-DAD-001..018
+Hard Internal SDD Graph → ACYCLIC
+RCP-20 RT-R04 Contribution → CLOSED AT CURRENT DESIGN LEVEL / full cross-component closure NOT CLOSED
+RCP-22 RT-R04 Producer Contribution → CLOSED AT CURRENT DESIGN LEVEL / full cross-component closure NOT CLOSED
+RCP-03 / RCP-05 / RCP-06 → accepted upstream semantics preserved / consumed only
+RCP-04 / RCP-07 / RCP-08 / RCP-09 / RCP-23 → reference / consumer / re-observation expectations only / owner-side internals remain downstream
+RCP-19 Desired / Applied / Observed → PRESERVED
+Authority / SoT / Final Actual-state Transfer → 0
+Conflict Winner / Merge Law / Authoritative Sync Direction → NOT CREATED
+Universal Recovery / Replay Semantics → NOT CREATED
+Major Universal Recovery Identity Namespace → NOT CREATED
+Concrete DB / Event-store / Queue / Broker / Recovery Engine / API / Wire / Process / Deployment Leakage → 0
+Misclassified MDE → 0
+Decision Registry → 0.0.28
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Unexpected Drift → NONE
+Unauthorized Progression → NONE
+Accepted ns_runtime Boundary Coverage → 4 / 4 / 100%
+Remaining accepted ns_runtime boundaries without Component Internal Design → NONE
+ns_runtime Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 3 ACCEPTANCE
+ns_runtime Component Internal Design Global Closure → NOT DECLARED
+Current Authorized Phase → NONE
+Unique Next Legal Action → fresh-recovery GAC post-Batch-3 ns_runtime Component Internal Design remaining-pressure / exhaustion / global-closure assessment; do not infer closure or authorize another Product Component automatically
 ```
