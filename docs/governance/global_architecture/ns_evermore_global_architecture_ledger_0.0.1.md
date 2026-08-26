@@ -925,3 +925,36 @@ ns_runtime Component Internal Design Global Closure → NOT DECLARED
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC post-Batch-2 ns_runtime Component Internal Design remaining-pressure / exhaustion / batching assessment; do not authorize Batch 3 automatically from this acceptance
 ```
+
+```text
+GAC-TR-0085 → GAC-EPOCH-0075
+Transition → post-Batch-2 ns_runtime Component Internal Design remaining-pressure / exhaustion / R4 entry-readiness assessment
+Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.2.md
+Assessment Commit → 02111a836ab4191ba2a610eaadbae0bd9197c436
+Working State Commit → baa3aec7105087e63635aa3dfe227f998b995252
+Result → COMPLETED
+Remaining Material ns_runtime Component Internal-design Pressure → PRESENT
+ns_runtime Internal Design Exhaustion → NOT_SATISFIED
+Remaining Boundary → R4 Coordination Recovery / Reconciliation / Diagnostics
+R4 Runtime Role → RT-R04 Coordination Recovery / Reconciliation Participant
+R4 Entry Readiness → SATISFIED
+Immediate Final Batch Candidate → ns_runtime / Batch 3 / R4
+Proposed Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_3 / COORDINATION_RECOVERY_RECONCILIATION_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Proposed RCP-20 Scope → RT-R04 owner/coordinator-side semantic closure + stable contract synthesis / full cross-component closure NOT PROPOSED
+Proposed RCP-22 Scope → RT-R04 diagnostics/provenance producer-side contribution / full cross-component closure NOT PROPOSED
+Accepted RCP-03 / RCP-05 / RCP-06 → upstream evidence consumption only / MUST NOT be reopened
+RCP-04 / RCP-07 / RCP-08 / RCP-09 / RCP-23 → reference-consumer expectations only where materially required / owner-side internals downstream
+RCP-19 → accepted Desired/Applied semantics preserved / R4 local Applied-health evidence only where genuinely R4-owned
+Conflict Winner / Latest-wins / Local-wins / Central-wins / Merge Law → NOT CREATED
+Recovery / Reconciliation Algorithm → NOT SELECTED
+Authority / SoT / Actual-state Topology → unchanged
+Missing Mandatory Foundation Semantic → NONE_FOUND
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Semantic Gap → NONE
+Blocking Item → NONE
+Decision Registry → 0.0.27 / unchanged
+Current Authorized Phase → NONE
+Batch 3 Authorization → NOT GRANTED BY ASSESSMENT
+Unique Next Legal Action → write GAC-EPOCH-0075 Global State seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_runtime Component Internal Design / Batch 3 / R4 authorization transition
+```
