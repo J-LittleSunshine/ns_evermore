@@ -667,7 +667,7 @@ Inherited Runtime Role → SV-R09 Discovery Projection Participant
 Owner Capability Baseline → Unified Governed Cross-domain Resource Discovery / authorization-aware / Tenant-aware / private-offline-capable / domain identity preserved
 Discovery Projection / Index as Resource Authority or Canonical SoT → PROHIBITED
 S13 Actual-state Ownership → projection freshness/completeness/partiality/rebuild/staleness/availability/uncertainty only
-Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating applicable owners / PRESERVED
+Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating resource owners / PRESERVED
 RCP-21 S13 / SV-R09 Contribution → AUTHORIZED FOR CURRENT DESIGN-LEVEL CLOSURE
 RCP-21 Full Cross-component Closure → NOT AUTHORIZED
 S11 Human Task / S12 Notification Contribution Semantics → accepted upstream / may be consumed / internals MUST NOT be reopened
