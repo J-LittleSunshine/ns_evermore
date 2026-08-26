@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0080`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0081`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # Current Working Baseline
@@ -67,112 +67,217 @@ Known Working-branch Drift
 → NONE
 
 Current Authorized Phase
-→ NONE
+→ NGRP-001 — Component Internal Design / ns_node / Batch 1
 
 Authorization Scope
-→ NONE
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_NODE / BATCH_1 / LOCAL_READINESS_GOVERNED_EXECUTION_PROTECTED_EFFECT_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
-# Next Product Component Sequencing Assessment
+# Authorization Basis
 
 Assessment:
 
 `docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_runtime_component_internal_design_next_component_sequencing_ns_node_entry_readiness_assessment_0.0.1.md`
 
 ```text
-Assessment Entry HEAD
-→ f248d2f04d34ce83c5edc9c5a990736198a8eb97
-
 Assessment Commit
 → 3d152f3c1526fbba5dd92fa821ada4939495688f
 
-Assessment Input Epoch
-→ GAC-EPOCH-0079
+Assessment Transition
+→ GAC-TR-0090 → GAC-EPOCH-0080
 
-Recovery Result
+Assessment State Seal
+→ 44fadd5a9c23094ad5599111d852232c74358ec0
+
+Fresh Authorization Recovery
 → PASS
-
-Next Product Component
-→ ns_node
 
 ns_node Component Internal Design Entry Readiness
 → SATISFIED
 
-Recommended Batch Shape
-→ MULTIPLE / 2
+Open MDE
+→ 0
 
-Immediate Next Batch Candidate
-→ ns_node / Batch 1 / N1 + N2 + N3
+Unpersisted Owner Decision
+→ 0
 
-Proposed Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_NODE / BATCH_1 / LOCAL_READINESS_GOVERNED_EXECUTION_PROTECTED_EFFECT_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
-
-Batch 2 Candidate
-→ N4 Offline Continuity, Recovery & Local Diagnostics
-→ NOT AUTHORIZED / NOT ENTRY-ASSESSED YET
+Blocking Item
+→ NONE
 ```
 
-# Sequencing Rationale
+# Authorized ns_node Batch 1
+
+```text
+Authorized Phase
+→ NGRP-001 — Component Internal Design / ns_node / Batch 1
+
+Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_NODE / BATCH_1 / LOCAL_READINESS_GOVERNED_EXECUTION_PROTECTED_EFFECT_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+
+Authorized Internal Boundaries
+→ N1 Local Capability, Readiness & Applied Configuration
+→ N2 Governed Local Execution
+→ N3 Protected Local Effect & Source-fact Custody
+
+Inherited Runtime Roles
+→ ND-R01 Node Capability & Readiness Participant
+→ ND-R02 Governed Local Execution Participant
+→ ND-R03 Protected Local Effect Custodian
+
+N4 Offline Continuity, Recovery & Local Diagnostics
+→ NOT AUTHORIZED
+
+ND-R04 Node Offline Continuity & Recovery Participant
+→ NOT AUTHORIZED
+```
+
+Authorization does not constitute Global Acceptance.
+
+```text
+Accepted ns_node Boundary Coverage
+→ 0 / 4 / 0%
+
+ns_node Internal Design Exhaustion
+→ NOT ASSESSED
+
+ns_node Component Internal Design Global Closure
+→ NOT DECLARED
+```
+
+# Batch 1 Authority / Actual-state Boundary
 
 ```text
 N1 / ND-R01
-→ final owner of Node capability/readiness/applied-config Actual-state
+→ owns bounded Node capability / installed / available / activated / mode-readiness / readiness / Applied-config Actual-state genuinely established at Node
 
 N2 / ND-R02
-→ final owner of Node local execution Attempt Actual-state
+→ owns bounded local execution Attempt Actual-state genuinely established at Node
 
 N3 / ND-R03
-→ final owner of protected local Effect/source facts
-
-N4 / ND-R04
-→ Node-local offline continuity/recovery/diagnostic participation
+→ owns protected local Effect / local source-fact assertions genuinely originating at Node
 ```
 
-Accepted execution chain remains:
+Explicitly preserved external authority:
 
 ```text
-SV-R04 Admission
-→ RT-R02 Dispatch
-→ ND-R01 Readiness
-→ ND-R02 Attempt
-→ ND-R03 Effect
+Tenant / Principal / IAM / Policy / Trust
+→ ns_server authorities
+
+Artifact Acceptance / Formal Execution Admission
+→ ns_server / S8 / SV-R04
+
+Managed Runtime Desired Configuration
+→ ns_server / S9 / SV-R05
+
+Presence / Reachability Coordination
+→ ns_runtime / R1 / RT-R01
+
+Routing / Scheduling / Dispatch
+→ ns_runtime / R2 / RT-R02
+
+Continuation / Delegation / Intervention Coordination
+→ ns_runtime / R3 / RT-R03
+
+Recovery / Reconciliation Coordination
+→ ns_runtime / R4 / RT-R04
+
+Automation semantic continuation / result
+→ ns_server / S6 / SV-R02
+
+Agent semantic / delegation source facts
+→ applicable ns_agent owners downstream
+
+Business / external semantic success
+→ applicable source/domain owner
 ```
 
-Node source-side design has complete accepted server/runtime upstream. It also reduces forward-assumption pressure for later `ns_agent` A4/A6 tool/delegation semantics and later `ns_web` diagnostics/projection semantics.
+# Authorized Stable-contract Scope
+
+## RCP-04 — Node Readiness
 
 ```text
-ns_agent after ns_node
-→ NOT YET FROZEN
+ND-R01 owner/source-side semantic closure
+→ AUTHORIZED
 
-ns_web after ns_node
-→ NOT YET FROZEN
+representation-neutral stable contract synthesis
+→ AUTHORIZED
 
-Complete post-ns_node order
-→ MUST be reassessed later
+RCP-04 Full Cross-component Closure
+→ NOT AUTHORIZED BY INFERENCE
 ```
 
-# Proposed ns_node Batch 1 RCP Scope
+## RCP-07 — Node Attempt
 
 ```text
-RCP-04 ND-R01 owner/source-side closure + stable contract synthesis
-RCP-07 ND-R02 owner/source-side closure + stable contract synthesis
-RCP-08 ND-R03 owner/source-side closure + stable contract synthesis
+ND-R02 owner/source-side semantic closure
+→ AUTHORIZED
 
-RCP-02 Node executor consumer-side applicability only
-RCP-05 Node executor consumer-side applicability only
-RCP-03 Node participant-side contribution where N1 participates
-RCP-12 Node target/receiving-side expectation only / AG-R04 source side downstream
-RCP-13 / RCP-15 Node executor-side expectations only / accepted Automation semantics preserved
-RCP-17 Node trial executor/effect contribution only / Full Trial closure not inferred
-RCP-19 Node Applied-configuration contribution / S9 Desired authority preserved
-RCP-22 N1/N2/N3 fact-owner provenance obligations only / complete Node diagnostics remains N4
-RCP-24 Node intervention target/outcome-side expectation only where applicable
-RCP-20 comprehensive Node recovery participation → DEFERRED TO N4 / Batch 2
+representation-neutral stable contract synthesis
+→ AUTHORIZED
+
+RCP-07 Full Cross-component Closure
+→ NOT AUTHORIZED BY INFERENCE
 ```
 
-No full cross-component closure is inferred by this assessment.
+## RCP-08 — Node Effect Evidence
 
-# Permanent Node Non-collapse for Future Authorization
+```text
+ND-R03 owner/source-side semantic closure
+→ AUTHORIZED
+
+representation-neutral stable contract synthesis
+→ AUTHORIZED
+
+RCP-08 Full Cross-component Closure
+→ NOT AUTHORIZED BY INFERENCE
+```
+
+## Bounded refinements / expectations
+
+```text
+RCP-02
+→ Node executor consumer-side Admission-evidence applicability refinement only
+→ accepted S8/SV-R04 producer authority preserved
+
+RCP-05
+→ Node executor consumer-side Dispatch-evidence applicability refinement only
+→ accepted RT-R02 producer authority preserved
+
+RCP-03
+→ Node participant-side contribution only where N1 materially participates
+→ accepted RT-R01 coordination authority preserved
+
+RCP-12
+→ Node target/receiving-side expectation only
+→ AG-R04 owner/source-side semantics remain downstream
+
+RCP-13 / RCP-15
+→ Node executor-side applicability/correlation expectations only
+→ accepted S6 Automation semantics preserved
+
+RCP-17
+→ Node trial executor/effect contribution only
+→ Full Trial closure NOT AUTHORIZED by inference
+
+RCP-19
+→ Node Applied-configuration contribution only
+→ S9 Desired-state authority preserved
+
+RCP-22
+→ N1/N2/N3 fact-owner provenance/diagnostic contribution only
+→ complete Node local-diagnostics/recovery contribution remains N4
+→ Full RCP-22 closure NOT AUTHORIZED
+
+RCP-24
+→ Node intervention target/outcome-side expectation only where materially required
+→ WB/SDK intent source side remains downstream
+
+RCP-20 comprehensive Node recovery/reconciliation participation
+→ NOT AUTHORIZED
+→ RESERVED FOR N4 / FUTURE BATCH 2
+```
+
+# Permanent Node Non-collapse
 
 ```text
 Connected != Trusted != Admitted
@@ -181,56 +286,117 @@ Installed != Accepted
 Available != Admitted
 Activated != Authorized
 User Session != IAM Authority
-Admission != Dispatch != Attempt != Effect
-Attempt != Effect
+Admission != Scheduling != Routing != Dispatch != Attempt != Effect
+Dispatch != Attempt
+Attempt != Protected Effect
 Attempt Success != Protected Effect automatically
+Protected Effect != Business Semantic Success automatically
 Stopped != Effects Reversed
-Local Effect != Business Semantic Success
+Local Source Fact != broader domain truth
+Local Copy != External SoT Replacement
 Offline != Authority Transfer
 Reconnect != Reconciled
 Recovery != SoT Transfer
 Replay != Retroactive Authorization
 Latest Timestamp != Canonical Winner
-Desired != Applied != Observed
+Desired != Distributed != Applied != Observed
 ```
 
-# Assessment Governance Boundary
+# Identity / History / Offline Obligations
+
+Batch 1 may refine only bounded, representation-neutral Node subjects materially required for responsibility/history/correlation, including where applicable:
 
 ```text
-New MDE required for ns_node entry
+Node Reference / Participant Reference
+Node Capability / Readiness Evidence Reference
+Operation / Work Reference
+Admission Evidence Reference
+Dispatch Identity / Reference
+Node Attempt Identity / Reference
+Protected Effect / Source Evidence Identity / Reference
+source/resource reference
+configuration Desired revision reference + Node Applied revision/evidence
+trial/delegation/intervention references where supplied by authoritative owners
+Tenant / Principal / Policy / Trust context references
+history / lineage / provenance / currentness / uncertainty
+```
+
+Permanent:
+
+```text
+Attempt Identity != Effect Identity
+Operation Identity != Attempt Identity
+Dispatch Identity != Attempt Identity
+Admission Evidence != Attempt
+Reference != Authority
+Correlation != Ownership
+```
+
+No universal Node/event identity namespace or physical UUID/database/message/wire format is authorized.
+
+Batch 1 must preserve non-destructive attempt/effect history and sufficient offline-retainable provenance for later N4 consumption, but must not design N4 recovery/reconciliation internals.
+
+# Attended / Unattended Boundary
+
+Both modes belong to the same governed Node responsibility model.
+
+```text
+ATTENDED
+→ may include user-session/presence binding evidence
+→ does not bypass IAM/Policy/Trust/Admission
+
+UNATTENDED
+→ may operate without active human presence where already authorized
+→ does not create unrestricted authority
+```
+
+No concrete desktop/browser profile/session/process model is authorized.
+
+# MDE / Foundation / Implementation Gate
+
+```text
+Open MDE required for Batch 1 entry
+→ 0
+
+Unpersisted Owner Decision required for Batch 1 entry
 → 0
 
 Missing Mandatory Shared Foundation Semantic
 → NONE_FOUND
 
-Implementation-defined Architecture Escape required for entry
-→ 0
+Blocking Item
+→ NONE
+```
 
-ns_node Batch 1 Authorization
-→ NOT GRANTED BY ASSESSMENT
+Producing session must STOP and return to GAC if it materially requires a new durable decision on universal retry/cancellation/rollback/compensation, execution guarantee, protected-effect reversal law, local/central conflict winner, cross-Tenant Node coordination, mandatory sandbox/broker/queue/scheduler/storage/provider, public dependency, provider/protocol/framework/storage lock-in, major identity namespace, new Product capability or other high-migration commitment.
 
+# Explicitly Not Authorized
+
+```text
+N4 / ND-R04 internal design
+ns_node Batch 2
 ns_agent Component Internal Design
-→ NOT AUTHORIZED
-
 ns_web Component Internal Design
-→ NOT AUTHORIZED
-
 System-level SDK Detailed Design
-→ NOT AUTHORIZED
-
 Design-to-Implementation Readiness
-→ NOT AUTHORIZED
+Implementation Planning
+IWP
+Coding
+```
 
-Implementation Planning / IWP / Coding
-→ NOT AUTHORIZED
+Concrete worker/process/thread/coroutine/session/browser-profile/container/deployment topology, DB/storage engine, queue/broker/scheduler/workflow engine, REST/gRPC/concrete WebSocket protocol, DTO/wire/table/ORM schema and exactly/at-most/at-least-once guarantee are not authorized.
+
+# Maximum Legal Bounded-session State
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 ```
 
 # Unique Next Legal Action
 
 ```text
-append GAC-TR-0090 assessment transition to Global Architecture Ledger
-→ write GAC-EPOCH-0080 Global State assessment seal
-→ fresh Repository recovery
-→ if ns_node entry readiness remains SATISFIED, perform a separate ns_node Component Internal Design / Batch 1 authorization transition
-→ do not start ns_node producing work from this assessment alone
+append separate GAC-TR-0091 authorization transition to Global Architecture Ledger
+→ write GAC-EPOCH-0081 Global State authorization seal
+→ start exactly one bounded ns_node Component Internal Design / Batch 1 producing session
+→ return to GAC for independent Global Acceptance
 ```
