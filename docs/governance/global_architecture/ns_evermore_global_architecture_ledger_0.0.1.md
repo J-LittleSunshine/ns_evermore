@@ -924,9 +924,7 @@ ns_runtime Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 2 ACCEP
 ns_runtime Component Internal Design Global Closure → NOT DECLARED
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC post-Batch-2 ns_runtime Component Internal Design remaining-pressure / exhaustion / batching assessment; do not authorize Batch 3 automatically from this acceptance
-```
 
-```text
 GAC-TR-0085 → GAC-EPOCH-0075
 Transition → post-Batch-2 ns_runtime Component Internal Design remaining-pressure / exhaustion / R4 entry-readiness assessment
 Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.2.md
