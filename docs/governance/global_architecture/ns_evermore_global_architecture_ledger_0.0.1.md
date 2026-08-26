@@ -280,7 +280,7 @@ Result → GLOBAL_ACCEPT
 Accepted Boundary → S5 Business Application Definition Lifecycle
 Accepted Internal Module Count → 6
 Accepted DAD → CID-SV-B3-DAD-001..012
-Hard SDD Graph → ACYCLIC
+Hard Internal SDD Graph → ACYCLIC
 Business Application Authority / Canonical Definition SoT → ns_server / PRESERVED
 Source↔Visual Semantic Interoperability → REQUIRED / PRESERVED / no silent semantic loss
 S7 Native Definition SoT Inference → 0
@@ -676,8 +676,8 @@ Unauthorized Resource-existence Leakage → PROHIBITED
 Cross-Tenant Discovery / Authorization Bypass → PROHIBITED
 Universal AI / Semantic-search Guarantee → NOT AUTHORIZED
 Mandatory Search/Index/Vector/Embedding Provider or Technology → NOT AUTHORIZED
-Other Product Component Internal Design → NOT AUTHORIZED
-System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Other Product Component Internal Design → NOT_AUTHORIZED
+System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT_AUTHORIZED
 Open MDE required for current S13 Batch → 0
 Unpersisted Owner Decision required for current S13 Batch → 0
 Blocking Item → NONE
@@ -780,7 +780,7 @@ Admission / Scheduling / Routing / Dispatch / Attempt / Effect Non-collapse → 
 Connected / Trusted / Admitted and Reachable / Ready Non-collapse → REQUIRED
 Other Product Component Internal Design → NOT AUTHORIZED
 System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT AUTHORIZED
-Concrete Broker / Queue / Scheduler / DB / API / Wire Protocol / DTO / Worker / Process / Container / Deployment Selection → NOT AUTHORIZED
+Concrete Broker / Queue / Scheduler / DB / API / Wire Protocol / DTO / Worker / Process / Container / Deployment Selection → NOT_AUTHORIZED
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
@@ -867,7 +867,7 @@ RCP-16 Authorized Refinement → RT-R03 cross-component resume/intervention coor
 RCP-12 Authorized Refinement → RT-R03 consumer/coordination expectation only / AG-R04 owner-side and full closure downstream
 RCP-24 Authorized Refinement → RT-R03 receiving/correlation/applicability expectation only / WB-SDK source-side and full closure downstream
 RCP-07 / RCP-08 / RCP-09 → owner-side design NOT AUTHORIZED / reference-consumer expectations only if materially required
-RCP-20 / R4 → NOT AUTHORIZED
+RCP-20 / R4 → NOT_AUTHORIZED
 R3 Actual-state Ownership → continuation/delegation/intervention coordination-stage facts genuinely originating in ns_runtime only
 Automation semantic continuation → S6/SV-R02 PRESERVED
 Agent semantic continuation / delegation source facts → applicable ns_agent owners downstream PRESERVED
@@ -878,7 +878,7 @@ Universal Operation / Workflow / Saga / Retry / Cancellation / Rollback / Compen
 Request / Outcome Non-collapse → REQUIRED
 Private / Offline Core Correctness → REQUIRED
 Mandatory Public SaaS / Workflow Engine / Broker Dependency → PROHIBITED
-Concrete Broker / Queue / Workflow Engine / DB / API / Wire / DTO / Process / Deployment Selection → NOT AUTHORIZED
+Concrete Broker / Queue / Workflow Engine / DB / API / Wire / DTO / Process / Deployment Selection → NOT_AUTHORIZED
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
@@ -973,11 +973,11 @@ RCP-19 → accepted Desired/Applied semantics preserved / only genuinely R4-owne
 R4 Actual-state Ownership → runtime-originated recovery/evidence-exchange/re-observation/reconciliation-stage + health/diagnostic/currentness/uncertainty/history facts only
 Source Facts / Effects / Source Recovery Truth → original owners / PRESERVED
 Conflict Winner / Latest-wins / Earliest-wins / Local-wins / Central-wins / Source-priority / Merge Law → NOT CREATED
-Recovery / Reconciliation / Replay Algorithm → NOT AUTHORIZED
+Recovery / Reconciliation / Replay Algorithm → NOT_AUTHORIZED
 Universal Recovery / Replay / Delivery Guarantee → NOT CREATED
 Private / Offline Core Correctness → REQUIRED
 Mandatory Public SaaS / Broker / Queue / Log / Recovery Engine Dependency → PROHIBITED
-Concrete DB/Event-store/API/Wire/DTO/Process/Deployment Selection → NOT AUTHORIZED
+Concrete DB/Event-store/API/Wire/DTO/Process/Deployment Selection → NOT_AUTHORIZED
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
