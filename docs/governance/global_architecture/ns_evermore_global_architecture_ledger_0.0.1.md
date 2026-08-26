@@ -1223,4 +1223,38 @@ Decision Registry → 0.0.30 / unchanged
 Current Authorized Phase → NONE
 ns_node Batch 2 Authorization → NOT GRANTED BY ASSESSMENT
 Unique Next Legal Action → write GAC-EPOCH-0083 Global State assessment seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_node Component Internal Design / Batch 2 / N4 authorization transition
+
+GAC-TR-0094 → GAC-EPOCH-0084
+Transition → separate ns_node Component Internal Design / Batch 2 / N4 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_ns_node_internal_design_remaining_pressure_batching_assessment_0.0.1.md
+Assessment Seal → f4718e497e42184753437be98bdae37caf346ed0
+Authorization Working State Commit → c28b13401813ab9f1185d5ff22a4f5f870d53fe8
+Authorized Phase → NGRP-001 — Component Internal Design / ns_node / Batch 2
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_NODE / BATCH_2 / OFFLINE_CONTINUITY_RECOVERY_AND_LOCAL_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Boundary → N4 Offline Continuity, Recovery & Local Diagnostics
+Inherited Runtime Role → ND-R04 Node Offline Continuity & Recovery Participant
+Accepted N1 / N2 / N3 Internals → NORMATIVE UPSTREAM / MUST NOT BE REOPENED
+RCP-20 Authorized → ND-R04 Node-local recovery/reconciliation participant-side semantic contribution + representation-neutral stable contract synthesis / Full Cross-component Closure NOT AUTHORIZED
+RCP-22 Authorized → ND-R04 Node-local recovery/health/lifecycle/offline diagnostic producer contribution / may complete ns_node-side contribution at current design level / Full Cross-component Closure NOT AUTHORIZED
+RCP-04 / RCP-07 / RCP-08 / RCP-19 → accepted upstream semantics consumed only / internals MUST NOT be reopened
+RCP-03 → reconnect/participant references only / RT-R01 authority preserved
+RCP-06 → recovery/resume/intervention coordination correlation only / RT-R03 + final source owners preserved
+RCP-24 → recovery/resume Human-SDK intent receiving correlation only / WB-SDK source side downstream
+N4 Actual-state Ownership → Node-local retention/offline/recovery-participation/reconciliation-stage/health-lifecycle-diagnostic/currentness-uncertainty-history facts genuinely originating in N4 only
+N1 Readiness / N2 Attempt / N3 Effect-Source Facts → original accepted owners / PRESERVED
+RT-R04 Coordination Truth → ns_runtime R4 / PRESERVED
+Source-domain Recovery Outcome → original applicable source owner / PRESERVED
+Conflict Winner / Latest-wins / Local-wins / Central-wins / Merge Law / Authoritative Sync Direction → NOT CREATED
+Universal Replay / Retry / Cancellation / Rollback / Compensation / Once Guarantee → NOT CREATED
+Offline Fail-open / Fail-closed Policy → NOT CREATED
+Mandatory Public SaaS / Broker / Queue / Scheduler / Recovery Engine / Storage Dependency → NOT CREATED
+Concrete Persistence / API / Wire / Process / Deployment Selection → NOT AUTHORIZED
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Decision Registry → 0.0.30 / unchanged
+Accepted ns_node Boundary Coverage → 3 / 4 / 75% until future Global Acceptance
+Current Authorized Phase → NGRP-001 — Component Internal Design / ns_node / Batch 2
+Maximum Legal Bounded-session State → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Unique Next Legal Action → write GAC-EPOCH-0084 Global State authorization seal, then start exactly one bounded ns_node Component Internal Design / Batch 2 / N4 producing session under exact scope
 ```
