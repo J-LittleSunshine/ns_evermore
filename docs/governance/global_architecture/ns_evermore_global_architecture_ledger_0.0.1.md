@@ -849,7 +849,7 @@ Blocking Item → NONE
 Decision Registry → 0.0.26 / unchanged
 Current Authorized Phase → NONE
 Batch 2 Authorization → NOT GRANTED BY ASSESSMENT
-Unique Next Legal Action → write Global State seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_runtime Component Internal Design / Batch 2 / R3 authorization transition
+Unique Next Legal Action → write GAC-EPOCH-0075 Global State seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_runtime Component Internal Design / Batch 2 / R3 authorization transition
 
 GAC-TR-0083 → GAC-EPOCH-0073
 Transition → separate ns_runtime Component Internal Design / Batch 2 / R3 authorization
@@ -955,4 +955,35 @@ Decision Registry → 0.0.27 / unchanged
 Current Authorized Phase → NONE
 Batch 3 Authorization → NOT GRANTED BY ASSESSMENT
 Unique Next Legal Action → write GAC-EPOCH-0075 Global State seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_runtime Component Internal Design / Batch 3 / R4 authorization transition
+
+GAC-TR-0086 → GAC-EPOCH-0076
+Transition → separate ns_runtime Component Internal Design / Batch 3 / R4 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.2.md
+Assessment Seal → 4108191f7707cd7047b0c91605ac990ee5d38975
+Authorization Working State Commit → ddc6cd9e42dcae4cea6f2e2b3ef0598bb58296bd
+Authorized Phase → NGRP-001 — Component Internal Design / ns_runtime / Batch 3
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_3 / COORDINATION_RECOVERY_RECONCILIATION_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Internal Boundary → R4 Coordination Recovery / Reconciliation / Diagnostics
+Inherited Runtime Role → RT-R04 Coordination Recovery / Reconciliation Participant
+RCP-20 Authorized → RT-R04 owner/coordinator-side semantic closure + stable contract synthesis / full cross-component closure NOT AUTHORIZED
+RCP-22 Authorized → RT-R04 diagnostics/provenance producer-side contribution / full cross-component closure NOT AUTHORIZED
+Accepted RCP-03 / RCP-05 / RCP-06 → upstream evidence consumption only / internals MUST NOT be reopened
+RCP-04 / RCP-07 / RCP-08 / RCP-09 / RCP-23 → reference-consumer expectations only where materially required / owner-side internals NOT AUTHORIZED
+RCP-19 → accepted Desired/Applied semantics preserved / only genuinely R4-owned Applied-health evidence may be refined
+R4 Actual-state Ownership → runtime-originated recovery/evidence-exchange/re-observation/reconciliation-stage + health/diagnostic/currentness/uncertainty/history facts only
+Source Facts / Effects / Source Recovery Truth → original owners / PRESERVED
+Conflict Winner / Latest-wins / Earliest-wins / Local-wins / Central-wins / Source-priority / Merge Law → NOT CREATED
+Recovery / Reconciliation / Replay Algorithm → NOT AUTHORIZED
+Universal Recovery / Replay / Delivery Guarantee → NOT CREATED
+Private / Offline Core Correctness → REQUIRED
+Mandatory Public SaaS / Broker / Queue / Log / Recovery Engine Dependency → PROHIBITED
+Concrete DB/Event-store/API/Wire/DTO/Process/Deployment Selection → NOT AUTHORIZED
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Decision Registry → 0.0.27 / unchanged
+Current Authorized Phase → NGRP-001 — Component Internal Design / ns_runtime / Batch 3
+Maximum Legal Bounded-session State → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Post-Batch-3 Exhaustion / Global Closure → MUST be separately reassessed after future Global Acceptance
+Unique Next Legal Action → write GAC-EPOCH-0076 Global State seal, then start exactly one bounded ns_runtime Component Internal Design / Batch 3 / R4 producing session under the exact authorized scope
 ```
