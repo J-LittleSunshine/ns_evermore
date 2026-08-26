@@ -667,7 +667,7 @@ Inherited Runtime Role → SV-R09 Discovery Projection Participant
 Owner Capability Baseline → Unified Governed Cross-domain Resource Discovery / authorization-aware / Tenant-aware / private-offline-capable / domain identity preserved
 Discovery Projection / Index as Resource Authority or Canonical SoT → PROHIBITED
 S13 Actual-state Ownership → projection freshness/completeness/partiality/rebuild/staleness/availability/uncertainty only
-Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating resource owners / PRESERVED
+Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating applicable owners / PRESERVED
 RCP-21 S13 / SV-R09 Contribution → AUTHORIZED FOR CURRENT DESIGN-LEVEL CLOSURE
 RCP-21 Full Cross-component Closure → NOT AUTHORIZED
 S11 Human Task / S12 Notification Contribution Semantics → accepted upstream / may be consumed / internals MUST NOT be reopened
@@ -1022,4 +1022,32 @@ ns_runtime Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 3 ACCEP
 ns_runtime Component Internal Design Global Closure → NOT DECLARED
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh-recovery GAC post-Batch-3 ns_runtime Component Internal Design remaining-pressure / exhaustion / global-closure assessment; do not infer closure or authorize another Product Component automatically
+
+GAC-TR-0088 → GAC-EPOCH-0078
+Transition → post-Batch-3 ns_runtime Component Internal Design remaining-pressure / exhaustion / global-closure eligibility assessment
+Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.3.md
+Assessment Commit → 455d549d427f575640318df3d129192b94779b40
+Working State Commit → 186ce286594face15681e66b9860e0cf14f55014
+Result → EXHAUSTION_SATISFIED / GLOBAL_CLOSURE_ELIGIBLE
+Accepted ns_runtime Boundary Coverage → 4 / 4 / 100%
+Remaining accepted ns_runtime boundaries without Component Internal Design → NONE
+Remaining Material ns_runtime Component Internal-design Pressure → NONE_FOUND
+ns_runtime Internal Design Exhaustion → SATISFIED
+ns_runtime Component Internal Design Global-closure Eligibility → SATISFIED
+ns_runtime Component Internal Design Global Closure → NOT YET DECLARED
+Missing ns_runtime Runtime-role source-boundary design → 0
+Remaining ns_runtime Authority / SoT / Actual-state ambiguity → 0
+Remaining material identity / lifecycle / history ambiguity → 0
+Remaining material offline / recovery ambiguity → 0
+Mandatory missing Shared Foundation semantic → 0
+Implementation-defined Component Architecture Escape → 0
+Cross-component RCP work remaining → downstream/multi-party / NOT ns_runtime internal-design pressure
+RCP Full Cross-component Closure by inference → NOT CLAIMED
+Decision Registry → 0.0.28 / unchanged
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Semantic Gap → NONE
+Blocking Item → NONE
+Current Authorized Phase → NONE
+Unique Next Legal Action → write GAC-EPOCH-0078 Global State assessment seal, fresh Repository recovery, then if exhaustion/eligibility remain satisfied perform a separate ns_runtime Component Internal Design global-closure transition; do not authorize another Product Component automatically
 ```
