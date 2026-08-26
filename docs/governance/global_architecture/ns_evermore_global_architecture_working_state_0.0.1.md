@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0083`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0084`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # Current Working Baseline
@@ -26,12 +26,9 @@ ns_runtime Internal Design Exhaustion → SATISFIED
 ns_node Component Internal Design / Batch 1 → GLOBAL_ACCEPTED
 Accepted ns_node Boundaries → N1 / N2 / N3
 Accepted ns_node Boundary Coverage → 3 / 4 / 75%
-Remaining accepted ns_node boundary without Component Internal Design → N4 / Offline Continuity, Recovery & Local Diagnostics
-
+Remaining accepted ns_node boundary without Component Internal Design → N4
 Remaining Material ns_node Component Internal-design Pressure → PRESENT
 ns_node Internal Design Exhaustion → NOT_SATISFIED
-N4 / ND-R04 Entry Readiness → SATISFIED
-Immediate Final Batch Candidate → ns_node / Batch 2 / N4
 
 Decision Registry → 0.0.30 / CURRENT / NORMATIVE
 Open MDE → 0
@@ -39,103 +36,159 @@ Unpersisted Owner Decision → 0
 Blocking Semantic Gap → NONE
 Blocking Item → NONE
 Known Working-branch Drift → NONE
-Current Authorized Phase → NONE
-Authorization Scope → NONE
+
+Current Authorized Phase
+→ NGRP-001 — Component Internal Design / ns_node / Batch 2
+
+Authorization Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_NODE / BATCH_2 / OFFLINE_CONTINUITY_RECOVERY_AND_LOCAL_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
-# Post-Batch-1 Remaining-pressure / N4 Readiness Assessment
+# Authorization Basis
 
 Assessment:
 
 `docs/architecture_reviews/ns_evermore_ngrp_001_ns_node_internal_design_remaining_pressure_batching_assessment_0.0.1.md`
 
 ```text
-Assessment Entry HEAD
-→ b3294ad5dd7cfc0aac314270dadde74732a3eac8
-
 Assessment Commit
 → b47f9e109f2129d775b90d026a68299a2829e320
 
-Assessment Input Epoch
-→ GAC-EPOCH-0082
+Assessment Transition
+→ GAC-TR-0093 → GAC-EPOCH-0083
 
-Recovery Result
+Assessment State Seal
+→ f4718e497e42184753437be98bdae37caf346ed0
+
+Fresh Authorization Recovery
 → PASS
 
-Remaining Material ns_node Component Internal-design Pressure
-→ PRESENT
+N4 / ND-R04 Entry Readiness
+→ SATISFIED
+
+Open MDE
+→ 0
+
+Unpersisted Owner Decision
+→ 0
+
+Blocking Item
+→ NONE
+```
+
+# Authorized ns_node Batch 2
+
+```text
+Authorized Boundary
+→ N4 / Offline Continuity, Recovery & Local Diagnostics
+
+Inherited Runtime Role
+→ ND-R04 / Node Offline Continuity & Recovery Participant
+
+N1 / N2 / N3 Internal Design
+→ GLOBAL_ACCEPTED UPSTREAM
+→ MUST NOT BE REOPENED
+```
+
+Authorization does not constitute Global Acceptance.
+
+```text
+Accepted ns_node Boundary Coverage
+→ 3 / 4 / 75%
+
+N4 Accepted
+→ NO / AUTHORIZED FOR PRODUCING ONLY
 
 ns_node Internal Design Exhaustion
 → NOT_SATISFIED
 
-Remaining Boundary
-→ N4 / Offline Continuity, Recovery & Local Diagnostics
-
-Inherited Runtime Role
-→ ND-R04 Node Offline Continuity & Recovery Participant
-
-N4 Entry Readiness
-→ SATISFIED
-
-Immediate Final Batch Candidate
-→ ns_node / Batch 2 / N4
-
-Proposed Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_NODE / BATCH_2 / OFFLINE_CONTINUITY_RECOVERY_AND_LOCAL_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+ns_node Component Internal Design Global Closure
+→ NOT DECLARED
 ```
 
-# N4 Entry Basis
+# N4 Bounded Authority / Actual-state
 
-Accepted source owners required by N4 are already stable:
+N4 may refine only facts genuinely originating in the Node-local offline/recovery/diagnostic boundary:
 
 ```text
-N1 / ND-R01 → Readiness / Applied Configuration source facts
-N2 / ND-R02 → Attempt source facts
-N3 / ND-R03 → Effect / genuine Node-origin source facts
+Node-local evidence-retention / retained-evidence availability facts
+Node offline / degraded continuity qualification
+N4 recovery participation scope / stage facts
+RT-R04 evidence-exchange handoff / receipt / correlation participation facts
+N1/N2/N3 source-owner re-observation request / handoff / receipt / correlation facts
+N4 reconciliation participation / stage facts
+Node-local recovery / health / lifecycle diagnostic facts
+N4 currentness / availability / uncertainty / conflict / partiality qualifications
+N4 non-destructive recovery / diagnostic history / lineage / provenance
 ```
 
-Accepted recovery coordination is already stable:
+Explicitly non-owned:
 
 ```text
-R4 / RT-R04
-→ recovery-scope binding
-→ evidence-exchange coordination
-→ source-owner re-observation coordination
-→ reconciliation-stage participation
-→ conflict/partiality/currentness qualification
-→ non-destructive history/provenance
+N1 Readiness / Applied Configuration source facts
+N2 Attempt source facts
+N3 Effect / genuine local source facts
+RT-R04 coordination truth
+source-domain recovery outcome
+conflict winner / canonical merged state
+Tenant / Principal / Policy / Trust authority
+Formal Admission
+Dispatch
+Automation / Agent / Business semantic outcomes
+external factual SoTs
 ```
 
-N4 therefore may be designed without creating a new central recovery authority or moving source ownership.
-
-# Proposed Batch-2 Stable-contract Scope
+# Authorized RCP-20 Scope
 
 ```text
-RCP-20
-→ ND-R04 Node-local recovery/reconciliation participant-side contribution + representation-neutral stable contract synthesis
-→ Full Cross-component Closure NOT PROPOSED
-
-RCP-22
-→ ND-R04 Node-local recovery / health / lifecycle / offline diagnostics contribution
-→ may complete ns_node-side diagnostic/provenance contribution at current design level
-→ Full Cross-component Closure NOT PROPOSED
+RCP-20 / Recovery-Reconciliation
+→ ND-R04 Node-local recovery/reconciliation participant-side semantic contribution
+→ representation-neutral stable contract synthesis
+→ consume accepted RT-R04 recovery scope/evidence-exchange/re-observation coordination
+→ consume accepted N1/N2/N3 source evidence identities/history/provenance
+→ Full Cross-component Closure NOT AUTHORIZED
 ```
 
-Accepted N1/N2/N3 contract semantics must not be reopened:
+Must not create:
 
 ```text
-RCP-04 Node Readiness
-RCP-07 Node Attempt
-RCP-08 Node Effect Evidence
-RCP-19 Node Applied Configuration
+latest-wins / earliest-wins
+local-wins / central-wins
+source-priority / majority-wins
+cross-source merge law
+authoritative synchronization direction
+universal replay algorithm
+recovery engine authority
 ```
 
-Applicable correlation/reference-only pressure may include:
+# Authorized RCP-22 Scope
 
 ```text
-RCP-03 reconnect/participant references / RT-R01 authority preserved
-RCP-06 recovery/resume/intervention coordination correlation / RT-R03 and source owners preserved
-RCP-24 recovery/resume Human-SDK intent receiving correlation / source side downstream
+RCP-22 / Diagnostics-Provenance
+→ ND-R04 Node-local recovery / health / lifecycle / offline diagnostic producer contribution
+→ consume N1/N2/N3 source provenance without canonicalizing it
+→ may synthesize complete ns_node-side RCP-22 contribution at current design level
+→ Full Cross-component Closure NOT AUTHORIZED
+```
+
+Original fact owners remain N1/N2/N3 or other applicable owners. WB/SDK presentation and Agent diagnostics remain downstream.
+
+# Accepted Upstream RCPs — Consume Only
+
+```text
+RCP-04 Node Readiness → accepted N1/ND-R01 / MUST NOT REOPEN
+RCP-07 Node Attempt → accepted N2/ND-R02 / MUST NOT REOPEN
+RCP-08 Node Effect Evidence → accepted N3/ND-R03 / MUST NOT REOPEN
+RCP-19 Node Applied Configuration → accepted N1 contribution / MUST NOT REOPEN
+```
+
+Bounded correlation/reference authority where materially required:
+
+```text
+RCP-03 → reconnect / participant references only / RT-R01 authority preserved
+RCP-06 → recovery/resume/intervention coordination correlation only / RT-R03 + final source owners preserved
+RCP-24 → recovery/resume Human-SDK intent receiving correlation only / WB-SDK source side downstream
+RCP-02 / RCP-05 / RCP-13 / RCP-15 / RCP-17 → historical/context references only where genuinely required / accepted authorities preserved
 ```
 
 # Permanent N4 Non-collapse
@@ -145,51 +198,148 @@ Recovery Participation != Source Recovery Authority
 Local Evidence Retention != Canonical Global SoT
 Evidence Exchange != Source Fact Transfer
 Re-observation Coordination != Re-observed Source Fact
+N4 Re-observation Request != N1/N2/N3 Source Fact
 Source Re-observed != Source Rewritten
 Reconnect != Reconciled
 Recovery != SoT Transfer
 Replay != Retroactive Authorization
 Latest Timestamp != Canonical Winner
+Latest Arrival != Canonical Winner
 Local Copy != Canonical Source automatically
 Central Copy != Canonical Source automatically
 Conflict Detected != Conflict Resolved
-Diagnostics != Source Authority
+Reconciliation Stage Completed != Source Facts Unified automatically
+Recovery Participation Completed != Source Recovery Outcome automatically
+Diagnostic Observation != Source Semantic Fact
+Diagnostic Aggregation != Canonicalization
 ```
 
-N4 may own only Node-local recovery/diagnostic facts genuinely originating in N4. N1/N2/N3 remain final owners of Readiness/Applied, Attempt, and Effect/source facts.
+# Offline Boundary
 
-# MDE / Foundation / Implementation Gate
+N4 may preserve and qualify already-owned/source-attributable evidence under private/offline/degraded operation.
+
+It does not gain authority to admit new work merely because the Node is offline.
 
 ```text
-New Owner MDE required merely for N4 entry → 0
-Open MDE → 0
-Unpersisted Owner Decision → 0
-Missing Mandatory Shared Foundation Semantic → NONE_FOUND
-Implementation-defined Architecture Escape required for entry → 0
-Blocking Item → NONE
+Offline != Authority Transfer
+Retained Admission Evidence != New Admission Authority
+Local Copy != Canonical Global Source
+Central Unavailable != Local Source Invalid
+Reconnect != Reconciled
 ```
 
-If a future N4 design requires fail-open/fail-closed policy, latest/local/central winner, cross-source merge law, authoritative sync direction, universal replay/retry/cancel/rollback/compensation/once guarantee, protected-effect reversal law, cross-Tenant Node coordination, mandatory persistence/recovery engine/provider, technology lock-in, major identity namespace or new Product capability, producing work must STOP for GAC/Owner MDE.
+No universal fail-open/fail-closed policy is authorized.
 
-# Assessment Governance Boundary
+# Identity / History Boundary
+
+Existing accepted identities remain authoritative inputs:
 
 ```text
-ns_node Batch 2 Authorization → NOT GRANTED BY ASSESSMENT
-N4 / ND-R04 Internal Design → NOT AUTHORIZED BY ASSESSMENT
-ns_node Component Internal Design Global Closure → NOT DECLARED
-ns_agent Component Internal Design → NOT AUTHORIZED
-ns_web Component Internal Design → NOT AUTHORIZED
-System-level SDK Detailed Design → NOT AUTHORIZED
-Design-to-Implementation Readiness → NOT AUTHORIZED
-Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Node / Participant Reference
+N1 Readiness Evidence Reference
+N2 Attempt Identity / Reference
+N3 Effect / Source Evidence Identity / Reference
+R4 Recovery Scope Identity / Reference
+R4 Recovery / Reconciliation-stage Evidence Identity / Reference
+Operation / Admission / Dispatch references
+Tenant / Principal / Policy / Trust references
+```
+
+A bounded `N4 Recovery Participation Scope Identity / Reference` and/or `N4 Recovery / Diagnostic Evidence Identity / Reference` may be introduced only if materially required for exact non-destructive history.
+
+Any such identity must be:
+
+```text
+representation-neutral
+Node/N4-bounded
+non-universal
+non-authoritative for N1/N2/N3 source facts
+```
+
+No UUID/database/message/wire format is authorized.
+
+History must remain non-destructive:
+
+```text
+one recovery participation scope → multiple evidence exchanges
+one scope → multiple source-owner re-observation references/results
+later re-observation → does not rewrite prior source evidence
+later recovery success → does not erase prior failure/conflict/uncertainty
+conflicting evidence → remains provenance-bearing
+current projection → does not rewrite history
+```
+
+# MDE Stop Boundary
+
+Producing work must STOP if N4 design materially requires:
+
+```text
+fail-open / fail-closed Product policy
+latest/local/central/source-priority conflict winner
+cross-source merge law
+authoritative synchronization direction
+universal replay semantics or deterministic replay guarantee
+universal retry / cancellation / rollback / compensation law
+exactly-once / at-most-once / at-least-once recovery guarantee
+protected-effect reversal law
+cross-Tenant Node recovery/reconciliation semantics
+mandatory database / event store / queue / broker / scheduler / recovery engine
+mandatory public dependency / SaaS / cloud control plane
+provider / protocol / framework / storage lock-in
+major universal identity namespace
+new Product capability
+other high-migration durable commitment
+```
+
+# Shared Foundation / Implementation Boundary
+
+Applicable accepted Shared Foundation semantics must be reused, including temporal/freshness, correlation/provenance, technical status/uncertainty, diagnostics/technical observation, governed context, serialization, network mechanics, secret reference, redaction, compatibility/conformance and bootstrap config.
+
+```text
+Missing Mandatory Shared Foundation Semantic
+→ NONE_FOUND
+```
+
+Not authorized:
+
+```text
+database / storage engine / event store
+queue / broker / scheduler / workflow/recovery/reconciliation/replay engine
+Redis / RabbitMQ / Kafka / NATS / Celery / Temporal / Airflow / Quartz / APScheduler
+REST / gRPC / concrete WebSocket protocol/frame/handshake/envelope
+DTO / wire schema / table / ORM
+process / service / worker / thread / coroutine
+container / pod / host / deployment topology
+physical UUID/key format
+public SaaS / cloud control plane dependency
+exactly-once / at-most-once / at-least-once guarantee
+```
+
+# Explicitly Not Authorized
+
+```text
+ns_node Component Internal Design Global Closure
+ns_node Internal Design Exhaustion declaration
+ns_agent Component Internal Design
+ns_web Component Internal Design
+System-level SDK Detailed Design
+Design-to-Implementation Readiness
+Implementation Planning
+IWP
+Coding
+```
+
+# Maximum Legal Bounded-session State
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 ```
 
 # Unique Next Legal Action
 
 ```text
-append GAC-TR-0093 assessment transition to Global Architecture Ledger
-→ write GAC-EPOCH-0083 Global State assessment seal
-→ fresh Repository recovery
-→ if N4 Entry Readiness remains SATISFIED, perform separate ns_node Component Internal Design / Batch 2 / N4 authorization transition
-→ do not start N4 producing work from this assessment alone
+append separate Batch-2 authorization transition to Global Architecture Ledger
+→ write corresponding Global State authorization seal
+→ start exactly one bounded ns_node Component Internal Design / Batch 2 / N4 producing session
+→ return to GAC for independent Global Acceptance review
 ```
