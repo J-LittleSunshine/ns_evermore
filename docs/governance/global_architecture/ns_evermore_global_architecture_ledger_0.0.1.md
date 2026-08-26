@@ -220,6 +220,7 @@ Accepted Partial Closure → RCP-16 Automation Source-side / RCP-17 Automation-s
 Full RCP-16 / RCP-17 Cross-domain Closure → NOT CLAIMED
 Authority / SoT / Actual-state Transfer → 0
 Concrete DSL/AST/IR/Broker/Workflow-engine/DB/API/Process leakage → 0
+Misclassified MDE → 0
 Decision Registry → 0.0.17
 Open MDE → 0
 Unpersisted Owner Decision → 0
