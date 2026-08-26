@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0078`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0079`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # Current Working Baseline
@@ -42,14 +42,11 @@ ns_server Component Internal Design
 ns_server Internal Design Exhaustion
 → SATISFIED
 
-ns_runtime Component Internal Design / Batch 1
-→ GLOBAL_ACCEPTED
+ns_runtime Component Internal Design
+→ GLOBAL_CLOSED / COMPLETE
 
-ns_runtime Component Internal Design / Batch 2 / R3
-→ GLOBAL_ACCEPTED
-
-ns_runtime Component Internal Design / Batch 3 / R4
-→ GLOBAL_ACCEPTED
+ns_runtime Internal Design Exhaustion
+→ SATISFIED
 
 Accepted ns_runtime Boundaries
 → R1 / R2 / R3 / R4
@@ -57,23 +54,17 @@ Accepted ns_runtime Boundaries
 Accepted ns_runtime Boundary Coverage
 → 4 / 4 / 100%
 
+Accepted ns_runtime Internal Responsibility Count
+→ 29
+
 Remaining accepted ns_runtime boundaries without Component Internal Design
 → NONE
 
 Remaining Material ns_runtime Component Internal-design Pressure
 → NONE_FOUND
 
-ns_runtime Internal Design Exhaustion
-→ SATISFIED
-
-ns_runtime Component Internal Design Global-closure Eligibility
-→ SATISFIED
-
-ns_runtime Component Internal Design Global Closure
-→ NOT YET DECLARED
-
 Decision Registry
-→ 0.0.28 / CURRENT / NORMATIVE
+→ 0.0.29 / CURRENT / NORMATIVE
 
 Open MDE
 → 0
@@ -97,60 +88,57 @@ Authorization Scope
 → NONE
 ```
 
-# Post-Batch-3 Exhaustion Assessment Basis
+# Global Closure Basis
 
-Assessment:
+Closure evidence:
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.3.md`
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_component_internal_design_global_closure_0.0.1.md`
 
 ```text
-Assessment Entry HEAD
-→ b5a6260eddcadd2c69fe719e61123d12b0677259
+Closure Recovery Entry HEAD
+→ dbcd61360b2587842632c28a6b11e2c94c076659
 
-Recovered Input Epoch
-→ GAC-EPOCH-0077
+Closure Recovery Epoch
+→ GAC-EPOCH-0078
 
-Recovered State Verified Through HEAD
-→ de610113cb98c6a58ce42bb9e5b51c963837879b
+State Verified Through HEAD at closure recovery
+→ 2fe9a6cdcd8e8149f8fa9d3794246c5bf8a10f89
 
-Assessment Commit
+Exhaustion Assessment
+→ docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.3.md
+
+Exhaustion Assessment Commit
 → 455d549d427f575640318df3d129192b94779b40
 
-Recovery Result
+Closure Evidence Commit
+→ 17651deb4b3ef665de9cb8ace99b575082e0ff29
+
+Decision Registry 0.0.29 Commit
+→ 7cd2989f256df96b2afc1280057037bce137c88a
+
+Closure Recovery Result
 → PASS
-
-Unexpected Drift
-→ NONE
-
-Unauthorized Progression
-→ NONE
 ```
 
-# Exhaustion Audit Result
+# Closure Determination
 
 ```text
-Remaining accepted ns_runtime boundary without Component Internal Design
+Remaining Material ns_runtime Component Internal-design Pressure
+→ NONE_FOUND
+
+ns_runtime Internal Design Exhaustion
+→ SATISFIED
+
+ns_runtime Component Internal Design
+→ GLOBAL_CLOSED / COMPLETE
+
+Accepted Boundary Coverage
+→ 4 / 4 / 100%
+
+Missing Runtime-role source-boundary design
 → 0
 
-Remaining unowned material ns_runtime internal responsibility
-→ 0
-
-Missing ns_runtime Runtime Role source-boundary design
-→ 0
-
-Remaining ns_runtime Authority / SoT ambiguity
-→ 0
-
-Remaining ns_runtime Actual-state / source-fact ambiguity
-→ 0
-
-Remaining material identity / lifecycle / history ambiguity
-→ 0
-
-Remaining material Tenant / Principal / Policy / Trust / privacy ambiguity
-→ 0
-
-Remaining material offline / recovery ambiguity
+Remaining Authority / SoT / Actual-state ambiguity
 → 0
 
 Mandatory missing Shared Foundation semantic
@@ -158,49 +146,56 @@ Mandatory missing Shared Foundation semantic
 
 Implementation-defined Component Architecture Escape
 → 0
-
-Unmapped Material Decision
-→ 0
-
-Open MDE
-→ 0
-
-Unpersisted Owner Decision
-→ 0
-
-Blocking Item
-→ NONE
 ```
 
-# Cross-component Contract Qualification
+# Stable Contract Qualification
 
-Remaining non-full-closed RCP work is downstream/multi-party and is not remaining ns_runtime internal-design pressure.
-
-Runtime-owned/currently accepted contributions include:
+Runtime-owned/current runtime-side contributions remain closed at current design level, including:
 
 ```text
-RCP-03 RT-R01 contribution → CLOSED AT CURRENT DESIGN LEVEL
-RCP-05 RT-R02 contribution → CLOSED AT CURRENT DESIGN LEVEL
-RCP-06 RT-R03 contribution → CLOSED AT CURRENT DESIGN LEVEL
-RCP-20 RT-R04 contribution → CLOSED AT CURRENT DESIGN LEVEL
-RCP-22 RT-R04 producer contribution → CLOSED AT CURRENT DESIGN LEVEL
+RCP-03 / RT-R01
+RCP-05 / RT-R02
+RCP-06 / RT-R03
+RCP-20 / RT-R04
+RCP-22 / RT-R04 producer side
 ```
 
-No full cross-component closure is inferred for RCPs whose other participant contributions remain downstream.
+Remaining multi-party/full cross-component closure remains downstream where applicable and is not promoted by ns_runtime Global Closure.
 
-# Global-closure Boundary
-
-This Working State records exhaustion/eligibility only.
+Explicitly not inferred:
 
 ```text
-ns_runtime Internal Design Exhaustion
-→ SATISFIED
-
-ns_runtime Component Internal Design Global Closure
-→ NOT YET DECLARED
+RCP-03 Full Cross-component Closure
+RCP-04 Full Closure
+RCP-05 Full Cross-component Closure where downstream executor consumption remains
+RCP-06 Full Cross-component Closure
+RCP-12 Full Closure
+RCP-16 Full Cross-component Closure
+RCP-20 Full Cross-component Closure
+RCP-22 Full Cross-component Closure
+RCP-24 Full Closure
 ```
 
-A separate closure transition remains mandatory after this assessment is sealed and a fresh Repository recovery passes.
+# Permanent Non-collapse
+
+```text
+Authority != Coordination
+Connected != Trusted != Admitted
+Reachable != Ready
+Admission != Scheduling != Routing != Dispatch != Attempt != Effect
+Continuation Coordination != Source Semantic Continuation Authority
+Delegation Coordination != Agent Delegation Source Authority
+Intervention Request != Final Outcome
+Recovery Coordination != Source Recovery Authority
+Reconciliation Participation != Conflict Winner Authority
+Evidence Exchange != Source Fact Transfer
+Re-observation != Canonicalization
+Sync != Authority Transfer
+Recovery != SoT Transfer
+Reconnect != Reconciled
+Replay != Retroactive Authorization
+Latest Timestamp != Canonical Winner
+```
 
 # Explicitly Not Authorized
 
@@ -218,10 +213,9 @@ Coding
 # Unique Next Legal Action
 
 ```text
-append GAC-TR-0088 exhaustion-assessment transition to Global Architecture Ledger
-→ write GAC-EPOCH-0078 Global State assessment seal
+append separate ns_runtime global-closure transition to Global Architecture Ledger
+→ write GAC-EPOCH-0079 Global State closure seal
 → fresh Repository recovery
-→ if exhaustion/eligibility remain SATISFIED with no drift/MDE/blocker:
-   perform separate ns_runtime Component Internal Design global-closure transition
-→ do not authorize another Product Component automatically
+→ perform next-Product-Component Component Internal Design sequencing / remaining-pressure / entry-readiness assessment
+→ do not authorize the next component automatically
 ```
