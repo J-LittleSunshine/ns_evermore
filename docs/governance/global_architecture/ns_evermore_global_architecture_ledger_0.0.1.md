@@ -82,7 +82,7 @@ Current Authorized Phase → NONE
 Unique Next Legal Action → separate Foundation Provider Design / Batch 1 authorization transition
 
 GAC-TR-0050 → GAC-EPOCH-0040
-Transition → separate Foundation Provider Design / Batch 1 authorization
+Transition → separate ns_runtime Component Internal Design / Batch 1 authorization
 Authorized Phase → NGRP-001 — Foundation Provider Design / Batch 1
 Scope → FOUNDATION_PROVIDER_DESIGN_ONLY / BATCH_1 / PROVIDER_ABSTRACTION_BOUNDARY_LIFECYCLE_SELECTION_CONFORMANCE_AND_REPLACEMENT_SYNTHESIS
 Provider-bearing Pressure Handoff → 10 / 10
@@ -1111,4 +1111,39 @@ Blocking Item → NONE
 Current Authorized Phase → NONE
 ns_node Batch 1 Authorization → NOT GRANTED BY ASSESSMENT
 Unique Next Legal Action → write GAC-EPOCH-0080 Global State assessment seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_node Component Internal Design / Batch 1 authorization transition
+
+GAC-TR-0091 → GAC-EPOCH-0081
+Transition → separate ns_node Component Internal Design / Batch 1 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_runtime_component_internal_design_next_component_sequencing_ns_node_entry_readiness_assessment_0.0.1.md
+Assessment Seal → 44fadd5a9c23094ad5599111d852232c74358ec0
+Authorization Working State Commit → 6742b9d2b802debd60dbff4561593e05f2828a31
+Authorized Phase → NGRP-001 — Component Internal Design / ns_node / Batch 1
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_NODE / BATCH_1 / LOCAL_READINESS_GOVERNED_EXECUTION_PROTECTED_EFFECT_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Internal Boundaries → N1 Local Capability, Readiness & Applied Configuration + N2 Governed Local Execution + N3 Protected Local Effect & Source-fact Custody
+Inherited Runtime Roles → ND-R01 Node Capability & Readiness Participant + ND-R02 Governed Local Execution Participant + ND-R03 Protected Local Effect Custodian
+N4 / ND-R04 → NOT AUTHORIZED / reserved for future Batch 2
+RCP-04 Authorized → ND-R01 owner/source-side semantic closure + representation-neutral stable contract synthesis / full cross-component closure NOT AUTHORIZED by inference
+RCP-07 Authorized → ND-R02 owner/source-side semantic closure + representation-neutral stable contract synthesis / full cross-component closure NOT AUTHORIZED by inference
+RCP-08 Authorized → ND-R03 owner/source-side semantic closure + representation-neutral stable contract synthesis / full cross-component closure NOT AUTHORIZED by inference
+RCP-02 / RCP-05 → Node executor consumer-side applicability refinement only / accepted producer authorities preserved
+RCP-03 → Node participant-side contribution only where N1 materially participates / RT-R01 authority preserved
+RCP-12 → Node target/receiving-side expectation only / AG-R04 source side downstream
+RCP-13 / RCP-15 → Node executor-side expectations only / accepted S6 Automation semantics preserved
+RCP-17 → Node trial executor/effect contribution only / full Trial closure NOT AUTHORIZED by inference
+RCP-19 → Node Applied-configuration contribution only / S9 Desired authority preserved
+RCP-22 → N1/N2/N3 fact-owner provenance/diagnostic contribution only / complete Node local diagnostics remains N4 / full closure NOT AUTHORIZED
+RCP-24 → Node intervention target/outcome-side expectation only where materially required / WB-SDK intent source side downstream
+RCP-20 comprehensive Node recovery/reconciliation participation → NOT AUTHORIZED / reserved for N4
+Authority / SoT / Actual-state Topology → unchanged / Node owns only bounded readiness + Attempt + protected Effect/source facts
+Attended / Unattended → modes of same governed Node responsibility / neither bypasses IAM/Policy/Trust/Admission
+Universal Retry / Cancellation / Rollback / Compensation / Execution Guarantee → NOT CREATED
+Concrete Sandbox / Worker / Browser-profile / Queue / Broker / Scheduler / DB / API / Wire / Process / Deployment Selection → NOT AUTHORIZED
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Decision Registry → 0.0.29 / unchanged
+Accepted ns_node Boundary Coverage → 0 / 4 / 0% until future Global Acceptance
+Current Authorized Phase → NGRP-001 — Component Internal Design / ns_node / Batch 1
+Maximum Legal Bounded-session State → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Unique Next Legal Action → write GAC-EPOCH-0081 Global State authorization seal, then start exactly one bounded ns_node Component Internal Design / Batch 1 producing session under the exact authorized scope
 ```
