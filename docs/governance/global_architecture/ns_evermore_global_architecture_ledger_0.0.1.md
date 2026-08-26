@@ -280,7 +280,7 @@ Result → GLOBAL_ACCEPT
 Accepted Boundary → S5 Business Application Definition Lifecycle
 Accepted Internal Module Count → 6
 Accepted DAD → CID-SV-B3-DAD-001..012
-Hard SDD Graph → ACYCLIC
+Hard Internal SDD Graph → ACYCLIC
 Business Application Authority / Canonical Definition SoT → ns_server / PRESERVED
 Source↔Visual Semantic Interoperability → REQUIRED / PRESERVED / no silent semantic loss
 S7 Native Definition SoT Inference → 0
