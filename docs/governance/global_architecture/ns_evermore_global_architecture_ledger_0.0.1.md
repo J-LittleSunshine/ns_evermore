@@ -82,7 +82,7 @@ Current Authorized Phase → NONE
 Unique Next Legal Action → separate Foundation Provider Design / Batch 1 authorization transition
 
 GAC-TR-0050 → GAC-EPOCH-0040
-Transition → separate ns_runtime Component Internal Design / Batch 1 authorization
+Transition → separate Foundation Provider Design / Batch 1 authorization
 Authorized Phase → NGRP-001 — Foundation Provider Design / Batch 1
 Scope → FOUNDATION_PROVIDER_DESIGN_ONLY / BATCH_1 / PROVIDER_ABSTRACTION_BOUNDARY_LIFECYCLE_SELECTION_CONFORMANCE_AND_REPLACEMENT_SYNTHESIS
 Provider-bearing Pressure Handoff → 10 / 10
