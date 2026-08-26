@@ -1,16 +1,16 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0075`
+- Status: `CURRENT / GAC-EPOCH-0076`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-→ GAC-EPOCH-0075
+→ GAC-EPOCH-0076
 
 State Verified Through HEAD
-→ 7e233f7f9bcb2ad7445bc962ee9af61c242be63e
+→ 9a74cf387ebe265e19ab560aef5f3d35cfb92b4f
 
 Genesis Constitution
 → GLOBAL_ACCEPTED / NORMATIVE
@@ -57,9 +57,6 @@ Component Internal Design Readiness
 ns_server Component Internal Design
 → GLOBAL_CLOSED / COMPLETE
 
-ns_server Accepted Boundary Coverage
-→ 13 / 13 / 100%
-
 ns_server Internal Design Exhaustion
 → SATISFIED
 
@@ -89,14 +86,20 @@ ns_runtime Internal Design Exhaustion
 ns_runtime Component Internal Design Global Closure
 → NOT_DECLARED
 
-Post-Batch-2 Remaining-pressure / Exhaustion / Batching Assessment
+Post-Batch-2 R4 Entry-readiness Assessment
 → COMPLETED
-
-Immediate Final Batch Candidate
-→ ns_runtime / Batch 3 / R4
 
 R4 / RT-R04 Entry Readiness
 → SATISFIED
+
+ns_runtime Component Internal Design / Batch 3
+→ AUTHORIZED
+
+Authorized Boundary
+→ R4 / Coordination Recovery / Reconciliation / Diagnostics
+
+Inherited Runtime Role
+→ RT-R04 / Coordination Recovery / Reconciliation Participant
 
 Decision Registry
 → 0.0.27 / CURRENT / NORMATIVE
@@ -117,238 +120,104 @@ Known Working-branch Drift
 → NONE
 
 Current Authorized Phase
-→ NONE
+→ NGRP-001 — Component Internal Design / ns_runtime / Batch 3
 
 Authorization Scope
-→ NONE
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_3 / COORDINATION_RECOVERY_RECONCILIATION_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
-# Post-Batch-2 Assessment Evidence
+# Governance Transition Evidence
 
-Assessment:
+Post-Batch-2 assessment:
 
 `docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.2.md`
 
 ```text
-Assessment Entry HEAD
-→ 3d309ef907d79ef2795a897696a6301ee88a5e18
-
 Assessment Commit
 → 02111a836ab4191ba2a610eaadbae0bd9197c436
 
 Assessment Working State Commit
 → baa3aec7105087e63635aa3dfe227f998b995252
 
-GAC Transition
+Assessment Transition
 → GAC-TR-0085 → GAC-EPOCH-0075
 
 Assessment Ledger Verified Commit
 → 7e233f7f9bcb2ad7445bc962ee9af61c242be63e
 
-Ledger Append-only Net Validation
+Assessment State Seal
+→ 4108191f7707cd7047b0c91605ac990ee5d38975
+
+Assessment Ledger Net Append-only Validation
+→ additions 31 / deletions 0
+```
+
+Separate Batch-3 authorization:
+
+```text
+Fresh Authorization Recovery
+→ PASS
+
+Authorization Working State Commit
+→ ddc6cd9e42dcae4cea6f2e2b3ef0598bb58296bd
+
+Authorization Transition
+→ GAC-TR-0086 → GAC-EPOCH-0076
+
+Authorization Ledger Verified Commit
+→ 9a74cf387ebe265e19ab560aef5f3d35cfb92b4f
+
+Authorization Ledger Net Append-only Validation
 → additions 31 / deletions 0
 
-Result
-→ COMPLETED
+Decision Registry
+→ 0.0.27 / unchanged
 ```
 
-# Accepted ns_runtime Baseline Preserved
-
-## R1 / RT-R01
+# Exact Batch 3 Authorization
 
 ```text
-R1
-→ Connection / Participant Presence Coordination
+Authorized Phase
+→ NGRP-001 — Component Internal Design / ns_runtime / Batch 3
 
-RT-R01
-→ Participant Presence Coordinator
+Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_RUNTIME / BATCH_3 / COORDINATION_RECOVERY_RECONCILIATION_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 
-Status
-→ GLOBAL_ACCEPTED
-```
-
-Permanent:
-
-```text
-Connected != Trusted != Admitted
-Reachable != Ready
-Disconnected != Revoked
-Stale != False
-Unknown != Disconnected
-```
-
-## R2 / RT-R02
-
-```text
-R2
-→ Governed Routing / Scheduling / Dispatch Coordination
-
-RT-R02
-→ Governed Routing / Scheduling / Dispatch Coordinator
-
-Status
-→ GLOBAL_ACCEPTED
-```
-
-Permanent:
-
-```text
-Admission != Scheduling != Routing != Dispatch != Attempt != Effect
-Dispatch != Attempt
-Attempt != Protected Effect
-Route Candidate != Ready Executor
-```
-
-## R3 / RT-R03
-
-```text
-R3
-→ Operation Continuation / Delegation / Intervention Coordination
-
-RT-R03
-→ Operation Continuation / Delegation / Intervention Coordinator
-
-Status
-→ GLOBAL_ACCEPTED
-```
-
-Accepted R3 responsibilities remain:
-
-```text
-C01 Operation / Work & Source-authority Context Binding
-C02 Coordination Request Intake, Identity & Applicability Qualification
-C03 Continuation Coordination & Source-owner Forwarding
-C04 Delegation Coordination & Delegation-lineage Correlation
-C05 HITL Resume Coordination & Response/Source-wait Correlation
-C06 Intervention Coordination & Target-owner Forwarding
-C07 Final-owner Evidence Correlation & R3 Coordination-completion Qualification
-C08 Currentness, Availability & Uncertainty Qualification
-C09 Non-destructive History, Lineage, Provenance & Stable-contract Governance
-```
-
-Permanent:
-
-```text
-Authority != Coordination
-Continuation Coordination != Source Semantic Continuation Authority
-Delegation Coordination != Agent Delegation Source Authority
-Intervention Request Received != Intervention Accepted
-Intervention Forwarded != Intervention Applied
-Cancel Requested != Cancelled
-Retry Requested != Retry Started
-Resume Requested != Resumed
-Recovery Requested != Recovered
-Stopped != Effects Reversed
-Request Accepted != Outcome Achieved
-```
-
-# Stable Contract State Before R4 Design
-
-```text
-RCP-03 / Presence
-→ RT-R01 contribution CLOSED AT CURRENT DESIGN LEVEL
-→ Full Cross-component Closure NOT CLOSED
-
-RCP-05 / Dispatch Evidence
-→ RT-R02 contribution CLOSED AT CURRENT DESIGN LEVEL
-→ Full Cross-component Closure NOT CLOSED
-
-RCP-06 / Continuation / Intervention
-→ RT-R03 contribution CLOSED AT CURRENT DESIGN LEVEL
-→ Full Cross-component Closure NOT CLOSED
-
-RCP-12 / Agent Delegation
-→ RT-R03 consumer expectation CLOSED AT CURRENT DESIGN LEVEL
-→ Full Closure NOT CLOSED
-
-RCP-13 / Automation Continuation
-→ accepted S6 semantics PRESERVED
-→ RT-R03 contribution CLOSED AT CURRENT DESIGN LEVEL
-
-RCP-15 / Automation Composition
-→ accepted S6 semantics PRESERVED
-→ RT-R03 contribution CLOSED AT CURRENT DESIGN LEVEL
-
-RCP-16 / Human Task
-→ RT-R03 contribution CLOSED AT CURRENT DESIGN LEVEL
-→ Full Cross-component Closure NOT CLOSED
-
-RCP-20 / Recovery / Reconciliation
-→ NOT DESIGNED
-→ NOT CLOSED
-
-RCP-22 / Diagnostics / Provenance
-→ RT-R04 producer-side contribution NOT YET INTERNALLY DESIGNED
-
-RCP-24 / Human / SDK Intent
-→ RT-R03 receiving expectation CLOSED AT CURRENT DESIGN LEVEL
-→ Full Closure NOT CLOSED
-```
-
-# R4 Entry-readiness Determination
-
-Accepted remaining boundary:
-
-```text
-R4
-→ Coordination Recovery / Reconciliation / Diagnostics
-
-RT-R04
-→ Coordination Recovery / Reconciliation Participant
-```
-
-```text
-R4 Entry Readiness
-→ SATISFIED
-
-Open MDE Required for Entry
-→ 0
-
-Blocking Semantic Gap
-→ NONE
-
-Blocking Item
-→ NONE
-```
-
-R1-R3 now provide stabilized upstream coordination evidence for R4. R4 may be internally designed without first selecting any conflict winner, reconciliation algorithm, replay guarantee or implementation technology.
-
-# Proposed Batch 3 Exact Boundary
-
-```text
-Product Component
-→ ns_runtime
-
-Batch
-→ Batch 3
-
-Proposed Internal Boundary
+Authorized Internal Boundary
 → R4 / Coordination Recovery / Reconciliation / Diagnostics
 
 Inherited Runtime Role
 → RT-R04 / Coordination Recovery / Reconciliation Participant
-
-Proposed Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY
-  / NS_RUNTIME
-  / BATCH_3
-  / COORDINATION_RECOVERY_RECONCILIATION_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
-This Global State does NOT authorize the proposed Batch. A separate fresh-recovery authorization transition is required.
+Batch 3 is the final remaining architecture-derived `ns_runtime` Component Internal Design boundary. No other Product Component is authorized.
 
-# Proposed RCP-20 Boundary
+# Authorized RCP-20 Scope
 
 ```text
 RCP-20 / Recovery / Reconciliation
-→ RT-R04 owner/coordinator-side semantic closure ELIGIBLE
-→ stable contract synthesis ELIGIBLE
-→ Full Cross-component Closure NOT ELIGIBLE from runtime-only design
+→ RT-R04 owner/coordinator-side semantic closure AUTHORIZED
+→ stable contract synthesis AUTHORIZED
+→ Full Cross-component Closure NOT AUTHORIZED
 ```
 
-R4 may own only runtime-originated recovery / evidence-exchange / re-observation / reconciliation-stage coordination facts and associated health/currentness/uncertainty/history.
+The bounded session may define only runtime-owned recovery / reconciliation coordination semantics, including where applicable:
 
-Original source facts, effects and source-specific recovery truth remain with original owners.
+```text
+recovery / reconciliation scope and correlation
+recovery-stage evidence exchange
+source-owner and source-revision preservation
+re-observation request / observation correlation
+R1 / R2 / R3 coordination evidence correlation
+recovery / reconciliation-stage status/currentness qualification
+runtime-owned recovery / health evidence
+conflict / uncertainty preservation
+non-destructive history / provenance
+compatibility / migration / conformance
+offline / private qualification
+```
+
+Final source facts, effects and source-specific recovery truth remain with the applicable original owner.
 
 Permanent:
 
@@ -361,14 +230,15 @@ Sync != Authority Transfer
 Recovery != SoT Transfer
 ```
 
-# Proposed RCP-22 Boundary
+# Authorized RCP-22 Scope
 
 ```text
 RCP-22 / Diagnostics / Provenance
-→ RT-R04 producer-side contribution ELIGIBLE
+→ RT-R04 producer-side contribution AUTHORIZED
+→ only R4-originated diagnostics / health / recovery evidence may be R4-owned
 → original fact owner remains original fact owner
 → WB-R01 / SDK consumption remains downstream
-→ Full Cross-component Closure NOT ELIGIBLE from runtime-only design
+→ Full Cross-component Closure NOT AUTHORIZED
 ```
 
 Permanent:
@@ -376,21 +246,25 @@ Permanent:
 ```text
 Diagnostic Observation != Source Semantic Fact
 Diagnostic Aggregation != Canonicalization
-Health Evidence != Authority Transfer
+Health Evidence != Source Authority
 Projection != Source SoT
 ```
 
-# Upstream Evidence Consumption Boundary
+# Accepted R1-R3 Evidence Consumption
 
-A later authorized R4 Batch may consume without reopening:
+The bounded session may consume without reopening:
 
 ```text
 RCP-03 / R1 Presence and reconnect-related coordination evidence
-RCP-05 / R2 Dispatch Evidence
-RCP-06 / R3 Continuation / Intervention coordination evidence
+RCP-05 / R2 Dispatch Evidence and history
+RCP-06 / R3 Continuation / Intervention coordination evidence and history
 ```
 
-Where materially required, only representation-neutral consumer/reference expectations may be stated for downstream owner-side evidence such as:
+Accepted R1-R3 internal responsibilities, identity distinctions, authority partitions and histories remain normative upstream.
+
+# Downstream Evidence Boundary
+
+Where materially required, the bounded session may state representation-neutral reference/consumer expectations for:
 
 ```text
 RCP-04 / Node Readiness
@@ -400,13 +274,68 @@ RCP-09 / Agent Runtime
 RCP-23 / Server-native Runtime Evidence
 ```
 
-Owner-side internal design remains with applicable Product Components.
+This does not authorize owner-side internal design for `ns_node`, `ns_agent` or another Product Component and does not close those RCPs by inference.
 
-Accepted `RCP-19` Desired/Applied Configuration semantics remain normative; R4 may own only genuinely R4-specific Applied/health evidence where applicable.
+# RCP-19 Configuration Preservation
 
-# Failure / Offline / Reconciliation Boundary
+Accepted configuration topology remains:
 
-A later authorized R4 design may preserve explicit qualifications such as:
+```text
+Managed Runtime Desired Configuration
+→ ns_server / S9
+
+Applied Configuration
+→ applicable actual-state owner
+
+Observed Configuration
+→ derived projection / observation
+```
+
+R4 may refine only genuinely R4-specific Applied / recovery-health evidence where applicable. It does not become a Desired-state authority.
+
+# R4 Authority / SoT / Actual-state Boundary
+
+R4 / RT-R04 owns only facts genuinely originating in ns_runtime, such as:
+
+```text
+runtime recovery-scope coordination fact
+recovery evidence-exchange coordination fact
+re-observation coordination-stage fact
+reconciliation-stage participation fact
+R4 recovery / health / lifecycle diagnostic fact
+R4 currentness / availability / uncertainty / conflict qualification
+R4 history / provenance / correlation fact
+```
+
+R4 does NOT own or canonicalize:
+
+```text
+Node / Agent / Server / Automation original source facts
+Node Attempt / Effect
+Agent runtime semantic state
+Automation semantic continuation / final result
+Formal Execution Admission
+R1 source truth beyond accepted R1 coordination facts
+R2 source truth beyond accepted R2 coordination facts
+R3 source truth beyond accepted R3 coordination facts
+source-domain recovery outcome
+canonical conflict winner
+canonical merged state merely because reconciliation occurred
+```
+
+Permanent:
+
+```text
+Source Re-observed != Source Rewritten
+Evidence Received != Evidence Accepted as Canonical
+Conflict Detected != Conflict Resolved
+Reconciliation Stage Completed != Source Facts Unified automatically
+Recovery Coordination Completed != Source Recovery Outcome automatically
+```
+
+# Failure / Offline / Recovery Semantics
+
+The bounded session must preserve explicit applicable qualifications such as:
 
 ```text
 RECOVERY_PENDING
@@ -422,7 +351,7 @@ PARTIAL where applicable
 SUPERSEDED only where source semantics establish it
 ```
 
-These are semantic qualifications, not a mandatory enum or universal state machine.
+These are semantic qualifications, not a mandatory enum/schema or universal state machine.
 
 Permanent:
 
@@ -432,13 +361,49 @@ Latest Arrival != Canonical Winner
 Latest Timestamp != Canonical Winner
 Local Copy != Canonical Source automatically
 Central Copy != Canonical Source automatically
+Conflict != Error-to-discard automatically
 Replay != Retroactive Authorization
 Recovery != Original Fact Rewrite
 ```
 
-# MDE Stop Boundary for Future R4 Batch
+# History / Provenance Boundary
 
-A future bounded R4 session MUST STOP and escalate exactly one Material Decision Question if closure materially requires an unresolved durable commitment about:
+Recovery/reconciliation history must be non-destructive and preserve where applicable:
+
+```text
+recovery scope / subject reference
+source owner / source revision
+original source evidence reference
+R1 / R2 / R3 evidence references
+re-observation request / result correlation
+recovery / reconciliation-stage evidence lineage
+Tenant / Principal / Policy / Trust governed context
+temporal / freshness qualification
+conflict / uncertainty qualification
+producer / provenance relationship
+compatibility / conformance context
+```
+
+Collection, aggregation, re-observation or reconciliation does not transfer source authority.
+
+# Identity Boundary
+
+Existing accepted R1-R3 identities/references remain distinct and normative.
+
+A scoped R4 recovery/reconciliation evidence identity may be introduced only when materially necessary for non-destructive history or exact recovery-scope correlation and must remain:
+
+```text
+representation-neutral
+R4-bounded
+non-universal
+non-authoritative for source facts
+```
+
+No major universal identity namespace or physical identifier format is authorized.
+
+# MDE Stop Boundary
+
+The bounded session MUST STOP and escalate exactly one Material Decision Question if closure materially requires an unresolved durable commitment about:
 
 ```text
 canonical conflict winner
@@ -447,15 +412,15 @@ local-wins / central-wins
 source-priority hierarchy
 cross-source merge semantics
 authoritative synchronization direction
-reconciliation conflict-resolution Product law
+reconciliation conflict-resolution algorithm as Product law
 universal recovery success semantics
 universal replay semantics / deterministic replay guarantee
-exactly-once / at-most-once / at-least-once recovery/reconciliation guarantee
+exactly-once / at-most-once / at-least-once recovery / reconciliation guarantee
 cross-Tenant recovery / reconciliation semantics
-global recovery priority / fairness
-global recovery timeout / expiry / escalation
-authoritative historical rewrite that loses provenance
-mandatory broker / queue / log / recovery engine
+global recovery priority / fairness law
+global recovery timeout / expiry / escalation law
+authoritative historical rewrite / compaction that loses provenance
+mandatory broker / queue / log / workflow / recovery engine
 mandatory public service dependency
 provider / protocol / framework / storage lock-in
 major new identity namespace
@@ -464,9 +429,11 @@ material fail-open / fail-closed recovery policy
 other high-migration durable commitment not already accepted
 ```
 
-# Shared Foundation / Technology Neutrality
+Producing session may recommend but may not select the Owner decision.
 
-Applicable accepted Shared Foundation semantics are sufficient for R4 entry, including:
+# Shared Foundation Consumption
+
+Accepted Shared Foundation semantics must be reused where applicable for:
 
 ```text
 Temporal & Freshness
@@ -482,39 +449,43 @@ Bootstrap Configuration Acquisition where applicable
 ```
 
 ```text
-Missing Mandatory Foundation Semantic
+Missing Mandatory Foundation Semantic at Authorization
 → NONE_FOUND
-
-New Foundation Capability / Contract / Module / Provider Required for Entry
-→ 0
 ```
 
-No database/event-store, replay/reconciliation engine, queue/broker/log, REST/gRPC/concrete WebSocket wire design, DTO/schema, process/worker/thread/container/deployment topology or physical identity format is selected.
+If a mandatory reusable semantic is discovered missing, the bounded session must STOP and return to GAC for Foundation revalidation.
 
-# Exhaustion / Global-closure Boundary
+# Implementation Leakage Prohibited
 
-If a future Batch 3 is globally accepted, ns_runtime boundary coverage would become `4 / 4 / 100%`.
-
-That future acceptance MUST NOT automatically imply:
+No authorization exists to select/design:
 
 ```text
-ns_runtime Internal Design Exhaustion → SATISFIED
-ns_runtime Component Internal Design → GLOBAL_CLOSED / COMPLETE
+Redis / RabbitMQ / Kafka / NATS
+Celery / Temporal / Airflow / Quartz / APScheduler
+database / storage engine / event store
+queue / broker / topic / subscription
+workflow / recovery / reconciliation / replay engine
+conflict-resolution library
+exactly-once / at-most-once / at-least-once guarantee
+REST / gRPC / concrete WebSocket protocol
+message envelope / frame / DTO / schema
+process / service / worker / thread / coroutine topology
+container / pod / host / deployment topology
+UUID / database key / message key / wire-id physical format
 ```
 
-A separate post-Batch-3 remaining-pressure / exhaustion / global-closure assessment remains mandatory.
+The accepted `ns_runtime = Python + WebSocket-centered` direction remains inherited only; concrete framework/frame/endpoint/handshake/message design is not authorized.
 
 # Explicitly Not Authorized
 
 ```text
-ns_runtime Batch 3 producing work
-R4 / RT-R04 Internal Design
-RCP-20 closure
-RCP-22 full cross-component closure
-ns_runtime Component Internal Design Global Closure
+RCP-20 Full Cross-component Closure
+RCP-22 Full Cross-component Closure
 ns_node Component Internal Design
 ns_agent Component Internal Design
 ns_web Component Internal Design
+ns_runtime Internal Design Exhaustion declaration
+ns_runtime Component Internal Design Global Closure declaration
 System-level SDK Detailed Design
 Design-to-Implementation Readiness
 Implementation Planning
@@ -522,9 +493,28 @@ IWP
 Coding
 ```
 
+# Maximum Legal Bounded-session State
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+```
+
+The bounded session may not self-declare Batch 3 Global Acceptance, ns_runtime Exhaustion/Global Closure or authorize another component/phase.
+
+# Post-Batch-3 Boundary
+
+If Batch 3 is later globally accepted:
+
+```text
+Accepted ns_runtime Boundary Coverage
+→ 4 / 4 / 100%
+```
+
+A separate fresh GAC post-Batch-3 remaining-pressure / exhaustion / global-closure assessment is still mandatory before any ns_runtime closure declaration or next-component sequencing.
+
 # Current Required Read Set
 
-Minimum sufficient Repository context for a fresh GAC Batch-3 authorization decision and later bounded R4 session:
+Minimum sufficient Repository context for the bounded Batch-3 producing session:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -543,7 +533,7 @@ Minimum sufficient Repository context for a fresh GAC Batch-3 authorization deci
 14. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.1.md
 15. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_2_global_acceptance_0.0.1.md
 16. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.2.md
-17. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md / relevant tail GAC-TR-0081..0085
+17. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md / relevant tail GAC-TR-0081..0086
 ```
 
 Read exact Owner/MDE evidence additionally if a reserved durable dimension is materially touched.
@@ -551,9 +541,8 @@ Read exact Owner/MDE evidence additionally if a reserved durable dimension is ma
 # Unique Next Legal Action
 
 ```text
-Fresh Repository recovery
-→ verify GAC-EPOCH-0075 assessment seal and no drift
-→ if R4 Entry Readiness remains SATISFIED / Open MDE = 0 / Blocking Item = NONE:
-   perform a separate ns_runtime Component Internal Design / Batch 3 / R4 authorization transition
-→ do not combine assessment and authorization
+start exactly one bounded ns_runtime Component Internal Design / Batch 3 / R4 producing session
+→ produce Candidate / DAD / Review / Handoff only
+→ stop at COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+→ return to GAC for independent Global Acceptance review
 ```
