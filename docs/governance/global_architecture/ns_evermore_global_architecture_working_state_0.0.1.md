@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0079`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0080`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # Current Working Baseline
@@ -48,21 +48,6 @@ ns_runtime Component Internal Design
 ns_runtime Internal Design Exhaustion
 → SATISFIED
 
-Accepted ns_runtime Boundaries
-→ R1 / R2 / R3 / R4
-
-Accepted ns_runtime Boundary Coverage
-→ 4 / 4 / 100%
-
-Accepted ns_runtime Internal Responsibility Count
-→ 29
-
-Remaining accepted ns_runtime boundaries without Component Internal Design
-→ NONE
-
-Remaining Material ns_runtime Component Internal-design Pressure
-→ NONE_FOUND
-
 Decision Registry
 → 0.0.29 / CURRENT / NORMATIVE
 
@@ -88,134 +73,164 @@ Authorization Scope
 → NONE
 ```
 
-# Global Closure Basis
+# Next Product Component Sequencing Assessment
 
-Closure evidence:
+Assessment:
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_component_internal_design_global_closure_0.0.1.md`
+`docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_runtime_component_internal_design_next_component_sequencing_ns_node_entry_readiness_assessment_0.0.1.md`
 
 ```text
-Closure Recovery Entry HEAD
-→ dbcd61360b2587842632c28a6b11e2c94c076659
+Assessment Entry HEAD
+→ f248d2f04d34ce83c5edc9c5a990736198a8eb97
 
-Closure Recovery Epoch
-→ GAC-EPOCH-0078
+Assessment Commit
+→ 3d152f3c1526fbba5dd92fa821ada4939495688f
 
-State Verified Through HEAD at closure recovery
-→ 2fe9a6cdcd8e8149f8fa9d3794246c5bf8a10f89
+Assessment Input Epoch
+→ GAC-EPOCH-0079
 
-Exhaustion Assessment
-→ docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.3.md
-
-Exhaustion Assessment Commit
-→ 455d549d427f575640318df3d129192b94779b40
-
-Closure Evidence Commit
-→ 17651deb4b3ef665de9cb8ace99b575082e0ff29
-
-Decision Registry 0.0.29 Commit
-→ 7cd2989f256df96b2afc1280057037bce137c88a
-
-Closure Recovery Result
+Recovery Result
 → PASS
-```
 
-# Closure Determination
+Next Product Component
+→ ns_node
 
-```text
-Remaining Material ns_runtime Component Internal-design Pressure
-→ NONE_FOUND
-
-ns_runtime Internal Design Exhaustion
+ns_node Component Internal Design Entry Readiness
 → SATISFIED
 
-ns_runtime Component Internal Design
-→ GLOBAL_CLOSED / COMPLETE
+Recommended Batch Shape
+→ MULTIPLE / 2
 
-Accepted Boundary Coverage
-→ 4 / 4 / 100%
+Immediate Next Batch Candidate
+→ ns_node / Batch 1 / N1 + N2 + N3
 
-Missing Runtime-role source-boundary design
-→ 0
+Proposed Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_NODE / BATCH_1 / LOCAL_READINESS_GOVERNED_EXECUTION_PROTECTED_EFFECT_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 
-Remaining Authority / SoT / Actual-state ambiguity
-→ 0
-
-Mandatory missing Shared Foundation semantic
-→ 0
-
-Implementation-defined Component Architecture Escape
-→ 0
+Batch 2 Candidate
+→ N4 Offline Continuity, Recovery & Local Diagnostics
+→ NOT AUTHORIZED / NOT ENTRY-ASSESSED YET
 ```
 
-# Stable Contract Qualification
-
-Runtime-owned/current runtime-side contributions remain closed at current design level, including:
+# Sequencing Rationale
 
 ```text
-RCP-03 / RT-R01
-RCP-05 / RT-R02
-RCP-06 / RT-R03
-RCP-20 / RT-R04
-RCP-22 / RT-R04 producer side
+N1 / ND-R01
+→ final owner of Node capability/readiness/applied-config Actual-state
+
+N2 / ND-R02
+→ final owner of Node local execution Attempt Actual-state
+
+N3 / ND-R03
+→ final owner of protected local Effect/source facts
+
+N4 / ND-R04
+→ Node-local offline continuity/recovery/diagnostic participation
 ```
 
-Remaining multi-party/full cross-component closure remains downstream where applicable and is not promoted by ns_runtime Global Closure.
-
-Explicitly not inferred:
+Accepted execution chain remains:
 
 ```text
-RCP-03 Full Cross-component Closure
-RCP-04 Full Closure
-RCP-05 Full Cross-component Closure where downstream executor consumption remains
-RCP-06 Full Cross-component Closure
-RCP-12 Full Closure
-RCP-16 Full Cross-component Closure
-RCP-20 Full Cross-component Closure
-RCP-22 Full Cross-component Closure
-RCP-24 Full Closure
+SV-R04 Admission
+→ RT-R02 Dispatch
+→ ND-R01 Readiness
+→ ND-R02 Attempt
+→ ND-R03 Effect
 ```
 
-# Permanent Non-collapse
+Node source-side design has complete accepted server/runtime upstream. It also reduces forward-assumption pressure for later `ns_agent` A4/A6 tool/delegation semantics and later `ns_web` diagnostics/projection semantics.
 
 ```text
-Authority != Coordination
+ns_agent after ns_node
+→ NOT YET FROZEN
+
+ns_web after ns_node
+→ NOT YET FROZEN
+
+Complete post-ns_node order
+→ MUST be reassessed later
+```
+
+# Proposed ns_node Batch 1 RCP Scope
+
+```text
+RCP-04 ND-R01 owner/source-side closure + stable contract synthesis
+RCP-07 ND-R02 owner/source-side closure + stable contract synthesis
+RCP-08 ND-R03 owner/source-side closure + stable contract synthesis
+
+RCP-02 Node executor consumer-side applicability only
+RCP-05 Node executor consumer-side applicability only
+RCP-03 Node participant-side contribution where N1 participates
+RCP-12 Node target/receiving-side expectation only / AG-R04 source side downstream
+RCP-13 / RCP-15 Node executor-side expectations only / accepted Automation semantics preserved
+RCP-17 Node trial executor/effect contribution only / Full Trial closure not inferred
+RCP-19 Node Applied-configuration contribution / S9 Desired authority preserved
+RCP-22 N1/N2/N3 fact-owner provenance obligations only / complete Node diagnostics remains N4
+RCP-24 Node intervention target/outcome-side expectation only where applicable
+RCP-20 comprehensive Node recovery participation → DEFERRED TO N4 / Batch 2
+```
+
+No full cross-component closure is inferred by this assessment.
+
+# Permanent Node Non-collapse for Future Authorization
+
+```text
 Connected != Trusted != Admitted
 Reachable != Ready
-Admission != Scheduling != Routing != Dispatch != Attempt != Effect
-Continuation Coordination != Source Semantic Continuation Authority
-Delegation Coordination != Agent Delegation Source Authority
-Intervention Request != Final Outcome
-Recovery Coordination != Source Recovery Authority
-Reconciliation Participation != Conflict Winner Authority
-Evidence Exchange != Source Fact Transfer
-Re-observation != Canonicalization
-Sync != Authority Transfer
-Recovery != SoT Transfer
+Installed != Accepted
+Available != Admitted
+Activated != Authorized
+User Session != IAM Authority
+Admission != Dispatch != Attempt != Effect
+Attempt != Effect
+Attempt Success != Protected Effect automatically
+Stopped != Effects Reversed
+Local Effect != Business Semantic Success
+Offline != Authority Transfer
 Reconnect != Reconciled
+Recovery != SoT Transfer
 Replay != Retroactive Authorization
 Latest Timestamp != Canonical Winner
+Desired != Applied != Observed
 ```
 
-# Explicitly Not Authorized
+# Assessment Governance Boundary
 
 ```text
-ns_node Component Internal Design
+New MDE required for ns_node entry
+→ 0
+
+Missing Mandatory Shared Foundation Semantic
+→ NONE_FOUND
+
+Implementation-defined Architecture Escape required for entry
+→ 0
+
+ns_node Batch 1 Authorization
+→ NOT GRANTED BY ASSESSMENT
+
 ns_agent Component Internal Design
+→ NOT AUTHORIZED
+
 ns_web Component Internal Design
+→ NOT AUTHORIZED
+
 System-level SDK Detailed Design
+→ NOT AUTHORIZED
+
 Design-to-Implementation Readiness
-Implementation Planning
-IWP
-Coding
+→ NOT AUTHORIZED
+
+Implementation Planning / IWP / Coding
+→ NOT AUTHORIZED
 ```
 
 # Unique Next Legal Action
 
 ```text
-append separate ns_runtime global-closure transition to Global Architecture Ledger
-→ write GAC-EPOCH-0079 Global State closure seal
+append GAC-TR-0090 assessment transition to Global Architecture Ledger
+→ write GAC-EPOCH-0080 Global State assessment seal
 → fresh Repository recovery
-→ perform next-Product-Component Component Internal Design sequencing / remaining-pressure / entry-readiness assessment
-→ do not authorize the next component automatically
+→ if ns_node entry readiness remains SATISFIED, perform a separate ns_node Component Internal Design / Batch 1 authorization transition
+→ do not start ns_node producing work from this assessment alone
 ```
