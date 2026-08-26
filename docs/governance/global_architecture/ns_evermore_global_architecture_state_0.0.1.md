@@ -1,16 +1,16 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0077`
+- Status: `CURRENT / GAC-EPOCH-0078`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-→ GAC-EPOCH-0077
+→ GAC-EPOCH-0078
 
 State Verified Through HEAD
-→ de610113cb98c6a58ce42bb9e5b51c963837879b
+→ 2fe9a6cdcd8e8149f8fa9d3794246c5bf8a10f89
 
 Genesis Constitution
 → GLOBAL_ACCEPTED / NORMATIVE
@@ -60,7 +60,7 @@ ns_server Component Internal Design
 ns_server Internal Design Exhaustion
 → SATISFIED
 
-ns_runtime Component Internal Design / Batch 1
+ns_runtime Component Internal Design / Batch 1 / R1-R2
 → GLOBAL_ACCEPTED
 
 ns_runtime Component Internal Design / Batch 2 / R3
@@ -70,10 +70,7 @@ ns_runtime Component Internal Design / Batch 3 / R4
 → GLOBAL_ACCEPTED
 
 Accepted ns_runtime Boundaries
-→ R1 / Connection / Participant Presence Coordination
-→ R2 / Governed Routing / Scheduling / Dispatch Coordination
-→ R3 / Operation Continuation / Delegation / Intervention Coordination
-→ R4 / Coordination Recovery / Reconciliation / Diagnostics
+→ R1 / R2 / R3 / R4
 
 Accepted ns_runtime Boundary Coverage
 → 4 / 4 / 100%
@@ -81,11 +78,17 @@ Accepted ns_runtime Boundary Coverage
 Remaining accepted ns_runtime boundaries without Component Internal Design
 → NONE
 
+Remaining Material ns_runtime Component Internal-design Pressure
+→ NONE_FOUND
+
 ns_runtime Internal Design Exhaustion
-→ NOT YET REASSESSED AFTER BATCH 3 ACCEPTANCE
+→ SATISFIED
+
+ns_runtime Component Internal Design Global-closure Eligibility
+→ SATISFIED
 
 ns_runtime Component Internal Design Global Closure
-→ NOT_DECLARED
+→ NOT YET DECLARED
 
 Decision Registry
 → 0.0.28 / CURRENT / NORMATIVE
@@ -95,6 +98,9 @@ Open MDE
 
 Unpersisted Owner Decision
 → 0
+
+Blocking Semantic Gap
+→ NONE
 
 Blocking Item
 → NONE
@@ -109,81 +115,73 @@ Authorization Scope
 → NONE
 ```
 
-# ns_runtime Batch 3 Global Acceptance Evidence
+# Post-Batch-3 Exhaustion Assessment Evidence
 
-Acceptance evidence:
+Assessment:
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_3_global_acceptance_0.0.1.md`
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.3.md`
 
 ```text
-Producing Entry HEAD
-→ 62f84a8bd38d6a49240d6b44f5151f88875f3d79
+Assessment Entry HEAD
+→ b5a6260eddcadd2c69fe719e61123d12b0677259
 
-Producing Final HEAD
-→ 877ced0c48422a9f99a701fe4dcff629e1ffde8e
+Assessment Commit
+→ 455d549d427f575640318df3d129192b94779b40
 
-Producing Commit Count
-→ 4
+Assessment Working State Commit
+→ 186ce286594face15681e66b9860e0cf14f55014
 
-Candidate Commit
-→ 5ec780d0347fa83270a653f1732b7db06c2e20f2
+Assessment Transition
+→ GAC-TR-0088 → GAC-EPOCH-0078
 
-DAD Commit
-→ a2a24d65a078bd6a8e7e870e09d79308db025dfc
+Assessment Ledger Verified Commit
+→ 2fe9a6cdcd8e8149f8fa9d3794246c5bf8a10f89
 
-Review / Audit Commit
-→ 008e71420f76dd23f055102ded38ce0074fdf6ac
-
-Handoff / Producing Final Commit
-→ 877ced0c48422a9f99a701fe4dcff629e1ffde8e
-
-Global Acceptance Evidence Commit
-→ 99107506287e26330a88df5e05f1b238157b3e4f
-
-Decision Registry 0.0.28 Commit
-→ a0c40fb3499eb763d6ef70754e09270c8f049de7
-
-Working State Acceptance Commit
-→ 41f28de63b6d28f04dff7c6961e401a29ac016b1
-
-GAC Transition
-→ GAC-TR-0087 → GAC-EPOCH-0077
-
-Ledger Commit
-→ de610113cb98c6a58ce42bb9e5b51c963837879b
-
-Ledger Append-only Validation
-→ additions 36 / deletions 0
+Ledger Append-only Net Validation
+→ additions 28 / deletions 0
 
 Result
-→ GLOBAL_ACCEPT
+→ EXHAUSTION_SATISFIED / GLOBAL_CLOSURE_ELIGIBLE
 ```
 
-Producing delta was independently classified:
+# Accepted ns_runtime Internal Architecture Baseline
+
+## R1 / RT-R01
 
 ```text
-EXPECTED_PHASE_EVIDENCE
-
-Unexpected Drift
-→ NONE
-
-Unauthorized Progression
-→ NONE
+P01 Participant Reference & Coordination-context Binding
+P02 Connection Observation & Presence-evidence Intake
+P03 Presence Currentness & Freshness Qualification
+P04 Reachability Qualification & Uncertainty Custody
+P05 Presence History, Projection & RCP-03 Contract Governance
 ```
 
-# Accepted ns_runtime Batch 3 Internal Architecture
+## R2 / RT-R02
+
+```text
+D01 Admitted-work Intake & Admission-evidence Applicability
+D02 Work Requirement & Target Correlation
+D03 Routing Candidate Qualification
+D04 Scheduling Coordination & Bounded Ordering
+D05 Dispatch Decision, Handoff & Evidence Custody
+D06 Dispatch Lineage, History & Later-attempt Correlation
+```
+
+## R3 / RT-R03
+
+```text
+C01 Operation / Work & Source-authority Context Binding
+C02 Coordination Request Intake, Identity & Applicability Qualification
+C03 Continuation Coordination & Source-owner Forwarding
+C04 Delegation Coordination & Delegation-lineage Correlation
+C05 HITL Resume Coordination & Response/Source-wait Correlation
+C06 Intervention Coordination & Target-owner Forwarding
+C07 Final-owner Evidence Correlation & R3 Coordination-completion Qualification
+C08 Currentness, Availability & Uncertainty Qualification
+C09 Non-destructive History, Lineage, Provenance & Stable-contract Governance
+```
 
 ## R4 / RT-R04
-
-```text
-R4
-→ Coordination Recovery / Reconciliation / Diagnostics
-
-RT-R04
-→ Coordination Recovery / Reconciliation Participant
-```
-
-Accepted internal responsibilities:
 
 ```text
 RC01 Recovery Scope, Subject & Governed-context Binding
@@ -198,87 +196,31 @@ RC09 Non-destructive History, Lineage, Provenance & Stable-contract Governance
 ```
 
 ```text
-Accepted Internal Responsibility Count
-→ 9
+Accepted ns_runtime Internal Responsibility Count
+→ 29
 
-R4 Boundary Coverage
-→ 1 / 1 / 100%
+Accepted Runtime Roles
+→ RT-R01 / RT-R02 / RT-R03 / RT-R04
 
-Unowned Material R4 Responsibility
+Runtime Roles lacking source-boundary Component Internal Design
 → 0
 
-Duplicate Final Responsibility
+Unowned Material ns_runtime Internal Responsibility
 → 0
-
-Hard Internal SDD Graph
-→ ACYCLIC
 ```
 
-These labels are architecture-semantic responsibilities only. They do not imply package, class, service, process, worker, queue, database, API, schema, protocol or deployment topology.
-
-# Accepted R4 Authority / SoT / Actual-state Boundary
-
-R4 / RT-R04 owns only bounded facts genuinely originating in `ns_runtime` recovery/reconciliation/diagnostics coordination:
-
-```text
-Recovery Scope binding facts
-recovery coordination-stage facts
-evidence-exchange request / receipt / handoff coordination facts
-re-observation request / handoff / receipt / correlation facts
-reconciliation-stage participation facts
-R4 health / lifecycle / diagnostic facts
-R4 Applied recovery-coordination configuration Actual-state
-R4 currentness / availability / uncertainty / conflict / partiality qualifications
-R4 non-destructive history / lineage / provenance / correlation facts
-```
-
-Preserved external/source ownership:
-
-```text
-Node Readiness
-→ ND-R01 downstream
-
-Node Attempt
-→ ND-R02 downstream
-
-Node Effect / protected local source fact
-→ ND-R03 downstream
-
-Agent runtime semantics / final result
-→ applicable ns_agent owner downstream
-
-Automation semantic continuation / final result
-→ S6 / SV-R02
-
-Server-native runtime evidence
-→ applicable SV-R01 / SV-R03 / SV-R06
-
-Formal Execution Admission
-→ S8 / SV-R04
-
-Managed Runtime Desired Configuration
-→ S9 / SV-R05
-
-R1 Presence / Reachability coordination facts
-→ R1 / RT-R01
-
-R2 Routing / Scheduling / Dispatch coordination facts
-→ R2 / RT-R02
-
-R3 Continuation / Delegation / Intervention coordination facts
-→ R3 / RT-R03
-
-source-domain recovery outcome
-→ original applicable source owner
-
-conflict winner / canonical merged state
-→ NOT selected / NOT owned by R4
-```
+# Authority / SoT / Actual-state Baseline
 
 Permanent:
 
 ```text
 Authority != Coordination
+Connected != Trusted != Admitted
+Reachable != Ready
+Admission != Scheduling != Routing != Dispatch != Attempt != Effect
+Continuation Coordination != Source Semantic Continuation Authority
+Delegation Coordination != Agent Delegation Source Authority
+Intervention Request != Final Outcome
 Recovery Coordination != Source Recovery Authority
 Reconciliation Participation != Conflict Winner Authority
 Evidence Exchange != Source Fact Transfer
@@ -289,282 +231,200 @@ Reconnect != Reconciled
 Replay != Retroactive Authorization
 Latest Timestamp != Canonical Winner
 Latest Arrival != Canonical Winner
-Source Re-observed != Source Rewritten
-Evidence Received != Evidence Accepted as Canonical
-Conflict Detected != Conflict Resolved
-Reconciliation Stage Completed != Source Facts Unified automatically
-Recovery Coordination Completed != Source Recovery Outcome automatically
 ```
 
-```text
-Authority Transfer
-→ 0
-
-SoT Transfer
-→ 0
-
-Final Actual-state Ownership Transfer
-→ 0
-
-Circular Actual-state Ownership
-→ NONE
-```
-
-# Accepted Identity / Correlation / Provenance Baseline
-
-Accepted scoped R4 evidence subjects:
+Accepted runtime ownership remains bounded:
 
 ```text
-R4 Recovery Scope Identity / Reference
-R4 Recovery / Reconciliation-stage Evidence Identity / Reference
-```
+R1 connection/presence/reachability coordination facts
+→ RT-R01
 
-They are representation-neutral, R4-bounded and non-authoritative for source facts.
+R2 routing/scheduling/dispatch coordination facts
+→ RT-R02
 
-Permanent semantic distinctions include:
+R3 continuation/delegation/intervention coordination-stage facts
+→ RT-R03
 
-```text
-Participant Reference
-!= Presence Observation Reference
-!= Operation / Work Reference
-!= Admission Evidence Reference
-!= Dispatch Identity / Reference
-!= R3 Coordination Request Identity / Reference
-!= R3 Coordination-stage Evidence Identity / Reference
-!= R4 Recovery Scope Identity / Reference
-!= R4 Recovery / Reconciliation-stage Evidence Identity / Reference
-!= Attempt Identity / Reference
-!= Effect Identity / Reference
-```
+R4 recovery/evidence-exchange/re-observation/reconciliation-stage/diagnostic facts
+→ RT-R04
 
-```text
-Major Universal Recovery Identity Namespace
-→ NOT CREATED
+Formal Execution Admission
+→ ns_server / S8 / SV-R04
 
-UUID / Database Key / Message ID / Wire Identifier Selection
-→ 0
-```
-
-Correlation never establishes source ownership or final semantic authority.
-
-# Stable Contract State After ns_runtime Batch 3
-
-```text
-RCP-20 / Recovery / Reconciliation
-→ RT-R04 owner/coordinator-side contribution CLOSED AT CURRENT DESIGN LEVEL
-→ Full Cross-component Closure NOT CLOSED
-
-RCP-22 / Diagnostics / Provenance
-→ RT-R04 producer-side contribution CLOSED AT CURRENT DESIGN LEVEL
-→ Full Cross-component Closure NOT CLOSED
-
-RCP-03 / Presence
-→ accepted R1 semantics PRESERVED / consumed only
-
-RCP-05 / Dispatch Evidence
-→ accepted R2 semantics PRESERVED / consumed only
-
-RCP-06 / Continuation / Intervention
-→ accepted R3 semantics PRESERVED / consumed only
-
-RCP-04 / Node Readiness
-RCP-07 / Node Attempt
-RCP-08 / Node Effect Evidence
-RCP-09 / Agent Runtime
-RCP-23 / Server-native Runtime Evidence
-→ representation-neutral reference / consumer / re-observation expectations only where required
-→ owner-side internal design remains downstream
-
-RCP-19 / Desired / Applied Configuration
-→ accepted topology PRESERVED
-```
-
-No additional full cross-component closure is inferred from Batch 3 acceptance.
-
-# Re-observation Baseline
-
-Permanent:
-
-```text
-Re-observation Request != Source Fact
-Re-observation Performed != Source Changed
-Source Owner Re-observed != Source Rewritten
-Re-observation Result Received != Result Accepted as Canonical automatically
-Re-observation Failure != Source Fact Invalid
-No Response != Source Fact Deleted
-Reconnect != Re-observation Completed
-```
-
-The original source owner performs the observation and owns any source evidence. R4 only owns its request/handoff/receipt/correlation and qualification facts.
-
-# Reconciliation / Conflict Baseline
-
-```text
-Latest-wins
-→ NOT CREATED
-
-Earliest-wins
-→ NOT CREATED
-
-Local-wins
-→ NOT CREATED
-
-Central-wins
-→ NOT CREATED
-
-Source-priority hierarchy
-→ NOT CREATED
-
-Majority-wins
-→ NOT CREATED
-
-Cross-source Merge Law
-→ NOT CREATED
-
-Authoritative Synchronization Direction
-→ NOT CREATED
-
-Product-wide Conflict-resolution Algorithm
-→ NOT CREATED
-```
-
-`CONFLICTING` remains an explicit evidence qualification with provenance. A conflict may remain unresolved even after R4 reconciliation participation completes.
-
-Permanent:
-
-```text
-Conflict Detected != Conflict Resolved
-Evidence Exchange Completed != Conflict Resolved
-Reconciliation Stage Completed != Canonical Merged State
-```
-
-# Recovery Completion / Replay Baseline
-
-No universal `RECOVERED` state is created.
-
-```text
-Recovery Coordination Started
-Recovery Evidence Exchanged
-Re-observation Requested
-Re-observation Completed where source evidence establishes it
-Reconciliation Participation Completed
-Source Owner Re-observed
-Source Owner Produced New Evidence
-Conflict Remains
-Source Recovery Outcome
-```
-
-remain distinct semantic subjects/stages.
-
-Permanent:
-
-```text
-R4 Coordination Completed != all source facts reconciled
-Evidence Exchange Completed != conflict resolved
-Source Re-observed != source changed
-Reconciliation Stage Completed != canonical merged state exists
-```
-
-Replay remains source-defined reference/correlation pressure only where applicable.
-
-```text
-Universal Replay Semantics
-→ NOT CREATED
-
-Deterministic Replay Guarantee
-→ NOT CREATED
-
-Replay Algorithm / Engine
-→ NOT SELECTED
-
-Replay != Retroactive Authorization
-Replay != Historical Fact Rewrite
-```
-
-# Failure / Offline / Private Baseline
-
-Applicable R4 evidence/currentness qualifications remain explicit:
-
-```text
-RECOVERY_PENDING
-RECONCILIATION_PENDING
-RECOVERING
-UNKNOWN
-STALE
-UNAVAILABLE
-UNREACHABLE
-INDETERMINATE
-CONFLICTING
-PARTIAL
-SUPERSEDED where source semantics establish it
-```
-
-These do not define a universal linear recovery state machine.
-
-Permanent:
-
-```text
-UNKNOWN != ABSENT
-STALE != FALSE
-PARTIAL != COMPLETE
-UNAVAILABLE != FAILED automatically
-CONFLICTING != Canonical Winner
-Offline != Authority Transfer
-Local Copy != Canonical Source automatically
-Central Copy != Canonical Source automatically
-Reconnect != Reconciled
-Sync != Proof of Original Authority
-Recovery != Original Fact Rewrite
-Latest Timestamp != Canonical Winner
-```
-
-Core correctness requires no mandatory public Internet, public SaaS, cloud broker, public event log, hosted recovery/workflow engine or external recovery control plane.
-
-# History / Lineage Baseline
-
-History is non-destructive.
-
-```text
-one Recovery Scope → multiple evidence exchanges
-one Recovery Scope → multiple re-observation requests / results
-one source assertion → multiple historical observations
-one conflict → multiple mutually conflicting evidence references
-later reconciliation evidence → does not overwrite earlier conflict evidence
-later source re-observation → does not rewrite prior source evidence
-later success → does not erase earlier unavailable / failure evidence
-current projection → does not rewrite history
-```
-
-Historical provenance, source owner/revision, temporal qualification and uncertainty must remain recoverable across compatibility/migration evolution.
-
-# Configuration Baseline
-
-```text
 Managed Runtime Desired Configuration
 → ns_server / S9 / SV-R05
 
-R4 intrinsic recovery-coordination configuration meaning
-→ ns_runtime / R4
+Node Readiness / Attempt / Effect
+→ ND-R01 / ND-R02 / ND-R03 downstream
 
-R4 Applied Configuration Actual-state
-→ R4 only where genuinely applied to its bounded responsibility
+Agent runtime / delegation / semantic facts
+→ applicable ns_agent owners downstream
 
-Observed Configuration
-→ derived observation / projection
+Automation semantic continuation / final result
+→ ns_server / S6 / SV-R02
+
+Server-native runtime facts
+→ applicable SV-R01 / SV-R03 / SV-R06
+
+Source-domain recovery outcome
+→ original applicable source owner
 ```
-
-Permanent:
 
 ```text
-Desired != Distributed != Applied != Observed
-Observed != Applied SoT
-Configuration != Secret Material
-Secret Reference != Secret Material
+Remaining ns_runtime Authority ambiguity
+→ 0
+
+Remaining ns_runtime canonical-SoT ambiguity
+→ 0
+
+Remaining ns_runtime Actual-state ownership ambiguity
+→ 0
+
+Remaining ns_runtime source-fact ownership ambiguity
+→ 0
 ```
+
+# Stable Contract State / Exhaustion Qualification
+
+Runtime-side/current accepted contributions include:
+
+```text
+RCP-03 RT-R01 contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-05 RT-R02 contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-06 RT-R03 contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-20 RT-R04 contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-22 RT-R04 producer contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-02 runtime consumer refinement
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-12 RT-R03 consumer expectation
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-13 RT-R03 coordination-side refinement
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-15 RT-R03 coordination-side refinement
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-16 RT-R03 contribution
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-24 RT-R03 receiving expectation
+→ CLOSED AT CURRENT DESIGN LEVEL
+
+RCP-19 Desired / Applied / Observed topology
+→ PRESERVED
+```
+
+Remaining non-full-closed multi-party RCP work does not create additional ns_runtime internal-design pressure.
+
+Explicitly preserved:
+
+```text
+RCP-03 Full Cross-component Closure
+→ NOT CLOSED
+
+RCP-04 Full Closure
+→ NOT CLOSED
+
+RCP-05 Full Cross-component Closure
+→ NOT CLOSED where downstream executor consumption remains
+
+RCP-06 Full Cross-component Closure
+→ NOT CLOSED
+
+RCP-12 Full Closure
+→ NOT CLOSED
+
+RCP-16 Full Cross-component Closure
+→ NOT CLOSED
+
+RCP-20 Full Cross-component Closure
+→ NOT CLOSED
+
+RCP-22 Full Cross-component Closure
+→ NOT CLOSED
+
+RCP-24 Full Closure
+→ NOT CLOSED
+```
+
+```text
+Remaining cross-component RCP work
+!= Remaining ns_runtime Component Internal-design Pressure
+```
+
+# Identity / History / Offline / Recovery Exhaustion
+
+Accepted runtime-scoped semantic identities/references include:
+
+```text
+Participant Reference
+Presence Observation Reference
+Operation / Work Reference
+Admission Evidence Reference
+Dispatch Identity / Reference
+R3 Coordination Request Identity / Reference
+R3 Coordination-stage Evidence Identity / Reference
+R4 Recovery Scope Identity / Reference
+R4 Recovery / Reconciliation-stage Evidence Identity / Reference
+Attempt / Effect references where supplied by actual owners
+```
+
+No major universal identity namespace or physical identifier format is accepted.
+
+```text
+Remaining material ns_runtime identity pressure
+→ NONE_FOUND
+
+Remaining material lifecycle pressure
+→ NONE_FOUND
+
+Remaining material history / provenance pressure
+→ NONE_FOUND
+
+Remaining material offline / degraded pressure
+→ NONE_FOUND
+
+Remaining material recovery / reconciliation internal pressure
+→ NONE_FOUND
+```
+
+History remains non-destructive; later evidence does not erase prior uncertainty/conflict/failure evidence.
+
+# Governance / Security / Privacy / Secret Exhaustion
+
+Runtime consumes authoritative governed context and does not replace it.
+
+```text
+Remaining material Tenant / Principal context ambiguity
+→ 0
+
+Remaining material Policy / Trust ambiguity
+→ 0
+
+Remaining material privacy / disclosure ambiguity
+→ 0
+
+Remaining material secret-custody pressure requiring a new ns_runtime boundary
+→ NONE_FOUND
+```
+
+Core correctness remains private/offline capable without mandatory public Internet, public SaaS, cloud broker, hosted workflow/recovery engine or external coordination control plane.
 
 # Shared Foundation / Technology Neutrality
 
-Accepted Shared Foundation semantics are consumed for:
+Accepted Shared Foundation semantics are sufficient for current ns_runtime Component Internal Design:
 
 ```text
 Temporal & Freshness
@@ -581,95 +441,39 @@ Bootstrap Configuration Acquisition
 ```
 
 ```text
-Missing Mandatory Shared Foundation Semantic
+Mandatory Missing Shared Foundation Semantic
+→ 0
+
+Unauthorized Foundation Authority Transfer
+→ 0
+
+Implementation-defined Component Architecture Escape
+→ 0
+```
+
+Concrete broker/queue/scheduler/workflow/recovery/replay/database/API/wire/process/deployment technology remains downstream.
+
+# Assessment Determination
+
+```text
+REMAINING MATERIAL NS_RUNTIME COMPONENT INTERNAL-DESIGN PRESSURE
 → NONE_FOUND
 
-New Foundation Capability / Contract / Module / Provider
-→ 0
+NS_RUNTIME INTERNAL DESIGN EXHAUSTION
+→ SATISFIED
 
-Foundation Authority Transfer
-→ 0
+NS_RUNTIME COMPONENT INTERNAL DESIGN GLOBAL-CLOSURE ELIGIBILITY
+→ SATISFIED
+
+NS_RUNTIME COMPONENT INTERNAL DESIGN GLOBAL CLOSURE
+→ NOT YET DECLARED
 ```
 
-No concrete database/event store, queue/broker, recovery/reconciliation/replay engine, REST/gRPC/concrete WebSocket wire design, DTO/schema, process/worker/thread/container/deployment topology or physical identity format is accepted.
+This assessment seal does not itself perform Global Closure and authorizes no downstream Product Component or implementation phase.
 
-Project-level `ns_runtime = Python + WebSocket-centered` remains inherited direction only.
-
-# Accepted DAD Baseline — CID-RT-B3
+# Explicitly Not Authorized
 
 ```text
-CID-RT-B3-DAD-001 → R4 internal responsibility decomposition
-CID-RT-B3-DAD-002 → scoped R4 Recovery Scope identity/reference
-CID-RT-B3-DAD-003 → scoped R4 Recovery/Reconciliation-stage evidence identity/reference
-CID-RT-B3-DAD-004 → bounded R4 Actual-state ownership and source-authority preservation
-CID-RT-B3-DAD-005 → R1/R2/R3 evidence correlation preserves accepted identity boundaries
-CID-RT-B3-DAD-006 → evidence exchange is coordination evidence, not source-fact transfer
-CID-RT-B3-DAD-007 → re-observation is source-owner re-observation, never R4 canonicalization
-CID-RT-B3-DAD-008 → reconciliation participation does not select conflict winner or merge law
-CID-RT-B3-DAD-009 → recovery/reconciliation completion is multi-stage, not universal RECOVERED
-CID-RT-B3-DAD-010 → currentness/availability/uncertainty/conflict/partiality are orthogonal qualifications
-CID-RT-B3-DAD-011 → non-destructive history and provenance survive later recovery evidence
-CID-RT-B3-DAD-012 → RCP-20 RT-R04 stable contract closes at current design level only
-CID-RT-B3-DAD-013 → RCP-22 contribution is only RT-R04-originated diagnostics/provenance
-CID-RT-B3-DAD-014 → RCP-19 Desired/Applied/Observed topology remains unchanged for R4 configuration
-CID-RT-B3-DAD-015 → offline/private recovery and replay references preserve authority
-CID-RT-B3-DAD-016 → downstream source-evidence contracts remain reference/re-observation expectations only
-CID-RT-B3-DAD-017 → typed dependency topology with acyclic hard SDD
-CID-RT-B3-DAD-018 → Shared Foundation consumption, compatibility and implementation deferral
-```
-
-```text
-Recognized New MDE
-→ 0
-
-Misclassified MDE
-→ 0
-
-Open MDE
-→ 0
-
-Unpersisted Owner Decision
-→ 0
-```
-
-# ns_runtime Coverage After Batch 3 Acceptance
-
-```text
-R1 / RT-R01
-→ GLOBAL_ACCEPTED
-
-R2 / RT-R02
-→ GLOBAL_ACCEPTED
-
-R3 / RT-R03
-→ GLOBAL_ACCEPTED
-
-R4 / RT-R04
-→ GLOBAL_ACCEPTED
-
-Accepted Boundary Coverage
-→ 4 / 4 / 100%
-
-Remaining accepted boundaries without Component Internal Design
-→ NONE
-```
-
-This coverage fact does not by itself establish exhaustion or global closure.
-
-```text
-ns_runtime Internal Design Exhaustion
-→ NOT YET REASSESSED AFTER BATCH 3 ACCEPTANCE
-
-ns_runtime Component Internal Design Global Closure
-→ NOT_DECLARED
-```
-
-# Explicitly Not Authorized / Not Declared
-
-```text
-ns_runtime Component Internal Design Global Closure by inference
-RCP-20 Full Cross-component Closure
-RCP-22 Full Cross-component Closure
 ns_node Component Internal Design
 ns_agent Component Internal Design
 ns_web Component Internal Design
@@ -682,7 +486,7 @@ Coding
 
 # Current Required Read Set
 
-Minimum sufficient Repository context for the next GAC post-Batch-3 `ns_runtime` remaining-pressure / exhaustion / global-closure assessment:
+Minimum sufficient Repository context for the separate ns_runtime global-closure transition:
 
 ```text
 1. docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -693,30 +497,23 @@ Minimum sufficient Repository context for the next GAC post-Batch-3 `ns_runtime`
 6. docs/ns_evermore_nse_constraints_index_0.0.5.md
 7. docs/ns_evermore_project_architecture_0.0.3.md
 8. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_five_component_internal_architecture_boundaries_candidate_0.0.1.md
-9. docs/architecture_reviews/ns_evermore_ngrp_001_phase_z3_batch_3_global_acceptance_0.0.1.md
-10. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_candidate_0.0.1.md
-11. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_global_acceptance_0.0.1.md
-12. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_exhaustion_component_internal_design_readiness_assessment_0.0.1.md
-13. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_1_global_acceptance_0.0.1.md
-14. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.1.md
-15. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_2_global_acceptance_0.0.1.md
-16. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.2.md
-17. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_3_candidate_0.0.1.md
-18. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_3_dad_evidence_0.0.1.md
-19. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_3_review_audit_0.0.1.md
-20. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_3_handoff_0.0.1.md
-21. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_3_global_acceptance_0.0.1.md
-22. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md / relevant tail GAC-TR-0081..0087
+9. docs/architecture_reviews/ns_evermore_ngrp_001_runtime_responsibility_architecture_batch_1_candidate_0.0.1.md
+10. docs/architecture_reviews/ns_evermore_ngrp_001_foundation_provider_exhaustion_component_internal_design_readiness_assessment_0.0.1.md
+11. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_1_global_acceptance_0.0.1.md
+12. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_2_global_acceptance_0.0.1.md
+13. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_batch_3_global_acceptance_0.0.1.md
+14. docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.3.md
+15. docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md / relevant tail GAC-TR-0081..0088
 ```
-
-Read exact Owner/MDE evidence additionally if the assessment materially touches an Owner-reserved durable dimension.
 
 # Unique Next Legal Action
 
 ```text
 Fresh Repository recovery
-→ perform post-Batch-3 ns_runtime Component Internal Design remaining-pressure / exhaustion / global-closure assessment
-→ verify whether any material ns_runtime internal-design pressure remains despite 4 / 4 accepted boundary coverage
-→ if and only if exhaustion is independently SATISFIED, perform a separate ns_runtime Component Internal Design global-closure transition
-→ do not authorize another Product Component automatically from this Global State
+→ verify GAC-EPOCH-0078 assessment seal and State Verified Through HEAD
+→ confirm Exhaustion = SATISFIED / Global-closure Eligibility = SATISFIED
+→ confirm Global Closure still NOT YET DECLARED
+→ confirm Open MDE = 0 / Blocking Item = NONE / no drift
+→ perform a separate ns_runtime Component Internal Design global-closure transition
+→ do not authorize another Product Component automatically
 ```
