@@ -849,7 +849,7 @@ Blocking Item → NONE
 Decision Registry → 0.0.26 / unchanged
 Current Authorized Phase → NONE
 Batch 2 Authorization → NOT GRANTED BY ASSESSMENT
-Unique Next Legal Action → write GAC-EPOCH-0075 Global State seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_runtime Component Internal Design / Batch 2 / R3 authorization transition
+Unique Next Legal Action → write Global State seal, fresh Repository recovery, then if eligibility remains satisfied perform a separate ns_runtime Component Internal Design / Batch 2 / R3 authorization transition
 
 GAC-TR-0083 → GAC-EPOCH-0073
 Transition → separate ns_runtime Component Internal Design / Batch 2 / R3 authorization
