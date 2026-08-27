@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / NSH_INSERTION_ASSESSMENT`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0089_AUTHORIZATION_REVALIDATED_PENDING_LEDGER_AND_SEAL`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 - Current Authoritative Global State: `GAC-EPOCH-0088`
 
@@ -14,6 +14,7 @@ Five-component Internal-boundary Exhaustion → SATISFIED
 Accepted Internal Boundaries → 34
 Runtime Responsibility Architecture → GLOBAL_CLOSED / COMPLETE
 Runtime Roles → 22
+Runtime / Domain Stable Contract Pressure → 24 / unchanged
 Shared Foundation Architecture / Contract / Module / Provider → GLOBAL_CLOSED / COMPLETE
 Foundation Provider Design Exhaustion → SATISFIED
 Component Internal Design Readiness → SATISFIED
@@ -30,17 +31,19 @@ ns_node Internal Design Exhaustion → SATISFIED
 Next Product Component → ns_agent
 ns_agent Component Internal Design Entry Readiness → SATISFIED
 Recommended ns_agent Batch Shape → MULTIPLE / 2
+Accepted ns_agent Boundary Coverage → 0 / 6 / 0%
 
 Decision Registry → 0.0.32 / CURRENT / NORMATIVE
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Semantic Gap → NONE
+Blocking Item → NONE
 Known Working-branch Drift → NONE
 ```
 
-# Current Authoritative Authorization
+# Current Authoritative Authorization Before Seal
 
-The current Global State remains the authorization authority.
+The current Global State remains authoritative until the new State seal is written.
 
 ```text
 Current Authoritative Global State
@@ -56,150 +59,285 @@ ns_agent producing work
 → NOT STARTED
 ```
 
-The previously prepared authorization is not authoritative because no `GAC-EPOCH-0089` State seal was issued.
-
-# Pre-NSH Prospective Authorization Record
+# Superseded Pre-NSH Prospective Authorization
 
 ```text
-Prospective Authorization Working State Commit
-→ afcdc320c7cb5b23092e5e00ff2ad5d6c49e41af
-
-GAC-TR-0099 Ledger Record
-→ GAC-TR-0099 → GAC-EPOCH-0089
-
-GAC-TR-0099 Final Clean Ledger Commit
-→ 81919158a8fbe37d44afa437ed98fb8731c53a88
-
-Ledger Net Validation from afcdc320...
-→ additions 37 / deletions 0
-
-GAC-EPOCH-0089 Global State Seal
-→ NOT ISSUED
-
-Activation Status
+GAC-TR-0099
+→ pre-NSH prospective ns_agent Batch-1 authorization
+→ clean append-only historical record
+→ GAC-EPOCH-0089 State seal was NOT issued
 → NOT ACTIVATED
+→ MUST NOT be sealed as-is
 ```
 
-Because the Owner introduced material `ns_evermore Harness / NSH` architectural intent before the State seal and before any producing session, `GAC-TR-0099` MUST remain historical append-only evidence but MUST NOT be sealed as-is.
+`GAC-TR-0099` remains historical evidence and must not be deleted or rewritten.
 
-# NSH Architecture Insertion Assessment
+# Targeted Revalidation Evidence
 
-Assessment evidence:
+Entry-readiness assessment:
+
+`docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_node_component_internal_design_next_component_sequencing_ns_agent_entry_readiness_assessment_0.0.1.md`
+
+NSH insertion assessment:
 
 `docs/architecture_reviews/ns_evermore_ngrp_001_ns_harness_architecture_insertion_impact_authority_sequencing_assessment_0.0.1.md`
 
-```text
-Assessment Entry HEAD
-→ 81919158a8fbe37d44afa437ed98fb8731c53a88
+Targeted authorization revalidation:
 
-Assessment Evidence Commit
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_agent_batch_1_nsh_targeted_authorization_revalidation_0.0.1.md`
+
+```text
+NSH Assessment Evidence Commit
 → 733f4fa565255897dc91febfd1c66a237d20d22c
 
-Subject
-→ ns_evermore Harness / NSH
+NSH Assessment Working Checkpoint
+→ f42b92c3297680b594aaf79a9bb36bdba7c11a74
 
-Input Classification
-→ OWNER ARCHITECTURAL INTENT
+Targeted Authorization Revalidation Evidence Commit
+→ ea28c0da3c2c981760f43620af22ecbc687e86b4
 
-Assessment Result
-→ GAC_CLASSIFIED
+Revalidation Result
+→ PASS / AUTHORIZATION_ELIGIBLE
+
+New Authorization Transition
+→ GAC-TR-0100 → GAC-EPOCH-0089
 ```
 
-# NSH Classification
+# Revalidated Prospective Authorization
 
 ```text
-Architecture Identity
-→ OPTION A
-→ NAMED INTERNAL ARCHITECTURE CONCEPT INSIDE EXISTING ns_agent BOUNDARIES
+Authorized Phase after State seal
+→ NGRP-001 — Component Internal Design / ns_agent / Batch 1
 
-Product Component
-→ NO / NOT sixth Product Component
+Authorization Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_AGENT / BATCH_1 / AGENT_DEFINITION_HARNESS_RUNTIME_PROVIDER_TOOL_KNOWLEDGE_EXECUTION_BOUNDARY_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+
+Authorized Internal Boundaries
+→ A1 Agent Definition & Evolution
+→ A2 Agent Runtime Context, HITL & Actual-state
+→ A3 Model / Provider Mediation & Multimodal Capability
+→ A4 Tool & Knowledge Consumption
+
+Inherited Runtime Roles
+→ AG-R01 Agent Runtime Participant
+→ AG-R02 Model / Provider Mediation Participant
+
+A5 Native Multi-Agent Composition
+→ NOT AUTHORIZED FOR INTERNAL DESIGN
+
+A6 Governed Cross-domain Delegation & Automation Participation
+→ NOT AUTHORIZED FOR INTERNAL DESIGN
+```
+
+# NSH Authorization Placement
+
+```text
+NSH Architecture Identity
+→ named internal architecture concept inside existing ns_agent boundaries
 
 New Product Capability
 → NO
 
-New ns_agent Internal Boundary
+New Internal Boundary
 → NO
 
-New / Modified Runtime Role
+New Runtime Role
 → NO
 
-Shared Foundation Capability / Module
+Shared Foundation Change
 → NO
 
-System-level SDK Authority / Runtime Concept
-→ NO
-
-Owner MDE Required for insertion/classification
+SDK Architecture Change
 → NO
 
 Authority / SoT / Actual-state Movement
 → NO_CHANGE
 ```
 
-# Existing Boundary Placement
+Authorized current placement:
 
 ```text
-A1 Agent Definition & Evolution
-→ upstream Agent semantic authority + canonical Definition SoT
-→ Harness consumes / MUST NOT replace
+A1
+→ normative Agent Definition Authority / Canonical Definition SoT input to NSH
+→ NSH MUST NOT replace A1
 
-A2 Agent Runtime Context, HITL & Actual-state
+A2
 → primary NSH core runtime locus
 → reasoning/execution loop
-→ context lifecycle
-→ long-running/cross-session continuity
-→ HITL / operation history / runtime provenance
+→ context lifecycle/currentness/provenance
+→ long-running/cross-session continuation
+→ HITL / operation history / checkpoint-continuation evidence
 
-A3 Model / Provider Mediation & Multimodal Capability
-→ provider/model capability-profile observations
-→ compatibility/adaptation input to Harness behavior
+A3
+→ provider/model capability-profile observation and compatibility
+→ bounded adaptation inputs for model-adaptive Harness behavior
 
-A4 Tool & Knowledge Consumption
+A4
 → tool/knowledge/RAG/governed-execution consumption
-→ invocation preparation/correlation/result reintegration boundary
+→ invocation preparation/correlation/result-context reintegration
 
-A5 Native Multi-Agent Composition
-→ future NSH extension seam only
-→ NOT AUTHORIZED FOR INTERNAL DESIGN
-
-A6 Governed Cross-domain Delegation & Automation Participation
-→ future NSH extension seam only
-→ NOT AUTHORIZED FOR INTERNAL DESIGN
+A5/A6
+→ future extension seams only
+→ internals MUST NOT be designed in Batch 1
 ```
 
-# New Material NSH Pressure
-
-The Owner intent does not add Product capability, but it adds material named internal architecture pressure that must be explicit before ns_agent producing work starts:
-
-```text
-1. Agent Harness internal architecture synthesis
-2. Agent reasoning/execution-loop non-collapse from Automation workflow semantics
-3. context lifecycle / currentness / provenance pressure
-4. provider/model capability-profile → Harness strategy adaptation pressure
-5. tool/knowledge result reintegration with authority preservation
-6. durable Agent continuation/checkpoint/history pressure
-7. Agent operation/invocation lineage and uncertainty pressure
-8. governed Action Proposal / Intent / Admission / Attempt / Effect separation
-9. private/offline Harness correctness
-10. model-adaptive Harness evolution law
-```
-
-Stable architecture law:
+# Harness Evolution Law
 
 ```text
 Harness Strategy
 → MUST remain model-adaptive where applicable
 
+Provider / Model Capability Profile
+→ MAY inform bounded Harness strategy selection/adaptation
+
 Current-generation model limitation
 → MUST NOT automatically become permanent Product Architecture
+
+Provider/model evolution
+→ MUST NOT silently rewrite Agent semantics
 ```
 
-# Authority / Non-collapse Preservation
+# Revalidated Stable-contract / RCP Scope
+
+No new cross-component RCP is created.
 
 ```text
-Model != Agent
+RCP Count
+→ 24 / unchanged
+```
+
+Authorized/refined pressure:
+
+```text
+RCP-09
+→ AG-R01 / A2 owner/source-side Agent Runtime semantic closure + representation-neutral stable contract synthesis
+→ NSH operation/context/continuation/history included
+
+RCP-10
+→ AG-R02 / A3 Provider Mediation bounded-observation owner-side semantic closure + representation-neutral stable contract synthesis
+→ provider/model capability-profile + compatibility included
+
+RCP-16
+→ AG-R01 Agent Human-Task source wait / response-applicability side only
+→ Full Cross-component Closure NOT AUTHORIZED
+
+RCP-17
+→ Agent Trial semantic/runtime contribution only
+→ Full Cross-component Closure NOT AUTHORIZED
+
+RCP-19
+→ Agent Applied Configuration contribution only where genuinely Agent-owned
+→ S9 Desired authority preserved
+
+RCP-20
+→ EXPLICITLY AUTHORIZED by targeted revalidation
+→ Agent source-owner recovery/reconciliation participation/refinement only
+→ A2/AG-R01 facts genuinely originating in Agent runtime
+→ context/checkpoint/history/provenance recovery participation where applicable
+→ RT-R04 coordination authority preserved
+→ Full Cross-component Closure NOT AUTHORIZED
+
+RCP-22
+→ A1/A2/A3/A4 fact-owner provenance / diagnostics contribution
+→ NSH context/model/tool/recovery evidence included
+→ Full Cross-component Closure NOT AUTHORIZED
+
+RCP-24
+→ Agent receiving/correlation/applicability expectation only where materially required
+→ WB/SDK source side downstream
+
+RCP-04 / RCP-07 / RCP-08
+→ accepted ns_node source semantics consume/reference only through A4
+→ MUST NOT be reopened
+
+RCP-12
+→ bounded correlation / target expectation only where A4 materially requires it
+→ AG-R04 owner/source side remains A6 / future Batch 2
+
+RCP-11
+→ A5 / AG-R03 owner-side Multi-Agent design
+→ future Batch 2 / NOT AUTHORIZED
+```
+
+# Named Intra-component Stable Pressure
+
+```text
+Agent Harness Internal Stable Contract Pressure
+→ A2 ↔ A3 ↔ A4
+→ consumes A1 Agent Definition / Revision semantics
+→ future extension seams to A5/A6 only
+→ no new RCP ID
+```
+
+Representation-neutral pressure includes:
+
+```text
+Agent Operation Identity
+Invocation Identity / Lineage
+Context lifecycle / currentness / provenance
+Provider/model capability-profile observation
+Harness strategy-adaptation input/output distinction
+Tool/model/knowledge invocation preparation
+Result/context reintegration
+Checkpoint/continuation identity/currentness/provenance
+Uncertainty / unavailable / stale / partial states
+Non-destructive history
+Action Proposal / Intent / Admission / Attempt / Effect non-collapse
+```
+
+# Authority / SoT / Actual-state Boundary
+
+```text
+AI Agent Definition / Semantic Authority
+→ ns_agent / A1
+
+AI Agent Canonical Definition SoT
+→ ns_agent / A1
+
+Agent Runtime Actual-state
+→ A2 / AG-R01 for facts genuinely originating in Agent runtime
+
+Provider Mediation bounded observations
+→ A3 / AG-R02 where genuinely produced
+
+Automation Definition / Workflow Authority
+→ ns_server / S6 / PRESERVED
+
+Formal Artifact Acceptance / Execution Admission
+→ ns_server / S8 / PRESERVED
+
+Routing / Scheduling / Dispatch Coordination
+→ ns_runtime / R2 / RT-R02 / PRESERVED
+
+Continuation / Delegation / Intervention Coordination
+→ ns_runtime / R3 / RT-R03 / PRESERVED
+
+Recovery / Reconciliation Coordination
+→ ns_runtime / R4 / RT-R04 / PRESERVED
+
+Node Readiness / Attempt / Effect
+→ N1 / N2 / N3 / PRESERVED
+
+Knowledge / external factual SoT
+→ original applicable owners / PRESERVED
+```
+
+# Permanent Agent / NSH Non-collapse
+
+```text
 Model Provider != Agent Authority
+Model != Agent
+Tool Provider != Agent Semantic Authority
+Agent Consumes Knowledge != Agent Owns Knowledge
+RAG Consumption != Knowledge Authority Transfer
+Agent Definition SoT != Formal Artifact Acceptance Authority
+Agent Definition != Agent Runtime Actual-state
+Agent Intent != Formal Execution Admission
+Agent Delegation != Node Attempt
+Agent Runtime Success != Node Effect automatically
+Human Response Submitted != Agent Response Applied
+Candidate Automation != Accepted Automation
+
 Harness != Agent Definition Authority automatically
 Harness != Policy Authority
 Harness != Trust Authority
@@ -218,123 +356,28 @@ Harness Checkpoint != Canonical Product State automatically
 Harness Recovery != SoT Transfer
 Harness Retry != Prior Attempt Erasure
 Harness Scheduling Convenience != Universal Runtime Scheduling Authority
+Harness Agent Loop != Automation Workflow Semantics
+Harness-local continuation != ns_runtime cross-component routing/scheduling/dispatch
 ```
 
 Also permanent:
 
 ```text
-Harness Agent Loop != Automation Workflow Semantics
-Harness-local continuation != ns_runtime cross-component routing/scheduling/dispatch
-```
-
-# Stable-contract / RCP Treatment
-
-No new cross-component RCP is required.
-
-```text
-RCP Count
-→ 24 / unchanged
-```
-
-Reuse / refine:
-
-```text
-RCP-09 → NSH Agent runtime / operation / context / continuation / history
-RCP-10 → provider/model capability-profile observations + compatibility
-RCP-16 → Agent HITL source wait / response applicability
-RCP-17 → Agent Trial runtime contribution
-RCP-19 → Agent Applied configuration where genuinely Agent-owned
-RCP-20 → EXPLICIT Agent source-owner recovery/reconciliation participation pressure for Batch 1
-RCP-22 → NSH diagnostics / provenance contribution
-RCP-24 → governed receiving/correlation expectation where applicable
-RCP-04 / RCP-07 / RCP-08 → Node source semantics consume/reference only
-RCP-11 → future A5 / Batch 2 only
-RCP-12 owner/source side → future A6 / Batch 2 only
-```
-
-Named intra-component pressure:
-
-```text
-Agent Harness Internal Stable Contract Pressure
-→ A2 ↔ A3 ↔ A4
-→ consumes A1 definition/revision semantics
-→ future extension seams to A5/A6
-→ no new RCP ID required
-```
-
-# Revalidation Determination
-
-```text
-Project Architecture Revalidation → NOT REQUIRED
-Five-component Capability Revalidation → NOT REQUIRED
-Five-component Internal-boundary Revalidation → NOT REQUIRED
-Runtime Responsibility Architecture Revalidation → NOT REQUIRED
-Shared Foundation Revalidation → NOT REQUIRED
-Decision Registry / Owner MDE Update → NOT REQUIRED
-ns_agent Entry Readiness → REMAINS SATISFIED
-
-Targeted ns_agent Batch-1 Authorization Revalidation
-→ REQUIRED
-```
-
-Reason:
-
-```text
-GAC-TR-0099 was recorded before NSH intent
-+ GAC-EPOCH-0089 was never sealed
-+ producing work never started
-+ NSH adds material named Batch-1 internal pressure
-+ Agent-side RCP-20 must now be explicit
-→ old prospective authorization MUST NOT be activated as-is
-```
-
-# Revalidated Batch-1 Candidate Shape
-
-Boundaries remain:
-
-```text
-A1 / A2 / A3 / A4
-```
-
-Recommended revised scope:
-
-```text
-COMPONENT_INTERNAL_DESIGN_ONLY
-/ NS_AGENT
-/ BATCH_1
-/ AGENT_DEFINITION_HARNESS_RUNTIME_PROVIDER_TOOL_KNOWLEDGE_EXECUTION_BOUNDARY_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
-```
-
-Required treatment if separately reauthorized:
-
-```text
-A1
-→ normative Agent Definition Authority / SoT input to Harness
-
-A2
-→ NSH core runtime/context/continuity/HITL/operation architecture
-
-A3
-→ provider/model capability-profile mediation for adaptive Harness behavior
-
-A4
-→ tool/knowledge/governed-execution consumption + reintegration boundary
-
-A5/A6
-→ extension seams only
-→ internals MUST NOT be designed in Batch 1
-
-RCP-20
-→ Agent source-owner participation/refinement explicitly authorized
-→ Full Cross-component Closure NOT authorized
+Admission != Scheduling != Routing != Dispatch != Attempt != Effect
+Dispatch != Attempt
+Attempt != Protected Effect
+Reference != Authority
+Correlation != Ownership
+Observation != Canonicalization
+Retry != historical mutation
+Recovery != original fact rewrite
+Reconnect != Reconciled
+Latest Timestamp != Canonical Winner
 ```
 
 # Explicitly Not Authorized
 
 ```text
-GAC-EPOCH-0089 seal from the existing GAC-TR-0099 as-is
-ns_agent Component Internal Design producing work
-NSH Component Internal Design as a separate phase
 A5 Internal Design
 A6 Internal Design
 ns_agent Batch 2
@@ -344,34 +387,73 @@ Design-to-Implementation Readiness
 Implementation Planning
 IWP
 Coding
-Harness module/package/class/API/schema/storage/algorithm/framework design
 ```
 
-# Current Blocking Item
+Not authorized in Batch 1:
 
 ```text
-Blocking Semantic Gap
-→ NONE
+NSH as sixth Product Component
+A7 Harness boundary
+AG-R05 Harness Runtime Role
+new cross-component RCP
+new Workflow / Automation Authority
+universal Agent scheduler / cross-component dispatcher
+universal retry / replay / recovery engine
+universal retry/cancel/rollback/compensation/once guarantee
+conflict-winner / latest-wins / local-wins / central-wins / merge law
+offline fail-open / fail-closed law
+mandatory public SaaS/model/provider/broker/workflow dependency
+LangGraph / DeepSeek Harness / OpenAI Agents SDK / framework adoption decision
+provider SDK / routing / fallback algorithm
+context-compaction / memory algorithm
+checkpoint storage / DB / event-store
+queue / broker / scheduler / workflow engine
+REST/gRPC/concrete WebSocket protocol/wire
+DTO / schema / table / ORM
+process / service / worker / thread / coroutine / container / deployment topology
+```
 
-Blocking Governance Item
-→ NSH_NS_AGENT_BATCH1_AUTHORIZATION_REVALIDATION
+# Authorization Gate
+
+```text
+Targeted Revalidation
+→ PASS
+
+ns_agent Batch-1 Authorization Eligibility
+→ SATISFIED
 
 Open MDE
 → 0
 
 Unpersisted Owner Decision
 → 0
+
+Blocking Semantic Gap
+→ NONE
+
+Blocking Item
+→ NONE
+
+Decision Registry
+→ 0.0.32 / unchanged
+
+Accepted ns_agent Boundary Coverage
+→ 0 / 6 / 0% until future Global Acceptance
+```
+
+# Maximum Legal Bounded-session State
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 ```
 
 # Unique Next Legal Action
 
 ```text
-Fresh Repository recovery
-→ consume this NSH insertion assessment
-→ perform exactly one targeted ns_agent Component Internal Design / Batch-1 authorization revalidation / supersession transition
-→ preserve A1+A2+A3+A4 only
-→ explicitly add NSH internal architecture pressure + Agent-side RCP-20
-→ preserve A5/A6/ns_web/SDK/implementation as unauthorized
-→ only after that transition is internally consistent, write the authoritative Global State authorization seal
-→ only then start exactly one bounded ns_agent Batch-1 producing session
+append GAC-TR-0100 → GAC-EPOCH-0089 as a strict Ledger addition
+→ explicitly supersede only the unactivated authorization effect of GAC-TR-0099
+→ preserve all historical Ledger text exactly
+→ validate net Ledger deletions = 0 from this authorization Working State checkpoint
+→ if validation passes, write GAC-EPOCH-0089 Global State authorization seal
+→ only then start exactly one bounded ns_agent Component Internal Design / Batch 1 producing session under the revalidated exact scope
 ```
