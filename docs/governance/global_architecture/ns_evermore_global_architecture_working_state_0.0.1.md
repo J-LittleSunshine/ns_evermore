@@ -72,6 +72,40 @@ GAC-TR-0099
 
 `GAC-TR-0099` remains historical evidence and must not be deleted or rewritten.
 
+# Ledger Append-only Continuation Rule
+
+The predecessor Ledger artifact is:
+
+`docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md`
+
+Its current immutable blob is:
+
+```text
+8e74e3b08bf2cf07180d1076bc8eb550ce2e154b
+```
+
+The predecessor ends at `GAC-TR-0099` without a terminal LF newline. A same-file line append would therefore cause Git to report deletion/replacement of the historical final line, violating the project requirement that Ledger continuation preserve historical text with net deletions = 0.
+
+Therefore:
+
+```text
+Predecessor Ledger 0.0.1
+→ FROZEN BYTE-FOR-BYTE THROUGH GAC-TR-0099
+
+New append-only continuation segment
+→ docs/governance/global_architecture/ns_evermore_global_architecture_ledger_continuation_0.0.1.md
+
+Continuation Start
+→ GAC-TR-0100
+
+Logical Current Ledger
+→ predecessor Ledger 0.0.1 + ordered continuation segment(s)
+```
+
+This is a Repository-continuity mechanism only. It does not change any Product Architecture, Authority, SoT, Actual-state ownership, Runtime Role, RCP, Decision Registry decision or accepted semantic history.
+
+The authorization Working State commit used for the `GAC-TR-0100` append-only audit is the commit containing this rule.
+
 # Targeted Revalidation Evidence
 
 Entry-readiness assessment:
@@ -450,10 +484,10 @@ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 # Unique Next Legal Action
 
 ```text
-append GAC-TR-0100 → GAC-EPOCH-0089 as a strict Ledger addition
+create the append-only Ledger continuation segment starting at GAC-TR-0100 → GAC-EPOCH-0089
 → explicitly supersede only the unactivated authorization effect of GAC-TR-0099
-→ preserve all historical Ledger text exactly
-→ validate net Ledger deletions = 0 from this authorization Working State checkpoint
+→ preserve predecessor Ledger 0.0.1 byte-for-byte
+→ validate net deletions = 0 from this authorization Working State checkpoint to the continuation commit
 → if validation passes, write GAC-EPOCH-0089 Global State authorization seal
 → only then start exactly one bounded ns_agent Component Internal Design / Batch 1 producing session under the revalidated exact scope
 ```
