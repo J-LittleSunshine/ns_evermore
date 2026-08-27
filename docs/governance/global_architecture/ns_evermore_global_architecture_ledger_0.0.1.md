@@ -235,7 +235,7 @@ Transition → post-Batch-2 ns_server Component Internal Design remaining-pressu
 Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.2.md
 Assessment Commit → d0fb66a04654f50bdcc2eee2c9be77616536ae85
 Result → COMPLETED
-Remaining Material ns_server Component Internal-design Pressure → PRESENT
+Remaining Material ns_server Internal-design Pressure → PRESENT
 ns_server Internal Design Exhaustion → NOT_SATISFIED
 Remaining Boundaries → S5 / S7 / S10 / S11 / S12 / S13
 Immediate Next Batch Candidate → ns_server / Batch 3 / S5 Business Application Domain
@@ -305,7 +305,7 @@ GAC-TR-0061 → GAC-EPOCH-0051
 Transition → post-Batch-3 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
 Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.3.md
 Assessment Commit → dff1db874ae8bf693a1eda43cdcd1d196f1e7040
-Remaining Material ns_server Component Internal-design Pressure → PRESENT
+Remaining Material ns_server Internal-design Pressure → PRESENT
 ns_server Internal Design Exhaustion → NOT_SATISFIED
 Remaining Boundaries → S7 / S10 / S11 / S12 / S13
 Highest-pressure Next Boundary → S7 Enterprise Data / Knowledge / Foundational ETL Governance
@@ -412,7 +412,7 @@ GAC-TR-0066 → GAC-EPOCH-0056
 Transition → post-Batch-4 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
 Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.4.md
 Assessment Commit → cec43d44232e799aa37ea40af88fc255fb9d8035
-Remaining Material ns_server Component Internal-design Pressure → PRESENT
+Remaining Material ns_server Internal-design Pressure → PRESENT
 ns_server Internal Design Exhaustion → NOT_SATISFIED
 Remaining Boundaries → S10 / S11 / S12 / S13
 Highest-pressure Next Boundary → S10 Server-local Background Work & Server Actual-state
@@ -492,7 +492,7 @@ GAC-TR-0069 → GAC-EPOCH-0059
 Transition → post-Batch-5 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
 Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.5.md
 Assessment Commit → 60aa35e8aad8a31a0fa705904d662d7c9a4924be
-Remaining Material ns_server Component Internal-design Pressure → PRESENT
+Remaining Material ns_server Internal-design Pressure → PRESENT
 ns_server Internal Design Exhaustion → NOT_SATISFIED
 Remaining Boundaries → S11 / S12 / S13
 Highest-pressure Next Boundary → S12 Governed Notification & External Delivery Lifecycle
@@ -564,7 +564,7 @@ GAC-TR-0072 → GAC-EPOCH-0062
 Transition → post-Batch-6 ns_server Component Internal Design remaining-pressure / exhaustion / batching assessment
 Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.6.md
 Assessment Commit → 03b7e17b4b29393fd48c164b1fdc85100e86502a
-Remaining Material ns_server Component Internal-design Pressure → PRESENT
+Remaining Material ns_server Internal-design Pressure → PRESENT
 ns_server Internal Design Exhaustion → NOT_SATISFIED
 Remaining Boundaries → S11 / S13
 Highest-pressure Next Boundary → S11 Unified Human Task Aggregation & Response Routing
@@ -642,7 +642,7 @@ GAC-TR-0075 → GAC-EPOCH-0065
 Transition → post-Batch-7 ns_server Component Internal Design remaining-pressure / exhaustion / S13 entry-readiness assessment
 Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_server_internal_design_remaining_pressure_batching_assessment_0.0.7.md
 Assessment Commit → 5fddd2b3af76cdd888b3c7d458de65271f3b6f70
-Remaining Material ns_server Component Internal-design Pressure → PRESENT
+Remaining Material ns_server Internal-design Pressure → PRESENT
 ns_server Internal Design Exhaustion → NOT_SATISFIED
 Remaining Boundaries → S13
 Highest-pressure Next Boundary → S13 Cross-domain Resource Discovery Projection
