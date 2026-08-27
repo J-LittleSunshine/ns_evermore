@@ -472,7 +472,7 @@ Global Retry / Cancellation / Conflict-winner Policy → 0
 RCP-23 S10 / SV-R06 Contribution → CLOSED AT CURRENT DESIGN LEVEL
 RCP-23 Full Server-native Runtime Evidence → CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
 RCP-23 Producer Partitions → S5/SV-R01 + S7/SV-R03 + S10/SV-R06 / ownership preserved
-Universal Server Runtime Actual-state SoT → NOT_CREATED
+Universal Server Runtime Actual-state SoT → NOT CREATED
 S5 Internals Reopened → 0
 S7 Internals Reopened → 0
 Authority / SoT / Actual-state Transfer → 0
@@ -501,12 +501,11 @@ S12 Owner Capability / MDE → OWNER_DECIDED / PERSISTED / Option B / channel-ne
 S12 Entry Readiness → SATISFIED
 Potential RCP-18 Notification / Delivery Closure → ELIGIBLE IN LATER SEPARATELY AUTHORIZED BATCH 6
 S11 → own side possible / full RCP-16 still spans Automation + Agent + Human Task + Web participation
-S12 → entry-clean in principle / RCP-18 side later / lower dependency-unlocking value
 S13 → deferred until Human Task / Notification contribution semantics are further stabilized
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
-Batch 6 Authorization → NOT_GRANTED
+Batch 6 Authorization → NOT GRANTED
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh Repository recovery then separate GAC authorization transition for ns_server Component Internal Design / Batch 6 / S12
 
@@ -1172,7 +1171,7 @@ RCP-13 / RCP-15 Node Automation Executor Correlation → BOUNDED / S6 semantics 
 RCP-17 Node Trial Attempt/Effect Contribution → CLOSED AT CURRENT NODE DESIGN LEVEL / Full Trial closure NOT CLOSED
 RCP-19 Node Applied Configuration Contribution → CLOSED AT CURRENT NODE DESIGN LEVEL / S9 Desired authority preserved
 RCP-22 N1/N2/N3 Provenance/Technical Diagnostics → BOUNDED / complete Node diagnostics remains N4
-RCP-24 Node Intervention Target/Outcome Expectation → BOUNDED
+RCP-24 Node intervention target/outcome expectation → BOUNDED
 RCP-20 → NOT DESIGNED / reserved for N4 future Batch 2
 Authority / SoT / Final Actual-state Transfer → 0
 External factual SoT replacement → 0
