@@ -1302,3 +1302,33 @@ ns_node Component Internal Design Global Closure → NOT DECLARED
 Current Authorized Phase → NONE
 Unique Next Legal Action → write GAC-EPOCH-0085 Global State acceptance seal, fresh Repository recovery, then perform post-Batch-2 ns_node Component Internal Design remaining-pressure / exhaustion / global-closure assessment; do not infer closure or authorize another Product Component automatically
 ```
+
+```text
+GAC-TR-0096 → GAC-EPOCH-0086
+Transition → post-Batch-2 ns_node Component Internal Design remaining-pressure / exhaustion / global-closure eligibility assessment
+Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_node_internal_design_remaining_pressure_batching_assessment_0.0.2.md
+Assessment Commit → a9ae16e56a777f7bfeb2b2a1caca78c271910cbc
+Working State Commit → fe0529396ae54022cd3f240c35a2a762fe09138e
+Result → EXHAUSTION_SATISFIED / GLOBAL_CLOSURE_ELIGIBLE
+Accepted ns_node Boundary Coverage → 4 / 4 / 100%
+Remaining accepted ns_node boundaries without Component Internal Design → NONE
+Remaining Material ns_node Component Internal-design Pressure → NONE_FOUND
+ns_node Internal Design Exhaustion → SATISFIED
+ns_node Component Internal Design Global-closure Eligibility → SATISFIED
+ns_node Component Internal Design Global Closure → NOT YET DECLARED
+Missing ns_node Runtime-role source-boundary design → 0
+Remaining ns_node Authority / SoT / Actual-state ambiguity → 0
+Remaining material identity / lifecycle / history ambiguity → 0
+Remaining material offline / recovery / diagnostics ambiguity → 0
+Mandatory missing Shared Foundation semantic → 0
+Implementation-defined Component Architecture Escape → 0
+Cross-component RCP work remaining → downstream / multi-party / NOT ns_node internal-design pressure
+RCP Full Cross-component Closure by inference → NOT CLAIMED
+Decision Registry → 0.0.31 / unchanged
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Semantic Gap → NONE
+Blocking Item → NONE
+Current Authorized Phase → NONE
+Unique Next Legal Action → write GAC-EPOCH-0086 Global State assessment seal, fresh Repository recovery, then if exhaustion/eligibility remain satisfied perform a separate ns_node Component Internal Design global-closure transition; do not authorize another Product Component automatically
+```
