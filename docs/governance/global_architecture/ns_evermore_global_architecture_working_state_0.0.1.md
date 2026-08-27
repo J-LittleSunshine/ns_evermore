@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0086`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0087`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # Current Working Baseline
@@ -23,19 +23,15 @@ ns_server Internal Design Exhaustion → SATISFIED
 ns_runtime Component Internal Design → GLOBAL_CLOSED / COMPLETE
 ns_runtime Internal Design Exhaustion → SATISFIED
 
-ns_node Batch 1 → GLOBAL_ACCEPTED
-ns_node Batch 2 / N4 → GLOBAL_ACCEPTED
+ns_node Component Internal Design → GLOBAL_CLOSED / COMPLETE
+ns_node Internal Design Exhaustion → SATISFIED
 Accepted ns_node Boundaries → N1 / N2 / N3 / N4
 Accepted ns_node Boundary Coverage → 4 / 4 / 100%
 Accepted ns_node Internal Responsibility Count → 33
 Remaining accepted ns_node boundary without Component Internal Design → NONE
-
 Remaining Material ns_node Component Internal-design Pressure → NONE_FOUND
-ns_node Internal Design Exhaustion → SATISFIED
-ns_node Component Internal Design Global-closure Eligibility → SATISFIED
-ns_node Component Internal Design Global Closure → NOT YET DECLARED
 
-Decision Registry → 0.0.31 / CURRENT / NORMATIVE
+Decision Registry → 0.0.32 / CURRENT / NORMATIVE
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Semantic Gap → NONE
@@ -45,35 +41,38 @@ Current Authorized Phase → NONE
 Authorization Scope → NONE
 ```
 
-# Assessment Basis
+# Global Closure Basis
 
-Assessment evidence:
+Closure evidence:
+
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_node_component_internal_design_global_closure_0.0.1.md`
+
+Exhaustion / eligibility assessment:
 
 `docs/architecture_reviews/ns_evermore_ngrp_001_ns_node_internal_design_remaining_pressure_batching_assessment_0.0.2.md`
 
 ```text
-Assessment Entry HEAD → 44264ee6e5680c15b80ea77142153cb399f3f65c
-Assessment Commit → a9ae16e56a777f7bfeb2b2a1caca78c271910cbc
+Assessment Transition → GAC-TR-0096 → GAC-EPOCH-0086
 Assessment Result → EXHAUSTION_SATISFIED / GLOBAL_CLOSURE_ELIGIBLE
+Assessment Seal → d66787134c577b1f795a03df9b23faf521ab8ff1
+Closure Recovery → PASS
+Closure Evidence Commit → c433b6e85c748add6a07570b848e5ff1cbe5875d
+Decision Registry 0.0.32 Commit → 925fe002250d9cedf2a4bc0babbbd632d53d8d2f
 ```
 
-# Exhaustion Evidence
+# Accepted ns_node Closure
 
 ```text
-Accepted ns_node Boundaries → 4
-Boundaries with Global-Accepted Component Internal Design → 4
-Coverage → 4 / 4 / 100%
-Missing Runtime-role source-boundary design → 0
+N1 / ND-R01 → GLOBAL_ACCEPTED
+N2 / ND-R02 → GLOBAL_ACCEPTED
+N3 / ND-R03 → GLOBAL_ACCEPTED
+N4 / ND-R04 → GLOBAL_ACCEPTED
+
+Boundary Coverage → 4 / 4 / 100%
+Internal Responsibility Count → 33
+Missing Runtime-role Source-boundary Design → 0
 Unowned Material Internal Responsibility → 0
-Duplicate Final Responsibility requiring repair → 0
-Remaining Authority / SoT / Actual-state ambiguity → 0
-Remaining identity / lifecycle / history ambiguity → 0
-Remaining offline / recovery / diagnostics ambiguity → 0
-Mandatory missing Shared Foundation semantic → 0
-Implementation-defined Component Architecture Escape → 0
-Unmapped Material Decision → 0
-Open MDE → 0
-Blocking Item → NONE
+Remaining Material Internal-design Pressure → NONE_FOUND
 ```
 
 # Stable-contract Qualification
@@ -87,7 +86,7 @@ RCP-22 complete ns_node-side contribution → COMPLETE AT CURRENT DESIGN LEVEL /
 RCP-19 Node Applied contribution → CLOSED AT CURRENT NODE DESIGN LEVEL
 ```
 
-Remaining full cross-component RCP closure is downstream/multi-party and is not remaining `ns_node` internal-design pressure.
+No Full Cross-component RCP closure is inferred from `ns_node` Global Closure. Remaining peer/source/UI/SDK contributions remain downstream or multi-party.
 
 # Authority / Recovery Baseline
 
@@ -115,10 +114,7 @@ Latest Timestamp / Arrival != Canonical Winner
 
 # Governance Boundary
 
-This checkpoint establishes exhaustion/eligibility only.
-
 ```text
-ns_node Component Internal Design Global Closure → NOT YET DECLARED
 ns_agent Component Internal Design → NOT AUTHORIZED
 ns_web Component Internal Design → NOT AUTHORIZED
 System-level SDK Detailed Design → NOT AUTHORIZED
@@ -129,9 +125,9 @@ Implementation Planning / IWP / Coding → NOT AUTHORIZED
 # Unique Next Legal Action
 
 ```text
-append GAC-TR-0096 exhaustion / global-closure eligibility assessment transition
-→ seal GAC-EPOCH-0086 assessment State
+append GAC-TR-0097 ns_node Component Internal Design Global Closure transition
+→ write GAC-EPOCH-0087 Global State closure seal
 → fresh Repository recovery
-→ if Exhaustion and Eligibility remain SATISFIED with no drift/MDE/blocker, perform a separate ns_node Component Internal Design Global Closure transition
+→ perform next-Product-Component Component Internal Design sequencing / remaining-pressure / entry-readiness assessment
 → do not authorize another Product Component automatically
 ```
