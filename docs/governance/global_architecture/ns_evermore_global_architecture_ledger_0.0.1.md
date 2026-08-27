@@ -1401,9 +1401,7 @@ Blocking Item → NONE
 Current Authorized Phase → NONE
 ns_agent Batch 1 Authorization → NOT GRANTED BY ASSESSMENT
 Unique Next Legal Action → write GAC-EPOCH-0088 Global State assessment seal, fresh Repository recovery, then if readiness remains satisfied perform a separate ns_agent Component Internal Design / Batch 1 authorization transition
-```
 
-```text
 GAC-TR-0099 → GAC-EPOCH-0089
 Transition → separate ns_agent Component Internal Design / Batch 1 authorization
 Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_node_component_internal_design_next_component_sequencing_ns_agent_entry_readiness_assessment_0.0.1.md
