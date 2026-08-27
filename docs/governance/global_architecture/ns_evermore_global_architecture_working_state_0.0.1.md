@@ -1,8 +1,8 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0090_BATCH1_ACCEPTANCE_PENDING_LEDGER_AND_SEAL`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0091_NS_AGENT_BATCH2_ENTRY_READINESS_ASSESSMENT_PENDING_LEDGER_AND_SEAL`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
-- Current Authoritative Global State Before Seal: `GAC-EPOCH-0089`
+- Current Authoritative Global State Before Seal: `GAC-EPOCH-0090`
 
 # Current Working Baseline
 
@@ -28,15 +28,13 @@ ns_runtime Internal Design Exhaustion → SATISFIED
 ns_node Component Internal Design → GLOBAL_CLOSED / COMPLETE
 ns_node Internal Design Exhaustion → SATISFIED
 
-ns_agent Component Internal Design / Batch 1 → GLOBAL_ACCEPTED BY CURRENT GAC WORKING TRANSITION
+ns_agent Component Internal Design / Batch 1 → GLOBAL_ACCEPTED
 Accepted ns_agent Boundaries → A1 / A2 / A3 / A4
 Accepted ns_agent Boundary Coverage → 4 / 6 / 66.67%
 Accepted ns_agent Internal Responsibility Count → 35
-Remaining accepted ns_agent boundaries without Component Internal Design → A5 / A6
-ns_agent Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 1 ACCEPTANCE
-ns_agent Component Internal Design Global Closure → NOT DECLARED
+Remaining accepted ns_agent boundaries → A5 / A6
 
-Decision Registry → 0.0.33 / CURRENT / NORMATIVE after seal
+Decision Registry → 0.0.33 / CURRENT / NORMATIVE
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Semantic Gap → NONE
@@ -44,218 +42,225 @@ Blocking Item → NONE
 Known Working-branch Drift → NONE
 ```
 
-# Acceptance Review Basis
+# Assessment Evidence
 
-Producing coordinates:
-
-```text
-Producing Entry HEAD
-→ 6b4f71eb1531a91df1ad7c24ef59d0c9f1613354
-
-Candidate Commit
-→ 3690a4e007b5879790364657b465253349576993
-
-DAD Commit
-→ 8b7cf5523d9e1085d0325d6f66a522afb28f4606
-
-Review / Audit Commit
-→ 515d1d1dea2e4a9f07f6512ff257f75d36e05afd
-
-Producing Final / Handoff HEAD
-→ ebc015421c9ce959192c7408bb210a22a485fd4e
-```
-
-GAC acceptance evidence:
-
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_agent_internal_design_batch_1_global_acceptance_0.0.1.md`
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_agent_internal_design_remaining_pressure_batching_assessment_0.0.1.md`
 
 ```text
-Global Acceptance Evidence Commit
-→ a46b86bdde40d3dd096d6fc6497a318b08079503
+Assessment Entry HEAD
+→ ce7173d4515625c946ba5408f107c4ca50dbda62
 
-Decision Registry 0.0.33 Commit
-→ 0fa73558fdfa864cc98863e7c713530e814a418f
+Assessment Evidence Commit
+→ c88f634afe7f5fd56160acd4f0cb00e043f7f677
+
+Input Epoch
+→ GAC-EPOCH-0090
 
 Result
-→ GLOBAL_ACCEPT
+→ COMPLETED
 ```
 
-Producing delta:
+# Remaining-pressure / Exhaustion Result
 
 ```text
-6b4f71eb... → ebc01542...
-→ exactly 4 commits
-→ exactly 4 added architecture evidence files
-→ existing governance/normative/source files modified = 0
-→ Unexpected Drift = NONE
-→ Unauthorized Progression = NONE
+Remaining Material ns_agent Component Internal-design Pressure
+→ PRESENT
+
+ns_agent Internal Design Exhaustion
+→ NOT_SATISFIED
+
+Remaining Boundaries
+→ A5 Native Multi-Agent Composition
+→ A6 Governed Cross-domain Delegation & Automation Participation
+
+ns_agent Component Internal Design Global Closure
+→ NOT ELIGIBLE / NOT DECLARED
 ```
 
-# Accepted Batch-1 Scope
+A1-A4 + accepted NSH core remain normative upstream and MUST NOT be reopened by Batch 2 without formal GAC revalidation.
+
+# Batch-2 Entry-readiness Result
 
 ```text
-A1 — Agent Definition & Evolution
-A2 — Agent Runtime Context, HITL & Actual-state
-A3 — Model / Provider Mediation & Multimodal Capability
-A4 — Tool & Knowledge Consumption
+Immediate Next Batch Candidate
+→ ns_agent / Batch 2 / A5 + A6
+
+Batch-2 Entry Readiness
+→ SATISFIED
+
+Inherited Runtime Roles
+→ AG-R03 Native Multi-Agent Composition Coordinator
+→ AG-R04 Cross-domain Delegation & Automation Participant
+
+Proposed Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_AGENT / BATCH_2 / HARNESS_NATIVE_MULTI_AGENT_COMPOSITION_GOVERNED_CROSS_DOMAIN_DELEGATION_AUTOMATION_PARTICIPATION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+
+Batch-2 Authorization
+→ NOT GRANTED BY ASSESSMENT
 ```
 
-Accepted internal responsibility count:
+# A5 / A6 Ownership Preservation
 
 ```text
-A1 → 7
-A2 → 13
-A3 → 7
-A4 → 8
-Total → 35
+Agent Definition / Semantic Authority + Canonical Definition SoT
+→ A1 / ns_agent
+
+A5 / AG-R03
+→ composition coordination / provenance facts only
+
+Each participant Agent runtime
+→ A2 / AG-R01
+
+A6 / AG-R04
+→ Agent-side delegation / invocation / candidate-authoring participation facts only
+
+Automation Definition / Workflow Authority + SoT
+→ ns_server / S6
+
+Formal Artifact Acceptance / Execution Admission
+→ ns_server / S8
+
+Routing / Scheduling / Dispatch
+→ ns_runtime / R2 / RT-R02
+
+Cross-component continuation / delegation coordination
+→ ns_runtime / R3 / RT-R03
+
+Recovery / Reconciliation Coordination
+→ ns_runtime / R4 / RT-R04
+
+Node Readiness / Attempt / Effect
+→ N1 / N2 / N3
 ```
 
-# ns_evermore Harness / NSH Accepted Position
+Permanent:
+
+```text
+Multi-Agent Composition != Separate Multi-Agent Authority
+AG-R03 Composition Coordination != merged AG-R01 Actual-state
+Agent A Invokes Agent B != Authority Transfer
+Multi-Agent != Automation Workflow Authority
+Agent Delegation != Node Attempt
+Agent Delegation != Node Effect Ownership
+Agent Invokes Automation != Automation Authority
+Agent Authors Candidate Automation != Accepted Automation
+Candidate Possession != Artifact Acceptance
+Agent Intent != Execution Admission
+```
+
+# NSH Batch-2 Extension Pressure
 
 ```text
 NSH Architecture Identity
-→ NAMED INTERNAL ARCHITECTURE CONCEPT INSIDE EXISTING ns_agent BOUNDARIES
+→ named internal architecture concept inside existing ns_agent boundaries
 
-A1
-→ Agent Definition / Revision authority + canonical SoT upstream
+A1-A4
+→ accepted NSH core / normative upstream
 
-A2
-→ primary NSH runtime/context/continuity/HITL core
+A5
+→ future Multi-Agent composition extension seam to be internally designed only if separately authorized
 
-A3
-→ provider/model capability and mediation evidence lane
+A6
+→ future governed cross-domain action/delegation extension seam to be internally designed only if separately authorized
 
-A4
-→ Tool/Knowledge/RAG consumption and reintegration lane
-
-A5 / A6
-→ future opaque extension seams only / NOT DESIGNED
+A7 / AG-R05
+→ NOT CREATED
 ```
 
-Not introduced:
+Harness evolution law remains unchanged and normative.
+
+# Stable-contract / RCP Candidate Scope
 
 ```text
-sixth Product Component
-A7
-AG-R05 Runtime Role
-new Product Capability
-new Authority / SoT / final Actual-state owner
-new cross-component RCP
+RCP Count
+→ 24 / unchanged
+
+RCP-11
+→ proposed AG-R03 composition/provenance owner-side closure + A2/AG-R01 participant integration refinement
+→ Full design-semantic closure NOT CLAIMED BY ASSESSMENT
+
+RCP-12
+→ proposed AG-R04 owner/source-side Agent Delegation closure + stable contract synthesis
+→ Full Cross-component Closure NOT CLAIMED BY ASSESSMENT
+
+RCP-02
+→ Admission Evidence consume/applicability only
+
+RCP-03 / RCP-05 / RCP-06
+→ accepted RT presence/dispatch/continuation coordination consume-only / internals NOT reopened
+
+RCP-04 / RCP-07 / RCP-08
+→ accepted Node readiness/attempt/effect consume/reference only / internals NOT reopened
+
+RCP-13 / RCP-15
+→ accepted Automation continuation/composition consume/reference only
+
+RCP-16
+→ accepted A2 HITL source semantics preserved / A5-A6 correlation only where material
+
+RCP-17
+→ A5/A6 Trial contribution only where material / Full closure not inferred
+
+RCP-19
+→ A5/A6 Applied configuration contribution only where genuinely owned / S9 Desired preserved
+
+RCP-20
+→ AG-R03/AG-R04 source-owner recovery/reconciliation participation for their own facts only / RT-R04 preserved
+
+RCP-22
+→ A5/A6 diagnostics/provenance contribution; may complete all-six-boundary ns_agent contribution only if later design proves it
+
+RCP-24
+→ A5/A6 receiving/applicability expectation only where material / WB-SDK source side downstream
 ```
 
-# Accepted Harness Evolution Law
+Accepted A6 boundary also carries representation-neutral stable pressure for governed Agent→Node delegation, existing Automation invocation, and candidate Automation submission into normal S6/S8 lifecycle. No new RCP ID is created by this assessment.
+
+# Entry-readiness Gate
 
 ```text
-Harness Strategy
-→ MUST remain model-adaptive where applicable
-
-Provider / Model Capability Profile
-→ MAY inform bounded Harness strategy selection/adaptation
-
-Current-generation model limitation
-→ MUST NOT automatically become permanent Product Architecture
-
-Provider/model evolution
-→ MUST NOT silently rewrite Agent semantics
-```
-
-# Accepted Authority / SoT / Actual-state Boundary
-
-```text
-AI Agent Definition / Semantic Authority → A1 / ns_agent
-AI Agent Canonical Definition SoT → A1 / ns_agent
-Agent Runtime Actual-state → A2 / AG-R01 for A2-origin facts
-Provider Mediation bounded observations → A3 / AG-R02 for A3-origin facts
-Automation Definition / Workflow Authority → ns_server / S6
-Formal Artifact Acceptance / Execution Admission → ns_server / S8
-Routing / Scheduling / Dispatch Coordination → ns_runtime / R2 / RT-R02
-Continuation / Delegation / Intervention Coordination → ns_runtime / R3 / RT-R03
-Recovery / Reconciliation Coordination → ns_runtime / R4 / RT-R04
-Node Readiness / Attempt / Effect → N1 / N2 / N3
-Knowledge / external factual SoT → original applicable owners
-```
-
-# Accepted Permanent Non-collapse
-
-```text
-Model != Agent
-Model Provider != Agent Authority
-Harness != Agent Definition Authority automatically
-Harness Action Proposal != Authorized Execution
-Harness Tool Selection != Execution Admission
-Harness Invocation != Protected Effect
-Harness Tool Result != Business Semantic Success automatically
-Harness Context Cache != Knowledge SoT
-Harness Memory != External Data SoT
-Harness Checkpoint != Canonical Product State automatically
-Harness Recovery != SoT Transfer
-Harness Agent Loop != Automation Workflow Semantics
-Harness-local continuation != ns_runtime cross-component scheduling/routing/dispatch
-
-Agent Definition Revision != Agent Operation
-Agent Operation != Agent Runtime Attempt
-Agent Runtime Attempt != Harness Invocation
-Harness Invocation != Provider Mediation Interaction
-Harness Invocation != Node Attempt
-Node Attempt != Node Effect
-
-Admission != Scheduling != Routing != Dispatch != Attempt != Effect
-Reference != Authority
-Correlation != Ownership
-Observation != Canonicalization
-Retry != historical mutation
-Recovery != original fact rewrite
-Latest Timestamp != Canonical Winner
-```
-
-# Stable-contract / RCP Acceptance
-
-```text
-RCP-09 AG-R01 owner/source-side → CLOSED AT CURRENT DESIGN LEVEL
-RCP-10 AG-R02 bounded-observation owner-side → CLOSED AT CURRENT DESIGN LEVEL
-RCP-16 Agent source wait/applicability side → CLOSED AT CURRENT DESIGN LEVEL / Full Cross-component Closure NOT CLOSED
-RCP-17 Agent Trial contribution → CLOSED AT CURRENT DESIGN LEVEL / Full Closure NOT CLOSED
-RCP-19 Agent Applied contribution → CLOSED AT CURRENT DESIGN LEVEL / S9 Desired authority preserved
-RCP-20 AG-R01 source-owner recovery/reconciliation contribution → CLOSED AT CURRENT DESIGN LEVEL / RT-R04 preserved / Full Cross-component Closure NOT CLOSED
-RCP-22 A1-A4 diagnostics/provenance contribution → COMPLETE AT CURRENT BATCH DESIGN LEVEL / A5-A6 NOT DESIGNED / Full Cross-component Closure NOT CLOSED
-RCP-24 Agent receiving/applicability expectation → CLOSED AT CURRENT DESIGN LEVEL / Full Closure NOT CLOSED
-RCP-04 / RCP-07 / RCP-08 → accepted Node source semantics consume-only / NOT reopened
-RCP-12 → bounded consumer/correlation expectation only / AG-R04 owner side remains A6
-RCP-11 → NOT DESIGNED / future A5
-```
-
-Named intra-component stable pressure:
-
-```text
-Agent Harness Internal Stable Contract Pressure
-→ SYNTHESIZED
-→ A2 ↔ A3 ↔ A4
-→ consumes A1 Definition / Revision semantics
-→ no new RCP ID
-```
-
-# DAD / MDE / Foundation / Implementation Gate
-
-```text
-Accepted DAD → CID-AG-B1-DAD-001..022
-Misclassified MDE → 0
-New MDE → 0
-Open MDE → 0
+Missing A1-A4 Accepted Upstream → 0
+Missing AG-R03 / AG-R04 Runtime Role → 0 / 0
+Missing Required Server Upstream → 0
+Missing Required Runtime Upstream → 0
+Missing Required Node Upstream → 0
+Missing Mandatory Shared Foundation Semantic → NONE_FOUND
+New Product Capability Required For Entry → NO
+Open MDE Required For Entry → 0
 Unpersisted Owner Decision → 0
-Mandatory Missing Shared Foundation Semantic → NONE_FOUND
-Hard Internal SDD Graph → ACYCLIC
-Authority Cycle → NONE
-Circular Actual-state Ownership → NONE
-Implementation Leakage → 0
-A5/A6 Preemption → 0
+Blocking Semantic Gap → NONE
+Blocking Item → NONE
+Batch-2 Entry Readiness → SATISFIED
 ```
+
+# Future MDE Stop Boundary
+
+A future Batch-2 producing session must STOP and return to GAC / Owner if it materially requires a durable choice involving:
+
+```text
+recursive / cyclic Multi-Agent composition product semantics with material long-term tradeoff
+new universal Multi-Agent semantic authority
+shared participant Actual-state SoT
+universal delegation target winner / priority / fairness law
+universal retry / cancellation / rollback / compensation / once guarantee
+new cross-component scheduler / dispatcher authority
+new Workflow / Automation Authority
+candidate Automation governance bypass
+new fail-open / fail-closed law
+conflict winner / merge / authoritative synchronization law
+major universal identity namespace
+mandatory public SaaS / broker / workflow / recovery dependency
+provider/framework/protocol/storage lock-in or other high-migration commitment
+```
+
+No such question is required merely to authorize entry.
 
 # Explicitly Not Authorized / Not Declared
 
 ```text
 A5 Internal Design
 A6 Internal Design
-ns_agent Batch 2
+ns_agent Batch 2 producing work
 ns_agent Internal Design Exhaustion SATISFIED
 ns_agent Component Internal Design Global Closure
 ns_web Component Internal Design
@@ -266,9 +271,12 @@ IWP
 Coding
 ```
 
-# Current Authorization After Acceptance Seal
+# Current Governance State Before Assessment Seal
 
 ```text
+Current Authoritative Global State
+→ GAC-EPOCH-0090
+
 Current Authorized Phase
 → NONE
 
@@ -276,36 +284,13 @@ Authorization Scope
 → NONE
 ```
 
-# Ledger Continuity for Acceptance Transition
-
-The logical Ledger currently consists of:
-
-```text
-docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md
-+ docs/governance/global_architecture/ns_evermore_global_architecture_ledger_continuation_0.0.1.md
-```
-
-The primary Ledger remains immutable through `GAC-TR-0099`; continuation 0.0.1 contains `GAC-TR-0100`.
-
-For the Batch-1 Global Acceptance transition:
-
-```text
-Next Transition
-→ GAC-TR-0101 → GAC-EPOCH-0090
-
-Required Ledger Rule
-→ additions-only / historical segments unchanged
-```
-
-If continuation 0.0.1 cannot be appended without historical-line replacement, create the next explicitly linked append-only continuation segment rather than modify prior historical text.
-
 # Unique Next Legal Action
 
 ```text
-persist GAC-TR-0101 → GAC-EPOCH-0090 as strict Ledger continuation
-→ validate acceptance Working State → Ledger transition net deletions = 0
-→ write GAC-EPOCH-0090 Global State acceptance seal
+append GAC-TR-0102 → GAC-EPOCH-0091 as strict append-only Ledger evidence
+→ validate net Ledger deletions = 0 from this Working State checkpoint
+→ write GAC-EPOCH-0091 Global State assessment seal
 → fresh Repository recovery
-→ perform post-Batch-1 ns_agent Component Internal Design remaining-pressure / exhaustion / Batch-2 entry-readiness assessment
-→ do not authorize A5/A6 automatically
+→ if readiness remains SATISFIED, perform a separate ns_agent Component Internal Design / Batch-2 / A5+A6 authorization transition
+→ do not start Batch-2 producing work before separate authorization
 ```
