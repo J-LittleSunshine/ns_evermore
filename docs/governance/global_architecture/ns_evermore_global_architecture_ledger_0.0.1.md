@@ -930,7 +930,6 @@ Unique Next Legal Action → fresh-recovery GAC post-Batch-2 ns_runtime Componen
 GAC-TR-0085 → GAC-EPOCH-0075
 Transition → post-Batch-2 ns_runtime Component Internal Design remaining-pressure / exhaustion / R4 entry-readiness assessment
 Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.2.md
-Assessment Commit → 02111a836ab4191ba2a610eaadbae0bd9197c436
 Working State Commit → baa3aec7105087e63635aa3dfe227f998b995252
 Result → COMPLETED
 Remaining Material ns_runtime Component Internal-design Pressure → PRESENT
@@ -1171,7 +1170,7 @@ RCP-13 / RCP-15 Node Automation Executor Correlation → BOUNDED / S6 semantics 
 RCP-17 Node Trial Attempt/Effect Contribution → CLOSED AT CURRENT NODE DESIGN LEVEL / Full Trial closure NOT CLOSED
 RCP-19 Node Applied Configuration Contribution → CLOSED AT CURRENT NODE DESIGN LEVEL / S9 Desired authority preserved
 RCP-22 N1/N2/N3 Provenance/Technical Diagnostics → BOUNDED / complete Node diagnostics remains N4
-RCP-24 Node intervention target/outcome expectation → BOUNDED
+RCP-24 Node Intervention Target/Outcome Expectation → BOUNDED
 RCP-20 → NOT DESIGNED / reserved for N4 future Batch 2
 Authority / SoT / Final Actual-state Transfer → 0
 External factual SoT replacement → 0
