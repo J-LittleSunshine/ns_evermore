@@ -472,7 +472,7 @@ Global Retry / Cancellation / Conflict-winner Policy → 0
 RCP-23 S10 / SV-R06 Contribution → CLOSED AT CURRENT DESIGN LEVEL
 RCP-23 Full Server-native Runtime Evidence → CLOSED AT CURRENT DESIGN-SEMANTIC LEVEL
 RCP-23 Producer Partitions → S5/SV-R01 + S7/SV-R03 + S10/SV-R06 / ownership preserved
-Universal Server Runtime Actual-state SoT → NOT CREATED
+Universal Server Runtime Actual-state SoT → NOT_CREATED
 S5 Internals Reopened → 0
 S7 Internals Reopened → 0
 Authority / SoT / Actual-state Transfer → 0
@@ -501,11 +501,12 @@ S12 Owner Capability / MDE → OWNER_DECIDED / PERSISTED / Option B / channel-ne
 S12 Entry Readiness → SATISFIED
 Potential RCP-18 Notification / Delivery Closure → ELIGIBLE IN LATER SEPARATELY AUTHORIZED BATCH 6
 S11 → own side possible / full RCP-16 still spans Automation + Agent + Human Task + Web participation
+S12 → entry-clean in principle / RCP-18 side later / lower dependency-unlocking value
 S13 → deferred until Human Task / Notification contribution semantics are further stabilized
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Item → NONE
-Batch 6 Authorization → NOT GRANTED
+Batch 6 Authorization → NOT_GRANTED
 Current Authorized Phase → NONE
 Unique Next Legal Action → fresh Repository recovery then separate GAC authorization transition for ns_server Component Internal Design / Batch 6 / S12
 
@@ -526,7 +527,7 @@ S11 / S13 Internal Design → NOT AUTHORIZED
 Other Product Component Internal Design → NOT AUTHORIZED
 System-level SDK Detailed Design / Implementation Planning / IWP / Coding → NOT AUTHORIZED
 Concrete Feishu / WeCom / SMS Provider/API/SDK Selection → NOT AUTHORIZED
-Concrete Queue / Broker / Retry-engine / Template / Recipient-schema / DB / API Selection → NOT_AUTHORIZED
+Concrete Queue / Broker / Retry-engine / Template / Recipient-schema / DB / API Selection → NOT AUTHORIZED
 Open MDE required for current S12 Batch → 0
 Unpersisted Owner Decision required for current S12 Batch → 0
 Blocking Item → NONE
@@ -669,7 +670,7 @@ Inherited Runtime Role → SV-R09 Discovery Projection Participant
 Owner Capability Baseline → Unified Governed Cross-domain Resource Discovery / authorization-aware / Tenant-aware / private-offline-capable / domain identity preserved
 Discovery Projection / Index as Resource Authority or Canonical SoT → PROHIBITED
 S13 Actual-state Ownership → projection freshness/completeness/partiality/rebuild/staleness/availability/uncertainty only
-Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating applicable owners / PRESERVED
+Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating resource owners / PRESERVED
 RCP-21 S13 / SV-R09 Contribution → AUTHORIZED FOR CURRENT DESIGN-LEVEL CLOSURE
 RCP-21 Full Cross-component Closure → NOT AUTHORIZED
 S11 Human Task / S12 Notification Contribution Semantics → accepted upstream / may be consumed / internals MUST NOT be reopened
