@@ -1,16 +1,16 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0098`
+- Status: `CURRENT / GAC-EPOCH-0099`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-→ GAC-EPOCH-0098
+→ GAC-EPOCH-0099
 
 State Verified Through HEAD
-→ c9fa5104f22bb2e1559a610692756ebf8859529d
+→ 64de41c7cef6c05170c3b98eca077643e464538d
 
 Genesis Constitution
 → GLOBAL_ACCEPTED / NORMATIVE
@@ -90,11 +90,23 @@ Accepted ns_web Internal Responsibility Count
 Remaining accepted ns_web boundaries without Component Internal Design
 → W2 / W3 / W4 / W5 / W6
 
+Remaining Material ns_web Component Internal-design Pressure
+→ PRESENT
+
 ns_web Internal Design Exhaustion
-→ NOT YET REASSESSED AFTER BATCH 1 ACCEPTANCE
+→ NOT_SATISFIED
 
 ns_web Component Internal Design Global Closure
-→ NOT DECLARED
+→ NOT ELIGIBLE / NOT DECLARED
+
+Recommended ns_web Batch Shape
+→ MULTIPLE / 4 / PRESERVED
+
+Immediate Next Batch Candidate
+→ ns_web / Batch 2 / W2
+
+ns_web Batch-2 Entry Readiness
+→ SATISFIED
 
 Decision Registry
 → 0.0.36 / CURRENT / NORMATIVE
@@ -121,333 +133,267 @@ Authorization Scope
 → NONE
 ```
 
-# ns_web Batch-1 Global Acceptance
+# Post-Batch-1 ns_web Remaining-pressure / Batch-2 Entry-readiness Assessment
 
 Transition:
 
 ```text
-GAC-TR-0109 → GAC-EPOCH-0098
+GAC-TR-0110 → GAC-EPOCH-0099
 ```
 
-Global Acceptance evidence:
+Assessment evidence:
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_1_global_acceptance_0.0.1.md`
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_remaining_pressure_batch_2_entry_readiness_assessment_0.0.1.md`
 
-Producing coordinates:
+Coordinates:
 
 ```text
-Producing Entry HEAD
-→ 392d817c60c2b69bf5367a6224dbb5b701c12fcf
+Assessment Recovery Entry HEAD
+→ c8df6e7776df851b98f17124118767107417cee2
 
-Candidate Commit
-→ c4a83ff19311d5c330ca9f7b0d015bc958a586e5
+Assessment Evidence Commit
+→ 1fafbc674a59a922d06e10181d9fd916c06ca587
 
-DAD Commit
-→ 5ebf2773ffae7a17cacb41ee5a4a870e6e20e472
+Assessment Working State Commit
+→ 3dafd995698a586c4a6b7b405aff7d0f05ecb272
 
-Review / Audit Commit
-→ b5939ec6ff7de27b8f7985628b82776176cd0935
+Assessment Ledger Commit
+→ 64de41c7cef6c05170c3b98eca077643e464538d
 
-Producing Final / Handoff HEAD
-→ b1973ef4af69e2e2f4be875bf6aacfbaadd36092
+Assessment Evidence Delta
+→ 1 commit / 1 added assessment file / additions 530 / deletions 0
 
-Global Acceptance Evidence Commit
-→ 2ff5c3534ebf1f4e4d4b51699897794f320d3701
-
-Decision Registry 0.0.36 Commit
-→ 981ba7b2bc92f5173d70547523a7e4c76ca23f5c
-
-Acceptance Working State Commit
-→ 68b14cc144e7e43faa9b9ba46fbdd6646a94fa65
-
-Acceptance Ledger Commit
-→ c9fa5104f22bb2e1559a610692756ebf8859529d
+Ledger Append-only Validation
+→ additions 91 / deletions 0
 
 Result
-→ GLOBAL_ACCEPT
+→ COMPLETED
 ```
 
-Producing delta:
+# Remaining Boundaries
 
 ```text
-392d817c60c2b69bf5367a6224dbb5b701c12fcf
-→ b1973ef4af69e2e2f4be875bf6aacfbaadd36092
-
-→ exactly 4 commits
-→ exactly 4 added architecture-review evidence files
-→ Candidate 1222 additions / 0 deletions
-→ DAD 1012 additions / 0 deletions
-→ Review 848 additions / 0 deletions
-→ Handoff 744 additions / 0 deletions
-→ existing governance/normative/source/implementation files modified = 0
-→ Unexpected Drift = NONE
-→ Unauthorized Progression = NONE
+W2 — Cross-domain Authoring & Semantic Interoperability
+W3 — Human Task Interaction
+W4 — Notification & Awareness Interaction
+W5 — Operational Observation, Trial, Intervention & Diagnostics
+W6 — Cross-domain Discovery & Governed Navigation
 ```
 
-# Accepted Batch-1 Internal Architecture
+These remain material Component Internal-design pressure. Batch-1 W1/W7 accepted architecture remains normative upstream and MUST NOT be reopened without formal GAC revalidation.
 
-Accepted boundaries:
+# Batch Shape
 
 ```text
-W1 — Governed Administration & Control Interaction
-W7 — Experience Semantics, Accessibility & Degraded Interaction
+Batch 1
+→ W1 + W7 / GLOBAL_ACCEPTED
+
+Batch 2
+→ W2 / immediate next candidate
+
+Batch 3
+→ W5
+
+Batch 4
+→ W3 + W4 + W6
 ```
 
-Inherited runtime-facing role:
+The previously assessed four-Batch shape remains valid.
+
+# W2 Position
 
 ```text
-WB-R01 — Governed Human Interaction & Projection Participant
+W2
+→ Cross-domain Authoring & Semantic Interoperability
+
+Purpose
+→ complete visual authoring for Business Application
+→ complete visual authoring for Automation
+→ complete visual authoring for Agent
+→ complete visual authoring for Data / Knowledge / ETL
+→ source ↔ visual semantic interoperability
+→ validation / conformance / compatibility feedback
+→ revision / history / semantic-diff interaction
 ```
 
-Accepted responsibility counts:
+W2 owns no domain Definition Authority or canonical Definition SoT.
+
+Definition authorities remain:
 
 ```text
-W1 → 11
-W7 → 9
-Total → 20
+Business Application Definition Authority / SoT
+→ S5 / ns_server
+
+Automation Definition Authority / SoT
+→ S6 / ns_server
+
+Data / Knowledge / ETL Semantic Authority
+→ S7 / ns_server
+
+Agent Definition Authority / Canonical Definition SoT
+→ A1 / ns_agent
 ```
 
-## W1 accepted responsibilities
+Permanent W2 entry constraints:
 
 ```text
-W1-R01 Governed Interaction Context & Session Provenance
-W1-R02 Administration Projection Qualification
-W1-R03 Authoritative Target & Intent Correlation
-W1-R04 Governed Command Intent Origination & Submission Occurrence
-W1-R05 Intent Applicability Observation
-W1-R06 Authoritative Outcome Correlation
-W1-R07 Governance / Acceptance / Admission Administration Projection
-W1-R08 Managed Configuration Administration Projection
-W1-R09 Web Interaction History / Audit / Diagnostic Projection
-W1-R10 Offline / Degraded Intent Possession & Re-observation
-W1-R11 Administration Compatibility / Migration / Conformance Interaction
+Visual Builder != Semantic Authority
+Visual Edit State != Canonical Definition SoT
+Visual Representation != Canonical Definition automatically
+Source Representation != separate source-only semantic class
+Authoring Intent != Accepted Definition Revision
+Validation Feedback != Formal Artifact Acceptance
+Validation Feedback != Execution Admission
+Local Draft != Canonical Revision
+Offline Draft Possession != Authoritative Acceptance
+Semantic Diff Projection != Revision Authority
+SDK Surface != Product Authority
 ```
 
-## W7 accepted responsibilities
+Source↔visual interoperability is semantic interoperability and does not imply physical byte-for-byte or syntax-preserving round-trip.
+
+# Batch-2 Candidate Scope
 
 ```text
-W7-R01 Semantic Presentation Vocabulary & Qualification
-W7-R02 Locale & Localization Context
-W7-R03 Timezone & Source-time Presentation
-W7-R04 Accessibility-preserving Critical Interaction
-W7-R05 Status / Error / Currentness Presentation
-W7-R06 Degraded / Unknown / Offline Experience Qualification
-W7-R07 Redaction & Sensitive Disclosure Preservation
-W7-R08 Cross-surface Semantic Consistency & Future Web Seam
-W7-R09 Experience Transformation Provenance & Diagnostics
+Candidate
+→ NGRP-001 — Component Internal Design / ns_web / Batch 2
+
+Boundary
+→ W2 — Cross-domain Authoring & Semantic Interoperability
+
+Inherited Runtime-facing Role
+→ WB-R01 — Governed Human Interaction & Projection Participant
+
+Proposed Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_2 / CROSS_DOMAIN_VISUAL_AUTHORING_SEMANTIC_INTEROPERABILITY_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+
+Authorization
+→ NOT GRANTED BY THIS ASSESSMENT
 ```
 
-# Accepted Web Authority / Intent Boundary
-
-WB-R01 owns only bounded Web-origin facts genuinely originating in the Web interaction surface:
+# Batch-2 Entry-readiness Gate
 
 ```text
-interaction/session occurrence
-Web-origin governed intent
-submission occurrence
-Web correlation/provenance
-presentation transformation provenance
+W2 accepted boundary exists
+→ YES
+
+W2 material pressure remains
+→ YES
+
+Missing accepted W1/W7 Web baseline
+→ 0
+
+Missing S5 Definition Authority upstream
+→ 0
+
+Missing S6 Definition Authority upstream
+→ 0
+
+Missing S7 Definition Authority upstream
+→ 0
+
+Missing A1 Definition Authority upstream
+→ 0
+
+Missing WB-R01 Runtime-facing Role
+→ 0
+
+Missing Mandatory Shared Foundation Semantic
+→ NONE_FOUND
+
+System-level SDK Detailed Design required merely for entry
+→ NO
+
+New Product Capability required for entry
+→ NO
+
+New Runtime Role required for entry
+→ NO
+
+New Cross-component RCP required for entry
+→ NO
+
+Open MDE required merely for entry
+→ 0
+
+Unpersisted Owner Decision
+→ 0
+
+Blocking Semantic Gap
+→ NONE
+
+Blocking Item
+→ NONE
+
+ns_web Batch-2 Entry Readiness
+→ SATISFIED
 ```
 
-Receiving/source owners retain applicability, semantic outcome and source Actual-state.
-
-Permanent:
+# Stable-contract / RCP Candidate Pressure
 
 ```text
-Web Interaction != Domain Authority
-Web Projection != Source Actual-state
-UI Local State != Canonical Product State
-Frontend Cache != Source of Truth
-Browser Session != Operation Owner
-Button Click != Policy Permit
-Button Click != Artifact Acceptance
-Button Click != Execution Admission
-UI Affordance != Permission
-Transport / HTTP Success != Domain Semantic Success
-Correlation != Ownership
+Runtime / Domain Stable Contract Pressure Count
+→ 24 / unchanged
+
+Primary W2 pressure
+→ S5 Business Application Definition Lifecycle ↔ W2
+→ S6 Automation Definition Lifecycle ↔ W2
+→ S7 Data / Knowledge / ETL Definition Lifecycle ↔ W2
+→ A1 Agent Definition Lifecycle ↔ W2
+
+RCP-24
+→ bounded authoring/change-intent refinement where materially applicable
+→ Full Closure NOT inferred
+
+RCP-22
+→ bounded authoring provenance/diagnostic presentation where materially applicable
+→ Full Cross-component Closure NOT inferred
+
+New RCP ID
+→ NOT REQUIRED FOR ENTRY
 ```
 
-Accepted governed-intent chain:
+Potential representation-neutral W2 stable subjects include, subject to actual bounded design:
 
 ```text
-Local / Offline Intent Possession
-!= Intent Submission Occurrence
-!= Intent Applicability Observation
-!= Authoritative Outcome
+Authoring Projection
+Governed Edit / Change Intent
+Revision-base Binding
+Authoritative Definition Correlation
+Validation Result / Feedback
+Conformance / Compatibility Feedback
+Unsupported / Non-editable / Representation-limited Qualification
+Semantic Diff / Revision History Projection
+Source ↔ Visual Semantic Interoperability
+Offline / Private Authoring Provenance
+Authoritative Outcome / Accepted Revision Correlation
 ```
 
-# Accepted Governance / Config Boundary
+# MDE Stop Boundary
+
+A future Batch-2 producing session MUST STOP and return to GAC / Owner if it materially requires:
 
 ```text
-Tenant / IAM Authority → S1
-Organization Authority → S2
-Policy / Authorization Authority → S3
-Trust Authority → S4
-Artifact Acceptance / Execution Admission → S8
-Managed Desired-state Authority / Canonical Desired SoT → S9 / SV-R05
-Applied Configuration Actual-state → applicable runtime owner
-Observed → projection
+new cross-domain Definition Authority / SoT
+Visual Builder promoted to semantic authority
+browser/local draft promoted to canonical definition state
+new universal authoring Actual-state owner
+mandatory canonical IR / AST / DSL / intermediate representation
+lossless physical source↔visual round-trip Product guarantee
+universal source-vs-visual conflict winner / merge law
+authoritative synchronization direction between source and visual representations
+new universal revision-selection / latest-wins law
+new Product-wide code-generation/compiler authority
+material fail-open / fail-closed authoring law
+major universal physical identity namespace
+mandatory public registry / SaaS / hosted authoring service
+frontend/editor/framework/protocol/storage lock-in or other high-migration commitment
+new Product capability
 ```
 
-Permanent:
+No such MDE is required merely for Batch-2 entry.
 
-```text
-Desired != Distributed != Applied != Observed
-Observed != Applied SoT
-Offline Web possession != Desired SoT
-Reconnect != Reconciled
-Conflict != winner selected
-Latest client state != canonical winner
-```
-
-# Accepted W7 Presentation Semantics
-
-```text
-Semantic Identity != Display Language
-Locale != Tenant
-Locale != Organization
-Locale != Principal
-Locale != Timezone
-Localized Text != Machine Semantic Identity
-Localized Status != New Domain Status
-Presentation Timezone != Source-time Authority
-Client Clock != Source-time Authority
-Client Clock != ordering/conflict winner
-Accessible Confirmation != Additional Authority
-Degraded UI State != Source Actual-state
-Offline Display != Source Truth
-```
-
-Accepted accessibility capability remains:
-
-```text
-First-class critical-workflow accessibility → REQUIRED
-Semantic interaction parity → REQUIRED
-Identical visual / gesture parity → NOT REQUIRED
-Pointer-only critical completion → PROHIBITED
-Color-only critical meaning → PROHIBITED
-```
-
-No new Product-wide formal compliance/certification target or exact accessibility standard/version is selected.
-
-# Accepted Degraded / Offline Qualification
-
-Applicable composable qualifications include:
-
-```text
-UNKNOWN
-STALE
-UNAVAILABLE
-UNREACHABLE
-PARTIAL
-INDETERMINATE
-CONFLICTING
-PENDING
-SUPERSEDED
-RECONCILIATION_PENDING
-```
-
-They do not form a universal Web lifecycle state machine.
-
-Permanent:
-
-```text
-UNKNOWN != FAILED
-STALE != CURRENT
-UNAVAILABLE != DENIED
-UNREACHABLE != REJECTED
-CONFLICTING != winner selected
-PENDING != accepted
-RECONCILIATION_PENDING != reconciled
-Offline Client Possession != Authority Transfer
-Reconnect != Reconciled
-Client Timestamp != Canonical Winner
-Latest Client State != Canonical Winner
-```
-
-# Security / Privacy / Secret Boundary
-
-```text
-Tenant != Organization
-Principal Identity != Authentication automatically
-Authenticated != Authorized automatically
-Authorized != Artifact Accepted
-Artifact Accepted != Execution Admitted
-Execution Admitted != Runtime Outcome
-Secret Reference != Secret Material
-```
-
-Redaction / non-leak applies across normal, localized, accessibility, degraded, offline, history and diagnostic presentation. Secret Material is not ordinary Web state/cache/history/diagnostic content.
-
-# Accepted W1↔W7 Stable Semantic Subjects
-
-```text
-Administration / Governance Projection
-Governed Command Intent
-Authoritative Outcome Correlation
-Status / Error / Currentness Presentation
-Experience / Locale / Timezone Semantic Presentation
-Accessibility-preserving Critical Interaction
-Degraded / Offline Interaction Qualification
-Web Interaction Provenance
-```
-
-These are representation-neutral semantic contracts and imply no physical API/UI technology.
-
-# Stable-contract / RCP Acceptance
-
-Runtime / Domain Stable Contract Pressure remains:
-
-```text
-24 / unchanged
-```
-
-```text
-RCP-01 Web-side Governance Context consume/presentation contribution
-→ CLOSED AT CURRENT BATCH DESIGN LEVEL
-→ S1-S4 authority preserved
-→ Full Cross-component Closure NOT INFERRED
-
-RCP-19 Web-side Desired/Distributed/Applied/Observed + W1 human Desired-state intent contribution
-→ CLOSED AT CURRENT BATCH DESIGN LEVEL
-→ S9 Desired + runtime Applied ownership preserved
-→ Full Cross-component Closure NOT INFERRED
-
-RCP-22 WB-R01 interaction provenance + source diagnostics/provenance presentation expectation
-→ ACCEPTED AT CURRENT BATCH DESIGN LEVEL
-→ original source fact owner preserved
-→ Full Cross-component Closure NOT INFERRED
-
-RCP-24 W1 Web human/admin intent source-side semantics
-→ CLOSED AT CURRENT BATCH DESIGN LEVEL
-→ receiving authority owns applicability/outcome
-→ Full Closure NOT INFERRED
-```
-
-No new RCP ID is created.
-
-# DAD / Review Result
-
-```text
-CID-WB-B1-DAD-001..015 → GLOBAL_ACCEPTED
-DAD Count → 15
-Mandatory Producing Review Gates → 32 PASS / 0 FAIL / 0 BLOCKED
-Misclassified MDE → 0
-Open MDE → 0
-Unpersisted Owner Decision → 0
-Missing / Ambiguous Normative Dimension → 0
-Implementation-defined Escape → 0
-Unmapped Material Decision → 0
-Hard Internal SDD Graph → ACYCLIC
-Authority Cycle → NONE
-Circular Actual-state Ownership → NONE
-Mandatory Missing Shared Foundation Semantic → NONE_FOUND
-Parallel ns_web-local Foundation → 0
-Implementation Leakage → 0
-W2-W6 Preemption → 0
-```
-
-# Explicitly Not Accepted / Not Authorized
+# Explicitly Not Authorized / Not Declared
 
 ```text
 W2 Internal Design
@@ -458,40 +404,38 @@ W6 Internal Design
 ns_web Batch 2 / Batch 3 / Batch 4 producing work
 ns_web Internal Design Exhaustion SATISFIED
 ns_web Component Internal Design Global Closure
-RCP-01 Full Cross-component Closure
-RCP-19 Full Cross-component Closure
-RCP-22 Full Cross-component Closure
-RCP-24 Full Closure
 System-level SDK Detailed Design
 Design-to-Implementation Readiness
 Implementation Planning
 IWP
 Coding
+any Full Cross-component RCP Closure by inference
 ```
 
 # Ledger Continuity
 
 Logical Ledger is the primary Ledger plus ordered continuation segments through:
 
-`docs/governance/global_architecture/ns_evermore_global_architecture_ledger_continuation_0.0.10.md`
+`docs/governance/global_architecture/ns_evermore_global_architecture_ledger_continuation_0.0.11.md`
 
 ```text
-Continuation 0.0.10
-→ GAC-TR-0109
+Continuation 0.0.11
+→ GAC-TR-0110
 
-Acceptance Ledger Commit
-→ c9fa5104f22bb2e1559a610692756ebf8859529d
+Assessment Ledger Commit
+→ 64de41c7cef6c05170c3b98eca077643e464538d
 
 Append-only Validation
-→ additions 107 / deletions 0
+→ additions 91 / deletions 0
 ```
 
 # Unique Next Legal Action
 
 ```text
 Fresh Repository recovery
-→ verify GAC-EPOCH-0098 and State Verified Through HEAD
-→ perform post-Batch-1 ns_web Component Internal Design remaining-pressure / Batch-2 entry-readiness assessment
-→ determine whether W2 remains the immediate next material pressure under the previously assessed 4-batch shape
-→ assessment does not automatically authorize Batch 2
+→ verify GAC-EPOCH-0099 and State Verified Through HEAD
+→ verify ns_web Batch-2 Entry Readiness = SATISFIED
+→ verify Open MDE = 0 / Blocking Item = NONE / no drift
+→ perform a separate ns_web Component Internal Design / Batch 2 / W2 authorization transition
+→ do not start Batch-2 producing work before separate authorization
 ```
