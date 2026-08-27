@@ -1402,3 +1402,42 @@ Current Authorized Phase → NONE
 ns_agent Batch 1 Authorization → NOT GRANTED BY ASSESSMENT
 Unique Next Legal Action → write GAC-EPOCH-0088 Global State assessment seal, fresh Repository recovery, then if readiness remains satisfied perform a separate ns_agent Component Internal Design / Batch 1 authorization transition
 ```
+
+```text
+GAC-TR-0099 → GAC-EPOCH-0089
+Transition → separate ns_agent Component Internal Design / Batch 1 authorization
+Authorization Basis → docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_node_component_internal_design_next_component_sequencing_ns_agent_entry_readiness_assessment_0.0.1.md
+Assessment Seal → cebed107ce323188f73038f300c50093cced0e99
+Authorization Working State Commit → afcdc320c7cb5b23092e5e00ff2ad5d6c49e41af
+Authorized Phase → NGRP-001 — Component Internal Design / ns_agent / Batch 1
+Scope → COMPONENT_INTERNAL_DESIGN_ONLY / NS_AGENT / BATCH_1 / AGENT_DEFINITION_RUNTIME_PROVIDER_TOOL_KNOWLEDGE_EXECUTION_BOUNDARY_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Authorized Internal Boundaries → A1 Agent Definition Lifecycle / Definition Governance + A2 Agent Runtime / Context / Reasoning / Long-running State / HITL + A3 Provider / Model / Multimodal Mediation + A4 Tool / Knowledge-RAG / Agent→Node Execution-Effect Boundary
+Inherited Runtime Roles → AG-R01 Agent Runtime Participant + AG-R02 Model / Provider Mediation Participant
+RCP-09 Authorized → AG-R01 Agent Runtime owner/source-side semantic closure + representation-neutral stable contract synthesis
+RCP-10 Authorized → AG-R02 Provider Mediation bounded-observation owner-side semantic closure + representation-neutral stable contract synthesis
+RCP-16 Authorized Refinement → AG-R01 Agent Human-Task source wait/applicability side only / Full Cross-component Closure NOT AUTHORIZED
+RCP-17 Authorized Refinement → Agent Trial semantic/runtime side only / Full Cross-component Closure NOT AUTHORIZED
+RCP-04 / RCP-07 / RCP-08 → accepted ns_node semantics consume-only through A4 / internals MUST NOT be reopened
+RCP-12 → correlation/target expectation only / AG-R04 owner side remains A6 future Batch 2
+RCP-19 → Agent Applied Configuration contribution only where genuinely Agent-owned / S9 Desired authority preserved
+RCP-22 → A1/A2/A3/A4 fact-owner provenance/diagnostic contribution only / Full Cross-component Closure NOT AUTHORIZED
+RCP-24 → Agent intervention target/outcome receiving expectation only / WB-SDK source side downstream
+AI Agent Definition / Semantic Authority → ns_agent / A1
+AI Agent Canonical Definition SoT → ns_agent / A1
+Agent Runtime Actual-state → A2 / AG-R01 for facts genuinely originating in Agent runtime
+Provider Mediation bounded observations → A3 / AG-R02 where genuinely produced
+Formal Admission / Runtime Coordination / Node Readiness-Attempt-Effect / Knowledge SoTs / Automation Semantics → accepted external owners / PRESERVED
+Permanent Agent Non-collapse → PRESERVED
+A5 / A6 / ns_agent Batch 2 → NOT AUTHORIZED
+ns_web Component Internal Design → NOT AUTHORIZED
+System-level SDK Detailed Design / Design-to-Implementation Readiness / Implementation Planning / IWP / Coding → NOT AUTHORIZED
+Concrete Agent framework / model-provider binding / queue / broker / database / API / wire / process / deployment selection → NOT AUTHORIZED
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Decision Registry → 0.0.32 / unchanged
+Accepted ns_agent Boundary Coverage → 0 / 6 / 0% until future Global Acceptance
+Current Authorized Phase → NGRP-001 — Component Internal Design / ns_agent / Batch 1
+Maximum Legal Bounded-session State → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Unique Next Legal Action → write GAC-EPOCH-0089 Global State authorization seal, then start exactly one bounded ns_agent Component Internal Design / Batch 1 producing session under exact scope
+```
