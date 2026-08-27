@@ -1258,3 +1258,47 @@ Current Authorized Phase → NGRP-001 — Component Internal Design / ns_node / 
 Maximum Legal Bounded-session State → COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 Unique Next Legal Action → write GAC-EPOCH-0084 Global State authorization seal, then start exactly one bounded ns_node Component Internal Design / Batch 2 / N4 producing session under exact scope
 ```
+
+```text
+GAC-TR-0095 → GAC-EPOCH-0085
+Transition → ns_node Component Internal Design / Batch 2 / N4 independent Global Acceptance
+Producing Entry HEAD → 90ab35107627ab021e7eb67ca95593668454d037
+Producing Final HEAD → 5f7a052147be7fcfe6a765f2d185503e7bc8f931
+Global Acceptance Evidence → docs/architecture_reviews/ns_evermore_ngrp_001_ns_node_internal_design_batch_2_global_acceptance_0.0.1.md
+Global Acceptance Evidence Commit → 706ee53409e63c5e0041faf2e620fab1acdd7b01
+Result → GLOBAL_ACCEPT
+Accepted Internal Boundary → N4 Offline Continuity, Recovery & Local Diagnostics
+Accepted Runtime Role Input → ND-R04 Node Offline Continuity & Recovery Participant
+Accepted N4 Internal Responsibility Count → 10
+Accepted ns_node Internal Responsibility Count → 33
+Accepted DAD → CID-ND-B2-DAD-001..015
+Hard Internal SDD Graph → ACYCLIC
+RCP-20 ND-R04 Node-local Participant-side Contribution → CLOSED AT CURRENT DESIGN LEVEL / Full Cross-component Closure NOT CLOSED
+RCP-22 N4 Recovery-Health-Lifecycle-Offline Diagnostic Contribution → CLOSED AT CURRENT DESIGN LEVEL
+RCP-22 Complete ns_node-side Contribution → COMPLETE AT CURRENT DESIGN LEVEL / FEDERATED BY ORIGINAL FACT OWNERSHIP / Full Cross-component Closure NOT CLOSED
+RCP-04 / RCP-07 / RCP-08 / RCP-19 → accepted upstream semantics preserved / internals not reopened
+RCP-03 / RCP-06 / RCP-24 → bounded reference/correlation only / upstream and downstream owners preserved
+N1 Readiness / N2 Attempt / N3 Effect-Source Facts → original accepted owners / PRESERVED
+RT-R04 Recovery-Reconciliation Coordination Truth → R4 / PRESERVED
+Source-domain Recovery Outcome → original applicable source owner / PRESERVED
+Authority / SoT / Final Actual-state Transfer → 0
+Universal Diagnostic SoT → NOT CREATED
+Conflict Winner / Merge Law / Authoritative Sync Direction → NOT CREATED
+Universal Replay / Retry / Cancellation / Rollback / Compensation / Once Guarantee → NOT CREATED
+Offline Fail-open / Fail-closed Policy → NOT SELECTED
+Concrete Persistence / Recovery Engine / API / Wire / Process / Deployment Leakage → 0
+Misclassified MDE → 0
+Decision Registry → 0.0.31
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Unexpected Drift → NONE
+Unauthorized Progression → NONE
+Accepted ns_node Boundaries → N1 / N2 / N3 / N4
+Accepted ns_node Boundary Coverage → 4 / 4 / 100%
+Remaining accepted ns_node boundary without Component Internal Design → NONE
+ns_node Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 2 ACCEPTANCE
+ns_node Component Internal Design Global Closure → NOT DECLARED
+Current Authorized Phase → NONE
+Unique Next Legal Action → write GAC-EPOCH-0085 Global State acceptance seal, fresh Repository recovery, then perform post-Batch-2 ns_node Component Internal Design remaining-pressure / exhaustion / global-closure assessment; do not infer closure or authorize another Product Component automatically
+```
