@@ -669,7 +669,7 @@ Inherited Runtime Role → SV-R09 Discovery Projection Participant
 Owner Capability Baseline → Unified Governed Cross-domain Resource Discovery / authorization-aware / Tenant-aware / private-offline-capable / domain identity preserved
 Discovery Projection / Index as Resource Authority or Canonical SoT → PROHIBITED
 S13 Actual-state Ownership → projection freshness/completeness/partiality/rebuild/staleness/availability/uncertainty only
-Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating resource owners / PRESERVED
+Resource Semantic Authority / Definition SoT / Runtime Actual-state / Source Facts → originating applicable owners / PRESERVED
 RCP-21 S13 / SV-R09 Contribution → AUTHORIZED FOR CURRENT DESIGN-LEVEL CLOSURE
 RCP-21 Full Cross-component Closure → NOT AUTHORIZED
 S11 Human Task / S12 Notification Contribution Semantics → accepted upstream / may be consumed / internals MUST NOT be reopened
@@ -930,6 +930,7 @@ Unique Next Legal Action → fresh-recovery GAC post-Batch-2 ns_runtime Componen
 GAC-TR-0085 → GAC-EPOCH-0075
 Transition → post-Batch-2 ns_runtime Component Internal Design remaining-pressure / exhaustion / R4 entry-readiness assessment
 Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_runtime_internal_design_remaining_pressure_batching_assessment_0.0.2.md
+Assessment Commit → 02111a836ab4191ba2a610eaadbae0bd9197c436
 Working State Commit → baa3aec7105087e63635aa3dfe227f998b995252
 Result → COMPLETED
 Remaining Material ns_runtime Component Internal-design Pressure → PRESENT
