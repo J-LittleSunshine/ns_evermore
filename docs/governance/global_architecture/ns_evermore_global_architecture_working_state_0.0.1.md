@@ -1,6 +1,6 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0088`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0089`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # Current Working Baseline
@@ -25,10 +25,6 @@ ns_runtime Internal Design Exhaustion → SATISFIED
 
 ns_node Component Internal Design → GLOBAL_CLOSED / COMPLETE
 ns_node Internal Design Exhaustion → SATISFIED
-Accepted ns_node Boundaries → N1 / N2 / N3 / N4
-Accepted ns_node Boundary Coverage → 4 / 4 / 100%
-Accepted ns_node Internal Responsibility Count → 33
-Remaining Material ns_node Component Internal-design Pressure → NONE_FOUND
 
 Decision Registry → 0.0.32 / CURRENT / NORMATIVE
 Open MDE → 0
@@ -36,119 +32,130 @@ Unpersisted Owner Decision → 0
 Blocking Semantic Gap → NONE
 Blocking Item → NONE
 Known Working-branch Drift → NONE
-Current Authorized Phase → NONE
-Authorization Scope → NONE
+
+Current Authorized Phase
+→ NGRP-001 — Component Internal Design / ns_agent / Batch 1
+
+Authorization Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_AGENT / BATCH_1 / AGENT_DEFINITION_RUNTIME_PROVIDER_TOOL_KNOWLEDGE_EXECUTION_BOUNDARY_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
-# Next-component Sequencing Assessment
+# Authorization Basis
 
-Assessment evidence:
+Assessment:
 
 `docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_node_component_internal_design_next_component_sequencing_ns_agent_entry_readiness_assessment_0.0.1.md`
 
 ```text
-Assessment Entry HEAD
-→ 15d717c6076319000a6e4c6de64dc6ebac8c630a
-
 Assessment Commit
 → 34d2492dd78a097567ef6bd0787c36d87cceba14
 
-Result
-→ COMPLETED
+Assessment Working State Commit
+→ 5443e7e27c161dbd7cc1230f33632f7768beff9c
 
-Next Product Component
-→ ns_agent
+Assessment Transition
+→ GAC-TR-0098 → GAC-EPOCH-0088
 
-ns_agent Component Internal Design Entry Readiness
-→ SATISFIED
+Assessment Ledger Verified Commit
+→ 71e877f3737b996551125942ea720f5cff0b489c
 
-Recommended Batch Shape
-→ MULTIPLE / 2
+Assessment State Seal
+→ cebed107ce323188f73038f300c50093cced0e99
 
-Immediate Next Batch Candidate
-→ ns_agent / Batch 1 / A1 + A2 + A3 + A4
+Assessment Result
+→ ns_agent ENTRY_READINESS_SATISFIED
 
-Proposed Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_AGENT / BATCH_1 / AGENT_DEFINITION_RUNTIME_PROVIDER_TOOL_KNOWLEDGE_EXECUTION_BOUNDARY_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
-
-ns_agent Batch 1 Authorization
-→ NOT GRANTED BY ASSESSMENT
+Fresh Authorization Recovery
+→ PASS
 ```
 
-# Sequencing Basis
-
-Accepted Agent authority:
+# Authorized ns_agent Batch 1
 
 ```text
-AI Agent Definition / Semantic Authority → ns_agent
-AI Agent Canonical Definition SoT → ns_agent
-Agent Runtime Actual-state → bounded Agent runtime source owners
-```
+Authorized Boundaries
+→ A1 Agent Definition Lifecycle / Definition Governance
+→ A2 Agent Runtime / Context / Reasoning / Long-running State / HITL
+→ A3 Provider / Model / Multimodal Mediation
+→ A4 Tool / Knowledge-RAG / Agent→Node Execution-Effect Boundary
 
-Remaining Agent boundaries:
-
-```text
-A1 Agent Definition / Provider / Tool / Knowledge / System Prompt Governance
-A2 Agent Runtime / Context / Reasoning / Long-running State / HITL
-A3 Provider / Model / Multimodal Mediation
-A4 Tool / Knowledge-RAG / Agent→Node Execution-Effect Boundary
-A5 Native Multi-Agent Interaction & Composition
-A6 Cross-domain Delegation / Automation Invocation / Candidate Automation Authoring
-```
-
-Remaining Web boundaries are predominantly human interaction/projection and several materially consume Agent source semantics. Therefore Agent precedes Web.
-
-# Proposed ns_agent Batch 1
-
-```text
-Authorized Candidate Boundaries
-→ A1 / A2 / A3 / A4
-
-Inherited Runtime Roles if separately authorized
+Inherited Runtime Roles
 → AG-R01 Agent Runtime Participant
 → AG-R02 Model / Provider Mediation Participant
 
 A1 / A4
-→ semantic source/consumption boundaries without independent Runtime Role
+→ semantic definition / consumption boundaries without independent Runtime Role
 ```
 
-Proposed stable-contract scope:
+# Authorized Stable-contract Scope
 
 ```text
-RCP-09 AG-R01 Agent Runtime owner/source-side closure
-RCP-10 AG-R02 Provider Mediation bounded-observation owner-side closure
-RCP-16 AG-R01 Agent Human-Task source wait/applicability side only / full closure not proposed
-RCP-17 Agent trial semantic/runtime side only / full closure not proposed
-RCP-04 / RCP-07 / RCP-08 accepted Node semantics consumed only through A4
-RCP-12 correlation/target expectation only / AG-R04 owner side remains A6 future Batch 2
-RCP-19 Agent Applied-config contribution only / S9 Desired authority preserved
-RCP-22 A1/A2/A3/A4 fact-owner provenance contribution only / full closure not proposed
-RCP-24 Agent intervention target/outcome receiving expectation only / WB-SDK source side downstream
+RCP-09
+→ AG-R01 Agent Runtime owner/source-side semantic closure + representation-neutral stable contract synthesis
+
+RCP-10
+→ AG-R02 Provider Mediation bounded-observation owner-side semantic closure + representation-neutral stable contract synthesis
+
+RCP-16
+→ AG-R01 Agent Human-Task source wait/applicability side only
+→ Full Cross-component Closure NOT AUTHORIZED
+
+RCP-17
+→ Agent Trial semantic/runtime side only
+→ Full Cross-component Closure NOT AUTHORIZED
+
+RCP-04 / RCP-07 / RCP-08
+→ accepted Node semantics consume-only through A4
+→ MUST NOT be reopened
+
+RCP-12
+→ correlation / target expectation only
+→ AG-R04 owner side remains A6 / future Batch 2
+
+RCP-19
+→ Agent Applied Configuration contribution only where genuinely Agent-owned
+→ S9 Desired authority preserved
+
+RCP-22
+→ A1/A2/A3/A4 fact-owner provenance / diagnostics contribution only
+→ Full Cross-component Closure NOT AUTHORIZED
+
+RCP-24
+→ Agent intervention target/outcome receiving expectation only
+→ WB/SDK source side downstream
 ```
 
-Future only:
+# Authority / SoT / Actual-state Boundary
 
 ```text
-ns_agent Batch 2 → A5 + A6 / NOT AUTHORIZED
-ns_web Component Internal Design → NOT AUTHORIZED
+AI Agent Definition / Semantic Authority
+→ ns_agent / A1
+
+AI Agent Canonical Definition SoT
+→ ns_agent / A1
+
+Agent Runtime Actual-state
+→ A2 / AG-R01 for facts genuinely originating in Agent runtime
+
+Provider Mediation bounded observations
+→ A3 / AG-R02 where genuinely produced
+
+Formal Execution Admission
+→ S8 / SV-R04 / PRESERVED
+
+Routing / Dispatch / Continuation Coordination
+→ accepted RT roles / PRESERVED
+
+Node Readiness / Attempt / Effect
+→ N1 / N2 / N3 / PRESERVED
+
+Knowledge / external factual SoT
+→ original applicable owners / PRESERVED
+
+Automation semantic authority / definition / runtime continuation
+→ S6 / SV-R02 as applicable / PRESERVED
 ```
 
-# Readiness Gate
-
-```text
-Missing Agent Semantic Authority → 0
-Missing Agent Canonical Definition SoT → 0
-Missing Required Server Upstream → 0
-Missing Required Runtime Upstream → 0
-Missing Required Node Upstream → 0
-Missing Mandatory Shared Foundation Semantic → NONE_FOUND
-Open MDE Required Merely For Entry → 0
-Unpersisted Owner Decision → 0
-Blocking Semantic Gap → NONE
-Blocking Item → NONE
-```
-
-# Permanent Agent Non-collapse
+Permanent:
 
 ```text
 Model Provider != Agent Authority
@@ -165,25 +172,42 @@ Human Response Submitted != Agent Response Applied
 Candidate Automation != Accepted Automation
 ```
 
-# Governance Boundary
+# Explicitly Not Authorized
 
 ```text
-Current Authorized Phase → NONE
-Authorization Scope → NONE
-ns_agent Batch 1 → NOT AUTHORIZED BY ASSESSMENT
-ns_agent Batch 2 → NOT AUTHORIZED
-ns_web Component Internal Design → NOT AUTHORIZED
-System-level SDK Detailed Design → NOT AUTHORIZED
-Design-to-Implementation Readiness → NOT AUTHORIZED
-Implementation Planning / IWP / Coding → NOT AUTHORIZED
+A5 Native Multi-Agent Interaction & Composition
+A6 Cross-domain Delegation / Automation Invocation / Candidate Automation Authoring
+ns_agent Batch 2
+ns_web Component Internal Design
+System-level SDK Detailed Design
+Design-to-Implementation Readiness
+Implementation Planning
+IWP
+Coding
+```
+
+# MDE / Foundation / Implementation Boundary
+
+```text
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Item → NONE
+Missing Mandatory Shared Foundation Semantic → NONE_FOUND
+```
+
+No universal Agent retry/cancel/rollback/compensation law, provider/model/tool winner policy, cross-Agent shared-state law, delegation authority transfer, mandatory public model/provider dependency, framework/provider/protocol/storage lock-in, universal identity namespace, concrete queue/broker/database/API/wire/process/deployment topology or other implementation commitment is authorized.
+
+# Maximum Legal Bounded-session State
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 ```
 
 # Unique Next Legal Action
 
 ```text
-append GAC-TR-0098 next-component / ns_agent entry-readiness assessment transition
-→ write GAC-EPOCH-0088 Global State assessment seal
-→ fresh Repository recovery
-→ if readiness remains SATISFIED with no drift/MDE/blocker, perform a separate ns_agent Component Internal Design / Batch 1 authorization transition
-→ do not start Agent producing work before separate authorization
+append GAC-TR-0099 separate ns_agent Component Internal Design / Batch 1 authorization transition
+→ write GAC-EPOCH-0089 Global State authorization seal
+→ start exactly one bounded ns_agent Component Internal Design / Batch 1 producing session under exact scope
+→ return to GAC for independent Global Acceptance review
 ```
