@@ -1,8 +1,8 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0095_NS_AGENT_GLOBAL_CLOSURE_PENDING_LEDGER_AND_SEAL`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0096_NS_WEB_ENTRY_READINESS_ASSESSMENT_PENDING_LEDGER_AND_SEAL`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
-- Current Authoritative Global State Before Seal: `GAC-EPOCH-0094`
+- Current Authoritative Global State Before Seal: `GAC-EPOCH-0095`
 
 # Current Working Baseline
 
@@ -20,20 +20,18 @@ Foundation Provider Design Exhaustion → SATISFIED
 Component Internal Design Readiness → SATISFIED
 
 ns_server Component Internal Design → GLOBAL_CLOSED / COMPLETE
+ns_server Internal Design Exhaustion → SATISFIED
+
 ns_runtime Component Internal Design → GLOBAL_CLOSED / COMPLETE
+ns_runtime Internal Design Exhaustion → SATISFIED
+
 ns_node Component Internal Design → GLOBAL_CLOSED / COMPLETE
+ns_node Internal Design Exhaustion → SATISFIED
 
-ns_agent Batch 1 → GLOBAL_ACCEPTED
-ns_agent Batch 2 → GLOBAL_ACCEPTED
-Accepted ns_agent Boundaries → A1 / A2 / A3 / A4 / A5 / A6
-Accepted ns_agent Boundary Coverage → 6 / 6 / 100%
-Accepted ns_agent Internal Responsibility Count → 54
-Remaining accepted ns_agent boundaries → NONE
-Remaining Material ns_agent Component Internal-design Pressure → NONE_FOUND
+ns_agent Component Internal Design → GLOBAL_CLOSED / COMPLETE
 ns_agent Internal Design Exhaustion → SATISFIED
-ns_agent Component Internal Design Global-closure Eligibility → SATISFIED
 
-Decision Registry → 0.0.35 / CURRENT / NORMATIVE after seal
+Decision Registry → 0.0.35 / CURRENT / NORMATIVE
 Open MDE → 0
 Unpersisted Owner Decision → 0
 Blocking Semantic Gap → NONE
@@ -41,135 +39,283 @@ Blocking Item → NONE
 Known Working-branch Drift → NONE
 ```
 
-# Closure Basis
+# Assessment Evidence
 
-Exhaustion / eligibility assessment:
-
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_agent_internal_design_remaining_pressure_batching_assessment_0.0.2.md`
+`docs/architecture_reviews/ns_evermore_ngrp_001_post_ns_agent_component_internal_design_next_component_sequencing_ns_web_entry_readiness_assessment_0.0.1.md`
 
 ```text
-Assessment Transition
-→ GAC-TR-0105 → GAC-EPOCH-0094
+Assessment Entry HEAD
+→ 6c7c5c3cfe37786fdea8ed2192b0ac7dd78f1a19
 
 Assessment Evidence Commit
-→ d628c8222e5ff42929ad87f0e8c923284734156e
+→ f7de128e216b7dd1399759e129580273b3955198
 
-Assessment Result
-→ Remaining Pressure NONE_FOUND
-→ Exhaustion SATISFIED
-→ Global-closure Eligibility SATISFIED
+Assessment Evidence Delta
+→ 1 commit / 1 added assessment file / additions 798 / deletions 0
+
+Input Epoch
+→ GAC-EPOCH-0095
+
+Result
+→ COMPLETED
 ```
 
-Global Closure evidence:
-
-`docs/architecture_reviews/ns_evermore_ngrp_001_ns_agent_component_internal_design_global_closure_0.0.1.md`
+# Next Product Component Sequencing Result
 
 ```text
-Closure Recovery Entry HEAD
-→ b4ddb4ec1dbacaeb5469676874b3fd40d2d950d0
+Exactly Five Product Components
+→ ns_server / ns_runtime / ns_node / ns_agent / ns_web
 
-Closure Evidence Commit
-→ aca2c5f1097d21b47943738302e4ed153739e76c
+Globally Closed Component Internal Design
+→ ns_server
+→ ns_runtime
+→ ns_node
+→ ns_agent
 
-Decision Registry 0.0.35 Commit
-→ 938c83044c8b2553e64fc803f76aa6ccd3aa3fbd
+Remaining Product Component without Component Internal Design
+→ ns_web only
 
-Closure Result
-→ GLOBAL_CLOSURE
+Next Product Component
+→ ns_web
 ```
 
-# Prospective Global Closure After State Seal
+No sixth Product Component pressure is introduced.
+
+# ns_web Accepted Boundary / Runtime-role Baseline
 
 ```text
-ns_agent Component Internal Design
-→ GLOBAL_CLOSED / COMPLETE
+W1 — Governed Administration & Control Interaction
+W2 — Cross-domain Authoring & Semantic Interoperability
+W3 — Human Task Interaction
+W4 — Notification & Awareness Interaction
+W5 — Operational Observation, Trial, Intervention & Diagnostics
+W6 — Cross-domain Discovery & Governed Navigation
+W7 — Experience Semantics, Accessibility & Degraded Interaction
 
-ns_agent Internal Design Exhaustion
+WB-R01 — Governed Human Interaction & Projection Participant
+→ W1-W7
+```
+
+Permanent Web non-collapse:
+
+```text
+Web Interaction != Domain Authority
+Web Projection != Source Actual-state
+UI Edit State != Canonical Definition SoT
+Builder != Semantic Authority
+Button Click / Intent != Policy Permit / Artifact Acceptance / Execution Admission
+Human Response Submitted != Response Applied
+Human Task Inbox != HITL Source SoT
+Notification Awareness != Underlying Source Condition
+Notification Read != Source Resolved
+Discovery Result != Resource SoT / Authorization
+Dashboard != Runtime SoT
+Trial Success != Production Acceptance / Admission
+Intervention Requested != Outcome Achieved
+Observed Config != Applied Config SoT
+Client Clock != Source-time Authority
+Frontend Cache != SoT
+Offline Client Possession != Authority Transfer
+```
+
+# Entry-readiness Result
+
+All Web source/component dependencies are now stable because `ns_server`, `ns_runtime`, `ns_node` and `ns_agent` are globally closed.
+
+```text
+W1 upstream readiness → SATISFIED
+W2 upstream readiness → SATISFIED
+W3 upstream readiness → SATISFIED
+W4 upstream readiness → SATISFIED
+W5 upstream readiness → SATISFIED
+W6 upstream readiness → SATISFIED
+W7 upstream readiness → SATISFIED
+
+Missing WB-R01 Runtime Role → 0
+Missing accepted Web Internal Boundary → 0
+Missing Required Server Upstream → 0
+Missing Required Runtime Upstream → 0
+Missing Required Node Upstream → 0
+Missing Required Agent Upstream → 0
+Missing Mandatory Shared Foundation Semantic → NONE_FOUND
+System-level SDK Detailed Design Required Merely For Web Entry → NO
+New Product Capability Required For Entry → NO
+Open MDE Required Merely For Entry → 0
+Unpersisted Owner Decision → 0
+Blocking Semantic Gap → NONE
+Blocking Item → NONE
+
+ns_web Component Internal Design Entry Readiness
 → SATISFIED
-
-Accepted ns_agent Boundary Coverage
-→ 6 / 6 / 100%
-
-Accepted ns_agent Internal Responsibility Count
-→ 54
-
-Remaining Material ns_agent Component Internal-design Pressure
-→ NONE_FOUND
 ```
 
-# Authority / SoT / Actual-state Preservation
+# Recommended Batch Shape
 
 ```text
-A1 → Agent Definition / Semantic Authority + Canonical Definition SoT
-A2 / AG-R01 → Agent runtime Actual-state
-A3 / AG-R02 → provider/model bounded mediation observations
-A4 → Tool/Knowledge consumption semantics
-A5 / AG-R03 → composition coordination/provenance only
-A6 / AG-R04 → Agent-side cross-domain participation/provenance only
-S6 → Automation semantics / SoT
-S8 → Artifact Acceptance / Execution Admission
-RT-R02 → Routing / Scheduling / Dispatch
-RT-R03 → Cross-component continuation / delegation coordination
-RT-R04 → Recovery / Reconciliation Coordination
-N1/N2/N3 → Node Readiness / Attempt / Effect
+MULTIPLE / 4
 ```
 
-No Authority, SoT or final Actual-state ownership moves in closure.
-
-# NSH Closure Qualification
+## Batch 1 — W1 + W7
 
 ```text
-NSH → named internal architecture concept inside existing ns_agent boundaries
-A1-A4 → accepted core
-A5 → accepted Multi-Agent composition extension
-A6 → accepted governed delegation / Automation participation extension
-A7 / AG-R05 → NOT REQUIRED / NOT CREATED
-Remaining Material NSH Internal-design Pressure → NONE_FOUND
+W1 — Governed Administration & Control Interaction
+W7 — Experience Semantics, Accessibility & Degraded Interaction
+
+Proposed Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_1 / GOVERNED_ADMINISTRATION_CONTROL_EXPERIENCE_SEMANTICS_ACCESSIBILITY_DEGRADED_INTERACTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
-# Stable-contract Qualification
+Primary pressure:
 
 ```text
-RCP-09 / RCP-10 → Agent owner-side closed at current design level
-RCP-11 → A5/AG-R03 owner-side + A2/AG-R01 participant integration COMPLETE AT CURRENT DESIGN LEVEL
-RCP-12 → A6/AG-R04 owner/source-side COMPLETE AT CURRENT DESIGN LEVEL
-RCP-20 → all applicable Agent source-owner contributions COMPLETE AT CURRENT DESIGN LEVEL / RT-R04 preserved
-RCP-22 → all-six-boundary ns_agent fact-owner contribution COMPLETE AT CURRENT NS_AGENT DESIGN LEVEL
+RCP-01 Governance Context consume/presentation only
+RCP-19 desired/applied/observed presentation contribution
+RCP-22 provenance/status presentation expectation
+RCP-24 WB-R01 governed human/admin command-intent source-side semantics
+Administration/Governance Projection + Command Intent stable contracts
 ```
 
-Global Closure does not infer Full Cross-component Closure for any RCP.
+## Batch 2 — W2
 
-# Current Governance Boundary Before Closure Seal
+```text
+W2 — Cross-domain Authoring & Semantic Interoperability
+
+Proposed Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_2 / CROSS_DOMAIN_VISUAL_AUTHORING_SEMANTIC_INTEROPERABILITY_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+```
+
+Primary stable pressure:
+
+```text
+Business Application Definition Lifecycle ↔ W2
+Automation Definition Lifecycle ↔ W2
+Data / Knowledge / ETL Definition Lifecycle ↔ W2
+Agent Definition Lifecycle ↔ W2
+Authoring Projection / Edit Intent / Validation / Compatibility / Revision / Semantic Diff
+Source↔Visual semantic interoperability
+RCP-24 bounded authoring/change intent where applicable
+```
+
+## Batch 3 — W5
+
+```text
+W5 — Operational Observation, Trial, Intervention & Diagnostics
+
+Proposed Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_3 / OPERATIONAL_OBSERVATION_TRIAL_INTERVENTION_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+```
+
+Primary pressure:
+
+```text
+RCP-04/07/08/09/11/12/13/15 source/runtime evidence consume/projection only
+RCP-17 Web Trial interaction/projection contribution
+RCP-19 desired/applied/observed presentation refinement
+RCP-20 recovery/reconciliation observation/projection
+RCP-22 WB diagnostics/provenance contribution
+RCP-24 Web intervention intent source side
+```
+
+## Batch 4 — W3 + W4 + W6
+
+```text
+W3 — Human Task Interaction
+W4 — Notification & Awareness Interaction
+W6 — Cross-domain Discovery & Governed Navigation
+
+Proposed Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_4 / HUMAN_TASK_NOTIFICATION_DISCOVERY_INTERACTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+```
+
+Primary pressure:
+
+```text
+RCP-16 WB Human Task / response submission contribution
+RCP-18 Notification awareness/history/delivery-status projection contribution
+RCP-21 Discovery query/result/navigation contribution
+RCP-22 provenance/redaction/currentness presentation
+RCP-24 bounded interaction intent where applicable
+```
+
+# Batch Sequencing Rationale
+
+```text
+Batch 1 → establish governed interaction intent boundary + shared Web experience/degraded semantics
+Batch 2 → close complete cross-domain visual-authoring interoperability independently
+Batch 3 → close broad operational observation/trial/intervention/diagnostic projection independently
+Batch 4 → finish specialized S11/S12/S13-backed interaction lanes
+```
+
+W7 is intentionally early so later W2-W6 consume one accepted degraded/unknown/accessibility/timezone interaction semantic baseline rather than independently inventing inconsistent UI meanings.
+
+# RCP / Stable-contract Boundary
+
+```text
+Runtime / Domain Stable Contract Pressure Count
+→ 24 / unchanged
+
+New Cross-component RCP Required For Web Entry
+→ 0
+```
+
+Web Component Internal Design may close WB-side contributions at the authorized design level, but no Full Cross-component RCP Closure is inferred or authorized by this assessment.
+
+# MDE / Revalidation Stop Boundary
+
+A future Web producing session must stop for GAC / Owner if it materially requires:
+
+```text
+new Web/domain Authority or SoT
+browser/local cache promoted to canonical Product state
+offline local-vs-central conflict winner / merge / authoritative synchronization direction
+universal optimistic-success / command-success semantics
+universal Human Task assignment / response-winner law
+lossless source↔visual physical round-trip Product guarantee
+new mandatory canonical IR / DSL / representation
+mobile/native desktop Product expansion
+new Product-wide accessibility/compliance guarantee beyond accepted critical-workflow accessibility semantics
+material fail-open / fail-closed law
+major universal identity namespace
+mandatory public SaaS / hosted control plane / browser-cloud dependency
+frontend framework / protocol / storage lock-in or other high-migration commitment
+new Product capability
+```
+
+No such MDE is required merely for `ns_web` entry.
+
+# Current Governance Boundary
 
 ```text
 Current Authoritative Global State
-→ GAC-EPOCH-0094
+→ GAC-EPOCH-0095
 
 Current Authorized Phase
 → NONE
 
 Authorization Scope
 → NONE
-```
 
-# Explicitly Not Authorized
-
-```text
 ns_web Component Internal Design
+→ NOT YET AUTHORIZED BY THIS ASSESSMENT
+
 System-level SDK Detailed Design
+→ NOT AUTHORIZED
+
 Design-to-Implementation Readiness
-Implementation Planning
-IWP
-Coding
+→ NOT AUTHORIZED
+
+Implementation Planning / IWP / Coding
+→ NOT AUTHORIZED
 ```
 
 # Unique Next Legal Action
 
 ```text
-append GAC-TR-0106 → GAC-EPOCH-0095 as strict additions-only Ledger evidence
+append GAC-TR-0107 → GAC-EPOCH-0096 as strict additions-only Ledger evidence
 → validate net Ledger deletions = 0 from this Working State checkpoint
-→ write GAC-EPOCH-0095 Global State closure seal
+→ write GAC-EPOCH-0096 Global State assessment seal
 → fresh Repository recovery
-→ perform post-ns_agent next-component sequencing / ns_web entry-readiness assessment
-→ do not authorize ns_web automatically
+→ if ns_web entry readiness remains SATISFIED with no drift/MDE/blocker
+→ perform a separate ns_web Component Internal Design / Batch 1 / W1+W7 authorization transition
+→ do not start Web producing work before separate authorization
 ```
