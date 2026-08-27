@@ -1133,7 +1133,7 @@ RCP-13 / RCP-15 → Node executor-side expectations only / accepted S6 Automatio
 RCP-17 → Node trial executor/effect contribution only / full Trial closure NOT AUTHORIZED by inference
 RCP-19 → Node Applied-configuration contribution only / S9 Desired authority preserved
 RCP-22 → N1/N2/N3 fact-owner provenance/diagnostic contribution only / complete Node local diagnostics remains N4 / full closure NOT AUTHORIZED
-RCP-24 → Node intervention target/outcome-side expectation only where materially required / WB-SDK intent source side downstream
+RCP-24 → Node intervention target/outcome expectation only where materially required / WB-SDK intent source side downstream
 RCP-20 comprehensive Node recovery/reconciliation participation → NOT AUTHORIZED / reserved for N4
 Authority / SoT / Actual-state Topology → unchanged / Node owns only bounded readiness + Attempt + protected Effect/source facts
 Attended / Unattended → modes of same governed Node responsibility / neither bypasses IAM/Policy/Trust/Admission
@@ -1301,4 +1301,34 @@ ns_node Internal Design Exhaustion → NOT YET REASSESSED AFTER BATCH 2 ACCEPTAN
 ns_node Component Internal Design Global Closure → NOT DECLARED
 Current Authorized Phase → NONE
 Unique Next Legal Action → write GAC-EPOCH-0085 Global State acceptance seal, fresh Repository recovery, then perform post-Batch-2 ns_node Component Internal Design remaining-pressure / exhaustion / global-closure assessment; do not infer closure or authorize another Product Component automatically
+```
+
+```text
+GAC-TR-0096 → GAC-EPOCH-0086
+Transition → post-Batch-2 ns_node Component Internal Design remaining-pressure / exhaustion / global-closure eligibility assessment
+Assessment → docs/architecture_reviews/ns_evermore_ngrp_001_ns_node_internal_design_remaining_pressure_batching_assessment_0.0.2.md
+Assessment Commit → a9ae16e56a777f7bfeb2b2a1caca78c271910cbc
+Working State Commit → fe0529396ae54022cd3f240c35a2a762fe09138e
+Result → EXHAUSTION_SATISFIED / GLOBAL_CLOSURE_ELIGIBLE
+Accepted ns_node Boundary Coverage → 4 / 4 / 100%
+Remaining accepted ns_node boundaries without Component Internal Design → NONE
+Remaining Material ns_node Component Internal-design Pressure → NONE_FOUND
+ns_node Internal Design Exhaustion → SATISFIED
+ns_node Component Internal Design Global-closure Eligibility → SATISFIED
+ns_node Component Internal Design Global Closure → NOT YET DECLARED
+Missing ns_node Runtime-role source-boundary design → 0
+Remaining ns_node Authority / SoT / Actual-state ambiguity → 0
+Remaining material identity / lifecycle / history ambiguity → 0
+Remaining material offline / recovery / diagnostics ambiguity → 0
+Mandatory missing Shared Foundation semantic → 0
+Implementation-defined Component Architecture Escape → 0
+Cross-component RCP work remaining → downstream / multi-party / NOT ns_node internal-design pressure
+RCP Full Cross-component Closure by inference → NOT CLAIMED
+Decision Registry → 0.0.31 / unchanged
+Open MDE → 0
+Unpersisted Owner Decision → 0
+Blocking Semantic Gap → NONE
+Blocking Item → NONE
+Current Authorized Phase → NONE
+Unique Next Legal Action → write GAC-EPOCH-0086 Global State assessment seal, fresh Repository recovery, then if exhaustion/eligibility remain satisfied perform a separate ns_node Component Internal Design global-closure transition; do not authorize another Product Component automatically
 ```
