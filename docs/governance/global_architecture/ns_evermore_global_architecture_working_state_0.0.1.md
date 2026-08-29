@@ -1,8 +1,8 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0099_NS_WEB_BATCH2_ENTRY_READINESS_ASSESSMENT_PENDING_LEDGER_AND_SEAL`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0100_NS_WEB_BATCH2_AUTHORIZATION_PENDING_LEDGER_AND_SEAL`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
-- Current Authoritative Global State Before Seal: `GAC-EPOCH-0098`
+- Current Authoritative Global State Before Seal: `GAC-EPOCH-0099`
 
 # Current Working Baseline
 
@@ -47,183 +47,105 @@ Blocking Item → NONE
 Known Working-branch Drift → NONE
 ```
 
-# Current Authoritative State Before Assessment Seal
+# Current Authoritative State Before Authorization Seal
 
 ```text
 Current Global State
-→ GAC-EPOCH-0098
+→ GAC-EPOCH-0099
 
-Assessment Recovery Entry HEAD
-→ c8df6e7776df851b98f17124118767107417cee2
+Authorization Recovery Entry HEAD
+→ 2117bfe4d1d415802a9f1fa84f6b7ca67b8be269
 
 State Verified Through HEAD
-→ c9fa5104f22bb2e1559a610692756ebf8859529d
+→ 64de41c7cef6c05170c3b98eca077643e464538d
 
 State-to-entry Delta
-→ exactly one Global State Batch-1 acceptance seal
+→ exactly one Global State assessment seal
 → EXPECTED_GOVERNANCE
 
-Current Authorized Phase
+Current Authorized Phase before seal
 → NONE
 
-Authorization Scope
+Authorization Scope before seal
 → NONE
 ```
 
-# Assessment Evidence
+# Authorization Basis
+
+Entry-readiness assessment:
 
 `docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_remaining_pressure_batch_2_entry_readiness_assessment_0.0.1.md`
 
-```text
-Assessment Evidence Commit
-→ 1fafbc674a59a922d06e10181d9fd916c06ca587
+Authorization evidence:
 
-Assessment Evidence Delta
-→ 1 commit / 1 added assessment file / additions 530 / deletions 0
-
-Input Epoch
-→ GAC-EPOCH-0098
-
-Result
-→ COMPLETED
-```
-
-# Remaining-pressure / Exhaustion Result
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_batch_2_authorization_0.0.1.md`
 
 ```text
-Remaining Boundaries
-→ W2 Cross-domain Authoring & Semantic Interoperability
-→ W3 Human Task Interaction
-→ W4 Notification & Awareness Interaction
-→ W5 Operational Observation, Trial, Intervention & Diagnostics
-→ W6 Cross-domain Discovery & Governed Navigation
-
-Remaining Material ns_web Component Internal-design Pressure
-→ PRESENT
-
-ns_web Internal Design Exhaustion
-→ NOT_SATISFIED
-
-ns_web Component Internal Design Global Closure
-→ NOT ELIGIBLE / NOT DECLARED
-```
-
-# Batch-shape Revalidation
-
-```text
-Recommended ns_web Batch Shape
-→ MULTIPLE / 4 / PRESERVED
-
-Batch 1
-→ W1 + W7 / GLOBAL_ACCEPTED
-
-Immediate Next Batch Candidate
-→ Batch 2 / W2
-
-Future Batch 3
-→ W5
-
-Future Batch 4
-→ W3 + W4 + W6
-```
-
-No new evidence requires resequencing W3/W4/W5/W6 ahead of W2.
-
-# W2 Candidate Position
-
-```text
-W2
-→ Cross-domain Authoring & Semantic Interoperability
-
-Purpose
-→ complete visual authoring for Business Application / Automation / Agent / Data-Knowledge-ETL
-→ source ↔ visual semantic interoperability
-→ validation / conformance / compatibility feedback
-→ revision / history / semantic-diff interaction
-
-Visual Builder
-→ NOT Semantic Authority
-
-Visual Edit State
-→ NOT Canonical Definition SoT
-```
-
-Definition authorities remain:
-
-```text
-Business Application Definition → S5 / ns_server
-Automation Definition → S6 / ns_server
-Data / Knowledge / ETL semantics → S7 / ns_server
-Agent Definition → A1 / ns_agent
-```
-
-# W2 Entry-readiness Basis
-
-```text
-Missing W1/W7 accepted Web baseline → 0
-Missing S5 definition-authority upstream → 0
-Missing S6 definition-authority upstream → 0
-Missing S7 definition-authority upstream → 0
-Missing A1 definition-authority upstream → 0
-Missing WB-R01 Runtime-facing Role → 0
-Missing Mandatory Shared Foundation Semantic → NONE_FOUND
-System-level SDK Detailed Design required merely for entry → NO
-New Product Capability required for entry → NO
-New Runtime Role required for entry → NO
-New Cross-component RCP required for entry → NO
-Open MDE required merely for entry → 0
-Unpersisted Owner Decision → 0
-Blocking Semantic Gap → NONE
-Blocking Item → NONE
-
-ns_web Batch-2 Entry Readiness
+Batch-2 Entry Readiness
 → SATISFIED
+
+Authorization Evidence Commit
+→ 972b8b2af65186d55a2727be5f1e5803519fb7f2
+
+Authorization Evidence Delta
+→ 1 commit / 1 added authorization file / additions 649 / deletions 0
+
+Authorization Result
+→ ELIGIBLE / APPROVED FOR STATE SEAL
+
+Prospective Transition
+→ GAC-TR-0111 → GAC-EPOCH-0100
 ```
 
-# Proposed Batch-2 Scope
+# Prospective Authorized Phase
 
 ```text
 NGRP-001 — Component Internal Design / ns_web / Batch 2
-
-Boundary
-→ W2 — Cross-domain Authoring & Semantic Interoperability
-
-Inherited Runtime-facing Role
-→ WB-R01
-
-Proposed Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_2 / CROSS_DOMAIN_VISUAL_AUTHORING_SEMANTIC_INTEROPERABILITY_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
-
-Authorization
-→ NOT GRANTED BY THIS ASSESSMENT
 ```
 
-# Stable-pressure Candidate Boundary
+Exact scope:
 
 ```text
-Runtime / Domain Stable Contract Pressure Count
-→ 24 / unchanged
-
-Primary pressure
-→ S5 Definition Lifecycle ↔ W2
-→ S6 Definition Lifecycle ↔ W2
-→ S7 Definition Lifecycle ↔ W2
-→ A1 Definition Lifecycle ↔ W2
-
-RCP-24
-→ bounded authoring/change-intent refinement where materially applicable
-
-RCP-22
-→ bounded authoring provenance/diagnostic presentation where materially applicable
-
-New RCP ID
-→ NOT REQUIRED FOR ENTRY
-
-Full Cross-component RCP Closure
-→ NOT INFERRED / NOT AUTHORIZED
+COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_2 / CROSS_DOMAIN_VISUAL_AUTHORING_SEMANTIC_INTEROPERABILITY_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
-# Permanent W2 Entry Constraints
+Authorized boundary:
+
+```text
+W2 — Cross-domain Authoring & Semantic Interoperability
+```
+
+Inherited runtime-facing role:
+
+```text
+WB-R01 — Governed Human Interaction & Projection Participant
+```
+
+No new Runtime Role is created.
+
+# Normative Upstream
+
+```text
+W1 / W7
+→ GLOBAL_ACCEPTED Batch-1 Web baseline
+→ consume only / MUST NOT be reopened
+
+S5 Business Application Definition Authority / SoT
+→ ns_server / preserved
+
+S6 Automation Definition Authority / SoT
+→ ns_server / preserved
+
+S7 Data / Knowledge / ETL Semantic Authority
+→ ns_server / preserved
+
+A1 Agent Definition Authority / Canonical Definition SoT
+→ ns_agent / preserved
+```
+
+# W2 Authority Boundary
+
+Permanent:
 
 ```text
 Visual Builder != Semantic Authority
@@ -237,13 +159,105 @@ Local Draft != Canonical Revision
 Offline Draft Possession != Authoritative Acceptance
 Semantic Diff Projection != Revision Authority
 SDK Surface != Product Authority
+Correlation != Ownership
+Projection != Source Actual-state
 ```
 
-Source↔visual interoperability does not imply physical byte-for-byte or syntax-preserving round-trip.
+W2 may own only bounded Web-origin authoring-session/edit-intent/projection/provenance facts genuinely originating in WB-R01.
 
-# Future MDE Stop Boundary
+# Authorized W2 Semantic Pressure
 
-Batch-2 producing must STOP for GAC / Owner if it materially requires:
+```text
+Authoring Projection
+Governed Edit / Change Intent
+Revision-base Binding
+Authoritative Definition Correlation
+Draft / Working Edit State semantics
+Validation Result / Feedback
+Conformance / Compatibility Feedback
+Unsupported / Non-editable / Representation-limited Qualification
+Semantic Diff / Revision History Projection
+Source ↔ Visual Semantic Interoperability
+Offline / Private Authoring Provenance
+Stale-base / Conflict Visibility
+Authoritative Outcome / Accepted Revision Correlation
+Cross-domain authoring consistency
+Secret-reference-only authoring semantics
+History / Provenance / Diagnostics
+```
+
+Source↔visual interoperability is semantic interoperability only; physical round-trip guarantees are not authorized by default.
+
+# Stable-contract / RCP Scope
+
+```text
+RCP Count
+→ 24 / unchanged
+
+Primary stable pressure
+→ S5 Definition Lifecycle ↔ W2
+→ S6 Definition Lifecycle ↔ W2
+→ S7 Definition Lifecycle ↔ W2
+→ A1 Definition Lifecycle ↔ W2
+
+RCP-24
+→ bounded W2 authoring/change-intent source-side semantics where material
+→ receiving definition authority owns acceptance/outcome
+→ Full Closure NOT AUTHORIZED
+
+RCP-22
+→ bounded W2 authoring provenance / history / diagnostics presentation where material
+→ original fact owners preserved
+→ Full Cross-component Closure NOT AUTHORIZED
+
+New RCP ID
+→ 0 at authorization entry
+```
+
+# Revision / Offline Boundary
+
+```text
+Local Draft != Canonical Revision
+Draft Base Revision != Current Canonical Revision automatically
+Latest Draft != Canonical Winner
+Client Timestamp != Canonical Winner
+Reconnect != Reconciled
+Conflict != Winner Selected
+Unknown Compatibility != Compatible
+Representation-limited != Semantic Deletion permission
+```
+
+No source-vs-visual winner/merge/authoritative synchronization law is authorized.
+
+# Governance / Security / Privacy
+
+```text
+Tenant != Organization
+Principal Identity != Authentication automatically
+Authenticated != Authorized automatically
+Authorized to view != Authorized to edit automatically
+Authorized to edit != Definition Accepted
+Definition Accepted != Artifact Accepted automatically
+Artifact Accepted != Execution Admitted
+Secret Reference != Secret Material
+```
+
+Authoring projection/edit affordance never grants semantic authority.
+
+# Shared Foundation
+
+W2 may consume accepted Foundation semantics for time/freshness, correlation/provenance, semantic representation mechanics, status/uncertainty, governed context, secret reference/redaction, compatibility/conformance and diagnostics.
+
+```text
+Mandatory Missing Shared Foundation Semantic
+→ NONE_FOUND
+```
+
+No parallel Web Foundation is authorized.
+
+# MDE Stop Boundary
+
+Batch-2 producing MUST STOP and return to GAC / Owner if it materially requires:
 
 ```text
 new cross-domain Definition Authority / SoT
@@ -261,19 +275,19 @@ major universal physical identity namespace
 mandatory public registry / SaaS / hosted authoring service
 frontend/editor/framework/protocol/storage lock-in or other high-migration commitment
 new Product capability
+new cross-component RCP identity
 ```
-
-No such MDE is required merely for Batch-2 entry.
 
 # Explicitly Not Authorized / Not Declared
 
 ```text
-W2 Internal Design
+W1 redesign
+W7 redesign
 W3 Internal Design
 W4 Internal Design
 W5 Internal Design
 W6 Internal Design
-ns_web Batch 2 / Batch 3 / Batch 4 producing work
+ns_web Batch 3 / Batch 4 producing work
 ns_web Internal Design Exhaustion SATISFIED
 ns_web Component Internal Design Global Closure
 System-level SDK Detailed Design
@@ -284,13 +298,17 @@ Coding
 any Full Cross-component RCP Closure by inference
 ```
 
+# Maximum Legal Bounded-session State
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+```
+
 # Unique Next Legal Action
 
 ```text
-append post-Batch-1 assessment transition to logical Ledger
-→ write GAC-EPOCH-0099 Global State assessment seal with Current Authorized Phase = NONE
-→ fresh Repository recovery
-→ if Batch-2 readiness remains SATISFIED with no drift/MDE/blocker
-→ perform a separate ns_web Component Internal Design / Batch 2 / W2 authorization transition
-→ do not start Batch-2 producing work before separate authorization
+append GAC-TR-0111 → GAC-EPOCH-0100 as strict additions-only Ledger evidence
+→ validate net Ledger deletions = 0
+→ write GAC-EPOCH-0100 Global State authorization seal
+→ only after seal start exactly one bounded ns_web Batch-2 W2 producing session under the exact authorized scope
 ```
