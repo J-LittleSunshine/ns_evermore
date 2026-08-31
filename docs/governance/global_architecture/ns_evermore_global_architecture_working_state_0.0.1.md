@@ -1,8 +1,8 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0102_NS_WEB_BATCH3_ENTRY_READINESS_ASSESSMENT_PENDING_LEDGER_AND_SEAL`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0103_NS_WEB_BATCH3_AUTHORIZATION_PENDING_LEDGER_AND_SEAL`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
-- Current Authoritative Global State Before Seal: `GAC-EPOCH-0101`
+- Current Authoritative Global State Before Seal: `GAC-EPOCH-0102`
 
 # Current Working Baseline
 
@@ -41,84 +41,102 @@ Blocking Item → NONE
 Known Working-branch Drift → NONE
 ```
 
-# Assessment Coordinates
+# Current Authoritative State Before Authorization Seal
 
 ```text
-Assessment Recovery Entry HEAD
-→ 8948b15c48a5dca545a3c33deb82b5901207acf7
+Current Global State
+→ GAC-EPOCH-0102
 
-Assessment Evidence
-→ docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_remaining_pressure_batch_3_entry_readiness_assessment_0.0.1.md
+Authorization Recovery Entry HEAD
+→ d1af94a160660725bb52c66d5c435312bab3fdb8
 
-Assessment Evidence Commit
-→ b9aa809d7d73899e44aa6b6d5f9507e4c698de9c
+State Verified Through HEAD
+→ 1b6173e31c0b7f1a1a42abe14e4cf90fcc2cffa9
 
-Assessment Evidence Delta
-→ 1 commit / 1 added assessment file / additions 691 / deletions 0
+State-to-entry Delta
+→ exactly one Global State assessment seal
+→ EXPECTED_GOVERNANCE
 
-Input Epoch
-→ GAC-EPOCH-0101
+Current Authorized Phase before seal
+→ NONE
+
+Authorization Scope before seal
+→ NONE
+```
+
+# Authorization Basis
+
+Entry-readiness assessment:
+
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_remaining_pressure_batch_3_entry_readiness_assessment_0.0.1.md`
+
+Authorization evidence:
+
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_batch_3_authorization_0.0.1.md`
+
+```text
+Batch-3 Entry Readiness
+→ SATISFIED
+
+Authorization Evidence Commit
+→ 3321f6254209efa2ca7f45e02d5e202007e9282a
+
+Authorization Evidence Delta
+→ 1 commit / 1 added authorization file / additions 809 / deletions 0
+
+Authorization Result
+→ ELIGIBLE / APPROVED FOR STATE SEAL
 
 Prospective Transition
-→ GAC-TR-0113 → GAC-EPOCH-0102
+→ GAC-TR-0114 → GAC-EPOCH-0103
 ```
 
-# Remaining-pressure / Exhaustion Result
+# Prospective Authorized Phase
 
 ```text
-Remaining Boundaries
-→ W3 Human Task Interaction
-→ W4 Notification & Awareness Interaction
-→ W5 Operational Observation, Trial, Intervention & Diagnostics
-→ W6 Cross-domain Discovery & Governed Navigation
-
-Remaining Material ns_web Component Internal-design Pressure
-→ PRESENT
-
-ns_web Internal Design Exhaustion
-→ NOT_SATISFIED
-
-ns_web Component Internal Design Global Closure
-→ NOT ELIGIBLE / NOT DECLARED
+NGRP-001 — Component Internal Design / ns_web / Batch 3
 ```
 
-# Batch-shape Revalidation
+Exact scope:
 
 ```text
-Recommended ns_web Batch Shape
-→ MULTIPLE / 4 / PRESERVED
-
-Batch 1
-→ W1 + W7 / GLOBAL_ACCEPTED
-
-Batch 2
-→ W2 / GLOBAL_ACCEPTED
-
-Immediate Next Batch Candidate
-→ Batch 3 / W5
-
-Future Final Batch Candidate
-→ Batch 4 / W3 + W4 + W6
+COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_3 / OPERATIONAL_OBSERVATION_TRIAL_INTERVENTION_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
 ```
 
-No new Repository evidence requires resequencing W3/W4/W6 ahead of W5.
-
-# W5 Candidate Position
+Authorized boundary:
 
 ```text
-W5
-→ Operational Observation, Trial, Intervention & Diagnostics
-
-Purpose
-→ asynchronous operation identity/history/return-later observation
-→ governed Trial interaction
-→ intervention request interaction
-→ Desired / Applied / Observed presentation
-→ layered diagnostics / explainability
-→ authorized provenance
+W5 — Operational Observation, Trial, Intervention & Diagnostics
 ```
 
-W5 owns no runtime/source-fact/Trial/Intervention authority and no universal Actual-state SoT.
+Inherited runtime-facing role:
+
+```text
+WB-R01 — Governed Human Interaction & Projection Participant
+```
+
+No new Runtime Role is created.
+
+# Normative Upstream
+
+```text
+W1 / W2 / W7
+→ GLOBAL_ACCEPTED Web baseline / consume only
+
+ns_server
+→ GLOBAL_CLOSED / source/runtime semantics preserved
+
+ns_runtime
+→ GLOBAL_CLOSED / RT-R01..RT-R04 preserved
+
+ns_node
+→ GLOBAL_CLOSED / N1..N4 preserved
+
+ns_agent
+→ GLOBAL_CLOSED / A1..A6 + AG-R01..04 preserved
+```
+
+# W5 Authority Boundary
 
 Permanent:
 
@@ -126,6 +144,7 @@ Permanent:
 Dashboard != Runtime SoT
 Web Projection != Source Actual-state
 Operation Observation != Operation Ownership
+Browser Session != Operation Owner
 Browser Closed != Operation Cancelled
 Trial Intent != Trial Result
 Trial Result != Production Acceptance / Admission
@@ -135,80 +154,117 @@ Desired != Applied != Observed
 Reconnect != Recovered / Reconciled
 Diagnostics Projection != Diagnostic Source Authority
 Provenance Aggregation != Source Ownership Transfer
+Raw Hidden Reasoning != Required Explainability Artifact
+Client Clock != Source-time Authority
 Latest Timestamp / Arrival != Canonical Winner
 ```
 
-# W5 Entry-readiness Basis
+W5 may own only bounded Web-origin observation/interaction/projection/provenance facts genuinely originating in WB-R01.
+
+# Authorized W5 Semantic Pressure
 
 ```text
-Missing W1/W7 accepted Web baseline → 0
-Missing W2 accepted revision/history correlation baseline → 0
-Missing required ns_server source/runtime upstream → 0
-Missing RT-R01..RT-R04 Runtime coordination upstream → 0
-Missing N1..N4 Node source upstream → 0
-Missing A1..A6 / AG-R01..04 Agent source upstream → 0
-Missing Trial semantic/runtime upstream → 0
-Missing Desired / Applied ownership upstream → 0
-Missing Recovery / Reconciliation upstream → 0
-Missing WB-R01 Runtime-facing Role → 0
-Missing Mandatory Shared Foundation Semantic → NONE_FOUND
-System-level SDK Detailed Design required merely for entry → NO
-New Product Capability required for entry → NO
-New Runtime Role required for entry → NO
-New Cross-component RCP required for entry → NO
-Open MDE required merely for entry → 0
-Unpersisted Owner Decision → 0
-Blocking Semantic Gap → NONE
-Blocking Item → NONE
-
-ns_web Batch-3 Entry Readiness
-→ SATISFIED
+Operation Observation Reference
+Operation History / Return-later Projection
+Cross-session Operation Rediscovery
+Source Evidence Correlation
+Trial Intent / Observation / Result Correlation
+Intervention Request / Outcome Correlation
+Cancel / Retry / Resume / Recovery Request Correlation
+Desired / Applied / Observed Operational Projection
+Recovery / Reconciliation Observation
+Diagnostics Layer / Diagnostic Evidence Projection
+Authorized Provenance / Explainability Projection
+Currentness / Uncertainty / Partiality Qualification
+Offline / Degraded Operational Observation
+Definition / Config / Runtime Revision Correlation
+Web Observation / Intervention Provenance
 ```
 
-# Proposed Batch-3 Scope
+These are representation-neutral architecture-semantic pressures only.
+
+# Source Ownership Preservation
 
 ```text
-NGRP-001 — Component Internal Design / ns_web / Batch 3
-
-Boundary
-→ W5 — Operational Observation, Trial, Intervention & Diagnostics
-
-Inherited Runtime-facing Role
-→ WB-R01
-
-Proposed Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_3 / OPERATIONAL_OBSERVATION_TRIAL_INTERVENTION_DIAGNOSTICS_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
-
-Authorization
-→ NOT GRANTED BY THIS ASSESSMENT
+Managed Desired Configuration → S9 / SV-R05
+Applied Configuration → applicable runtime owner
+Runtime coordination facts → RT-R01..RT-R04
+Node Readiness → N1 / ND-R01
+Node Attempt → N2 / ND-R02
+Node Effect → N3 / ND-R03
+Node Recovery / Diagnostics → N4 / ND-R04
+Agent Runtime → A2 / AG-R01
+Agent Provider/Model bounded observations → A3 / AG-R02
+Multi-Agent composition provenance → A5 / AG-R03
+Agent delegation provenance → A6 / AG-R04
+Canonical source facts / reconciliation outcomes → original applicable source owners
 ```
 
-# Stable-pressure Candidate Boundary
+# Stable-contract / RCP Scope
 
 ```text
 RCP Count
 → 24 / unchanged
 
-Consume/projection source pressure
-→ RCP-04 / 07 / 08 / 09 / 11 / 12 / 13 / 15
+Consume/projection-only upstream
+→ RCP-04 / RCP-07 / RCP-08 / RCP-09 / RCP-11 / RCP-12 / RCP-13 / RCP-15
 
-Candidate Web-side contribution
+Authorized Web-side contribution pressure
 → RCP-17 Trial interaction/projection
 → RCP-19 Desired/Applied/Observed presentation refinement
 → RCP-20 Recovery/Reconciliation observation/projection
-→ RCP-22 diagnostics/provenance/explainability projection + WB-owned observation provenance
-→ RCP-24 intervention/request-intent source side where materially applicable
+→ RCP-22 diagnostics/provenance/explainability projection + WB-origin observation provenance
+→ RCP-24 intervention/continuation/recovery request-intent source side where material
 
 Full Cross-component RCP Closure
-→ NOT INFERRED / NOT AUTHORIZED BY ASSESSMENT
+→ NOT AUTHORIZED / NOT INFERRED
 
 New RCP ID
-→ NOT REQUIRED FOR ENTRY
+→ 0 at authorization entry
 ```
+
+# Trial / Intervention / Recovery Non-collapse
+
+```text
+Trial Intent != Trial Result
+Trial Result != Production Acceptance
+Trial Result != Production Admission
+Intervention Request != Outcome Achieved
+Cancel Request != Cancellation Achieved
+Retry Request != Retry Achieved
+Resume Request != Resume Achieved
+Recovery Request != Recovery Achieved
+Reconnect != Recovered
+Reconnect != Reconciled
+```
+
+No universal success/retry/cancel/resume/recovery law is authorized.
+
+# Diagnostics / Explainability Boundary
+
+```text
+Diagnostics Projection != Diagnostic Source Authority
+Provenance Aggregation != Source Ownership Transfer
+Explainability Projection != Source Semantic Authority
+Raw Hidden Reasoning != Required Explainability Artifact
+```
+
+No universal diagnostic/provenance SoT is authorized.
+
+# Shared Foundation
+
+W5 may consume accepted Shared Foundation semantics for temporal/freshness, status/uncertainty, correlation/provenance, governed context, diagnostics, secret reference/redaction, compatibility/conformance and semantic representation mechanics.
+
+```text
+Mandatory Missing Shared Foundation Semantic
+→ NONE_FOUND
+```
+
+No parallel Web telemetry/diagnostics/status Foundation is authorized.
 
 # MDE Stop Boundary
 
-A future Batch-3 producing session MUST STOP for GAC / Owner if it materially requires:
+Batch-3 producing MUST STOP and return to GAC / Owner if it materially requires:
 
 ```text
 new universal Runtime / Operation Actual-state SoT
@@ -216,7 +272,7 @@ Dashboard promoted to runtime/source Authority
 new Trial semantic Authority / SoT
 new Intervention outcome Authority
 major universal operation identity namespace
-universal operation lifecycle/state machine across heterogeneous sources
+universal operation lifecycle/state machine
 universal Cancel / Retry / Resume / Recovery success semantics
 universal retry/backoff/once/compensation guarantee
 cross-source conflict winner / merge / canonicalization law
@@ -230,44 +286,37 @@ new Product capability
 new cross-component RCP identity
 ```
 
-No such MDE is required merely for Batch-3 entry.
-
-# Current Governance Boundary
+# Explicitly Not Authorized / Not Declared
 
 ```text
-Current Authorized Phase after assessment seal
-→ NONE
-
-Authorization Scope
-→ NONE
-
-ns_web Batch 3 producing work
-→ NOT AUTHORIZED BY THIS ASSESSMENT
-
+W1 redesign
+W2 redesign
+W7 redesign
+W3 Internal Design
+W4 Internal Design
+W6 Internal Design
 ns_web Batch 4 producing work
-→ NOT AUTHORIZED
-
 ns_web Internal Design Exhaustion SATISFIED
-→ NOT DECLARED
-
 ns_web Component Internal Design Global Closure
-→ NOT DECLARED
-
 System-level SDK Detailed Design
-→ NOT AUTHORIZED
+Design-to-Implementation Readiness
+Implementation Planning
+IWP
+Coding
+any Full Cross-component RCP Closure by inference
+```
 
-Design-to-Implementation Readiness / Implementation Planning / IWP / Coding
-→ NOT AUTHORIZED
+# Maximum Legal Bounded-session State
+
+```text
+COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 ```
 
 # Unique Next Legal Action
 
 ```text
-append GAC-TR-0113 → GAC-EPOCH-0102 as strict additions-only Ledger evidence
-→ validate net Ledger deletions = 0 from this Working State checkpoint
-→ write GAC-EPOCH-0102 Global State assessment seal with Current Authorized Phase = NONE
-→ fresh Repository recovery
-→ if Batch-3 readiness remains SATISFIED with no drift/MDE/blocker
-→ perform a separate ns_web Component Internal Design / Batch 3 / W5 authorization transition
-→ do not start Batch-3 producing work before separate authorization
+append GAC-TR-0114 → GAC-EPOCH-0103 as strict additions-only Ledger evidence
+→ validate net Ledger deletions = 0
+→ write GAC-EPOCH-0103 Global State authorization seal
+→ only after seal start exactly one bounded ns_web Batch-3 W5 producing session under the exact authorized scope
 ```
