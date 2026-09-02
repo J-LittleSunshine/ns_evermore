@@ -1,8 +1,8 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0112_STABLE_CONTRACT_BATCH_1_AUTHORIZATION_APPROVED_PENDING_LEDGER_AND_SEAL`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0113_STABLE_CONTRACT_BATCH_1_CORRECTION_REQUIRED_PENDING_LEDGER_AND_SEAL`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
-- Current Authoritative Global State: `GAC-EPOCH-0112`
+- Current Authoritative Global State: `GAC-EPOCH-0113`
 - Working-state Authority: `COORDINATION_ONLY / NOT_AUTHORIZATION_TOKEN`
 
 # Current Accepted Baseline
@@ -35,9 +35,6 @@ Runtime / Domain Stable Contract Design Readiness
 Contract Design Batch Count
 → 5
 
-Global Contract Batch Hard-SDD Graph
-→ ACYCLIC
-
 Decision Registry
 → 0.0.40 / GLOBAL_CURRENT / NORMATIVE
 
@@ -48,32 +45,32 @@ Unpersisted Owner Decision
 → 0
 ```
 
-# Fresh Authorization Recovery
+# Batch-1 Producing Review Recovery
 
 ```text
-Authorization Recovery HEAD
-→ 4eb37ccfae105d4ef109de38a116c805ff0b9cd4
+Original Batch-1 Authorization Seal / Producing Entry HEAD
+→ d6b12f1d9901d810a61943c0c84b058db61746b2
 
-Current Authoritative Global State
-→ GAC-EPOCH-0112
+Candidate 0.0.1
+→ f9966824b12f43c5043440a231b4cc9adf55d2cc
 
-State Verified Through HEAD
-→ ee1ebd8ab7784d5761b9359eaf03fdeb7dcbbc41
+DAD 0.0.1
+→ a2929f986e753136fa2ae114125f3efd0a4ce02b
 
-Latest Transition
-→ GAC-TR-0123 → GAC-EPOCH-0112
+Review / Audit 0.0.1
+→ 9e583c101d8cd028c11c2acda94efbbe9c069ff2
 
-Decision Registry
-→ 0.0.40 / GLOBAL_CURRENT / NORMATIVE
+Handoff / Frozen Producing Final HEAD
+→ 9c0393942402af9454622be5e07fb70165215e6c
 
-Current Authorized Phase at recovery
-→ NONE
+Producing commits
+→ 4
 
-Batch-1 Entry Readiness
-→ SATISFIED
+Producing files
+→ exactly 4 added evidence files
 
-Blocking Semantic Gap
-→ NONE
+Governance mutation by producing session
+→ 0
 
 Unexpected Drift
 → NONE
@@ -82,127 +79,182 @@ Unauthorized Progression
 → NONE
 ```
 
-# Authorization Evidence
+# Independent GAC Review Result
 
 ```text
-Evidence
-→ docs/architecture_reviews/ns_evermore_ngrp_001_runtime_domain_stable_contract_design_batch_1_authorization_0.0.1.md
+GAC Result
+→ CORRECTION_REQUIRED
 
-Evidence Commit
-→ 206f9c3db7ba1dcc39a9ff136cec42ba53f8698e
+Global Acceptance
+→ NOT GRANTED
 
-Evidence Delta
-→ exactly 1 commit
-→ exactly 1 added architecture-review authorization file
+Blocking Item
+→ RCP-24 PRODUCER TOPOLOGY SCOPE AMBIGUITY
 
-Authorization Result
-→ APPROVED / pending Ledger + State seal
+Open MDE
+→ 0
+
+Unpersisted Owner Decision
+→ 0
 ```
 
-# Authorized Producing Scope
+GAC evidence:
 
 ```text
-NGRP-001
-— Runtime / Domain Stable Contract Design
-/ Batch 1
-/ Governance / Intent / Admission / Presence / Configuration / Readiness Foundation
+docs/architecture_reviews/ns_evermore_ngrp_001_runtime_domain_stable_contract_design_batch_1_global_review_correction_required_0.0.1.md
+
+Commit
+→ d95882fbc37b0ba9b9106f815a50f1ffc0a89995
 ```
 
-Authorized RCP:
+# Passed Independent Review Areas
 
 ```text
-RCP-01 — Governance Context
-RCP-02 — Admission Evidence
-RCP-03 — Presence
-RCP-04 — Node Readiness
-RCP-19 — Desired / Applied Config
-RCP-24 — Human / SDK Intent
-```
+RCP-01 → PASS
+RCP-02 → PASS
+RCP-03 → PASS
+RCP-19 → PASS
+RCP-04 → PASS
 
-Authorized RCP Count:
+Batch-1 Hard CSDD Graph
+→ ACYCLIC / PASS
 
-```text
-6
-```
+Authority Transfer
+→ 0
 
-# Batch-1 Hard-SDD Graph
+SoT Transfer
+→ 0
 
-```text
-RCP-02 → RCP-01
-RCP-03 → RCP-01
-RCP-19 → RCP-01
-RCP-24 → RCP-01
-RCP-04 → RCP-01, RCP-19
-```
+Final Actual-state Ownership Transfer
+→ 0
 
-Notation:
-
-```text
-A → B
-→ A's Contract semantic definition depends on B's Contract semantic definition
-```
-
-Dependency-first synthesis order:
-
-```text
-Stage 0 → RCP-01
-Stage 1 → RCP-02 / RCP-03 / RCP-19 / RCP-24
-Stage 2 → RCP-04
-```
-
-```text
-Batch-1 Hard-SDD Graph
-→ ACYCLIC
-
-Authority Cycle
+Mandatory Missing Shared Foundation Semantic
 → NONE_FOUND
 
-SoT Cycle
-→ NONE_FOUND
+Security / Privacy / Secret Reference
+→ PASS
 
-Final Actual-state Ownership Cycle
-→ NONE_FOUND
+Offline / Private
+→ PASS
+
+Recovery / Re-observation Non-canonicalization
+→ PASS
+
+Compatibility / Migration / Conformance
+→ PASS
+
+Technology / Representation Leakage
+→ 0
+
+Implementation Leakage
+→ 0
 ```
 
-# Authority Preservation
+# Correction Defect
+
+Accepted RCP-24 authority is:
 
 ```text
-RCP-01 Governance authorities
-→ accepted ns_server Tenant / IAM / Organization / Policy / Trust authorities
-
-RCP-02 Formal Execution Admission
-→ ns_server / S8 / SV-R04
-
-RCP-03 Presence / Reachability coordination facts
-→ ns_runtime / R1 / RT-R01
-
-RCP-19 canonical Desired state
-→ ns_server / S9 / SV-R05
-
-RCP-19 Applied state
-→ applicable runtime Actual-state owner
-
-RCP-24 Human / SDK Intent
-→ source-surface intent/submission only; receiving authority owns semantic applicability/outcome
-
-RCP-04 Node Readiness
-→ ns_node / N1 / ND-R01
+WB/SDK → governed targets
+Human / SDK Intent
+receiving authority owns semantic applicability/outcome
 ```
 
-Permanent non-collapse:
+Accepted Web evidence includes multiple RCP-24 source-side contributions under `WB-R01`, including W1, W2 and W5 where materially applicable.
+
+Current Candidate 0.0.1 instead states:
+
+```text
+Human via ns_web / W1 / WB-R01
+future System-level SDK source surfaces
+other accepted human/source surfaces
+```
+
+This is not acceptable as a Full Cross-boundary producer topology because:
+
+```text
+W1-only Web wording
+→ too narrow relative to accepted W1/W2/W5 Web source contributions
+
+other accepted human/source surfaces
+→ too broad / open-ended relative to accepted WB/SDK producer topology
+```
+
+DAD-006 and Handoff preserve a narrower Human/Web/future-SDK formulation, so the evidence set is internally inconsistent and the Review's `RCP_SCOPE_OVERCLAIM_REVIEW → PASS` cannot be accepted as written.
+
+# Correction-only Reissuance Scope
+
+Prospective correction authorization is limited to:
+
+```text
+RUNTIME_DOMAIN_STABLE_CONTRACT_DESIGN_ONLY
+/ BATCH_1
+/ CORRECTION_REISSUANCE
+/ RCP24_PRODUCER_TOPOLOGY_SCOPE_RECONCILIATION_ONLY
+```
+
+Required corrected producer topology:
+
+```text
+Current Product-side source producer
+→ ns_web / WB-R01
+→ only accepted Web responsibilities that genuinely originate RCP-24 Intent/submission facts
+→ preserve at least W1 / W2 / W5 where materially applicable
+
+Future source producer
+→ System-level SDK
+→ only after separate SDK design/authorization
+
+Additional generic source-surface producer class
+→ NOT CREATED
+```
+
+Future newly accepted source surfaces, if any, require normal GAC revalidation; this Contract does not pre-authorize them.
+
+# Correction Evidence Strategy
+
+Preserve all original `0.0.1` producing evidence unchanged as historical evidence.
+
+Authorize a clean four-artifact `0.0.2` correction reissuance:
+
+```text
+Candidate 0.0.2
+DAD Evidence 0.0.2
+Review / Audit 0.0.2
+Handoff 0.0.2
+```
+
+The correction session must not mutate the original `0.0.1` files.
+
+Substantive design change outside RCP-24 producer topology scope is prohibited unless a new Repository contradiction forces STOP / RETURN TO GAC.
+
+# Mandatory Correction Revalidation
+
+At minimum re-run:
+
+```text
+PRODUCER_CONSUMER_OBLIGATION_REVIEW
+RCP_SCOPE_OVERCLAIM_REVIEW
+SDK_PREMATURE_DESIGN_REVIEW
+CONTRACT_SUBJECT_IDENTITY_REVIEW where affected
+GIT_DRIFT_REVIEW
+```
+
+Also revalidate all six Batch-1 RCP results for non-regression.
+
+# Preserved Non-collapse
 
 ```text
 Tenant != Organization
 Principal != Authentication
 Authenticated != Authorized
-Authorized != Artifact Accepted
-Artifact Accepted != Execution Admitted
-
 Admission != Scheduling != Routing != Dispatch != Attempt != Effect
 Connected != Trusted != Admitted
 Reachable != Ready
 Desired != Distributed != Applied != Observed
-Intent Submitted != Intent Applicable != Authoritative Outcome
+Intent != Permit != Acceptance != Admission != Outcome
+Local Possession != Submission != Receipt != Applicability != Application != Authoritative Outcome
+RCP-24 Configuration-change Intent != RCP-19 Canonical Desired-state
 Offline Possession != Submission
 Reconnect != Reconciled
 Replay != Retroactive Authorization
@@ -210,44 +262,13 @@ Latest Timestamp / Arrival != Canonical Winner
 Secret Reference != Secret Material
 ```
 
-# Technology / Representation Boundary
-
-Batch 1 is authorized only for representation-neutral Stable Contract Design.
-
-Not implied or selected:
-
-```text
-REST / GraphQL / gRPC / WebSocket / SSE
-DTO / API / wire schema
-broker / queue / topic
-JSON / Protobuf / Avro as architecture identity
-UUID / database key format
-ORM / table / event-store schema
-SDK package / method design
-retry / timeout algorithms
-process / service / worker / deployment topology
-implementation package structure
-```
-
 # Explicit Non-authorizations
 
 ```text
-Global Acceptance by producing session
+Runtime / Domain Stable Contract Design / Batch 2..5
 → NOT AUTHORIZED
 
-GAC Epoch progression by producing session
-→ NOT AUTHORIZED
-
-Global governance-state mutation by producing session
-→ NOT AUTHORIZED
-
-Runtime / Domain Stable Contract Design / Batch 2
-→ NOT AUTHORIZED
-
-Batch 3 / 4 / 5
-→ NOT AUTHORIZED
-
-RCP Full Cross-component Program Closure
+RCP-01..24 Full Cross-component Closure
 → NOT DECLARED
 
 System-level SDK Detailed Design
@@ -260,45 +281,33 @@ Implementation Planning / IWP / Coding
 → NOT AUTHORIZED
 ```
 
-# Producing-session Maximum Legal State
-
-```text
-NGRP-001
-— Runtime / Domain Stable Contract Design
-/ Batch 1
-/ RCP-01 + RCP-02 + RCP-03 + RCP-04 + RCP-19 + RCP-24
-
-→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
-```
-
-# Prospective Authorization Transition
+# Prospective Correction Transition
 
 ```text
 Next Logical Transition
-→ GAC-TR-0124
+→ GAC-TR-0125
 
 Next Global State Epoch
-→ GAC-EPOCH-0113
+→ GAC-EPOCH-0114
 
 Next Ledger Continuation
-→ ns_evermore_global_architecture_ledger_continuation_0.0.25.md
+→ ns_evermore_global_architecture_ledger_continuation_0.0.26.md
 
 Transition Meaning
-→ explicitly authorize Runtime / Domain Stable Contract Design / Batch 1 producing
-→ scope authorization to RCP-01 / 02 / 03 / 04 / 19 / 24 only
+→ persist Batch-1 CORRECTION_REQUIRED disposition
+→ authorize only RCP-24 producer-topology correction reissuance
 → preserve Decision Registry 0.0.40
 → keep Batch 2..5 and SDK unauthorized
 ```
 
-Until Ledger and final State seal are persisted, authoritative State remains `GAC-EPOCH-0112` and no producing session may start from this Working State alone.
+Until Ledger and final State seal are persisted, authoritative State remains `GAC-EPOCH-0113`; this Working State alone is not correction authorization.
 
 # Unique Next Legal Persistence Action
 
 ```text
-verify authorization evidence + Working State delta is clean
-→ verify branch drift = NONE
-→ append immutable Ledger continuation 0.0.25 with GAC-TR-0124
-→ write GAC-EPOCH-0113 Global Architecture State authorization seal
+verify GAC correction evidence → Working State delta is clean
+→ append immutable Ledger continuation 0.0.26 with GAC-TR-0125
+→ write GAC-EPOCH-0114 correction authorization State seal
 → verify remote HEAD equals final State seal
-→ STOP / hand off bounded Batch-1 producing prompt
+→ STOP / hand off bounded correction-reissuance prompt
 ```
