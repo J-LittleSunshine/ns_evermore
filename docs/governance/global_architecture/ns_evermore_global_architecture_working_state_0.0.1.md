@@ -1,8 +1,8 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0105_NS_WEB_BATCH4_AUTHORIZATION_APPROVED_PENDING_LEDGER_AND_SEAL`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0106_NS_WEB_BATCH4_CORRECTION_REISSUANCE_APPROVED_PENDING_LEDGER_AND_SEAL`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
-- Current Authoritative Global State: `GAC-EPOCH-0105`
+- Current Authoritative Global State: `GAC-EPOCH-0106`
 - Working-state Authority: `COORDINATION_ONLY / NOT_AUTHORIZATION_TOKEN`
 
 # Current Accepted Baseline
@@ -40,19 +40,15 @@ Component Internal Design Readiness
 
 ns_server Component Internal Design
 → GLOBAL_CLOSED / COMPLETE
-→ Internal Design Exhaustion SATISFIED
 
 ns_runtime Component Internal Design
 → GLOBAL_CLOSED / COMPLETE
-→ Internal Design Exhaustion SATISFIED
 
 ns_node Component Internal Design
 → GLOBAL_CLOSED / COMPLETE
-→ Internal Design Exhaustion SATISFIED
 
 ns_agent Component Internal Design
 → GLOBAL_CLOSED / COMPLETE
-→ Internal Design Exhaustion SATISFIED
 
 ns_web Batch 1
 → GLOBAL_ACCEPTED / W1 + W7
@@ -75,8 +71,8 @@ Accepted ns_web Internal Responsibility Count
 Remaining accepted ns_web boundaries
 → W3 / W4 / W6
 
-Remaining Material ns_web Component Internal-design Pressure
-→ PRESENT
+ns_web Batch 4 Global Acceptance
+→ NOT GRANTED
 
 ns_web Internal Design Exhaustion
 → NOT_SATISFIED
@@ -92,430 +88,285 @@ Open MDE
 
 Unpersisted Owner Decision
 → 0
-
-Blocking Semantic Gap
-→ NONE
-
-Blocking Item
-→ NONE
 ```
 
-# Fresh Authorization Recovery Coordinates
+# Fresh GAC Continuity Recovery
 
 ```text
-Fresh Recovery HEAD before Authorization Evidence
-→ b9f188cf7a0e7a0e195c4effa5971567e85ff95e
+Recovered Actual HEAD before GAC reconciliation evidence
+→ ed1d611f37706a85029e46a757b4125d92b873a1
 
-Current State Epoch at Recovery
-→ GAC-EPOCH-0105
+Current Authoritative State
+→ GAC-EPOCH-0106
 
 State Verified Through HEAD
-→ a060c987967306a5466780e8edc961e981597c8a
+→ ac880b9da9d8d9d5095a3fa9c356d72d80530c1c
 
-Logical Ledger Latest Segment before Authorization
-→ ns_evermore_global_architecture_ledger_continuation_0.0.17.md
+Current Logical Ledger Tail
+→ ns_evermore_global_architecture_ledger_continuation_0.0.18.md
 
-Logical Ledger Latest Transition before Authorization
-→ GAC-TR-0116 → GAC-EPOCH-0105
+Current Logical Ledger Transition
+→ GAC-TR-0117 → GAC-EPOCH-0106
 
 Current Decision Registry
 → 0.0.38 / CURRENT / NORMATIVE
-
-Post-Batch-3 Batch-4 Entry-readiness Assessment
-→ SATISFIED / CURRENT
-
-Assessment-to-State-seal Drift
-→ EXPECTED_GOVERNANCE ONLY
-
-Unexpected Drift before Authorization Evidence
-→ NONE
 ```
 
-# Dedicated Authorization Evidence
+# Original Batch-4 Producing Range
 
 ```text
-Authorization Evidence
-→ docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_batch_4_authorization_0.0.1.md
+Authorization Seal
+→ 7212f3e79f54cdfee0c0938e8dcdc778312acf3f
 
-Authorization Evidence Commit
-→ cfc2b3b8270616040421b3c6b33220b0a7584622
+Candidate
+→ ac560d34bb22b8883619857cec332e9ffb5fe5bc
 
-Authorization Evidence Delta
-→ exactly 1 commit
-→ exactly 1 added authorization evidence file
-→ 751 additions
-→ 0 deletions
+DAD Evidence
+→ a987a4f1654ec5773e3539803e924f611591951d
 
-Producing Design Result in Authorization Evidence
-→ NONE
+Review / Audit
+→ e6f0f1e0af41a639775ea241e462f7c706666a6c
+
+Handoff / Producing Final
+→ 9e97c4fd4e24e252d484c313f0ba27876deebe7d
+
+Original Producing State
+→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
 ```
 
-# Batch-4 Authorization Decision
+Independent GAC review found one dependency-direction documentation/traceability defect and did not grant Global Acceptance.
+
+# Unauthorized Post-producing Correction Range
 
 ```text
-Batch-4 Authorization
-→ APPROVED / PENDING LEDGER AND SEAL
+Correction-range Base
+→ 9e97c4fd4e24e252d484c313f0ba27876deebe7d
 
-Prospective Authorized Phase
-→ NGRP-001 — Component Internal Design / ns_web / Batch 4
+Candidate correction
+→ d8f5fb1e0e17f416f0da2910aeb77099794e2c7f
 
-Authorized Boundaries
-→ W3 — Human Task Interaction
-→ W4 — Notification & Awareness Interaction
-→ W6 — Cross-domain Discovery & Governed Navigation
+DAD correction
+→ 9f069a0c6fc6f997c32986bedcbe5089918ea875
 
-Inherited Runtime-facing Role
-→ WB-R01 — Governed Human Interaction & Projection Participant
+Review correction
+→ 00e4fa07fa2333a70a24fbdd02486b058e5d49aa
 
-Exact Authorization Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_4 / HUMAN_TASK_NOTIFICATION_DISCOVERY_INTERACTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS
+Handoff correction
+→ ed1d611f37706a85029e46a757b4125d92b873a1
 
-Producing Performed By GAC
+Range Classification
+→ UNAUTHORIZED_PROGRESSION
+→ NON-NORMATIVE EVIDENCE
+→ FROZEN / PRESERVED
+→ NOT RETROACTIVELY AUTHORIZED
+```
+
+No reset, force-push, history rewrite or deletion is authorized.
+
+# GAC Continuity Reconciliation Evidence
+
+```text
+Evidence
+→ docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_global_review_continuity_reconciliation_0.0.1.md
+
+Evidence Commit
+→ 5c1edc5bb611b0d084da5ecd1ef1dce5f7d64451
+
+Formal GAC Result
+→ CORRECTION_REQUIRED
+
+Correction Classification
+→ GOVERNANCE_CONTINUITY_RECONCILIATION / AUTHORIZED_REISSUANCE_REQUIRED
+
+Architecture Redesign Required
 → NO
 
-Batch-4 Global Acceptance
+Owner MDE Required
+→ NO
+
+Global Acceptance
 → NOT GRANTED
-
-ns_web Internal Design Exhaustion
-→ NOT SATISFIED / NOT REASSESSED AFTER FUTURE BATCH-4 ACCEPTANCE
-
-ns_web Component Internal Design Global Closure
-→ NOT DECLARED
 ```
 
-Until the append-only Ledger continuation and final Global State authorization seal are persisted, the current authoritative State remains `GAC-EPOCH-0105` with `Current Authorized Phase = NONE`. This Working State is not itself an authorization token.
-
-# Authorization Basis
+# Independent Semantic Review of Frozen Correction Evidence
 
 ```text
-Recommended Four-Batch Shape
-→ MULTIPLE / 4 / PRESERVED
+Accepted Dependency Notation Consistency
+→ PASS
 
-Immediate Next / Final Planned Batch
-→ Batch 4 / W3 + W4 + W6
+Hard-SDD Edge Direction Semantic Correctness
+→ PASS
 
-Batch-4 Entry Readiness
-→ SATISFIED
+Responsibility-definition Dependency Correctness
+→ PASS
 
-Missing W1/W7 accepted Web baseline
+Cross-boundary Dependency Classification Correctness
+→ PASS
+
+Hard Internal SDD Graph
+→ ACYCLIC
+
+Authority Cycle
+→ NONE
+
+Circular Actual-state Ownership
+→ NONE
+
+Authority Transfer
 → 0
 
-Missing W2 accepted revision/history/provenance baseline
+SoT Transfer
 → 0
 
-Missing W5 accepted observation/history/diagnostic baseline
+Final Actual-state Ownership Transfer
 → 0
 
-Missing S6 / A2 Human-action source semantics for W3
+New Product Capability
 → 0
 
-Missing S11 / SV-R07 upstream for W3
+New Runtime Role
 → 0
 
-Missing RT-R03 / RT-R04 upstream where applicable
+New RCP
 → 0
 
-Missing S12 / SV-R08 upstream for W4
-→ 0
-
-Missing original source-condition owner for W4
-→ 0
-
-Missing S13 / SV-R09 upstream for W6
-→ 0
-
-Missing original resource owners for W6
-→ 0
-
-Missing WB-R01 Runtime-facing Role
-→ 0
-
-Mandatory Missing Shared Foundation Semantic
-→ NONE_FOUND
-
-System-level SDK Detailed Design required merely for Batch 4
-→ NO
-
-New Product Capability required
-→ NO
-
-New Runtime Role required
-→ NO
-
-New Cross-component RCP required
-→ NO
-
-Open MDE required merely for Batch-4 entry
-→ 0
-```
-
-# W3 Authority Preservation
-
-```text
-Automation Human-action Requirement / Wait / response applicability / semantic resume
-→ S6 / SV-R02
-
-Agent Human-action Requirement / Wait / response applicability / semantic continuation
-→ A2 / AG-R01
-
-Human Task aggregate projection / freshness / response routing
-→ S11 / SV-R07
-
-Human Response Submission occurrence
-→ WB-R01 / W3
-```
-
-Permanent:
-
-```text
-Human Task Inbox != HITL Source SoT
-Human Task Projection != Source Human-action Requirement
-Human Response Submitted != Response Applicable / Accepted / Applied
-Response Routed != Source Owner Accepted / Applied
-Source Wait Resolved != Execution Complete automatically
-UI Completion != Runtime Completion
-```
-
-No universal assignment/claim/lease/dedup/timeout/escalation or first/last/latest/majority/admin/central response-winner law is authorized.
-
-# W4 Authority Preservation
-
-```text
-Notification existence / lifecycle / history
-→ S12 / SV-R08
-
-Delivery Attempt Actual-state
-→ S12 / SV-R08
-
-Provider evidence
-→ external evidence only / S12 interpretation
-
-Underlying source condition / source resolution
-→ original source owner
-
-Web awareness / read / acknowledgement interaction
-→ WB-R01 / W4 where genuinely Web-origin
-```
-
-Permanent:
-
-```text
-Notification != Source Fact
-Notification != Human Task
-Notification Projection != Notification Actual-state Owner
-Projected != Observed
-Observed != Read automatically
-Read != Acknowledged automatically
-Acknowledged != Resolved / Policy Approved
-Delivery Succeeded != Recipient Observed
-Notification Read != Source Resolved
-```
-
-No universal delivery/exactly-once/retry/fallback law or provider Authority is authorized.
-
-# W6 Authority Preservation
-
-```text
-Resource Semantic Authority / Definition SoT / source facts
-→ original resource owners
-
-Resource Runtime Actual-state
-→ applicable original runtime owner
-
-Discovery Projection Actual-state
-→ S13 / SV-R09
-
-Web query / result / navigation interaction
-→ WB-R01 / W6
-```
-
-Permanent:
-
-```text
-Discovery Result != Source Resource / Resource Actual-state / Resource SoT
-Discovery Result != Authorization
-No Result != Resource Does Not Exist
-Projection Entry != Source Resource automatically
-Rank / Score != Semantic Authority
-Snippet != Canonical Source Representation
-Navigation Target != Authorization Grant
-Index / Cache != Canonical Resource Registry
-Searchable != Authorized To Discover
-Technically Indexed != Authorized To Reveal
-```
-
-No universal Resource Authority/SoT/registry/identity namespace/Knowledge Graph/ranking law, mandatory AI/vector/embedding search or public search SaaS is authorized.
-
-# W3 / W4 / W6 Non-collapse
-
-```text
-Human Task → needs human action
-Notification → needs human awareness
-Discovery → finds / navigates governed resources
-
-Human Task Inbox != Notification Center
-Human Task Projection != Notification
-Notification != Discovery Result
-Discovery Result != Human Task source state
-Discovery Result != Notification lifecycle state
-Task Response != Notification Acknowledgement
-Notification Acknowledgement != Discovery Navigation
-Task Exists != Notification Exists != Resource Exists
-```
-
-Governed correlation/reference/navigation is allowed; authority, identity, lifecycle and Actual-state ownership collapse is prohibited.
-
-# Normative Web Upstream
-
-```text
-W1 / W2 / W5 / W7
-→ GLOBAL_ACCEPTED / CONSUME ONLY
-```
-
-Batch 4 must reuse and not rebuild:
-
-```text
-W1 intent / submission / applicability / outcome discipline
-W2 revision / history / semantic correlation / provenance discipline
-W5 operation / history / diagnostics / provenance correlation discipline
-W7 status / currentness / timezone / accessibility / degraded / redaction discipline
-```
-
-No second intent law, status law, timezone law, redaction law, offline-success law, history/provenance model or cross-session identity principle is authorized.
-
-# Stable-contract / RCP Boundary
-
-```text
 RCP Count
 → 24 / unchanged
 
-RCP-16
-→ W3 bounded contribution authorized
-→ source wait/applicability + S11 routing ownership preserved
-
-RCP-18
-→ W4 bounded contribution authorized
-→ S12 lifecycle + original source ownership preserved
-
-RCP-21
-→ W6 bounded contribution authorized
-→ S13 projection + original resource owners preserved
-
-RCP-22
-→ bounded provenance/currentness/redaction/diagnostics presentation authorized where material
-
-RCP-24
-→ bounded Web-origin response/query/navigation/interaction intent authorized where material
-
-RCP-01
-→ consume-only
-
-New RCP ID
-→ NONE AUTHORIZED
-```
-
-No RCP-16/18/21/22/24 Full Closure is granted by this authorization.
-
-# Security / Privacy / Offline Boundary
-
-```text
-Tenant != Organization
-Principal != Authentication automatically
-Authenticated != Authorized
-Visible != Authorized To Act
-Secret Reference != Secret Material
-
-Task existence != every Principal may see
-Notification existence != every Principal may see
-Resource existence != every Principal may discover
-Cross-Tenant Discovery → PROHIBITED
-
-Offline Task Projection != Source Wait Truth
-Offline Response Possession != Response Applied
-Offline Notification Projection != Current Source Condition
-Offline Discovery Projection != Resource SoT
-Reconnect != Reconciled
-Replay != Retroactive Authorization
-Cached authorization evidence != perpetual authorization
-Latest Timestamp != conflict winner
-```
-
-W6 existence signals such as rows/snippets/counts/facets/categories/relationships/navigation hints/suggestions/errors/rebuild metadata remain disclosure-sensitive.
-
-# Shared Foundation / SDK Boundary
-
-```text
-Reusable Accepted Shared Foundation
-→ Temporal / Freshness
-→ Status / Uncertainty
-→ Correlation / Provenance
-→ Governed Context
-→ Secret Reference / Redaction
-→ Compatibility / Conformance
-→ Diagnostics
-→ Semantic Representation mechanics
-
 Mandatory Missing Shared Foundation Semantic
 → NONE_FOUND
 
-System-level SDK Detailed Design
-→ NOT REQUIRED FOR BATCH-4 AUTHORIZATION
+Implementation Leakage
+→ 0
+```
+
+The frozen correction range is semantically suitable as source material for reissuance but is not the normative producing range.
+
+# Prospective Correction-Reissuance Authorization
+
+```text
+Prospective Authorized Phase
+→ NGRP-001 — Component Internal Design / ns_web / Batch 4 / Correction Reissuance
+
+Prospective Exact Scope
+→ COMPONENT_INTERNAL_DESIGN_ONLY
+  / NS_WEB
+  / BATCH_4
+  / DEPENDENCY_GRAPH_SEMANTICS_TRACEABILITY_CORRECTION_REISSUANCE_ONLY
+
+Authorized Boundaries
+→ W3 / W4 / W6
+
+Inherited Runtime-facing Role
+→ WB-R01
+
+Purpose
+→ reissue the already GAC-reviewed corrected semantics under valid Repository-backed authority
+→ no architecture redesign
+```
+
+# Required Reissuance Evidence
+
+The future bounded correction-reissuance session must create exactly:
+
+```text
+docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_candidate_0.0.2.md
+docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_dad_evidence_0.0.2.md
+docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_review_audit_0.0.2.md
+docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_handoff_0.0.2.md
+```
+
+Required strict chain:
+
+```text
+Correction Authorization Seal
+→ Candidate 0.0.2
+→ DAD Evidence 0.0.2
+→ Review / Audit 0.0.2
+→ Handoff 0.0.2
+```
+
+Each commit adds only its corresponding new `0.0.2` file.
+
+The session must not modify the existing `0.0.1` Batch-4 evidence or any governance/source/implementation file.
+
+Maximum legal bounded-session state:
+
+```text
+CORRECTION REISSUED / AWAITING_GLOBAL_ACCEPTANCE
+→ STOP
+→ RETURN TO GAC
+```
+
+# Stable Reissuance Semantics
+
+The reissuance must preserve:
+
+```text
+A → B
+→ A's semantic definition depends on B's semantic definition
+
+W3/W4/W6 corrected dependent-to-prerequisite hard-SDD direction
+
+Hard Internal SDD Graph
+→ ACYCLIC
+
+Authority Cycle
+→ NONE
+
+Circular Actual-state Ownership
+→ NONE
+```
+
+Authority / SoT / Actual-state owners remain unchanged.
+
+RCP status remains:
+
+```text
+RCP-16 W3 Web-side contribution
+→ CLOSED AT CURRENT BATCH DESIGN LEVEL
+
+RCP-18 W4 Web-side contribution
+→ CLOSED AT CURRENT BATCH DESIGN LEVEL
+
+RCP-21 W6 Web-side contribution
+→ CLOSED AT CURRENT BATCH DESIGN LEVEL
+
+RCP-22 Batch-4 Web-side contribution
+→ COMPLETE AT CURRENT BATCH DESIGN LEVEL
+
+RCP-24 Batch-4 Web-side contribution
+→ CLOSED AT CURRENT BATCH DESIGN LEVEL WHERE APPLICABLE
+
+RCP Count
+→ 24 / unchanged
+```
+
+No Full Cross-component Closure may be claimed by the bounded session.
+
+# Explicit Non-authorizations
+
+```text
+W3/W4/W6 architecture redesign
 → NOT AUTHORIZED
-```
 
-# MDE Stop Boundary
+new Product capability / Runtime Role / RCP
+→ NOT AUTHORIZED
 
-The future bounded producing session must STOP and return to GAC / Owner if it materially requires:
+new Authority / SoT / Actual-state owner
+→ NOT AUTHORIZED
 
-```text
-new Human Task Authority / SoT
-universal assignment / claim / responder-winner law
-Web response applicability / application Authority
+new Foundation semantic
+→ NOT AUTHORIZED
 
-new Notification source-condition Authority
-W4 Notification lifecycle Authority
-universal delivery→observed/read law
-universal Notification retry/fallback/exactly-once law
-
-new Discovery Resource Authority / SoT
-universal Resource Registry / Resource Identity Namespace
-universal Resource / Knowledge Graph Authority
-universal ranking / relevance Authority
-no-result = non-existence law
-mandatory AI / vector / embedding search
 cross-Tenant Discovery
+→ PROHIBITED
 
-new fail-open / fail-closed law
-major universal identity namespace
-mandatory public SaaS / hosted task-notification-search control plane
-high-migration provider / protocol / storage / index lock-in
-new Product capability
-new Runtime Role
-new cross-component RCP
-```
+new universal identity / fail / response-winner / provider / registry / graph / ranking law
+→ NOT AUTHORIZED
 
-# Explicit Deferrals / Non-authorizations
-
-No framework, state store, router, UI library, task/notification/search library, search/index technology, vector DB, broker, Redis/database/event store, REST/GraphQL/gRPC/WebSocket/SSE, DTO/schema/OpenAPI, provider API, pagination/ranking/assignment/retry algorithm, browser persistence/PWA mechanism, deployment topology, physical ID, database schema, endpoint or page/component hierarchy is selected.
-
-```text
-W3 Global Acceptance
-→ NOT GRANTED
-
-W4 Global Acceptance
-→ NOT GRANTED
-
-W6 Global Acceptance
-→ NOT GRANTED
-
-ns_web Batch 4 Global Acceptance
-→ NOT GRANTED
-
-ns_web Internal Design Exhaustion
-→ NOT DECLARED
-
-ns_web Component Internal Design Global Closure
-→ NOT DECLARED
+mandatory AI / vector / embedding search
+→ NOT AUTHORIZED
 
 System-level SDK Detailed Design
 → NOT AUTHORIZED
@@ -531,27 +382,28 @@ Implementation Planning / IWP / Coding
 
 ```text
 Next Logical Transition
-→ GAC-TR-0117
+→ GAC-TR-0118
 
 Next Global State Epoch
-→ GAC-EPOCH-0106
+→ GAC-EPOCH-0107
 
 Next Ledger Continuation
-→ ns_evermore_global_architecture_ledger_continuation_0.0.18.md
+→ ns_evermore_global_architecture_ledger_continuation_0.0.19.md
 
 Transition Meaning
-→ authorize NGRP-001 Component Internal Design / ns_web / Batch 4 / W3 + W4 + W6
+→ freeze unauthorized correction range as non-normative evidence
+→ authorize exactly one Batch-4 correction-reissuance bounded session
 ```
+
+Until the append-only Ledger continuation and final Global State seal are persisted, the current authoritative State remains `GAC-EPOCH-0106` and correction reissuance is **not yet authorized**.
 
 # Next Legal Persistence Action
 
 ```text
-verify Working State update is the only post-evidence delta
+verify this Working State is the only post-reconciliation-evidence delta
 → verify branch drift = NONE
-→ append immutable Ledger continuation 0.0.18 with GAC-TR-0117
-→ strict append-only audit: 1 commit / 1 added Ledger file / 0 deletions
-→ write GAC-EPOCH-0106 Global Architecture State authorization seal
-→ verify Ledger→State delta = exactly 1 commit / only State modified
+→ append immutable Ledger continuation 0.0.19 with GAC-TR-0118
+→ write GAC-EPOCH-0107 Global Architecture State correction-reissuance seal
 → verify remote branch HEAD equals final State seal
-→ only then may exactly one bounded Batch-4 producing session start
+→ only then may exactly one bounded correction-reissuance session start
 ```
