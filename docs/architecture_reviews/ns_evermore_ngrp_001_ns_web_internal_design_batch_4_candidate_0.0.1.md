@@ -775,6 +775,18 @@ Fresh Projection != Fresh Source automatically
 Complete-for-scope != Universal Completeness
 ```
 
+Clarification preserving accepted S13/W6 identity ownership:
+
+```text
+W6 Web Result Presentation / Projection Occurrence Identity
+!= S13 DP08 Result Correlation Identity / Reference
+
+W6 Query Intent / Web Correlation
+!= S13 DP07 Query Evaluation Actual-state
+```
+
+`S13 / SV-R09` remains the owner of Discovery Projection, governed Query Evaluation and Result Disclosure projection semantics within its accepted partition. `W6 / WB-R01` owns only Web-origin Query Intent, presentation and navigation interaction facts. This clarification creates no new identity authority, Runtime Role, Product capability or RCP.
+
 ## 7.2 W6 internal responsibility derivation
 
 ```text
@@ -1048,74 +1060,161 @@ XED → EXTERNAL_EVIDENCE_DEPENDENCY
 
 Only hard `SDD` participates in semantic-definition cycle analysis.
 
+Accepted dependency notation is the already Global-Accepted Web notation:
+
+```text
+A → B
+
+means:
+A's semantic definition depends on B's semantic definition.
+```
+
+An SDD arrow therefore points **from the dependent responsibility to its semantic-definition prerequisite**. Runtime/control flow, evidence return, interaction feedback, historical linkage, source observation, or provider evidence must not be inferred from arrow direction. Those relationships remain classified separately as `ACD`, `EL`, `HPL`, or `XED`.
+
+The following corrected edges were re-derived responsibility-by-responsibility from the definitions in Sections 5–7; they are not justified merely by globally reversing the prior diagram.
+
 ## 9.1 W3 hard SDD graph
 
 ```text
-W3-R01
-├─> W3-R02
-├─> W3-R03
-└─> W3-R04
+W3-R02 → W3-R01
+W3-R03 → W3-R01
+W3-R04 → W3-R01
 
-W3-R04 -> W3-R05
-W3-R02 -> W3-R06
-W3-R05 -> W3-R06
-W3-R06 -> W3-R07
-W3-R06 -> W3-R08
-W3-R02 -> W3-R09
-W3-R05 -> W3-R09
-W3-R07 -> W3-R09
-W3-R08 -> W3-R09
-W3-R01 -> W3-R10
-W3-R06 -> W3-R10
-W3-R09 -> W3-R10
+W3-R05 → W3-R04
+
+W3-R06 → W3-R02, W3-R05
+
+W3-R07 → W3-R06
+W3-R08 → W3-R06
+
+W3-R09 → W3-R02, W3-R05, W3-R07, W3-R08
+
+W3-R10 → W3-R01, W3-R06, W3-R09
 ```
 
-Accepted S6/A2/S11/W1/W2/W5/W7/Foundation semantics are upstream inputs. Routing/receipt/application evidence returning from S11/S6/A2 is `EL`; historical linkage is `HPL`; current governance applicability is `ACD`. No reverse Web semantic-authority edge is created.
+Semantic-direction proof:
+
+- `W3-R02/R03/R04` require the exact governed Human Task interaction subject/context established by `W3-R01` before projection rediscovery, eligibility, or draft continuity can be defined.
+- `W3-R05` requires the local possession/draft distinction defined by `W3-R04` so a Submission Occurrence is semantically distinct from possession.
+- `W3-R06` requires both projection/source reference semantics from `W3-R02` and Submission semantics from `W3-R05` to define exact response correlation.
+- `W3-R07/R08` require `W3-R06` correlation before downstream evidence or stale/wrong-context qualification can be interpreted against an exact response/source context.
+- `W3-R09` requires projection rediscovery, Submission identity, downstream evidence and conflict/currentness qualification so cross-session history has stable subjects and qualified meaning.
+- `W3-R10` depends on the base interaction subject, correlation law and cross-session/history semantics whose compatibility/conformance it governs.
+
+Accepted S6/A2/S11/W1/W2/W5/W7/Foundation semantics remain external semantic prerequisites where applicable. Routing/receipt/application evidence returning from S11/S6/A2 is `EL`; historical linkage is `HPL`; current governance applicability is `ACD`. No reverse Web semantic-authority edge is created.
+
+A valid dependency-first topological interpretation is:
+
+```text
+Stage 0 → W3-R01
+Stage 1 → W3-R02, W3-R03, W3-R04
+Stage 2 → W3-R05
+Stage 3 → W3-R06
+Stage 4 → W3-R07, W3-R08
+Stage 5 → W3-R09
+Stage 6 → W3-R10
+```
+
+Every hard-SDD edge points from a later stage to an earlier prerequisite stage; therefore no W3 hard-SDD cycle exists.
 
 ## 9.2 W4 hard SDD graph
 
 ```text
-W4-R01 -> W4-R02
-W4-R01 -> W4-R03
-W4-R01 -> W4-R04
-W4-R01 -> W4-R05
-W4-R05 -> W4-R06
-W4-R02 -> W4-R07
-W4-R04 -> W4-R07
-W4-R06 -> W4-R07
-W4-R01 -> W4-R08
-W4-R03 -> W4-R08
-W4-R05 -> W4-R08
-W4-R07 -> W4-R08
+W4-R02 → W4-R01
+W4-R03 → W4-R01
+W4-R04 → W4-R01
+W4-R05 → W4-R01
+
+W4-R06 → W4-R05
+
+W4-R07 → W4-R02, W4-R04, W4-R06
+
+W4-R08 → W4-R01, W4-R03, W4-R05, W4-R07
 ```
 
-S12/source evidence is upstream SDD/EL as appropriate. Provider raw evidence is `XED`. Web awareness evidence returning to S12 is `EL/ACD`, not reverse source authority.
+Semantic-direction proof:
+
+- `W4-R02/R03/R04/R05` require the Notification/Web interaction/source-correlation binding defined by `W4-R01` before history, disclosure, awareness occurrence, or delivery/source projection can be defined.
+- `W4-R06` requires the delivery/source-condition correlation of `W4-R05` to define Notification-vs-source currentness without collapsing the two owners.
+- `W4-R07` requires historical Notification interpretation (`R02`), awareness occurrences (`R04`), and currentness/uncertainty (`R06`) to define bounded offline/degraded retention and re-observation.
+- `W4-R08` requires the base subject, disclosure boundary, delivery/source projection and offline/history seam whose compatibility, diagnostics and provenance it governs.
+
+S12/source evidence remains external SDD/EL as appropriate. Provider raw evidence is `XED`. Web awareness evidence returning to S12 is `EL/ACD`, not reverse source authority.
+
+A valid dependency-first topological interpretation is:
+
+```text
+Stage 0 → W4-R01
+Stage 1 → W4-R02, W4-R03, W4-R04, W4-R05
+Stage 2 → W4-R06
+Stage 3 → W4-R07
+Stage 4 → W4-R08
+```
+
+Every hard-SDD edge points from a later stage to an earlier prerequisite stage; therefore no W4 hard-SDD cycle exists.
 
 ## 9.3 W6 hard SDD graph
 
 ```text
-W6-R01 -> W6-R02
-W6-R01 -> W6-R03
-W6-R02 -> W6-R03
-W6-R03 -> W6-R04
-W6-R03 -> W6-R05
-W6-R04 -> W6-R06
-W6-R04 -> W6-R07
-W6-R04 -> W6-R08
-W6-R03 -> W6-R09
-W6-R05 -> W6-R09
-W6-R01 -> W6-R10
-W6-R04 -> W6-R10
-W6-R09 -> W6-R10
+W6-R02 → W6-R01
+
+W6-R03 → W6-R01, W6-R02
+
+W6-R04 → W6-R03
+W6-R05 → W6-R03
+
+W6-R06 → W6-R04
+W6-R07 → W6-R04
+W6-R08 → W6-R04
+
+W6-R09 → W6-R03, W6-R05
+
+W6-R10 → W6-R01, W6-R04, W6-R09
 ```
 
-S13/resource-owner semantics are upstream. Query/result evidence is `EL`; source navigation applicability is `ACD`; historical query/result lineage is `HPL`.
+Semantic-direction proof:
 
-## 9.4 Cross-boundary graph
+- `W6-R02` requires the governed Web Query Intent/context defined by `W6-R01` before query scope/correlation/execution-reference history can be defined.
+- `W6-R03` requires both Web Query Intent context (`R01`) and query correlation/execution-reference semantics (`R02`) to define a Web Result Projection correlated to S13 Projection Entries/source Resources.
+- `W6-R04/R05` require the Result Projection subject defined by `R03` before disclosure qualification or projection freshness/completeness/rebuild qualification can be defined.
+- `W6-R06/R07/R08` require the disclosure-qualified Result Projection semantics of `R04`; their use of freshness/currentness, ranking evidence, source navigation evidence and source re-read evidence is application/evidence linkage and does not add a hard SDD edge merely because those qualifications are consumed at runtime.
+- `W6-R09` requires the Result Projection subject (`R03`) and projection freshness/completeness semantics (`R05`) so historical/offline retention preserves the original qualification instead of promoting stale data to current.
+- `W6-R10` requires the Query Intent base (`R01`), disclosure discipline (`R04`) and historical/offline result semantics (`R09`) whose compatibility/conformance/diagnostics seam it governs.
+
+S13/resource-owner semantics remain external semantic prerequisites. Query/result evidence is `EL`; source navigation applicability is `ACD`; historical query/result lineage is `HPL`. In particular, W6 Web Query Intent/correlation does not define S13 DP07 Query Evaluation Actual-state, and W6 Web Result Presentation occurrence does not define S13 DP08 Result Correlation/Disclosure projection state.
+
+A valid dependency-first topological interpretation is:
+
+```text
+Stage 0 → W6-R01
+Stage 1 → W6-R02
+Stage 2 → W6-R03
+Stage 3 → W6-R04, W6-R05
+Stage 4 → W6-R06, W6-R07, W6-R08, W6-R09
+Stage 5 → W6-R10
+```
+
+Every hard-SDD edge points from a later stage to an earlier prerequisite stage; therefore no W6 hard-SDD cycle exists.
+
+## 9.4 Cross-boundary graph and corrected interpretation
 
 There is **no hard SDD edge among W3, W4 and W6**. Cross-surface links are `ACD`, `EL`, or `HPL` only.
 
+The corrected graphs express semantic-definition dependency only. They do not express runtime event direction, request/response direction, source-to-Web evidence flow, source ownership, or Actual-state ownership. The correction therefore changes dependency notation/direction traceability only and does not alter the 28 responsibility definitions, their Authority/SoT/final Actual-state ownership, or any RCP boundary.
+
 ```text
+Accepted SDD Notation Consistency
+→ PASS
+
+Hard-SDD Edge Direction Semantic Correctness
+→ PASS
+
+Responsibility-definition Dependency Correctness
+→ PASS
+
+Cross-boundary Dependency Classification
+→ PASS
+
 Hard Internal SDD Graph
 → ACYCLIC
 
@@ -1183,8 +1282,10 @@ Delivery Attempt
 provider evidence occurrence
 source condition
 Discovery Query Intent
-query execution/reference
-Discovery Result Projection
+W6 Web Query Correlation / execution reference
+S13 DP07 Query Evaluation Actual-state/reference
+W6 Web Result Presentation / Projection Occurrence
+S13 DP08 Result Correlation Identity / Reference
 S13 Projection Entry
 discovery generation/rebuild
 source Resource
@@ -1200,6 +1301,12 @@ Historical Reference != Current Applicability
 Current View != Historical Rewrite
 Latest Revision != Automatic Retarget
 Latest Arrival != Canonical Winner
+
+W6 Web Result Presentation / Projection Occurrence Identity
+!= S13 DP08 Result Correlation Identity / Reference
+
+W6 Query Intent / Web Correlation
+!= S13 DP07 Query Evaluation Actual-state
 ```
 
 History remains source-qualified and append-preserving at semantic level. Web-owned occurrences retain Web provenance; S11/S12/S13 and original source-owner history retain their own provenance. No browser session becomes durable history owner.
@@ -1604,7 +1711,7 @@ Subjects:
 021 W6 historical/offline result and re-observation law
 022 shared Tenant/Principal/Policy/Trust/privacy/redaction discipline
 023 RCP-16/18/21/22/24 Web contribution synthesis
-024 dependency taxonomy / hard-SDD acyclic direction
+024 dependency taxonomy / accepted dependency direction / hard-SDD acyclicity
 025 Shared Foundation reuse + technology deferral + MDE/revalidation boundary
 ```
 
@@ -1732,4 +1839,4 @@ New RCP
 → 0
 ```
 
-This Candidate is ready for the separately committed DAD Evidence and mandatory Review/Audit. It does not itself complete the bounded producing session.
+This Candidate remains bounded producing evidence. Its dependency graph direction/traceability has been corrected after the GAC `CORRECTION_REQUIRED` finding; Global Acceptance remains `NOT CLAIMED` pending independent GAC re-review.
