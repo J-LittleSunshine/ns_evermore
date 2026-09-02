@@ -1,16 +1,16 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0111`
+- Status: `CURRENT / GAC-EPOCH-0112`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-→ GAC-EPOCH-0111
+→ GAC-EPOCH-0112
 
 State Verified Through HEAD
-→ 5cacf780ed674200c3b92c75ea89ea524369445d
+→ ee1ebd8ab7784d5761b9359eaf03fdeb7dcbbc41
 
 Genesis Constitution
 → GLOBAL_ACCEPTED / NORMATIVE
@@ -18,20 +18,8 @@ Genesis Constitution
 Unified Governance
 → 0.0.2 / NORMATIVE
 
-NSE-001..017
-→ GLOBAL_ACCEPTED / NORMATIVE
-
 Project Architecture
 → 0.0.3 / GLOBAL_ACCEPTED / CURRENT
-
-Five-component Product Capability Exhaustion
-→ SATISFIED
-
-Five-component Internal Architecture Boundaries
-→ GLOBAL_ACCEPTED / NORMATIVE
-
-Accepted Internal Boundaries
-→ 34
 
 Runtime Responsibility Architecture
 → GLOBAL_CLOSED / COMPLETE
@@ -52,22 +40,25 @@ Remaining Product Component Internal-design Pressure
 → NONE_FOUND
 
 Runtime / Domain Stable Contract Pressure
-→ 24 / PRESENT / RCP-01..RCP-24
-
-Full Cross-component Stable Contract Closure
-→ NOT YET ESTABLISHED
+→ 24 / RCP-01..RCP-24 / PRESENT
 
 Runtime / Domain Stable Contract Design Readiness
+→ SATISFIED
+
+Contract Design Batch Count
+→ 5
+
+Global Contract Batch Hard-SDD Graph
+→ ACYCLIC
+
+Runtime / Domain Stable Contract Design / Batch 1 Entry Readiness
 → SATISFIED
 
 System-level SDK Detailed Design Readiness
 → NOT_SATISFIED
 
 SDK Readiness Blocker
-→ RCP-01..24 Contract Design / Full Cross-component Stable Contract closure
-
-Design-to-Implementation Readiness
-→ NOT_SATISFIED
+→ RCP-01..24 Stable Contract Design / Full Cross-component Contract closure
 
 Decision Registry
 → 0.0.40 / GLOBAL_CURRENT / NORMATIVE
@@ -84,226 +75,251 @@ Open MDE
 Unpersisted Owner Decision
 → 0
 
-Blocking Semantic Gap for Stable Contract Design entry
+Blocking Semantic Gap for Batch-1 entry
 → NONE
 
 Known Working-branch Drift through State Verified HEAD
 → NONE
 ```
 
-# Sequencing Assessment Transition
+# Batching / Readiness Transition
 
 ```text
-GAC-TR-0122 → GAC-EPOCH-0111
-```
-
-Transition meaning:
-
-```text
-persist post-five-component Component Internal Design exhaustion
-and Runtime / Domain Stable Contract Design next-phase readiness
-while keeping System-level SDK Detailed Design not ready
+GAC-TR-0123 → GAC-EPOCH-0112
 ```
 
 Assessment evidence:
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_post_five_component_internal_design_next_phase_stable_contract_readiness_assessment_0.0.1.md`
+`docs/architecture_reviews/ns_evermore_ngrp_001_runtime_domain_stable_contract_design_batching_entry_readiness_assessment_0.0.1.md`
 
 Transition coordinates:
 
 ```text
 Input Epoch
-→ GAC-EPOCH-0110
+→ GAC-EPOCH-0111
 
 Assessment Entry HEAD
-→ 4e233e95187997f27f09920ad54e0d03ddb11661
+→ 8c15044b7a36f5318573012445c3235368551535
 
 Assessment Evidence Commit
-→ 9ceac0100e0c0005ee081a4d94f0ed0e1247ad4c
+→ 097842f22b147edec04c1758f00243343e2bff7e
 
 Assessment Working State Commit
-→ 70eaf3fd22f48061448a6f46dcb0893a959d07b9
+→ f5a3231589d3ab56a586df488a030549f9e86c34
 
 Assessment Ledger Commit / State Verified Through HEAD
-→ 5cacf780ed674200c3b92c75ea89ea524369445d
+→ ee1ebd8ab7784d5761b9359eaf03fdeb7dcbbc41
 
 Ledger Continuation
-→ docs/governance/global_architecture/ns_evermore_global_architecture_ledger_continuation_0.0.23.md
+→ docs/governance/global_architecture/ns_evermore_global_architecture_ledger_continuation_0.0.24.md
 
 Decision Registry
 → 0.0.40 / unchanged
 ```
 
-# Five-component Internal-design Position
+# Contract Dependency Taxonomy
 
 ```text
-ns_server  → Component Internal Design GLOBAL_CLOSED / COMPLETE
-ns_runtime → Component Internal Design GLOBAL_CLOSED / COMPLETE
-ns_node    → Component Internal Design GLOBAL_CLOSED / COMPLETE
-ns_agent   → Component Internal Design GLOBAL_CLOSED / COMPLETE
-ns_web     → Component Internal Design GLOBAL_CLOSED / COMPLETE
+CSDD → Contract semantic-definition dependency
+CACD → Contract application-context dependency
+CEL  → Contract evidence linkage
+CHPL → Contract historical/provenance linkage
+CXAR → cross-authority reference
+```
 
-Product Components with Global Closure
-→ 5 / 5 / 100%
+Only CSDD determines mandatory batch order.
 
-Remaining Product Component without Global Closure
-→ NONE
+```text
+RCP-A → RCP-B
+→ RCP-A's Contract semantic definition depends on RCP-B's Contract semantic definition
+```
 
-Remaining Product Component Internal-design Pressure
-→ NONE_FOUND
+Runtime/evidence return does not create reverse semantic authority.
 
-Five-component Component Internal Design Exhaustion
+# Five-batch Contract Design Plan
+
+## Batch 1 — Governance / Intent / Admission / Presence / Configuration / Readiness Foundation
+
+```text
+RCP-01 Governance Context
+RCP-02 Admission Evidence
+RCP-03 Presence
+RCP-04 Node Readiness
+RCP-19 Desired / Applied Config
+RCP-24 Human / SDK Intent
+```
+
+Batch-1 internal hard-SDD graph:
+
+```text
+RCP-02 → RCP-01
+RCP-03 → RCP-01
+RCP-19 → RCP-01
+RCP-24 → RCP-01
+RCP-04 → RCP-01, RCP-19
+```
+
+Dependency-first order:
+
+```text
+Stage 0 → RCP-01
+Stage 1 → RCP-02, RCP-03, RCP-19, RCP-24
+Stage 2 → RCP-04
+```
+
+```text
+Batch-1 Hard-SDD Graph
+→ ACYCLIC
+
+Batch-1 Entry Readiness
 → SATISFIED
 ```
 
-# Runtime / Domain Stable Contract Pressure
-
-The accepted Runtime Responsibility Architecture defines exactly:
+## Batch 2 — Dispatch / Attempt / Effect / Agent Runtime / Provider Mediation / Server Runtime Evidence
 
 ```text
-RCP Count
-→ 24
-
-RCP IDs
-→ RCP-01..RCP-24
-```
-
-Each RCP has accepted producer/consumer topology, authority/final-owner topology, stable-contract pressure and a named Later Authority. Named Later Authorities are Contract-design authorities, not SDK Detailed Design.
-
-Recovered authority categories include:
-
-```text
-Contract Design
-Runtime Contract Design
-Agent Runtime Contract Design
-Agent Contract Design
-Cross-component Contract Design
-Automation Runtime Contract Design
-Automation Contract Design
-HITL Contract Design
-Trial Contract Design
-Notification Contract Design
-Config Contract Design
-Recovery Contract Design
-Discovery Contract Design
-Diagnostics Contract Design
-Server Runtime Contract Design
-Cross-surface Contract Design
+RCP-05 / RCP-07 / RCP-08 / RCP-09 / RCP-10 / RCP-23
 ```
 
 ```text
-Component-side RCP responsibilities represented
-→ YES / where applicable
-
-Full Cross-component Stable Contract Closure
-→ NOT YET ESTABLISHED
-
-Remaining Contract semantic synthesis pressure
-→ PRESENT / 24 RCP SUBJECTS
+Entry Readiness
+→ BLOCKED ON BATCH-1 GLOBAL ACCEPTANCE
 ```
 
-# Stable Contract Design Readiness
+## Batch 3 — Continuation / Automation / Multi-Agent / Delegation Composition
 
 ```text
-Project Architecture complete
-→ YES
+RCP-06 / RCP-11 / RCP-12 / RCP-13 / RCP-14 / RCP-15
+```
 
-Runtime Responsibility Architecture complete
-→ YES
+Principal internal hard dependencies:
 
-Shared Foundation closure complete
-→ YES
+```text
+RCP-13 → RCP-15
+RCP-06 → RCP-13
+RCP-12 → RCP-06, RCP-13, RCP-15
+```
 
-Five Product Component Internal Designs complete
-→ YES
+```text
+Entry Readiness
+→ BLOCKED ON BATCH-1 + BATCH-2 GLOBAL ACCEPTANCE
+```
 
-RCP inventory complete
-→ YES / 24
+## Batch 4 — HITL / Trial / Notification / Recovery / Discovery
 
-Producer / Consumer topology known
-→ YES
+```text
+RCP-16 / RCP-17 / RCP-18 / RCP-20 / RCP-21
+```
 
-Authority / final-owner topology known
-→ YES
+```text
+Entry Readiness
+→ BLOCKED ON BATCH-1..3 GLOBAL ACCEPTANCE
+```
 
-Component-side responsibility semantics accepted
-→ YES
+## Batch 5 — Diagnostics / Provenance Cross-component Closure
+
+```text
+RCP-22
+```
+
+```text
+Entry Readiness
+→ BLOCKED ON BATCH-1..4 GLOBAL ACCEPTANCE
+```
+
+# Principal Dependency Findings
+
+```text
+RCP-04 → RCP-19
+RCP-05 → RCP-02, RCP-03, RCP-04
+RCP-07 → RCP-02, RCP-05
+RCP-08 → RCP-07
+RCP-10 → RCP-09
+RCP-13 → RCP-15
+RCP-06 → RCP-13
+RCP-11 → RCP-09
+RCP-12 → RCP-06, RCP-09, RCP-10, RCP-13, RCP-15
+RCP-20 → prior Presence/Readiness/Dispatch/Continuation/Attempt/Effect/Agent/Config/Server Runtime evidence Contracts
+RCP-22 → all materially applicable prior Contract subjects
+```
+
+```text
+Authority Cycle
+→ NONE_FOUND
+
+SoT Cycle
+→ NONE_FOUND
+
+Final Actual-state Ownership Cycle
+→ NONE_FOUND
+```
+
+# Batch-1 Entry Basis
+
+```text
+Governance / Tenant / IAM / Organization / Policy / Trust owners
+→ accepted
+
+Formal Artifact Acceptance / Execution Admission
+→ accepted S8 / SV-R04
+
+Managed Desired Configuration authority
+→ accepted S9 / SV-R05
+
+Node Applied Configuration / Readiness semantics
+→ accepted N1 / ND-R01
+
+Runtime Presence semantics
+→ accepted R1 / RT-R01
+
+Web governed human/SDK-style intent semantics
+→ accepted Web component contributions
+
+Shared Foundation context/freshness/provenance/status/redaction/conformance
+→ GLOBAL_CLOSED / COMPLETE
+
+Missing Batch-1 RCP identity
+→ 0
+
+Missing producer / consumer topology
+→ 0
+
+Missing Authority / SoT / final-owner topology
+→ 0
+
+Missing accepted component-side semantic contribution
+→ 0
 
 Mandatory Missing Shared Foundation Semantic
 → NONE_FOUND
 
-Open MDE blocking Contract entry
+Open MDE blocking entry
 → 0
 
-Unpersisted Owner Decision blocking Contract entry
+Unpersisted Owner Decision blocking entry
 → 0
 
-Blocking Semantic Gap for Contract entry
+Blocking Semantic Gap
 → NONE
 ```
 
-Result:
+# Contract Design Boundary
+
+Future Contract Design may synthesize representation-neutral Contract identities/subjects, producer/consumer obligations, authority preservation, applicability/currentness, failure/unknown, history/provenance, offline/private/security/privacy, compatibility/migration/conformance and guarantees/non-guarantees.
+
+It must not automatically select concrete API/wire/schema, transport, broker, database/event-store schema, physical IDs, SDK language/API shape, implementation algorithms or deployment topology.
+
+# Explicitly Not Authorized
 
 ```text
-RUNTIME / DOMAIN STABLE CONTRACT DESIGN READINESS
-→ SATISFIED
-```
+Runtime / Domain Stable Contract Design / Batch 1 producing
+→ NOT AUTHORIZED YET
 
-# System-level SDK Readiness Boundary
-
-System-level SDK Detailed Design must consume stable cross-component semantics rather than invent them.
-
-Because RCP-01..24 Contract Design has not yet established one globally accepted full cross-component Contract baseline:
-
-```text
-SYSTEM-LEVEL SDK DETAILED DESIGN READINESS
-→ NOT_SATISFIED
-
-System-level SDK Detailed Design
+Batch 2..5 producing
 → NOT AUTHORIZED
-```
 
-Starting SDK Detailed Design now would risk allowing SDK representation choices to become de-facto semantic contracts for identity/correlation, applicability/currentness, error/uncertainty, history/provenance, offline behavior, security context and compatibility/conformance.
-
-# Next-phase Candidate
-
-```text
-NGRP-001
-— Runtime / Domain Stable Contract Design
-— RCP-01..RCP-24
-```
-
-This State does not yet choose batch shape or authorize producing.
-
-# Contract Design Semantic Boundary
-
-The future Contract Design phase may synthesize representation-neutral stable semantics for:
-
-```text
-Contract subject / identity
-producer / consumer obligations
-source / correlation / revision references
-Authority / SoT / final Actual-state preservation
-applicability / currentness
-failure / unknown / degraded behavior
-history / provenance / replay / supersession
-offline / private / security / privacy
-compatibility / migration / versioning / conformance
-guarantees / non-guarantees
-cross-component closure evidence
-revalidation triggers
-```
-
-It must not automatically select concrete REST/GraphQL/gRPC/WebSocket/SSE, DTO/wire/schema, database/event-store schema, broker, physical identifier format, SDK package layout, implementation algorithm or deployment topology.
-
-# Explicitly Not Declared / Not Authorized
-
-```text
 RCP Full Cross-component Closure
 → NOT DECLARED
-
-Runtime / Domain Stable Contract Design producing
-→ NOT AUTHORIZED
 
 System-level SDK Detailed Design
 → NOT AUTHORIZED
@@ -311,13 +327,7 @@ System-level SDK Detailed Design
 Design-to-Implementation Readiness
 → NOT AUTHORIZED
 
-Implementation Planning
-→ NOT AUTHORIZED
-
-IWP
-→ NOT AUTHORIZED
-
-Coding
+Implementation Planning / IWP / Coding
 → NOT AUTHORIZED
 ```
 
@@ -327,8 +337,7 @@ Coding
 refs/heads/tmp-do-not-create
 → no unique commit/content
 → NON_AUTHORITATIVE / NON_SEMANTIC
-→ repository-hygiene residue only
-→ not a sequencing blocker
+→ not a batching/readiness blocker
 ```
 
 # Logical Ledger Continuity
@@ -337,31 +346,12 @@ refs/heads/tmp-do-not-create
 Primary Ledger 0.0.1
 → immutable through GAC-TR-0099
 
-Continuation 0.0.1..0.0.22
-→ immutable through GAC-TR-0121
+Continuation 0.0.1..0.0.23
+→ immutable through GAC-TR-0122
 
-Continuation 0.0.23
-→ GAC-TR-0122 → GAC-EPOCH-0111
+Continuation 0.0.24
+→ GAC-TR-0123 → GAC-EPOCH-0112
 → current latest immutable continuation
-```
-
-# Current Required Read Set
-
-Every subsequent Contract Design batching/authorization action must fresh-recover Repository authority and consume at minimum:
-
-```text
-docs/ns_evermore_genesis_constitution_0.0.1.md
-docs/governance/ns_evermore_governance_0.0.2.md
-docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md
-docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md
-docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md
-all logical Ledger continuations through 0.0.23
-docs/governance/decisions/ns_evermore_decision_registry_0.0.40.md
-docs/architecture_reviews/ns_evermore_ngrp_001_post_five_component_internal_design_next_phase_stable_contract_readiness_assessment_0.0.1.md
-accepted Runtime Responsibility Architecture and RCP-01..24 table
-all five Component Internal Design Global Closure evidence
-accepted Shared Foundation closure evidence
-applicable Component Candidate/DAD/Global Acceptance evidence for RCP producer/consumer semantics
 ```
 
 # Unique Next Legal Action
@@ -369,18 +359,10 @@ applicable Component Candidate/DAD/Global Acceptance evidence for RCP producer/c
 The only next material action is:
 
 ```text
-perform a separate GAC RCP-01..24 Contract Design
-semantic-dependency / batching / entry-readiness assessment
+fresh Repository recovery
+→ verify Batch-1 readiness remains SATISFIED
+→ verify no drift / MDE / blocker
+→ perform a separate explicit Runtime / Domain Stable Contract Design / Batch 1 authorization transition
 ```
 
-That assessment must:
-
-```text
-recover all 24 RCP subjects and named Later Authorities
-derive semantic-definition / authority / evidence / historical dependencies among RCPs
-identify a lawful bounded batch order without authority cycles
-preserve producer/consumer/source ownership
-verify each proposed batch has complete accepted upstream
-avoid using SDK/API/wire representation as a Contract definition
-leave producing unauthorized until a separate GAC authorization transition
-```
+No Contract Design producing session may start until that authorization State seal is persisted.
