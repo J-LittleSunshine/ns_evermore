@@ -1,8 +1,8 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0106_NS_WEB_BATCH4_CORRECTION_REISSUANCE_APPROVED_PENDING_LEDGER_AND_SEAL`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0107_NS_WEB_BATCH4_GLOBAL_ACCEPTED_PENDING_LEDGER_AND_SEAL`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
-- Current Authoritative Global State: `GAC-EPOCH-0106`
+- Current Authoritative Global State: `GAC-EPOCH-0107`
 - Working-state Authority: `COORDINATION_ONLY / NOT_AUTHORIZATION_TOKEN`
 
 # Current Accepted Baseline
@@ -59,29 +59,29 @@ ns_web Batch 2
 ns_web Batch 3
 → GLOBAL_ACCEPTED / W5
 
-Accepted ns_web Boundaries
-→ W1 / W2 / W5 / W7
+ns_web Batch 4
+→ GLOBAL_ACCEPTED / W3 + W4 + W6 / pending Ledger + State seal persistence
 
-Accepted ns_web Boundary Coverage
-→ 4 / 7 / 57.14%
+Accepted ns_web Boundaries after Batch-4 acceptance
+→ W1 / W2 / W3 / W4 / W5 / W6 / W7
 
-Accepted ns_web Internal Responsibility Count
-→ 47
+Accepted ns_web Boundary Coverage after Batch-4 acceptance
+→ 7 / 7 / 100%
 
-Remaining accepted ns_web boundaries
-→ W3 / W4 / W6
+Accepted ns_web Internal Responsibility Count after Batch-4 acceptance
+→ 75
 
-ns_web Batch 4 Global Acceptance
-→ NOT GRANTED
+Remaining accepted ns_web boundaries without Component Internal Design
+→ NONE
 
 ns_web Internal Design Exhaustion
-→ NOT_SATISFIED
+→ NOT YET REASSESSED AFTER BATCH-4 ACCEPTANCE
 
 ns_web Component Internal Design Global Closure
-→ NOT ELIGIBLE / NOT DECLARED
+→ NOT DECLARED
 
 Decision Registry
-→ 0.0.38 / CURRENT / NORMATIVE
+→ 0.0.39 / GLOBAL_CURRENT / NORMATIVE / pending State activation
 
 Open MDE
 → 0
@@ -90,128 +90,124 @@ Unpersisted Owner Decision
 → 0
 ```
 
-# Fresh GAC Continuity Recovery
+# Fresh Global Acceptance Recovery
 
 ```text
-Recovered Actual HEAD before GAC reconciliation evidence
-→ ed1d611f37706a85029e46a757b4125d92b873a1
+Correction Authorization Seal
+→ a41076a9bf7dabeb4cfc4506a68bee4170c7bfbb
+
+Producing Final / Handoff 0.0.2 HEAD
+→ 816c25bb97a5535fd7ab772ac9510686ba6084fe
+
+Actual Branch HEAD before acceptance evidence
+→ 816c25bb97a5535fd7ab772ac9510686ba6084fe
 
 Current Authoritative State
-→ GAC-EPOCH-0106
+→ GAC-EPOCH-0107
 
-State Verified Through HEAD
-→ ac880b9da9d8d9d5095a3fa9c356d72d80530c1c
+Current Authorization Transition
+→ GAC-TR-0118
 
-Current Logical Ledger Tail
-→ ns_evermore_global_architecture_ledger_continuation_0.0.18.md
+Current Ledger Tail
+→ ns_evermore_global_architecture_ledger_continuation_0.0.19.md
 
-Current Logical Ledger Transition
-→ GAC-TR-0117 → GAC-EPOCH-0106
-
-Current Decision Registry
+Current Decision Registry at review entry
 → 0.0.38 / CURRENT / NORMATIVE
+
+Open MDE
+→ 0
+
+Unpersisted Owner Decision
+→ 0
+
+Blocking Semantic Gap
+→ NONE
+
+Blocking Item
+→ NONE
 ```
 
-# Original Batch-4 Producing Range
+# Authorized Reissuance Producing Delta
 
 ```text
-Authorization Seal
-→ 7212f3e79f54cdfee0c0938e8dcdc778312acf3f
+a41076a9... State Seal
+→ 617f1ade... Candidate 0.0.2
+→ 8ba9818e... DAD 0.0.2
+→ 698e5732... Review/Audit 0.0.2
+→ 816c25bb... Handoff 0.0.2
 
-Candidate
-→ ac560d34bb22b8883619857cec332e9ffb5fe5bc
-
-DAD Evidence
-→ a987a4f1654ec5773e3539803e924f611591951d
-
-Review / Audit
-→ e6f0f1e0af41a639775ea241e462f7c706666a6c
-
-Handoff / Producing Final
-→ 9e97c4fd4e24e252d484c313f0ba27876deebe7d
-
-Original Producing State
-→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Producing Delta
+→ exactly 4 commits
+→ exactly 4 added 0.0.2 evidence files
+→ modified existing files 0
+→ deleted files 0
+→ governance mutation 0
+→ accepted upstream mutation 0
+→ source/implementation change 0
+→ unexpected drift NONE
+→ unauthorized progression NONE
 ```
 
-Independent GAC review found one dependency-direction documentation/traceability defect and did not grant Global Acceptance.
-
-# Unauthorized Post-producing Correction Range
+# Historical Evidence Classification
 
 ```text
-Correction-range Base
-→ 9e97c4fd4e24e252d484c313f0ba27876deebe7d
+Original Batch-4 0.0.1 producing
+→ AUTHORIZED / NOT GLOBALLY ACCEPTED
+→ dependency-direction defect retained as historical evidence
 
-Candidate correction
-→ d8f5fb1e0e17f416f0da2910aeb77099794e2c7f
-
-DAD correction
-→ 9f069a0c6fc6f997c32986bedcbe5089918ea875
-
-Review correction
-→ 00e4fa07fa2333a70a24fbdd02486b058e5d49aa
-
-Handoff correction
-→ ed1d611f37706a85029e46a757b4125d92b873a1
-
-Range Classification
+Frozen post-producing correction range
+→ d8f5fb1e... through ed1d611f...
 → UNAUTHORIZED_PROGRESSION
-→ NON-NORMATIVE EVIDENCE
-→ FROZEN / PRESERVED
+→ NON-NORMATIVE / FROZEN / PRESERVED
 → NOT RETROACTIVELY AUTHORIZED
+
+Authorized Batch-4 correction reissuance 0.0.2
+→ GAC-TR-0118 / GAC-EPOCH-0107
+→ GLOBAL_ACCEPTED by current GAC review
 ```
 
-No reset, force-push, history rewrite or deletion is authorized.
-
-# GAC Continuity Reconciliation Evidence
+# Global Acceptance Evidence
 
 ```text
 Evidence
-→ docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_global_review_continuity_reconciliation_0.0.1.md
+→ docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_global_acceptance_0.0.1.md
 
 Evidence Commit
-→ 5c1edc5bb611b0d084da5ecd1ef1dce5f7d64451
+→ bfd2e36a7a48c41c2f35cacc14439cdab8e32d94
 
-Formal GAC Result
-→ CORRECTION_REQUIRED
+Decision Registry Revision
+→ docs/governance/decisions/ns_evermore_decision_registry_0.0.39.md
 
-Correction Classification
-→ GOVERNANCE_CONTINUITY_RECONCILIATION / AUTHORIZED_REISSUANCE_REQUIRED
+Decision Registry Commit
+→ 62f281819f58c4a3e07a320bb395f2d88daf21fd
 
-Architecture Redesign Required
-→ NO
-
-Owner MDE Required
-→ NO
-
-Global Acceptance
-→ NOT GRANTED
+GAC Verdict
+→ GLOBAL_ACCEPT
 ```
 
-# Independent Semantic Review of Frozen Correction Evidence
+# Accepted Batch-4 Responsibility / Authority Result
 
 ```text
-Accepted Dependency Notation Consistency
-→ PASS
+W3 Human Task Interaction
+→ GLOBAL_ACCEPTED
+→ 10 responsibilities
 
-Hard-SDD Edge Direction Semantic Correctness
-→ PASS
+W4 Notification & Awareness Interaction
+→ GLOBAL_ACCEPTED
+→ 8 responsibilities
 
-Responsibility-definition Dependency Correctness
-→ PASS
+W6 Cross-domain Discovery & Governed Navigation
+→ GLOBAL_ACCEPTED
+→ 10 responsibilities
 
-Cross-boundary Dependency Classification Correctness
-→ PASS
+Batch-4 Responsibility Count
+→ 28
 
-Hard Internal SDD Graph
-→ ACYCLIC
+Cumulative accepted ns_web Responsibility Count
+→ 75
+```
 
-Authority Cycle
-→ NONE
-
-Circular Actual-state Ownership
-→ NONE
-
+```text
 Authority Transfer
 → 0
 
@@ -221,92 +217,40 @@ SoT Transfer
 Final Actual-state Ownership Transfer
 → 0
 
-New Product Capability
+Multiple-final-authority Ambiguity
 → 0
 
-New Runtime Role
-→ 0
-
-New RCP
-→ 0
-
-RCP Count
-→ 24 / unchanged
-
-Mandatory Missing Shared Foundation Semantic
-→ NONE_FOUND
-
-Implementation Leakage
+Source-of-Truth Ambiguity
 → 0
 ```
 
-The frozen correction range is semantically suitable as source material for reissuance but is not the normative producing range.
-
-# Prospective Correction-Reissuance Authorization
-
-```text
-Prospective Authorized Phase
-→ NGRP-001 — Component Internal Design / ns_web / Batch 4 / Correction Reissuance
-
-Prospective Exact Scope
-→ COMPONENT_INTERNAL_DESIGN_ONLY
-  / NS_WEB
-  / BATCH_4
-  / DEPENDENCY_GRAPH_SEMANTICS_TRACEABILITY_CORRECTION_REISSUANCE_ONLY
-
-Authorized Boundaries
-→ W3 / W4 / W6
-
-Inherited Runtime-facing Role
-→ WB-R01
-
-Purpose
-→ reissue the already GAC-reviewed corrected semantics under valid Repository-backed authority
-→ no architecture redesign
-```
-
-# Required Reissuance Evidence
-
-The future bounded correction-reissuance session must create exactly:
-
-```text
-docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_candidate_0.0.2.md
-docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_dad_evidence_0.0.2.md
-docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_review_audit_0.0.2.md
-docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_batch_4_handoff_0.0.2.md
-```
-
-Required strict chain:
-
-```text
-Correction Authorization Seal
-→ Candidate 0.0.2
-→ DAD Evidence 0.0.2
-→ Review / Audit 0.0.2
-→ Handoff 0.0.2
-```
-
-Each commit adds only its corresponding new `0.0.2` file.
-
-The session must not modify the existing `0.0.1` Batch-4 evidence or any governance/source/implementation file.
-
-Maximum legal bounded-session state:
-
-```text
-CORRECTION REISSUED / AWAITING_GLOBAL_ACCEPTANCE
-→ STOP
-→ RETURN TO GAC
-```
-
-# Stable Reissuance Semantics
-
-The reissuance must preserve:
+# Accepted Dependency Result
 
 ```text
 A → B
 → A's semantic definition depends on B's semantic definition
+→ dependent → semantic prerequisite
 
-W3/W4/W6 corrected dependent-to-prerequisite hard-SDD direction
+Accepted Dependency Notation Consistency
+→ PASS
+
+Hard-SDD Edge Direction Semantic Correctness
+→ PASS
+
+Responsibility-definition Dependency Correctness
+→ PASS
+
+Cross-boundary Dependency Classification
+→ PASS
+
+W3 Hard SDD Graph
+→ ACYCLIC
+
+W4 Hard SDD Graph
+→ ACYCLIC
+
+W6 Hard SDD Graph
+→ ACYCLIC
 
 Hard Internal SDD Graph
 → ACYCLIC
@@ -318,55 +262,86 @@ Circular Actual-state Ownership
 → NONE
 ```
 
-Authority / SoT / Actual-state owners remain unchanged.
-
-RCP status remains:
+# Accepted Stable-contract / RCP Result
 
 ```text
-RCP-16 W3 Web-side contribution
-→ CLOSED AT CURRENT BATCH DESIGN LEVEL
-
-RCP-18 W4 Web-side contribution
-→ CLOSED AT CURRENT BATCH DESIGN LEVEL
-
-RCP-21 W6 Web-side contribution
-→ CLOSED AT CURRENT BATCH DESIGN LEVEL
-
-RCP-22 Batch-4 Web-side contribution
-→ COMPLETE AT CURRENT BATCH DESIGN LEVEL
-
-RCP-24 Batch-4 Web-side contribution
-→ CLOSED AT CURRENT BATCH DESIGN LEVEL WHERE APPLICABLE
-
 RCP Count
 → 24 / unchanged
+
+New RCP
+→ 0
+
+RCP-16 W3 Web-side contribution
+→ GLOBAL_ACCEPTED at current Batch design level
+
+RCP-18 W4 Web-side contribution
+→ GLOBAL_ACCEPTED at current Batch design level
+
+RCP-21 W6 Web-side contribution
+→ GLOBAL_ACCEPTED at current Batch design level
+
+RCP-22 Batch-4 Web-side contribution
+→ GLOBAL_ACCEPTED at current Batch design level
+
+RCP-24 Batch-4 Web-side contribution
+→ GLOBAL_ACCEPTED at current Batch design level where applicable
+
+RCP-01
+→ CONSUME ONLY
 ```
 
-No Full Cross-component Closure may be claimed by the bounded session.
+No Full Cross-component RCP closure is declared by this acceptance.
+
+# Security / Offline / Foundation / Implementation Result
+
+```text
+Security / Privacy Non-leak
+→ PASS
+
+Cross-Tenant Discovery
+→ PROHIBITED
+
+Offline / Private Correctness
+→ PASS
+
+Failure / Recovery Responsibility
+→ PASS
+
+Mandatory Missing Shared Foundation Semantic
+→ NONE_FOUND
+
+Implementation Leakage
+→ 0
+
+Open MDE
+→ 0
+
+Unpersisted Owner Decision
+→ 0
+```
+
+# Repository Hygiene
+
+```text
+refs/heads/tmp-do-not-create
+→ points to existing 816c25bb... commit
+→ no unique commit/content
+→ NON_AUTHORITATIVE / NON_SEMANTIC
+→ repository-hygiene residue only
+→ not an architecture or acceptance blocker
+```
 
 # Explicit Non-authorizations
 
 ```text
-W3/W4/W6 architecture redesign
-→ NOT AUTHORIZED
+ns_web Internal Design Exhaustion
+→ NOT DECLARED BY ACCEPTANCE
 
-new Product capability / Runtime Role / RCP
-→ NOT AUTHORIZED
+ns_web Component Internal Design Global Closure
+→ NOT DECLARED
 
-new Authority / SoT / Actual-state owner
-→ NOT AUTHORIZED
-
-new Foundation semantic
-→ NOT AUTHORIZED
-
-cross-Tenant Discovery
-→ PROHIBITED
-
-new universal identity / fail / response-winner / provider / registry / graph / ranking law
-→ NOT AUTHORIZED
-
-mandatory AI / vector / embedding search
-→ NOT AUTHORIZED
+RCP Full Cross-component Closure
+→ NOT DECLARED
 
 System-level SDK Detailed Design
 → NOT AUTHORIZED
@@ -378,32 +353,36 @@ Implementation Planning / IWP / Coding
 → NOT AUTHORIZED
 ```
 
-# Prospective Ledger / Seal Transition
+# Prospective Ledger / State Transition
 
 ```text
 Next Logical Transition
-→ GAC-TR-0118
+→ GAC-TR-0119
 
 Next Global State Epoch
-→ GAC-EPOCH-0107
+→ GAC-EPOCH-0108
 
 Next Ledger Continuation
-→ ns_evermore_global_architecture_ledger_continuation_0.0.19.md
+→ ns_evermore_global_architecture_ledger_continuation_0.0.20.md
 
 Transition Meaning
-→ freeze unauthorized correction range as non-normative evidence
-→ authorize exactly one Batch-4 correction-reissuance bounded session
+→ globally accept ns_web Component Internal Design / Batch 4 / W3 + W4 + W6
+→ activate Decision Registry 0.0.39
+→ leave downstream authorization NONE
+→ require separate post-Batch-4 exhaustion/global-closure assessment
 ```
 
-Until the append-only Ledger continuation and final Global State seal are persisted, the current authoritative State remains `GAC-EPOCH-0106` and correction reissuance is **not yet authorized**.
+Until the append-only Ledger and final State seal are persisted, the current authoritative Global State remains `GAC-EPOCH-0107`.
 
-# Next Legal Persistence Action
+# Unique Next Legal Persistence Action
 
 ```text
-verify this Working State is the only post-reconciliation-evidence delta
+verify acceptance evidence + Decision Registry + this Working State are clean GAC-only deltas
 → verify branch drift = NONE
-→ append immutable Ledger continuation 0.0.19 with GAC-TR-0118
-→ write GAC-EPOCH-0107 Global Architecture State correction-reissuance seal
-→ verify remote branch HEAD equals final State seal
-→ only then may exactly one bounded correction-reissuance session start
+→ append immutable Ledger continuation 0.0.20 with GAC-TR-0119
+→ write GAC-EPOCH-0108 Global Architecture State acceptance seal
+→ verify remote HEAD equals final State seal
+→ STOP
 ```
+
+After the `GAC-EPOCH-0108` seal, the unique next legal material action is a separate GAC post-Batch-4 `ns_web` Component Internal Design remaining-pressure / exhaustion / global-closure assessment.
