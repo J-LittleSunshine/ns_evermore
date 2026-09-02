@@ -1,16 +1,16 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0109`
+- Status: `CURRENT / GAC-EPOCH-0110`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-→ GAC-EPOCH-0109
+→ GAC-EPOCH-0110
 
 State Verified Through HEAD
-→ 2209a527f0a449f94df3b6a9b808fdc752bd30ff
+→ 1039a556076a3b841f802f7e13b96022181d3aa3
 
 Genesis Constitution
 → GLOBAL_ACCEPTED / NORMATIVE
@@ -75,44 +75,17 @@ ns_agent Component Internal Design
 ns_agent Internal Design Exhaustion
 → SATISFIED
 
-ns_web Component Internal Design / Batch 1
-→ GLOBAL_ACCEPTED / W1 + W7
-
-ns_web Component Internal Design / Batch 2
-→ GLOBAL_ACCEPTED / W2
-
-ns_web Component Internal Design / Batch 3
-→ GLOBAL_ACCEPTED / W5
-
-ns_web Component Internal Design / Batch 4
-→ GLOBAL_ACCEPTED / W3 + W4 + W6
-
-Accepted ns_web Boundaries with Component Internal Design
-→ W1 / W2 / W3 / W4 / W5 / W6 / W7
-
-Accepted ns_web Boundary Coverage
-→ 7 / 7 / 100%
-
-Accepted ns_web Internal Responsibility Count
-→ 75
-
-Remaining accepted ns_web boundaries requiring Component Internal Design
-→ NONE
-
-Remaining Material ns_web Component Internal-design Pressure
-→ NONE_FOUND
+ns_web Component Internal Design
+→ GLOBAL_CLOSED / COMPLETE
 
 ns_web Internal Design Exhaustion
 → SATISFIED
 
-ns_web Component Internal Design Global-closure Eligibility
-→ SATISFIED
-
-ns_web Component Internal Design Global Closure
-→ NOT YET DECLARED
+Five Product Components with Component Internal Design Global Closure
+→ 5 / 5
 
 Decision Registry
-→ 0.0.39 / GLOBAL_CURRENT / NORMATIVE
+→ 0.0.40 / GLOBAL_CURRENT / NORMATIVE
 
 Current Authorized Phase
 → NONE
@@ -136,20 +109,24 @@ Known Working-branch Drift through State Verified HEAD
 → NONE
 ```
 
-# Assessment Transition
+# ns_web Closure Transition
 
 ```text
-GAC-TR-0120 → GAC-EPOCH-0109
+GAC-TR-0121 → GAC-EPOCH-0110
 ```
 
 Transition meaning:
 
 ```text
-persist the post-Batch-4 ns_web Component Internal Design
-remaining-pressure / exhaustion / global-closure eligibility assessment
+declare NGRP-001 ns_web Component Internal Design
+→ GLOBAL_CLOSED / COMPLETE
 ```
 
-Assessment evidence:
+Global Closure evidence:
+
+`docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_component_internal_design_global_closure_0.0.1.md`
+
+Closure basis:
 
 `docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_remaining_pressure_batching_assessment_0.0.1.md`
 
@@ -157,58 +134,89 @@ Transition coordinates:
 
 ```text
 Input Epoch
-→ GAC-EPOCH-0108
+→ GAC-EPOCH-0109
 
-Assessment Entry HEAD
-→ ebe832041aa60040f7d9e95de9f6f562481ce68f
+Closure Recovery Entry HEAD
+→ 5c416315f5227ecf99a9d9e5d3367c0efc8816b9
 
-Assessment Evidence Commit
-→ 9b39fe0b101d1e5a946516fb8d72e76e4c4b1708
+Global Closure Evidence Commit
+→ 169b69603dbbc32936b8d005414e72ffc2e11e88
 
-Assessment Working State Commit
-→ 0af3e4d840ccc45bc6f96b4f31982f4b18b97ce0
+Decision Registry 0.0.40 Commit
+→ af8ed168ec735c694f8ee886f9f452f401560b0d
 
-Assessment Ledger Commit / State Verified Through HEAD
-→ 2209a527f0a449f94df3b6a9b808fdc752bd30ff
+Closure Working State Commit
+→ a3252cb08ccd4b1a5918e560b9bc7fb4228ab48f
+
+Closure Ledger Commit / State Verified Through HEAD
+→ 1039a556076a3b841f802f7e13b96022181d3aa3
 
 Ledger Continuation
-→ docs/governance/global_architecture/ns_evermore_global_architecture_ledger_continuation_0.0.21.md
-
-Decision Registry
-→ 0.0.39 / unchanged
+→ docs/governance/global_architecture/ns_evermore_global_architecture_ledger_continuation_0.0.22.md
 ```
 
-# Assessment Basis
+# Globally Closed ns_web Internal Architecture
 
 ```text
-Accepted Web boundary set
-→ W1 / W2 / W3 / W4 / W5 / W6 / W7
+W1 — Governed Administration & Control Interaction
+→ GLOBAL_ACCEPTED
 
-Boundary Coverage
+W2 — Cross-domain Authoring & Semantic Interoperability
+→ GLOBAL_ACCEPTED
+
+W3 — Human Task Interaction
+→ GLOBAL_ACCEPTED
+
+W4 — Notification & Awareness Interaction
+→ GLOBAL_ACCEPTED
+
+W5 — Operational Observation, Trial, Intervention & Diagnostics
+→ GLOBAL_ACCEPTED
+
+W6 — Cross-domain Discovery & Governed Navigation
+→ GLOBAL_ACCEPTED
+
+W7 — Experience Semantics, Accessibility & Degraded Interaction
+→ GLOBAL_ACCEPTED
+
+Accepted ns_web Boundary Coverage
 → 7 / 7 / 100%
 
-Accepted Web internal responsibilities
+Accepted ns_web Internal Responsibility Count
 → 75
 
-Web Runtime Role
-→ WB-R01
+Remaining accepted ns_web boundary without Component Internal Design
+→ NONE
+
+Remaining Material ns_web Component Internal-design Pressure
+→ NONE_FOUND
+```
+
+Accepted responsibility counts:
+
+```text
+W1 → 11
+W2 → 17
+W3 → 10
+W4 → 8
+W5 → 10
+W6 → 10
+W7 → 9
+Total → 75
+```
+
+Web runtime-facing role:
+
+```text
+WB-R01 — Governed Human Interaction & Projection Participant
 
 Missing Web Runtime-role source-boundary design
 → 0
-
-Previously identified post-Batch-3 residual pressure
-→ W3 / W4 / W6 only
-
-Previously identified W3 / W4 / W6 pressure remaining after Batch-4 Global Acceptance
-→ 0
 ```
 
-# Remaining-pressure Audit
+# ns_web Closure Qualification
 
 ```text
-Remaining accepted ns_web boundary without Component Internal Design
-→ 0
-
 Remaining unowned material ns_web internal responsibility
 → 0
 
@@ -239,9 +247,6 @@ Remaining material compatibility / migration / conformance ambiguity
 Missing Web-owned stable-contract subject
 → 0
 
-Remaining material Web-side stable-contract pressure requiring another Web batch
-→ NONE_FOUND
-
 Mandatory Missing Shared Foundation Semantic
 → NONE_FOUND
 
@@ -250,21 +255,44 @@ Implementation-defined Component Architecture Escape
 
 Unmapped Material Decision
 → 0
+```
 
-Open MDE
+# Authority / SoT / Actual-state Preservation
+
+Global Closure moves no external authority into Web.
+
+Permanent:
+
+```text
+Web Interaction != Domain Authority
+Web Projection != Source Actual-state
+Frontend Cache != Source of Truth
+UI Affordance != Permission
+Correlation != Ownership
+Client Clock != Source-time Authority
+Offline Possession != Authority Transfer
+Reconnect != Reconciled
+Replay != Retroactive Authorization
+Latest Timestamp / Arrival != Canonical Winner
+```
+
+Representative accepted external owners remain server/runtime/node/agent/source authorities for governance/policy/trust, domain Definition/outcomes, Artifact Acceptance/Execution Admission, routing/dispatch, Node readiness/attempt/effect, Agent facts, Human Task Projection/routing, Notification lifecycle/delivery, Discovery Projection/Query Evaluation/Result Disclosure, Resource semantic SoT and Resource runtime Actual-state.
+
+```text
+Authority Transfer by Closure
 → 0
 
-Unpersisted Owner Decision
+SoT Transfer
 → 0
 
-Blocking Semantic Gap
-→ NONE
+Final Actual-state Ownership Transfer
+→ 0
 
-Blocking Item
+Circular Actual-state Ownership
 → NONE
 ```
 
-# Stable-contract Qualification
+# Stable-contract / RCP Position
 
 ```text
 RCP Count
@@ -272,57 +300,87 @@ RCP Count
 
 New RCP
 → 0
+
+Missing Web-owned stable-contract subject
+→ 0
+
+Remaining material Web-side stable-contract pressure requiring another Web batch
+→ NONE_FOUND
 ```
 
-Web-side/current-design contributions are represented where materially applicable across `RCP-01 / 16 / 17 / 18 / 19 / 20 / 21 / 22 / 24`.
+Web-side/current-design contributions are represented where materially applicable across:
+
+```text
+RCP-01 / RCP-16 / RCP-17 / RCP-18 / RCP-19 /
+RCP-20 / RCP-21 / RCP-22 / RCP-24
+```
+
+Applicable consume/project-only relationships preserve their real producers.
 
 ```text
 Remaining Full Cross-component RCP work
-→ may remain multi-party / downstream
+→ downstream / multi-party where applicable
 
 Remaining Full Cross-component RCP work
 != Remaining ns_web Component Internal-design Pressure
 ```
 
-No Full Cross-component RCP Closure is declared by this assessment.
+No Full Cross-component RCP Closure is inferred from Web closure.
 
-# Downstream Deferrals
-
-The following are not remaining Web Component Internal-design pressure:
+# Five-component Individual Closure State
 
 ```text
-Full cross-component stable-contract closure
-System-level SDK Detailed Design
-concrete API / wire / DTO / schema design
-Vue component/store/router/page/package realization
-browser persistence/offline-sync realization
-search/index/vector/AI technology selection
-Notification provider realization
-process/service/deployment topology
-Design-to-Implementation Readiness
-Implementation Planning
-IWP
-Coding
+ns_server
+→ GLOBAL_CLOSED / COMPLETE
+
+ns_runtime
+→ GLOBAL_CLOSED / COMPLETE
+
+ns_node
+→ GLOBAL_CLOSED / COMPLETE
+
+ns_agent
+→ GLOBAL_CLOSED / COMPLETE
+
+ns_web
+→ GLOBAL_CLOSED / COMPLETE
 ```
+
+All five Product Components therefore individually have completed Component Internal Design for the current accepted Product scope.
+
+This fact does **not** by itself declare a separate program-wide downstream readiness state and does not authorize System-level SDK Detailed Design.
+
+# Historical Batch-4 Evidence Classification
+
+```text
+Original Batch-4 0.0.1 producing
+→ AUTHORIZED / NOT GLOBALLY ACCEPTED
+
+Frozen post-producing correction range
+→ UNAUTHORIZED_PROGRESSION
+→ NON-NORMATIVE / FROZEN / PRESERVED
+→ NOT RETROACTIVELY AUTHORIZED
+
+Authorized Batch-4 correction reissuance 0.0.2
+→ GLOBAL_ACCEPTED
+```
+
+Only the authorized `0.0.2` Batch-4 evidence is part of the accepted Web baseline.
 
 # Repository Hygiene
 
 ```text
 refs/heads/tmp-do-not-create
-→ points to an existing historical producing-final commit
 → no unique commit/content
 → NON_AUTHORITATIVE / NON_SEMANTIC
 → repository-hygiene residue only
-→ not an exhaustion/closure blocker
+→ not an architecture/closure blocker
 ```
 
 # Explicitly Not Declared / Not Authorized
 
 ```text
-ns_web Component Internal Design Global Closure
-→ NOT YET DECLARED
-
-RCP Full Cross-component Closure
+Full Cross-component RCP Closure by inference
 → NOT DECLARED
 
 System-level SDK Detailed Design
@@ -347,17 +405,17 @@ Coding
 Primary Ledger 0.0.1
 → immutable through GAC-TR-0099
 
-Continuation 0.0.1..0.0.20
-→ immutable through GAC-TR-0119
+Continuation 0.0.1..0.0.21
+→ immutable through GAC-TR-0120
 
-Continuation 0.0.21
-→ GAC-TR-0120 → GAC-EPOCH-0109
+Continuation 0.0.22
+→ GAC-TR-0121 → GAC-EPOCH-0110
 → current latest immutable continuation
 ```
 
 # Current Required Read Set
 
-Every subsequent closure action must fresh-recover Repository authority and consume at minimum:
+Every subsequent GAC assessment must fresh-recover Repository authority and consume at minimum:
 
 ```text
 docs/ns_evermore_genesis_constitution_0.0.1.md
@@ -365,13 +423,14 @@ docs/governance/ns_evermore_governance_0.0.2.md
 docs/governance/global_architecture/ns_evermore_global_architecture_state_0.0.1.md
 docs/governance/global_architecture/ns_evermore_global_architecture_working_state_0.0.1.md
 docs/governance/global_architecture/ns_evermore_global_architecture_ledger_0.0.1.md
-all logical Ledger continuations through 0.0.21
-docs/governance/decisions/ns_evermore_decision_registry_0.0.39.md
-accepted ns_web Batch 1..4 Global Acceptance evidence
-docs/architecture_reviews/ns_evermore_ngrp_001_ns_web_internal_design_remaining_pressure_batching_assessment_0.0.1.md
+all logical Ledger continuations through 0.0.22
+docs/governance/decisions/ns_evermore_decision_registry_0.0.40.md
+all five Product Component Internal Design Global Closure evidence
 accepted Runtime Responsibility Architecture
-accepted Shared Foundation closure evidence
-applicable S6/A2/S11/S12/S13/RT-R03/RT-R04 evidence as needed
+accepted Shared Foundation Architecture / Contract / Module / Provider closure evidence
+accepted RCP-01..24 pressure inventory and applicable component contributions
+ns_web Batch 1..4 Global Acceptance evidence
+ns_web exhaustion assessment + Global Closure evidence
 ```
 
 # Unique Next Legal Action
@@ -379,12 +438,18 @@ applicable S6/A2/S11/S12/S13/RT-R03/RT-R04 evidence as needed
 The only next material action is:
 
 ```text
-fresh Repository recovery
-→ verify assessment State seal and no drift/MDE/blocker
-→ if Remaining Material Pressure = NONE_FOUND,
-   Internal Design Exhaustion = SATISFIED,
-   and Global-closure Eligibility = SATISFIED still hold,
-   perform a separate ns_web Component Internal Design Global Closure transition
+perform a separate GAC post-five-component Component Internal Design
+remaining-pressure / cross-component stable-contract / next-phase sequencing-readiness assessment
 ```
 
-That closure transition must not automatically authorize System-level SDK Detailed Design or any downstream phase. After any Web closure, a separate GAC post-five-component Component Internal Design global remaining-pressure / sequencing / next-phase readiness assessment is required.
+That assessment must independently determine:
+
+```text
+whether any Component Internal Design pressure remains outside the individually closed components
+whether unresolved cross-component RCP pressure requires additional semantic closure before SDK design
+whether System-level SDK Detailed Design is the next legal phase
+whether any MDE / Owner decision / Shared Foundation gap remains
+what, if anything, may be separately authorized next
+```
+
+No next phase is automatically authorized by `GAC-EPOCH-0110`.
