@@ -2,73 +2,93 @@
 
 ## Authority Metadata
 
-- **Producing Session:** `BOUNDED PRODUCING SESSION`
+- **Producing Session:** `BOUNDED PRODUCING SESSION / CORRECTION`
 - **Repository:** `J-LittleSunshine/ns_evermore`
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 - **Producing Entry HEAD:** `7212f3e79f54cdfee0c0938e8dcdc778312acf3f`
-- **Candidate Commit:** `ac560d34bb22b8883619857cec332e9ffb5fe5bc`
-- **DAD Evidence Commit:** `a987a4f1654ec5773e3539803e924f611591951d`
-- **Pre-review Remote HEAD:** `a987a4f1654ec5773e3539803e924f611591951d`
+- **Original Candidate Commit:** `ac560d34bb22b8883619857cec332e9ffb5fe5bc`
+- **Original DAD Evidence Commit:** `a987a4f1654ec5773e3539803e924f611591951d`
+- **Original Review / Audit Commit:** `e6f0f1e0af41a639775ea241e462f7c706666a6c`
+- **Correction Entry / Original Handoff HEAD:** `9e97c4fd4e24e252d484c313f0ba27876deebe7d`
+- **Candidate Dependency-correction Commit:** `d8f5fb1e0e17f416f0da2910aeb77099794e2c7f`
+- **DAD Dependency-evidence Correction Commit:** `9f069a0c6fc6f997c32986bedcbe5089918ea875`
+- **Pre-review-correction Remote HEAD:** `9f069a0c6fc6f997c32986bedcbe5089918ea875`
 - **Recovered GAC Epoch:** `GAC-EPOCH-0106`
 - **Authorization Transition:** `GAC-TR-0117`
 - **Decision Registry:** `0.0.38 / CURRENT / NORMATIVE`
 - **Authorization Scope:** `COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_4 / HUMAN_TASK_NOTIFICATION_DISCOVERY_INTERACTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS`
+- **Correction Scope:** `DEPENDENCY GRAPH SEMANTICS / DEPENDENCY DIRECTION / DEPENDENCY TRACEABILITY / REVIEW CONSISTENCY`
 - **Authorized Boundaries:** `W3 / W4 / W6`
 - **Inherited Runtime-facing Role:** `WB-R01 — Governed Human Interaction & Projection Participant`
 - **Global Acceptance Authority:** `NOT HELD BY THIS SESSION`
 
-This artifact audits the Candidate and DAD Evidence only within the bounded producing authority. A `PASS` below means the producing evidence is internally complete and consistent at the current Component Internal Design level; it does **not** mean Global Acceptance, full cross-component RCP closure, `ns_web` exhaustion/global closure, or downstream phase readiness.
+This revision is a bounded correction audit. The original producing Review recorded `DEPENDENCY_INVARIANT_REVIEW → PASS`, but independent GAC review found that the original Batch-4 hard-SDD diagrams used the opposite arrow direction from the already Global-Accepted Web dependency notation. That original dependency PASS therefore **did not survive independent GAC review**. GAC returned `CORRECTION_REQUIRED` for dependency invariant / documentation / traceability consistency only.
+
+The correction changes no W3/W4/W6 responsibility semantics, no substantive architecture purpose of the 25 DADs, no Authority/SoT/final Actual-state ownership, no Product capability, no Runtime Role, and no RCP identity/count/status. A `PASS` below means the corrected producing evidence is internally consistent at the current Component Internal Design level and ready for GAC **re-review**; it does **not** mean Global Acceptance.
 
 ---
 
-# 1. Review Inputs and Pre-review Git State
+# 1. Review Inputs and Correction Git State
 
-The review consumed:
+The correction review consumed:
 
 ```text
 Current Global State / Working State
+Unified Governance 0.0.2
 Logical Global Architecture Ledger through continuation 0.0.18
 Decision Registry 0.0.38
 Batch-4 entry-readiness assessment
 Batch-4 authorization evidence
 accepted W1/W2/W5/W7 Web normative upstream
+accepted W1/W2 dependency notation
 accepted S6/A2/S11 + RT-R03/RT-R04 W3 source-owner semantics
 accepted S12 W4 source-owner semantics
 accepted S13 + original Resource-owner W6 semantics
 accepted Shared Foundation architecture / Contract / Module / Provider closure
-Batch-4 Candidate
-Batch-4 DAD Evidence
+original Batch-4 Candidate / DAD / Review / Handoff
+corrected Batch-4 Candidate
+corrected Batch-4 DAD Evidence
+GAC CORRECTION_REQUIRED finding
 ```
 
-Pre-review producing chain was independently checked:
+Repository-backed accepted dependency notation was revalidated before correction:
 
 ```text
-Authorization Seal / Producing Entry
-→ 7212f3e79f54cdfee0c0938e8dcdc778312acf3f
+A → B
 
-Candidate
-→ ac560d34bb22b8883619857cec332e9ffb5fe5bc
-→ adjacent delta: 1 commit
-→ exactly 1 added Candidate file
-→ 1735 additions
-→ 0 deletions
-
-DAD Evidence
-→ a987a4f1654ec5773e3539803e924f611591951d
-→ adjacent delta: 1 commit
-→ exactly 1 added DAD Evidence file
-→ 789 additions
-→ 0 deletions
-
-Remote branch HEAD before Review write
-→ a987a4f1654ec5773e3539803e924f611591951d
+means:
+A's semantic definition depends on B's semantic definition.
 ```
 
-No pre-review governance authority file, source file, implementation file, or accepted upstream evidence was modified by the producing range.
+Therefore an SDD arrow points from the **dependent responsibility** to its **semantic-definition prerequisite**. Runtime/control flow, source-to-Web evidence flow, response flow, historical linkage, provider evidence, and re-observation direction are not represented by this arrow convention.
+
+Correction chain through the current pre-review-correction HEAD:
+
+```text
+Correction Entry / Original Producing Final HEAD
+→ 9e97c4fd4e24e252d484c313f0ba27876deebe7d
+
+Candidate correction
+→ d8f5fb1e0e17f416f0da2910aeb77099794e2c7f
+→ exactly 1 commit
+→ only Batch-4 Candidate modified
+→ no added/deleted file
+
+DAD correction
+→ 9f069a0c6fc6f997c32986bedcbe5089918ea875
+→ exactly 1 commit
+→ only Batch-4 DAD Evidence modified
+→ no added/deleted file
+
+Remote branch HEAD before Review correction
+→ 9f069a0c6fc6f997c32986bedcbe5089918ea875
+```
+
+No Global State, Working State, Ledger, Decision Registry, accepted upstream, source, or implementation file was modified by those two correction commits.
 
 ---
 
-# 2. Reviewed Candidate Inventory
+# 2. Reviewed Candidate Inventory — Non-regression
 
 ## 2.1 Responsibility counts
 
@@ -84,6 +104,9 @@ W6 Cross-domain Discovery & Governed Navigation
 
 Total Batch-4 Responsibilities
 → 28
+
+Responsibility Semantic Change During Correction
+→ 0
 
 Unowned Material Responsibility
 → 0
@@ -106,6 +129,15 @@ DAD IDs
 
 DAD Count
 → 25
+
+New DAD During Correction
+→ 0
+
+Substantive DAD Architecture Decision Change
+→ 0
+
+Corrected DAD
+→ CID-WB-B4-DAD-024 dependency notation / direction / traceability only
 
 Material Responsibility Without Decision Trace
 → 0
@@ -144,49 +176,52 @@ RCP-24 Batch-4 Web-side contribution
 RCP-01
 → CONSUME ONLY
 
-Full Cross-component Closure claimed by Candidate/DAD
+RCP Authority-level Promotion During Correction
+→ 0
+
+Full Cross-component Closure claimed
 → 0
 ```
 
 ---
 
-# 3. Mandatory Review / Audit Matrix
+# 3. Corrected Mandatory Review / Audit Matrix
 
-Exactly the required mandatory audit set was executed.
+The original 29-audit producing matrix is retained and re-executed against the corrected Candidate and DAD Evidence. Audit #7 is materially strengthened: acyclicity alone is insufficient; notation, edge direction, responsibility-definition correctness, and dependency classification must all agree.
 
-| # | Audit | Result | Reviewed evidence / finding |
+| # | Audit | Result | Corrected reviewed evidence / finding |
 |---:|---|---|---|
-| 1 | `MAJOR_DECISION_ESCALATION_AUDIT` | **PASS** | All 25 DADs remain inside accepted W3/W4/W6 + WB-R01 semantics. No DAD moves Product Authority/SoT/final Actual-state ownership, creates a Product capability/Runtime Role/RCP, chooses a universal fail law, universal identity namespace, cross-Tenant Discovery, universal response-winner law, universal Notification delivery guarantee, Resource registry/graph/ranking authority, mandatory AI search, public control plane, or high-migration provider/protocol/storage/index lock-in. `Open MDE → 0`. |
-| 2 | `DOCUMENTATION_COMPLETENESS_AUDIT` | **PASS** | Candidate includes authority metadata, recovery/gate, upstream baseline, W1/W2/W5/W7 reuse, permanent non-collapse, W3/W4/W6 topology/decomposition/profiles/matrices, cross-boundary review, dependency topology, authority/SoT/Actual-state matrix, identity/history, governance/privacy, offline/recovery, compatibility/conformance, RCP, Foundation, MDE boundary, implementation deferrals and non-authorizations. DAD Evidence includes all required decision fields and complete trace map. |
-| 3 | `SEMANTIC_RESOLUTION_DEPTH_REVIEW` | **PASS** | Each material responsibility resolves identity, revision/evolution, authority, semantic ownership, SoT, Actual-state ownership, lifecycle, time, failure/unknown, Tenant/Organization/Principal/auth/authz/Policy/Trust, security/privacy/secret boundary, offline/recovery, compatibility/migration/conformance, dependencies, history/provenance, diagnostics, invariant, decision trace and revalidation trigger; non-owned dimensions name actual owners. |
-| 4 | `CONSTRAINT_TRACEABILITY_REVIEW` | **PASS** | Candidate decisions trace to accepted Repository authority: W1/W2/W5/W7, S6/A2/S11/S12/S13, RT-R03/RT-R04, original source/resource owners and Shared Foundation. All 28 responsibilities map to DAD evidence; all DADs state upstream constraints. |
-| 5 | `AUTHORITY_SOURCE_OF_TRUTH_AMBIGUITY_REVIEW` | **PASS** | W3 source semantics remain S6/A2 and S11 projection/routing; W4 Notification/delivery remains S12 and source condition original owner; W6 Resource semantics remain original owners and Discovery projection remains S13. Web owns only genuine WB-R01 interaction/presentation/submission occurrences. `Multiple-final-authority Ambiguity → 0`; `Source-of-Truth Ambiguity → 0`. |
-| 6 | `TENANT_ORGANIZATION_NON_COLLAPSE_REVIEW` | **PASS** | Tenant and Organization remain distinct contextual dimensions in W3/W4/W6. Cross-Tenant Discovery remains prohibited. No Tenant/Organization authority is created in Web. |
-| 7 | `DEPENDENCY_INVARIANT_REVIEW` | **PASS** | Accepted `SDD/ACD/EL/HPL/XED` taxonomy is used. Only hard SDD participates in definition-cycle analysis. W3, W4 and W6 hard SDD graphs are individually acyclic; there is no cross-boundary hard SDD edge. Source feedback/re-observation/routing/provider evidence is EL/HPL/ACD/XED, not reverse authority. |
-| 8 | `PROVENANCE_HIDDEN_INHERITANCE_REVIEW` | **PASS** | No Web projection silently inherits source truth from arrival order, browser cache, provider evidence, query ranking, Notification state or Task routing. Every material projection/result/submission/awareness occurrence retains source-qualified owner attribution and correlation. |
-| 9 | `ARCHITECTURE_DOWNSTREAM_DESIGN_BOUNDARY_REVIEW` | **PASS** | No implementation planning, SDK Detailed Design, DTO/schema/API/wire/protocol, page/component/store/router/package/process/service/deployment design appears as architecture ownership. Named technology choices remain explicitly deferred. |
-| 10 | `COMPONENT_BOUNDARY_AMBIGUITY_REVIEW` | **PASS** | W3/W4/W6 stay inside `ns_web` interaction/projection responsibility and do not absorb S6/S11/S12/S13/A2/Runtime/Foundation or original Resource owners. W1/W2/W5/W7 are consumed as normative upstream and not reopened. |
-| 11 | `RUNTIME_BOUNDARY_AMBIGUITY_REVIEW` | **PASS** | WB-R01 owns Web-origin facts only. RT-R03 remains cross-component continuation/delegation/intervention coordination; RT-R04 remains recovery/reconciliation coordination. S11/S12/S13 retain their runtime-facing roles. No new Runtime Role or Web runtime authority is introduced. |
-| 12 | `SOURCE_EFFECT_RESPONSIBILITY_REVIEW` | **PASS** | Source wait/application/resume/continuation, Notification delivery attempts/source resolution, Resource runtime Actual-state, and source effects remain with accepted source/runtime owners. UI interaction cannot manufacture source effect or business semantic success. |
-| 13 | `OFFLINE_PRIVATE_CORRECTNESS_REVIEW` | **PASS** | `Offline Response Possession != Submission/Application`; `Offline Notification Projection != Current Source Condition`; `Offline Discovery Projection != Resource SoT`; cached authorization is not perpetual. Core semantics require no public SaaS/provider. Reconnect permits re-observation/requalification only. |
-| 14 | `FAILURE_RECOVERY_RESPONSIBILITY_REVIEW` | **PASS** | UNKNOWN/UNAVAILABLE/STALE/PARTIAL/INDETERMINATE/CONFLICTING/SUPERSEDED/REBUILDING/RECONCILIATION_PENDING are preserved as applicable. No latest/local/central/browser/server winner, automatic merge, canonicalization or fail-open/fail-closed law is introduced. RT-R04/source owners remain recovery authorities for their facts. |
-| 15 | `SECURITY_PRIVACY_NON_LEAK_REVIEW` | **PASS** | W3 protects task existence/participant eligibility/response/routing provenance; W4 protects Notification existence/content/source/delivery/audience/provider metadata; W6 treats rows/snippets/counts/facets/categories/relationships/hints/suggestions/errors/coverage/rebuild/partiality metadata as disclosure channels. Redaction/minimization applies to normal/localized/accessible/degraded/offline/history/diagnostic presentation. |
-| 16 | `HUMAN_TASK_SOURCE_AUTHORITY_NON_COLLAPSE_REVIEW` | **PASS** | Human Task Inbox/Projection remains S11 projection; Automation/Agent Human-action Requirement/Wait remain S6/A2. Web cannot become HITL source SoT or source wait owner. |
-| 17 | `HUMAN_RESPONSE_SUBMISSION_APPLICABILITY_NON_COLLAPSE_REVIEW` | **PASS** | W3 owns Human Response Submission Occurrence only. Submission, routing, receipt, applicability/acceptance, application, source wait resolution and execution completion remain separate stages/owners. No response winner/dedup/applicability authority is invented. |
-| 18 | `HUMAN_TASK_NOTIFICATION_NON_COLLAPSE_REVIEW` | **PASS** | Human Task is actionable human work; Notification is awareness. Task response is not Notification acknowledgement; Inbox is not Notification Center; no automatic Task↔Notification promotion or shared Attention Authority exists. |
-| 19 | `NOTIFICATION_SOURCE_CONDITION_NON_COLLAPSE_REVIEW` | **PASS** | S12 Notification existence/history/delivery state remains separate from original source condition/resolution. Notification/read/ack does not resolve source; provider delivery evidence never becomes source Authority. |
-| 20 | `NOTIFICATION_AWARENESS_LIFECYCLE_NON_COLLAPSE_REVIEW` | **PASS** | `Projected != Observed != Read != Acknowledged`; acknowledgement does not imply resolved/policy approved; delivery success does not imply observation. No universal exactly-once/at-most-once/at-least-once/retry/fallback law. |
-| 21 | `DISCOVERY_RESOURCE_AUTHORITY_NON_COLLAPSE_REVIEW` | **PASS** | Result Projection, S13 Projection Entry, Resource, Resource SoT and Resource runtime Actual-state remain distinct. No Resource Authority/registry/identity namespace/Knowledge Graph/Resource Graph/ranking authority is introduced. |
-| 22 | `DISCOVERY_EXISTENCE_LEAKAGE_REVIEW` | **PASS** | Every primary and aggregate/result-metadata channel is disclosure-scoped. Searchable/indexed/visible does not imply authorized to discover/reveal/act. Cross-Tenant Discovery remains prohibited and cached authorization cannot expand disclosure. |
-| 23 | `DISCOVERY_NO_RESULT_NON_EXISTENCE_REVIEW` | **PASS** | Query intent/execution/result and projection completeness are separated. `No Result != Resource Does Not Exist`; zero counts inherit bounded completeness/currentness/disclosure qualification and are not universal source non-existence evidence. |
-| 24 | `CROSS_BOUNDARY_W3_W4_W6_NON_COLLAPSE_REVIEW` | **PASS** | Three boundaries remain independent despite one Batch and one WB-R01 role. Cross-surface correlation/navigation/history is ACD/EL/HPL only; no identity/lifecycle/Authority/Actual-state collapse or catch-all SoT/state machine. |
-| 25 | `W1_W2_W5_W7_REDESIGN_REVIEW` | **PASS** | Candidate only consumes accepted W1 intent/submission law, W2 revision/history/conflict law, W5 history/re-observation/diagnostics law and W7 status/currentness/accessibility/localization/redaction/degraded semantics. No second model is created and accepted upstream files are unchanged. |
-| 26 | `SHARED_FOUNDATION_REUSE_REVIEW` | **PASS** | Accepted Temporal/Freshness, Status/Uncertainty, Correlation/Provenance, Governed Context, Secret Reference, Redaction, Compatibility/Conformance, Representation, Localization and diagnostics mechanics are reused. No parallel Web task/notification/discovery/status/provenance/offline Foundation. `Mandatory Missing Shared Foundation Semantic → NONE_FOUND`. |
-| 27 | `RCP_OVERCLAIM_REVIEW` | **PASS** | RCP-16/18/21 are claimed only as Web-side closed at current Batch design level; RCP-22 only Batch-4 Web-side complete at current level; RCP-24 only bounded Web-side closed where applicable; RCP-01 consume-only. No Full Cross-component Closure claim. RCP count remains 24, new 0. |
-| 28 | `IMPLEMENTATION_LEAKAGE_REVIEW` | **PASS** | No React/Vue implementation structure, state store/router/component library, search/index/vector technology, broker/database, REST/GraphQL/gRPC/WebSocket/SSE/polling, DTO/JSON Schema/OpenAPI, pagination/ranking/task algorithm, browser storage/offline sync, physical ID/schema/endpoint/page/component/class/package/process/deployment choice is frozen. Vue3+TypeScript appears only as inherited Constitution fact. |
-| 29 | `GIT_DRIFT_REVIEW` | **PASS** | Before Review write: Entry→Candidate is exactly 1 commit/1 added Candidate/0 deletions; Candidate→DAD is exactly 1 commit/1 added DAD/0 deletions; pre-review remote HEAD equals DAD commit. No unrelated/governance/source/implementation mutation is present. The Review commit itself must be independently verified immediately after creation before Handoff. |
+| 1 | `MAJOR_DECISION_ESCALATION_AUDIT` | **PASS** | All 25 DADs remain inside accepted W3/W4/W6 + WB-R01 semantics. Dependency correction is documentation/traceability only and requires no MDE. No Product Authority/SoT/final Actual-state movement, Product capability, Runtime Role, RCP, fail law, universal identity namespace, cross-Tenant Discovery, response-winner law, Notification provider authority, Resource registry/graph/ranking authority, mandatory AI search, public control plane, or high-migration lock-in is introduced. |
+| 2 | `DOCUMENTATION_COMPLETENESS_AUDIT` | **PASS** | Candidate now explicitly defines the accepted dependency notation, corrected W3/W4/W6 hard-SDD graphs, semantic-direction proof, dependency-first topological interpretation and correction provenance. DAD-024 is aligned to the corrected graph and accepted notation. |
+| 3 | `SEMANTIC_RESOLUTION_DEPTH_REVIEW` | **PASS** | All 28 responsibilities retain complete semantic resolution. Dependency correction changes no responsibility definition or owner. |
+| 4 | `CONSTRAINT_TRACEABILITY_REVIEW` | **PASS** | Corrected dependency notation traces directly to accepted W1/W2 Web evidence; each hard-SDD edge is justified from the corresponding Batch-4 responsibility definitions. All 28 responsibilities remain mapped to the same 25 DADs. |
+| 5 | `AUTHORITY_SOURCE_OF_TRUTH_AMBIGUITY_REVIEW` | **PASS** | W3 source semantics remain S6/A2 and S11 projection/routing; W4 Notification/delivery remains S12 and source condition original owner; W6 Resource semantics remain original owners and Discovery projection remains S13. Dependency arrows do not encode or transfer Authority. |
+| 6 | `TENANT_ORGANIZATION_NON_COLLAPSE_REVIEW` | **PASS** | Tenant and Organization remain distinct contextual dimensions; cross-Tenant Discovery remains prohibited. Dependency correction creates no governance authority. |
+| 7 | `DEPENDENCY_INVARIANT_REVIEW` | **PASS** | **RERUN AFTER GAC CORRECTION_REQUIRED.** Accepted notation is `A → B = A depends semantically on B`. Every W3/W4/W6 hard-SDD edge was re-derived from responsibility definitions under that notation. Corrected edge sets exactly match Candidate §9 and DAD-024. Dependency-first topological staging proves acyclicity. No hard SDD exists among W3/W4/W6. Source/runtime feedback, routing/receipt/application evidence, awareness evidence, query/result evidence and re-observation are `ACD/EL/HPL`; provider raw evidence is `XED`. None becomes reverse semantic authority. `Accepted Dependency Notation Consistency → PASS`; `Hard-SDD Edge Direction Semantic Correctness → PASS`; `Responsibility Dependency Correctness → PASS`; `Cross-boundary Dependency Classification Correctness → PASS`; `Hard Internal SDD Graph → ACYCLIC`. |
+| 8 | `PROVENANCE_HIDDEN_INHERITANCE_REVIEW` | **PASS** | Corrected arrows do not imply source truth from arrival order or flow direction. Every projection/result/submission/awareness occurrence remains source-qualified; historical/evidence linkages are non-SDD. |
+| 9 | `ARCHITECTURE_DOWNSTREAM_DESIGN_BOUNDARY_REVIEW` | **PASS** | No SDK Detailed Design, API/schema/wire/protocol, UI/component/store/router/package/process/deployment design is introduced by dependency correction. |
+| 10 | `COMPONENT_BOUNDARY_AMBIGUITY_REVIEW` | **PASS** | W3/W4/W6 remain Web interaction/projection boundaries and do not absorb S6/S11/S12/S13/A2/Runtime/Foundation or original Resource owners. |
+| 11 | `RUNTIME_BOUNDARY_AMBIGUITY_REVIEW` | **PASS** | WB-R01 remains Web-origin only; RT-R03/RT-R04 and S11/S12/S13 runtime-facing ownership remain unchanged. Dependency direction is semantic-definition direction, not runtime-control direction. |
+| 12 | `SOURCE_EFFECT_RESPONSIBILITY_REVIEW` | **PASS** | Source wait/application/resume/continuation, Notification delivery/source resolution, Resource runtime state and source effects remain with accepted owners. Corrected SDD arrows do not reassign effects. |
+| 13 | `OFFLINE_PRIVATE_CORRECTNESS_REVIEW` | **PASS** | Offline response possession, Notification projection and Discovery projection remain non-authoritative; reconnect remains re-observation/requalification. No public dependency is introduced. |
+| 14 | `FAILURE_RECOVERY_RESPONSIBILITY_REVIEW` | **PASS** | UNKNOWN/UNAVAILABLE/STALE/PARTIAL/INDETERMINATE/CONFLICTING/SUPERSEDED/REBUILDING/RECONCILIATION_PENDING remain explicit. No winner/merge/canonicalization/fail law is introduced. |
+| 15 | `SECURITY_PRIVACY_NON_LEAK_REVIEW` | **PASS** | W3/W4/W6 protected disclosure channels and redaction semantics are unchanged. Dependency correction does not alter disclosure scope. |
+| 16 | `HUMAN_TASK_SOURCE_AUTHORITY_NON_COLLAPSE_REVIEW` | **PASS** | S11 remains projection/routing owner; S6/A2 remain source Human-action Requirement/Wait owners; W3 remains submission occurrence only. |
+| 17 | `HUMAN_RESPONSE_SUBMISSION_APPLICABILITY_NON_COLLAPSE_REVIEW` | **PASS** | Submission, routing, receipt, applicability/acceptance, application, wait resolution and execution completion remain distinct. No winner/dedup/applicability authority is introduced. |
+| 18 | `HUMAN_TASK_NOTIFICATION_NON_COLLAPSE_REVIEW` | **PASS** | Human Task remains action; Notification remains awareness; correction creates no shared Attention Authority/state machine. |
+| 19 | `NOTIFICATION_SOURCE_CONDITION_NON_COLLAPSE_REVIEW` | **PASS** | S12 Notification/delivery remains separate from original source condition/resolution. Provider evidence remains evidence only. |
+| 20 | `NOTIFICATION_AWARENESS_LIFECYCLE_NON_COLLAPSE_REVIEW` | **PASS** | `Projected != Observed != Read != Acknowledged`; no automatic source resolution/policy approval or universal delivery guarantee. |
+| 21 | `DISCOVERY_RESOURCE_AUTHORITY_NON_COLLAPSE_REVIEW` | **PASS** | Result Projection/S13 Projection Entry/source Resource remain distinct. W6 identity clarification makes Web Result Presentation occurrence explicitly distinct from S13 DP08 Result Correlation reference and Web Query Intent/correlation distinct from S13 DP07 Query Evaluation Actual-state. No new identity authority is created. |
+| 22 | `DISCOVERY_EXISTENCE_LEAKAGE_REVIEW` | **PASS** | Rows/snippets/counts/facets/categories/relationships/hints/suggestions/errors/coverage/rebuild/partiality remain governed disclosure channels; no cross-Tenant or cached-auth bypass. |
+| 23 | `DISCOVERY_NO_RESULT_NON_EXISTENCE_REVIEW` | **PASS** | `No Result != Resource Does Not Exist`; corrected dependency direction does not change bounded completeness/currentness semantics. |
+| 24 | `CROSS_BOUNDARY_W3_W4_W6_NON_COLLAPSE_REVIEW` | **PASS** | No hard SDD exists among W3/W4/W6; cross-surface relationships remain ACD/EL/HPL only. No identity/lifecycle/Authority/Actual-state collapse. |
+| 25 | `W1_W2_W5_W7_REDESIGN_REVIEW` | **PASS** | W1/W2/W5/W7 remain consume-only normative upstream. Accepted W1/W2 dependency notation is reused rather than redefined. |
+| 26 | `SHARED_FOUNDATION_REUSE_REVIEW` | **PASS** | Accepted Temporal/Freshness, Status/Uncertainty, Correlation/Provenance, Governed Context, Secret Reference, Redaction, Compatibility/Conformance, Representation, Localization and diagnostics mechanics remain reused; no parallel Foundation. |
+| 27 | `RCP_OVERCLAIM_REVIEW` | **PASS** | RCP-16/18/21/22/24 remain at exactly the same bounded authority level; no Full Closure claim and no new RCP. |
+| 28 | `IMPLEMENTATION_LEAKAGE_REVIEW` | **PASS** | Dependency correction selects no framework structure, protocol, storage/index/search technology, schema, API, algorithm, browser persistence or deployment topology. |
+| 29 | `GIT_DRIFT_REVIEW` | **PASS** | Correction Entry→Candidate correction is exactly one commit modifying only Candidate; Candidate correction→DAD correction is exactly one commit modifying only DAD; pre-review-correction remote HEAD equals DAD correction commit. No new/deleted file or unrelated/governance/source/implementation mutation is present through this point. Review correction must be independently verified after commit before Handoff correction. |
 
-## Mandatory audit count
+## Corrected mandatory audit count
 
 ```text
 PASS
@@ -201,41 +236,241 @@ BLOCKED
 
 ---
 
-# 4. Semantic Resolution Depth Review
+# 4. Dedicated Correction Non-regression Audit Set
 
-The following matrix verifies that all required semantic dimensions are resolved across the three boundary sets and no dimension is left to implementation convention.
+The correction-specific mandatory non-regression set was independently rerun after correcting Candidate and DAD dependency semantics.
 
-| Dimension | W3 | W4 | W6 | Review result |
+| # | Audit | Result | Correction finding |
+|---:|---|---|---|
+| 1 | `MAJOR_DECISION_ESCALATION_AUDIT` | **PASS** | No MDE-class dimension changed. |
+| 2 | `AUTHORITY_SOURCE_OF_TRUTH_AMBIGUITY_REVIEW` | **PASS** | Authority/SoT topology unchanged; ambiguity 0. |
+| 3 | `DEPENDENCY_INVARIANT_REVIEW` | **PASS** | Accepted notation, per-edge semantic direction, responsibility dependencies, cross-boundary classification and acyclicity all pass. |
+| 4 | `PROVENANCE_HIDDEN_INHERITANCE_REVIEW` | **PASS** | No flow/evidence direction is misread as semantic authority. |
+| 5 | `COMPONENT_BOUNDARY_AMBIGUITY_REVIEW` | **PASS** | W3/W4/W6 boundaries unchanged. |
+| 6 | `RUNTIME_BOUNDARY_AMBIGUITY_REVIEW` | **PASS** | WB-R01/S11/S12/S13/RT boundaries unchanged. |
+| 7 | `SOURCE_EFFECT_RESPONSIBILITY_REVIEW` | **PASS** | Source/effect owners unchanged. |
+| 8 | `OFFLINE_PRIVATE_CORRECTNESS_REVIEW` | **PASS** | Offline/private invariants unchanged. |
+| 9 | `FAILURE_RECOVERY_RESPONSIBILITY_REVIEW` | **PASS** | No fail/winner/reconciliation law introduced. |
+| 10 | `SECURITY_PRIVACY_NON_LEAK_REVIEW` | **PASS** | Disclosure/redaction semantics unchanged. |
+| 11 | `HUMAN_TASK_SOURCE_AUTHORITY_NON_COLLAPSE_REVIEW` | **PASS** | S6/A2/S11 source topology preserved. |
+| 12 | `HUMAN_RESPONSE_SUBMISSION_APPLICABILITY_NON_COLLAPSE_REVIEW` | **PASS** | W3 submission/applicability separation preserved. |
+| 13 | `HUMAN_TASK_NOTIFICATION_NON_COLLAPSE_REVIEW` | **PASS** | W3/W4 non-collapse preserved. |
+| 14 | `NOTIFICATION_SOURCE_CONDITION_NON_COLLAPSE_REVIEW` | **PASS** | S12/source-condition separation preserved. |
+| 15 | `NOTIFICATION_AWARENESS_LIFECYCLE_NON_COLLAPSE_REVIEW` | **PASS** | awareness occurrence separation preserved. |
+| 16 | `DISCOVERY_RESOURCE_AUTHORITY_NON_COLLAPSE_REVIEW` | **PASS** | original Resource/S13/W6 topology preserved. |
+| 17 | `DISCOVERY_EXISTENCE_LEAKAGE_REVIEW` | **PASS** | all W6 disclosure channels remain governed. |
+| 18 | `DISCOVERY_NO_RESULT_NON_EXISTENCE_REVIEW` | **PASS** | no-result non-existence non-collapse preserved. |
+| 19 | `CROSS_BOUNDARY_W3_W4_W6_NON_COLLAPSE_REVIEW` | **PASS** | no cross-boundary hard SDD or authority collapse. |
+| 20 | `W1_W2_W5_W7_REDESIGN_REVIEW` | **PASS** | no accepted Web upstream redesign. |
+| 21 | `SHARED_FOUNDATION_REUSE_REVIEW` | **PASS** | no new Foundation semantic; accepted reuse preserved. |
+| 22 | `RCP_OVERCLAIM_REVIEW` | **PASS** | no RCP status promotion. |
+| 23 | `IMPLEMENTATION_LEAKAGE_REVIEW` | **PASS** | implementation leakage remains zero. |
+| 24 | `GIT_DRIFT_REVIEW` | **PASS** | correction delta through pre-review HEAD contains only Candidate and DAD modifications in two linear commits. |
+
+```text
+Correction Non-regression PASS
+→ 24
+
+Correction Non-regression FAIL
+→ 0
+
+Correction Non-regression BLOCKED
+→ 0
+```
+
+---
+
+# 5. Corrected Dependency Invariant Review
+
+## 5.1 Accepted dependency taxonomy and direction
+
+```text
+SDD → SEMANTIC_DEFINITION_DEPENDENCY
+ACD → APPLICATION_CONTEXT_DEPENDENCY
+EL  → EVIDENCE_LINKAGE
+HPL → HISTORICAL_PROVENANCE_LINKAGE
+XED → EXTERNAL_EVIDENCE_DEPENDENCY
+```
+
+Only `SDD` participates in recursive semantic-definition cycle analysis.
+
+Accepted Web notation:
+
+```text
+A → B
+
+A's semantic definition depends on B's semantic definition.
+```
+
+Thus each hard-SDD arrow points from a dependent responsibility to a semantic prerequisite. The direction is not runtime execution order or evidence-return direction.
+
+## 5.2 W3 corrected hard-SDD graph
+
+```text
+W3-R02 → W3-R01
+W3-R03 → W3-R01
+W3-R04 → W3-R01
+W3-R05 → W3-R04
+W3-R06 → W3-R02, W3-R05
+W3-R07 → W3-R06
+W3-R08 → W3-R06
+W3-R09 → W3-R02, W3-R05, W3-R07, W3-R08
+W3-R10 → W3-R01, W3-R06, W3-R09
+```
+
+Direction checks:
+
+- R02/R03/R04 require R01's exact governed task interaction subject/context.
+- R05 requires R04's possession-vs-submission distinction.
+- R06 requires projection/source-reference semantics from R02 and Submission semantics from R05.
+- R07/R08 require exact correlation from R06 before downstream evidence or stale/wrong-context qualification can be defined.
+- R09 requires projection rediscovery, Submission identity, downstream evidence and conflict/currentness qualification.
+- R10 requires the base interaction subject, correlation law and history/offline seam whose compatibility/conformance it governs.
+
+Dependency-first stages:
+
+```text
+0 → W3-R01
+1 → W3-R02, W3-R03, W3-R04
+2 → W3-R05
+3 → W3-R06
+4 → W3-R07, W3-R08
+5 → W3-R09
+6 → W3-R10
+```
+
+Every SDD arrow points from a later stage to an earlier prerequisite stage: `ACYCLIC`.
+
+## 5.3 W4 corrected hard-SDD graph
+
+```text
+W4-R02 → W4-R01
+W4-R03 → W4-R01
+W4-R04 → W4-R01
+W4-R05 → W4-R01
+W4-R06 → W4-R05
+W4-R07 → W4-R02, W4-R04, W4-R06
+W4-R08 → W4-R01, W4-R03, W4-R05, W4-R07
+```
+
+Direction checks:
+
+- R02/R03/R04/R05 require R01's Notification/Web interaction/source-correlation binding.
+- R06 requires R05's delivery/source-condition correlation before Notification-vs-source currentness can be defined.
+- R07 requires history (R02), awareness occurrences (R04), and currentness/uncertainty (R06).
+- R08 requires the base subject, disclosure, delivery/source projection and offline/history seam it governs for compatibility/provenance.
+
+Dependency-first stages:
+
+```text
+0 → W4-R01
+1 → W4-R02, W4-R03, W4-R04, W4-R05
+2 → W4-R06
+3 → W4-R07
+4 → W4-R08
+```
+
+Every SDD arrow points from a later stage to an earlier prerequisite stage: `ACYCLIC`.
+
+## 5.4 W6 corrected hard-SDD graph
+
+```text
+W6-R02 → W6-R01
+W6-R03 → W6-R01, W6-R02
+W6-R04 → W6-R03
+W6-R05 → W6-R03
+W6-R06 → W6-R04
+W6-R07 → W6-R04
+W6-R08 → W6-R04
+W6-R09 → W6-R03, W6-R05
+W6-R10 → W6-R01, W6-R04, W6-R09
+```
+
+Direction checks:
+
+- R02 requires R01's Query Intent/context.
+- R03 requires R01 Query Intent context plus R02 query correlation/execution-reference semantics.
+- R04/R05 require the Result Projection subject established by R03.
+- R06/R07/R08 require R04's disclosure-qualified Result Projection semantics; freshness/ranking/navigation evidence consumed at application time is not promoted to hard SDD merely because runtime presentation uses it.
+- R09 requires the Result Projection subject (R03) and projection freshness/completeness semantics (R05).
+- R10 requires Query Intent base (R01), disclosure discipline (R04) and historical/offline result semantics (R09).
+
+Dependency-first stages:
+
+```text
+0 → W6-R01
+1 → W6-R02
+2 → W6-R03
+3 → W6-R04, W6-R05
+4 → W6-R06, W6-R07, W6-R08, W6-R09
+5 → W6-R10
+```
+
+Every SDD arrow points from a later stage to an earlier prerequisite stage: `ACYCLIC`.
+
+## 5.5 Cross-boundary classification
+
+```text
+Hard W3↔W4 SDD
+→ NONE
+
+Hard W3↔W6 SDD
+→ NONE
+
+Hard W4↔W6 SDD
+→ NONE
+```
+
+Cross-surface navigation/correlation/current governance applicability are `ACD`; routing/source/application/query-result evidence is `EL`; historical linkage is `HPL`; provider raw evidence is `XED`.
+
+```text
+Accepted Dependency Notation Consistency
+→ PASS
+
+Hard-SDD Edge Direction Semantic Correctness
+→ PASS
+
+Responsibility Dependency Correctness
+→ PASS
+
+Cross-boundary Dependency Classification Correctness
+→ PASS
+
+Hard Internal SDD Graph
+→ ACYCLIC
+
+Authority Cycle
+→ NONE
+
+Circular Actual-state Ownership
+→ NONE
+```
+
+The corrected graph therefore closes the GAC dependency-invariant/documentation/traceability inconsistency without architecture redesign.
+
+---
+
+# 6. Semantic Resolution Depth Review
+
+The correction was checked for regression across all mandatory dimensions.
+
+| Dimension | W3 | W4 | W6 | Result |
 |---|---|---|---|---|
-| Identity / Namespace | Task Projection, source requirement, operation, local possession, Submission, routing/application distinct | Notification, awareness occurrence, Delivery Intent/Attempt, provider/source distinct | Query Intent, execution/ref, Result, Projection Entry, Resource, Navigation distinct | PASS |
-| Revision / Evolution | exact source revision/context; no silent retarget | notification/source historical correlation preserved | query/result/projection/resource version references preserved | PASS |
-| Authority | S6/A2/S11 preserved; WB submission only | S12 + original source owner preserved; WB awareness only | original Resource owners + S13 preserved; WB query/nav only | PASS |
-| Semantic Ownership | Human response occurrence only | awareness occurrence only | Web query/result/navigation interaction only | PASS |
-| Source of Truth | no Web Task/source SoT | no Web Notification/source SoT | no Web Resource/index SoT | PASS |
-| Actual-state Ownership | source/routing owners preserved | S12/source owners preserved | S13/original runtime owners preserved | PASS |
-| State / Lifecycle | possession/submission/route/receipt/apply/wait separated | projected/observed/read/ack separated | intent/execution/result/navigation separated | PASS |
+| Identity / Namespace | Task Projection/source/draft/Submission/routing distinct | Notification/awareness/Delivery/source distinct | Web Query Intent/Result occurrence distinct from S13 DP07/DP08, Projection Entry and Resource | PASS |
+| Revision / Evolution | exact source revision/context | historical Notification/source correlation | query/result/projection/resource versions | PASS |
+| Authority / SoT | S6/A2/S11 preserved | S12/source owners preserved | original Resource owners + S13 preserved | PASS |
+| Actual-state | source/routing owners preserved | S12/source owners preserved | S13/original runtime owners preserved | PASS |
+| Lifecycle | possession/submission/route/receipt/apply/wait separate | projected/observed/read/ack separate | intent/evaluation/result/navigation separate | PASS |
 | Temporal | client time not source/winner | Notification currentness != source currentness | Projection Fresh != Source Current | PASS |
-| Failure / Unknown | stale/wrong-context/expired/superseded/conflict explicit | pending/unavailable/stale/unknown explicit | partial/rebuilding/unknown/unavailable explicit | PASS |
-| Tenant | mandatory, non-authoritative Web context | mandatory audience context | mandatory; cross-Tenant prohibited | PASS |
-| Organization | distinct from Tenant | distinct | distinct | PASS |
-| Principal | participant context | audience/awareness context | query/navigation context | PASS |
-| Authentication | does not imply authorization | same | same | PASS |
-| Authorization / Policy | current governance + source eligibility consumed | audience visibility consumed | discovery/navigation disclosure consumed | PASS |
-| Security | source/routing metadata protected | content/delivery/provider protected | all result channels potential leak | PASS |
-| Trust | accepted Trust authority consumed | accepted Trust authority consumed | accepted Trust authority consumed | PASS |
-| Data / Privacy | response/task existence minimized | Notification/audience/provider minimized | existence/aggregate/error metadata minimized | PASS |
-| Secret Boundary | Secret Reference only; Material not owned | provider secret reference only | sensitive references only | PASS |
-| Offline / Degraded | possession != submission/application | retained projection != current source | retained result != Resource SoT | PASS |
-| Recovery / Reconciliation | reobserve/requalify | reobserve/requalify | reobserve/requalify | PASS |
-| Compatibility | semantic identity/history versionable | channel-neutral/provider-independent | provider/index/ranking-independent semantics | PASS |
-| Migration | no old-response reinterpretation | no old-awareness lifecycle rewrite | no old-result/source silent retarget | PASS |
-| Conformance | non-collapse + lineage + redaction | occurrence/source/provider separation | non-leak + no-result + bounded completeness | PASS |
-| Cross-boundary Dependency | upstream S6/A2/S11 | upstream S12/source | upstream S13/resource | PASS |
-| History / Provenance | source-qualified cross-session | S12 history + Web occurrence provenance | query/result/source/projection lineage | PASS |
-| Diagnostics | layer submission/routing/source apply | layer S12/provider/source | layer query/projection/resource/disclosure | PASS |
-| Invariant | submitted != applied/wait resolved | ack != resolved; delivery != observed | result != resource/auth; no result != absence | PASS |
-| Decision Traceability | DAD mapped | DAD mapped | DAD mapped | PASS |
-| Revalidation Trigger | explicit Owner/MDE triggers | explicit Owner/MDE triggers | explicit Owner/MDE triggers | PASS |
+| Failure / Unknown | stale/wrong-context/conflict explicit | pending/unavailable/stale explicit | partial/rebuilding/unknown explicit | PASS |
+| Tenant / Organization | non-collapsed | non-collapsed | non-collapsed; cross-Tenant prohibited | PASS |
+| Principal/Auth/Authz/Policy/Trust | accepted governance consumed | accepted governance consumed | accepted governance consumed | PASS |
+| Security / Privacy / Secret | response/task metadata protected | content/provider/audience protected | every output channel potential disclosure | PASS |
+| Offline / Recovery | possession != submission/application | retained projection != source truth | retained result != Resource SoT | PASS |
+| Compatibility / Migration / Conformance | no old response reinterpretation | provider/channel neutral | provider/index/ranking neutral | PASS |
+| History / Provenance / Diagnostics | source-qualified stages | S12 + Web occurrence provenance | query/projection/resource provenance | PASS |
+| Dependency | corrected accepted notation/direction | corrected accepted notation/direction | corrected accepted notation/direction | PASS |
+| Invariant / Trace / Revalidation | unchanged DAD mapping | unchanged DAD mapping | unchanged DAD mapping + W6 identity clarification | PASS |
 
 ```text
 Missing / Ambiguous Normative Dimension
@@ -247,38 +482,23 @@ Implementation-defined Escape
 
 ---
 
-# 5. W3 Detailed Non-collapse Verification
-
-## 5.1 Source ownership
+# 7. W3 Detailed Non-collapse Verification
 
 ```text
-Automation Human-action Requirement / Wait
+Automation Human-action Requirement / Wait / applicability / application / resume
 → S6 / SV-R02
 
-Automation response applicability / application / semantic resume
-→ S6 / SV-R02
-
-Agent Human-action Requirement / Wait
+Agent Human-action Requirement / Wait / applicability / application / continuation
 → A2 / AG-R01
 
-Agent response applicability / application / continuation
-→ A2 / AG-R01
-
-Human Task Projection / identity / history / currentness
-→ S11 / SV-R07
-
-Response routing state / attempt / evidence
+Human Task Projection / identity / history / currentness / routing
 → S11 / SV-R07
 
 Human Response Submission occurrence
 → W3 / WB-R01
 ```
 
-No source owner is duplicated.
-
-## 5.2 Submission ladder
-
-Verified invariant:
+Verified:
 
 ```text
 Draft / Local Possession
@@ -291,104 +511,50 @@ Draft / Local Possession
 != Execution Completion
 ```
 
-No Candidate/DAD text introduces:
-
-```text
-first-response-wins
-last-response-wins
-latest-response-wins
-majority-wins
-admin-wins
-central-wins
-browser-wins
-server-wins
-universal response dedup
-universal task timeout / escalation / SLA
-universal assignment / claim / lease
-```
-
-## 5.3 Stale/conflict continuity
-
-Verified that missing source continuity produces explicit qualification rather than:
-
-```text
-silent retarget to latest task
-silent retarget to latest revision
-silent merge
-silent discard
-silent reinterpretation
-latest timestamp winner
-latest arrival winner
-```
+No universal assignment/claim/lease, dedup, timeout/escalation/SLA, first/last/latest/majority/admin/central/browser/server response-winner law is introduced.
 
 **W3 Review Result:** `PASS`.
 
 ---
 
-# 6. W4 Detailed Non-collapse Verification
-
-## 6.1 Ownership
+# 8. W4 Detailed Non-collapse Verification
 
 ```text
 Notification existence / identity / lifecycle / history
 → S12 / SV-R08
 
-Delivery Intent / Attempt Actual-state
-→ S12 / SV-R08
-
-Provider evidence interpretation
+Delivery Intent / Attempt Actual-state + provider interpretation
 → S12 / SV-R08
 
 Provider raw evidence
 → external evidence only
 
-Underlying source fact / condition / resolution
+Underlying source condition / resolution
 → original source owner
 
-Web projection / observed / read / acknowledgement occurrence
+Web projected / observed / read / acknowledgement occurrence
 → W4 / WB-R01 where genuinely Web-origin
 ```
 
-## 6.2 Awareness lifecycle
-
 Verified:
 
 ```text
-Notification Projected
-!= Observed
-!= Read
-!= Acknowledged
-!= Source Resolved
-!= Policy Approved
-
-Delivery Attempt Success
-!= Recipient Observation
+Projected != Observed != Read != Acknowledged
+Acknowledged != Source Resolved
+Acknowledged != Policy Approved
+Delivery Attempt Success != Recipient Observation
+Notification Currentness != Source Condition Currentness
 ```
 
-No universal notification guarantee, retry/fallback law, provider authority, Read→Resolved or Acknowledged→Approved automatic effect appears.
-
-## 6.3 Source-currentness separation
-
-Verified:
-
-```text
-Notification Currentness
-!= Source Condition Currentness
-
-Provider Time
-!= Source-time Authority
-
-Latest Delivery Attempt
-!= Canonical Source Winner
-```
+No universal exactly-once/at-most-once/at-least-once/retry/fallback law or provider Authority is introduced.
 
 **W4 Review Result:** `PASS`.
 
 ---
 
-# 7. W6 Detailed Non-collapse and Non-leak Verification
+# 9. W6 Detailed Non-collapse, Identity and Non-leak Verification
 
-## 7.1 Ownership
+Preserved ownership:
 
 ```text
 Resource Semantic Authority / Definition SoT / source facts
@@ -397,209 +563,66 @@ Resource Semantic Authority / Definition SoT / source facts
 Resource Runtime Actual-state
 → applicable original runtime owner
 
-Discovery Projection Entry / freshness / completeness / rebuild
-→ S13 / SV-R09
+Discovery Projection Entry / query evaluation / result disclosure projection / freshness / completeness / rebuild
+→ S13 / SV-R09 accepted partition
 
-Web Query / Result / Navigation interaction occurrence
+Web Query Intent / Result presentation / Navigation interaction occurrence
 → W6 / WB-R01
 ```
 
-No universal Resource owner or registry is created.
+Clarified identity non-collapse:
 
-## 7.2 Query/result/source separation
+```text
+W6 Web Result Presentation / Projection Occurrence Identity
+!= S13 DP08 Result Correlation Identity / Reference
+
+W6 Query Intent / Web Correlation
+!= S13 DP07 Query Evaluation Actual-state
+```
+
+This clarification creates no competing Discovery authority; it makes the existing owner partition explicit.
 
 Verified:
 
 ```text
-Query Intent
-!= Query Execution
-!= Result Projection
-!= Source Resource
-!= Authorization Grant
-
-Projection Fresh
-!= Source Current
-
-Projection Complete-for-scope
-!= Universal Completeness
-
-No Result
-!= Resource Non-existence
-
-Rank / Score
-!= Authority
-
-Snippet
-!= Canonical Representation
-
-Navigation Intent
-!= Authorization
-
-Navigation Success
-!= Permission to act
+Query Intent != Query Evaluation/Execution != Result Presentation != Source Resource
+Result Projection != Authorization Grant
+Projection Fresh != Source Current
+Complete-for-scope != Universal Completeness
+No Result != Resource Non-existence
+Rank / Score != Authority
+Snippet != Canonical Representation
+Navigation Intent != Authorization
+Navigation Success != Permission to act
 ```
 
-## 7.3 Disclosure surface
-
-Every required channel is explicitly covered:
+Protected disclosure channels remain:
 
 ```text
-row
-snippet
-count
-facet
-category
-relationship
-navigation hint
-suggestion
-error semantic
-coverage metadata
-rebuild metadata
-partiality metadata
+row / snippet / count / facet / category / relationship
+navigation hint / suggestion / error semantic
+coverage / rebuild / partiality metadata
 ```
 
-No channel is allowed to bypass Tenant/Principal/Policy/Trust/disclosure context. Cross-Tenant Discovery remains prohibited.
-
-No mandatory Elasticsearch/OpenSearch/Solr/Lucene/vector DB/embedding model/ranking engine/Knowledge Graph/public search SaaS is selected.
+Cross-Tenant Discovery remains prohibited; no mandatory AI/vector/embedding/search provider/Resource graph/ranking authority is introduced.
 
 **W6 Review Result:** `PASS`.
 
 ---
 
-# 8. W3 / W4 / W6 Cross-boundary Review
+# 10. Authority / SoT / Actual-state Non-regression Audit
 
-Verified independent semantic purposes:
-
-```text
-W3 Human Task
-→ human action
-
-W4 Notification
-→ human awareness
-
-W6 Discovery
-→ governed resource finding/navigation
-```
-
-The Candidate permits only:
-
-```text
-governed correlation
-reference
-source navigation
-cross-surface navigation
-shared presentation mechanics
-historical provenance linkage
-```
-
-It prohibits and does not instantiate:
-
-```text
-shared catch-all Attention Authority
-shared universal Task/Notification/Resource SoT
-shared universal interaction state machine
-authority collapse
-identity collapse
-lifecycle collapse
-Actual-state ownership collapse
-```
-
-**Cross-boundary Review Result:** `PASS`.
-
----
-
-# 9. Dependency and Cycle Review
-
-## 9.1 Dependency taxonomy
-
-```text
-SDD → semantic-definition dependency / hard
-ACD → application-context dependency
-EL  → evidence linkage
-HPL → historical-provenance linkage
-XED → external evidence dependency
-```
-
-Only SDD is included in recursive semantic-definition cycle analysis.
-
-## 9.2 W3 graph result
-
-```text
-Nodes
-→ W3-R01..W3-R10
-
-Hard SDD Back-edge
-→ 0
-
-Hard SDD Cycle
-→ NONE
-```
-
-## 9.3 W4 graph result
-
-```text
-Nodes
-→ W4-R01..W4-R08
-
-Hard SDD Back-edge
-→ 0
-
-Hard SDD Cycle
-→ NONE
-```
-
-## 9.4 W6 graph result
-
-```text
-Nodes
-→ W6-R01..W6-R10
-
-Hard SDD Back-edge
-→ 0
-
-Hard SDD Cycle
-→ NONE
-```
-
-## 9.5 Cross-boundary result
-
-```text
-Hard W3↔W4 SDD
-→ NONE
-
-Hard W3↔W6 SDD
-→ NONE
-
-Hard W4↔W6 SDD
-→ NONE
-
-Hard Internal SDD Graph
-→ ACYCLIC
-
-Authority Cycle
-→ NONE
-
-Circular Actual-state Ownership
-→ NONE
-```
-
-Runtime feedback, source evidence return, routing evidence, awareness evidence, query/result evidence, historical linkage and re-observation remain non-SDD linkages and therefore do not invert semantic authority.
-
----
-
-# 10. Authority / SoT / Actual-state Audit
-
-| Subject | Preserved owner | Web-owned bounded fact | Ambiguity |
+| Subject | Preserved owner | Web-owned bounded fact | Ambiguity after correction |
 |---|---|---|---|
 | Automation HITL | S6/SV-R02 | response submission occurrence | 0 |
 | Agent HITL | A2/AG-R01 | response submission occurrence | 0 |
 | Task Projection/routing | S11/SV-R07 | presentation/correlation occurrence | 0 |
 | Notification lifecycle/history | S12/SV-R08 | awareness occurrence | 0 |
-| Notification delivery | S12/SV-R08 | status projection | 0 |
+| Notification delivery | S12/SV-R08 | status presentation | 0 |
 | Notification source condition | original source owner | correlation only | 0 |
 | Resource semantic/SoT | original resource owner | query/navigation interaction | 0 |
-| Resource runtime state | original runtime owner | projection only | 0 |
-| Discovery Projection | S13/SV-R09 | result presentation | 0 |
+| Resource runtime state | original runtime owner | presentation only | 0 |
+| Discovery Projection/query evaluation/result disclosure | S13/SV-R09 | Web Result presentation/correlation occurrence | 0 |
 | Tenant/IAM/Policy/Trust | accepted server authorities | context consumption/presentation | 0 |
 
 ```text
@@ -621,9 +644,9 @@ Source-of-Truth Ambiguity
 
 ---
 
-# 11. Security / Privacy / Non-leak Audit
+# 11. Security / Privacy / Offline / Recovery Non-regression
 
-## 11.1 Governed-context invariants
+Verified unchanged invariants:
 
 ```text
 Tenant != Organization
@@ -632,79 +655,34 @@ Authenticated != Authorized automatically
 Visible != Authorized To Act
 Secret Reference != Secret Material
 Cached authorization evidence != perpetual authorization
-```
 
-## 11.2 Presentation-mode parity
-
-The Candidate requires identical semantic disclosure discipline across:
-
-```text
-normal
-localized
-accessible
-degraded
-offline
-history
-diagnostics
-```
-
-No presentation mode may expose more authoritative/current/sensitive semantics merely because another mode cannot obtain fresh evidence.
-
-## 11.3 Discovery anti-existence-leak result
-
-```text
-Cross-Tenant Discovery
-→ PROHIBITED
-
-Unknown vs Unauthorized existence leak
-→ NOT INTRODUCED
-
-Aggregate metadata bypass
-→ NOT ALLOWED
-
-Diagnostic/error metadata bypass
-→ NOT ALLOWED
-```
-
-**Security / Privacy Result:** `PASS`.
-
----
-
-# 12. Offline / Recovery Audit
-
-Verified invariants:
-
-```text
 Offline Task Projection != Source Wait Truth
-Offline Response Possession != Response Submitted
-Offline Response Possession != Response Applied
+Offline Response Possession != Response Submitted / Applied
 Offline Notification Projection != Current Source Condition
 Offline Discovery Projection != Resource SoT
 Reconnect != Reconciled
 Replay != Retroactive Authorization
-Latest Timestamp != conflict winner
-Latest Arrival != conflict winner
+Latest Timestamp / Arrival != conflict winner
 ```
 
-Allowed reconnect behavior is limited to:
+Reconnect remains limited to current authorization re-evaluation, freshness refresh, source evidence retrieval, re-observation and requalification. No optimistic approval/application/read/ack/source resolution/discovery canonicalization/stale-result promotion/conflict merge is introduced.
 
 ```text
-current authorization re-evaluation
-freshness refresh
-source evidence retrieval
-re-observation
-requalification
+Security / Privacy / Non-leak
+→ PASS
+
+Offline / Private Correctness
+→ PASS
+
+Failure / Recovery Responsibility
+→ PASS
 ```
-
-No automatic optimistic approval/application/read/ack/source resolution/discovery canonicalization/stale-result promotion/conflict merge is present.
-
-**Offline / Recovery Result:** `PASS`.
 
 ---
 
-# 13. Shared Foundation Sufficiency Review
+# 12. Shared Foundation Sufficiency Review
 
-Consumed accepted semantics:
+Consumed accepted semantics remain:
 
 ```text
 Temporal / Freshness
@@ -718,8 +696,6 @@ Semantic Representation / Serialization mechanics
 Localization Presentation mechanics
 Structured Diagnostics where applicable
 ```
-
-Accessibility is correctly consumed from accepted W7 rather than converted into a new Shared Foundation capability.
 
 ```text
 Mandatory Missing Shared Foundation Semantic
@@ -742,89 +718,27 @@ Parallel Status / Provenance / Offline Foundation
 
 ---
 
-# 14. RCP Review
-
-## RCP-16
+# 13. RCP Non-regression Review
 
 ```text
-Web submission occurrence / identity / provenance
-→ W3
+RCP-16 W3 Web-side contribution
+→ CLOSED AT CURRENT BATCH DESIGN LEVEL
 
-Task Projection / routing
-→ S11 preserved
+RCP-18 W4 Web-side contribution
+→ CLOSED AT CURRENT BATCH DESIGN LEVEL
 
-Source wait / applicability / application / continuation
-→ S6 / A2 preserved
+RCP-21 W6 Web-side contribution
+→ CLOSED AT CURRENT BATCH DESIGN LEVEL
 
-Web-side current-level closure
-→ PASS
-
-Full Cross-component Closure
-→ NOT CLAIMED
-```
-
-## RCP-18
-
-```text
-Web awareness/history/delivery-status projection
-→ W4
-
-Notification lifecycle/history/delivery Attempt state
-→ S12 preserved
-
-Source condition/resolution
-→ original source owner preserved
-
-Web-side current-level closure
-→ PASS
-
-Full Cross-component Closure
-→ NOT CLAIMED
-```
-
-## RCP-21
-
-```text
-Query/result/navigation interaction
-→ W6
-
-Discovery projection state
-→ S13 preserved
-
-Resource semantics/SoT/runtime facts
-→ original owners preserved
-
-Web-side current-level closure
-→ PASS
-
-Full Cross-component Closure
-→ NOT CLAIMED
-```
-
-## RCP-22
-
-```text
-Batch-4 provenance/currentness/redaction/diagnostics contribution
+RCP-22 Batch-4 Web-side contribution
 → COMPLETE AT CURRENT BATCH DESIGN LEVEL
 
-Full Cross-component Closure
-→ NOT CLAIMED
-```
-
-## RCP-24
-
-```text
-W3/W4/W6 bounded Web-origin interaction intent/occurrence where applicable
+RCP-24 Batch-4 Web-side contribution
 → CLOSED AT CURRENT BATCH DESIGN LEVEL WHERE APPLICABLE
 
-Receiving/source applicability/outcome
-→ NOT OWNED BY WEB
+RCP-01
+→ CONSUME ONLY
 
-Full Closure
-→ NOT CLAIMED
-```
-
-```text
 RCP Count
 → 24 / unchanged
 
@@ -832,39 +746,39 @@ New RCP
 → 0
 ```
 
+Explicitly not claimed:
+
+```text
+RCP-16 Full Cross-component Closure
+RCP-18 Full Cross-component Closure
+RCP-21 Full Cross-component Closure
+RCP-22 Full Cross-component Closure
+RCP-24 Full Closure
+```
+
 **RCP Overclaim Result:** `PASS`.
 
 ---
 
-# 15. Technology / Implementation Leakage Audit
+# 14. Technology / Implementation Leakage Audit
 
-No architecture decision selects or freezes:
+No dependency correction selects or freezes:
 
 ```text
 frontend page/screen/component hierarchy
 Vue component/Composable/store/router/package layout
-state management library
-component/design/task/notification/search UI library
+state management/component/task/notification/search UI library
 REST / GraphQL / gRPC / WebSocket / SSE / polling / streaming
 DTO / JSON Schema / OpenAPI / wire envelope
 Elasticsearch / OpenSearch / Solr / Lucene
-vector DB / embedding model / ranking engine
-Knowledge Graph database
+vector DB / embedding model / ranking engine / Knowledge Graph database
 Kafka / RabbitMQ / NATS / Redis / database / event store / broker
-pagination protocol
-ranking algorithm
-task assignment algorithm
-retry/backoff/dedup algorithm
-browser storage / IndexedDB / localStorage / service worker / PWA
-offline sync algorithm
-physical ID format
-database schema
-API endpoint / route
-class / package / service / worker / process
-deployment topology
+pagination/ranking/task assignment/retry/backoff/dedup algorithm
+browser storage / IndexedDB / localStorage / service worker / PWA / offline sync
+physical ID / schema / endpoint / route / class / package / service / worker / process / deployment topology
 ```
 
-The inherited Constitution fact `ns_web → Vue 3 + TypeScript` is recorded only as an upstream technology fact and is not elevated into W3/W4/W6 architecture boundaries.
+The inherited Constitution fact `ns_web → Vue 3 + TypeScript` remains only an upstream technology fact.
 
 ```text
 Implementation Leakage
@@ -879,16 +793,59 @@ Implementation Planning / IWP / Coding
 
 ---
 
-# 16. Final Mandatory Exit Assertions
-
-The review explicitly verifies:
+# 15. Correction Exit Assertions
 
 ```text
+Accepted Dependency Notation Consistency
+→ PASS
+
+Hard-SDD Edge Direction Semantic Correctness
+→ PASS
+
+Responsibility Dependency Correctness
+→ PASS
+
+Cross-boundary Dependency Classification Correctness
+→ PASS
+
+Hard Internal SDD Graph
+→ ACYCLIC
+
+Authority Cycle
+→ NONE
+
+Circular Actual-state Ownership
+→ NONE
+
+Authority Transfer
+→ 0
+
+SoT Transfer
+→ 0
+
+Final Actual-state Ownership Transfer
+→ 0
+
 Open MDE
 → 0
 
 Unpersisted Owner Decision
 → 0
+
+New Product Capability
+→ 0
+
+New Runtime Role
+→ 0
+
+New RCP
+→ 0
+
+RCP Count
+→ 24 / unchanged
+
+Mandatory Missing Shared Foundation Semantic
+→ NONE_FOUND
 
 Missing / Ambiguous Normative Dimension
 → 0
@@ -899,71 +856,44 @@ Implementation-defined Escape
 Unmapped Material Decision
 → 0
 
-Multiple-final-authority Ambiguity
+Implementation Leakage
 → 0
 
-Source-of-Truth Ambiguity
-→ 0
-
-Authority Cycle
-→ NONE
-
-Circular Actual-state Ownership
-→ NONE
-
-Hard Internal SDD Graph
-→ ACYCLIC
-
-Mandatory Missing Shared Foundation Semantic
-→ NONE_FOUND
-
-Unexpected Drift through pre-review HEAD
+Unexpected Drift through pre-review-correction HEAD
 → NONE
 
 Unauthorized Progression
 → NONE
 ```
 
-Additional closure checks:
+Responsibility/DAD counts remain:
 
 ```text
-Authorized Material Pressure Coverage
-→ 100%
-
-W3 Responsibilities
-→ 10
-
-W4 Responsibilities
-→ 8
-
-W6 Responsibilities
-→ 10
-
-Total Responsibilities
-→ 28
-
-DAD Count
-→ 25
-
-God Responsibility
-→ NONE_FOUND
-
-Overfragmentation
-→ NONE_FOUND
-
-Unowned Material Responsibility
-→ 0
-
-Duplicate Final Responsibility
-→ 0
+W3 → 10
+W4 → 8
+W6 → 10
+Total → 28
+DAD → 25
 ```
 
 ---
 
-# 17. Review Verdict
+# 16. Corrected Review Verdict
 
 ```text
-Mandatory Review Gates
+Original Producing Review Dependency Finding
+→ INVALIDATED BY INDEPENDENT GAC REVIEW
+
+GAC Result on Original Producing Evidence
+→ CORRECTION_REQUIRED
+
+Architecture Redesign Required
+→ NO
+
+Owner MDE Required
+→ NO
+
+Corrected Mandatory Review Gates
 → 29
 
 PASS
@@ -975,20 +905,35 @@ FAIL
 BLOCKED
 → 0
 
-Candidate
-→ PASS FOR BOUNDED PRODUCING HANDOFF
+Correction-specific Non-regression Gates
+→ 24
 
-DAD Evidence
-→ PASS FOR BOUNDED PRODUCING HANDOFF
+PASS
+→ 24
+
+FAIL
+→ 0
+
+BLOCKED
+→ 0
+
+Candidate Dependency Correction
+→ PASS FOR CORRECTION HANDOFF
+
+DAD-024 Dependency Correction
+→ PASS FOR CORRECTION HANDOFF
 
 MDE_REQUIRED
 → NO
 
-CORRECTION_REQUIRED BY THIS PRODUCING REVIEW
-→ NO
+Global Acceptance
+→ NOT CLAIMED
+
+Correction Completion at this Review stage
+→ PENDING FINAL CORRECTED HANDOFF
 ```
 
-This review **does not** declare:
+This corrected review does **not** declare:
 
 ```text
 W3 Global Acceptance
@@ -997,10 +942,7 @@ W6 Global Acceptance
 ns_web Batch 4 Global Acceptance
 ns_web Internal Design Exhaustion
 ns_web Component Internal Design Global Closure
-RCP-16 Full Cross-component Closure
-RCP-18 Full Cross-component Closure
-RCP-21 Full Cross-component Closure
-RCP-22 Full Cross-component Closure
+RCP-16/18/21/22 Full Cross-component Closure
 RCP-24 Full Closure
 System-level SDK Detailed Design readiness
 Design-to-Implementation Readiness
@@ -1009,4 +951,4 @@ IWP
 Coding
 ```
 
-The next producing action is limited to creation of the fourth and final authorized Handoff evidence after the Review commit is independently verified as a one-file clean delta.
+The only remaining bounded correction action is to independently verify this Review correction commit as a one-file clean delta and then minimally correct the existing Batch-4 Handoff with correction provenance and final delta evidence.
