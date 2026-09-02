@@ -7,6 +7,7 @@
 - **Branch:** `architecture/ns-evermore-genesis-0.0.1`
 - **Producing Entry HEAD:** `7212f3e79f54cdfee0c0938e8dcdc778312acf3f`
 - **Candidate Commit:** `ac560d34bb22b8883619857cec332e9ffb5fe5bc`
+- **Candidate Dependency-correction Commit:** `d8f5fb1e0e17f416f0da2910aeb77099794e2c7f`
 - **Recovered GAC Epoch:** `GAC-EPOCH-0106`
 - **Authorization Transition:** `GAC-TR-0117`
 - **Authorization Scope:** `COMPONENT_INTERNAL_DESIGN_ONLY / NS_WEB / BATCH_4 / HUMAN_TASK_NOTIFICATION_DISCOVERY_INTERACTION_INTERNAL_ARCHITECTURE_AND_STABLE_CONTRACT_SYNTHESIS`
@@ -14,7 +15,7 @@
 - **Runtime-facing Role:** `WB-R01`
 - **Global Acceptance:** `NOT CLAIMED`
 
-This evidence records every material architecture decision used by the Batch-4 Candidate. It does not alter accepted Owner decisions or promote an Owner-reserved matter into a DAD.
+This evidence records every material architecture decision used by the Batch-4 Candidate. It does not alter accepted Owner decisions or promote an Owner-reserved matter into a DAD. Following the GAC `CORRECTION_REQUIRED` dependency-direction finding, this revision corrects only `CID-WB-B4-DAD-024` dependency notation/direction traceability so that it matches the already Global-Accepted Web notation and the corrected Candidate graph; the 25 DAD subjects and substantive architecture positions are unchanged.
 
 ---
 
@@ -637,30 +638,34 @@ Unpersisted Owner Decision
 | **Why DAD and not MDE** | no RCP identity or authority topology change; bounded contribution synthesis is explicitly authorized. |
 | **Revalidation trigger** | request for Full Cross-component Closure, new RCP, or owner boundary movement. |
 
-## CID-WB-B4-DAD-024 — Dependency taxonomy and hard-SDD acyclic direction
+## CID-WB-B4-DAD-024 — Dependency taxonomy, accepted direction semantics and hard-SDD acyclicity
 
 | Field | Record |
 |---|---|
 | **Decision ID** | `CID-WB-B4-DAD-024` |
-| **Decision Subject** | Model only semantic-definition edges as hard SDD and classify feedback/evidence/history using ACD/EL/HPL/XED so interaction feedback cannot become reverse semantic authority. |
-| **Context** | W3/W4/W6 receive source evidence and emit interaction evidence, which could be mis-modeled as bidirectional definition dependency. |
-| **Accepted upstream constraints** | accepted `SDD/ACD/EL/HPL/XED` taxonomy; only hard SDD participates in cycle analysis; authority flows must remain one-way where definition ownership exists. |
-| **Selected Architecture Position** | Candidate explicit W3/W4/W6 DAGs; no hard SDD among W3/W4/W6; source semantics flow upstream→Web; evidence return is EL/ACD/HPL; provider raw evidence XED. |
-| **Rejected Alternatives** | every runtime feedback as SDD; reverse Web→source semantic-definition edge; implementation topology used to break cycles. |
-| **Reason for selection** | accurately models semantic authority and proves cycle freedom without hiding runtime feedback. |
-| **Authority impact** | none; prevents false authority transfer. |
+| **Decision Subject** | Model only semantic-definition edges as hard SDD, use the accepted Web dependency direction `A → B` to mean “A's semantic definition depends on B's semantic definition,” and classify feedback/evidence/history using ACD/EL/HPL/XED so interaction feedback cannot become reverse semantic authority. |
+| **Context** | W3/W4/W6 receive source evidence and emit interaction evidence. The original Batch-4 diagrams expressed the right dependency relationships with the opposite arrow convention, creating a dependency-invariant/documentation/traceability inconsistency even though no Authority/SoT/Actual-state conflict existed. |
+| **Accepted upstream constraints** | Global-Accepted ns_web Batch 1 and Batch 2 notation: `A → B` means A depends semantically on B; accepted `SDD/ACD/EL/HPL/XED` taxonomy; only hard SDD participates in cycle analysis; runtime/evidence feedback does not become semantic-definition authority. |
+| **Selected Architecture Position** | Correct W3/W4/W6 hard-SDD arrows so each dependent points to its semantic-definition prerequisite; preserve no hard SDD among W3/W4/W6; classify source/runtime evidence return as EL/ACD/HPL and provider raw evidence as XED; validate each edge against the responsibility definitions and prove acyclicity by dependency-first topological staging. |
+| **Corrected W3 direction** | `R02→R01; R03→R01; R04→R01; R05→R04; R06→R02,R05; R07→R06; R08→R06; R09→R02,R05,R07,R08; R10→R01,R06,R09`. |
+| **Corrected W4 direction** | `R02→R01; R03→R01; R04→R01; R05→R01; R06→R05; R07→R02,R04,R06; R08→R01,R03,R05,R07`. |
+| **Corrected W6 direction** | `R02→R01; R03→R01,R02; R04→R03; R05→R03; R06→R04; R07→R04; R08→R04; R09→R03,R05; R10→R01,R04,R09`. |
+| **Rejected Alternatives** | retain opposite/local arrow convention; mechanically treat every runtime feedback as SDD; reverse Web→source semantic-definition edge; add application-time evidence relationships as hard SDD; use implementation topology to break cycles. |
+| **Reason for selection** | matches accepted Web notation, makes dependency traceability unambiguous, preserves the intended semantic prerequisite relationships, and proves cycle freedom without hiding runtime feedback or fabricating reverse authority. |
+| **Authority impact** | none; dependency-direction correction transfers no authority and prevents false reverse-authority interpretation. |
 | **SoT impact** | none. |
 | **Actual-state ownership impact** | none. |
-| **Identity impact** | linkage types do not merge identities. |
-| **Lifecycle impact** | evidence feedback can evolve independently from semantic definitions. |
-| **History/provenance impact** | HPL used for historical linkage. |
-| **Security/privacy impact** | dependency type does not bypass disclosure boundaries. |
-| **Offline/recovery impact** | recovery evidence is EL/HPL/ACD, not reverse authority. |
-| **Compatibility/migration impact** | dependency semantics are stable/conformance-testable. |
-| **RCP impact** | all Batch4 RCPs retain directed producer/consumer ownership. |
-| **Foundation impact** | follows accepted Foundation dependency-neutrality. |
-| **Why DAD and not MDE** | applies accepted dependency taxonomy; no new dependency category/authority. |
-| **Revalidation trigger** | hard SDD cycle discovered or accepted source definition dependency changes. |
+| **Identity impact** | linkage types do not merge identities; the W6 clarification preserves Web Query/Result occurrence identity separately from S13 DP07/DP08 evaluation/correlation subjects. |
+| **Lifecycle impact** | evidence feedback/application-time qualification can evolve independently from semantic definitions. |
+| **History/provenance impact** | HPL remains the historical-linkage category and never becomes a hard definition edge merely because history is consumed. |
+| **Security/privacy impact** | dependency type/direction does not bypass disclosure boundaries. |
+| **Offline/recovery impact** | recovery/re-observation evidence remains EL/HPL/ACD, not reverse authority. |
+| **Compatibility/migration impact** | dependency notation/direction and classification are stable/conformance-testable; future graph edits must preserve accepted notation. |
+| **RCP impact** | all Batch-4 RCP statuses remain at the same bounded design level; no RCP identity/count/status promotion. |
+| **Foundation impact** | follows accepted Foundation dependency-neutrality; no missing Foundation semantic. |
+| **Why DAD and not MDE** | This is a correction to the representation/traceability of an already delegated dependency-taxonomy DAD. It changes no Product capability, Authority, SoT, final Actual-state owner, Runtime Role, RCP, universal identity/fail law, or high-migration commitment. |
+| **Acyclic proof** | W3 stages `R01 | R02,R03,R04 | R05 | R06 | R07,R08 | R09 | R10`; W4 stages `R01 | R02,R03,R04,R05 | R06 | R07 | R08`; W6 stages `R01 | R02 | R03 | R04,R05 | R06,R07,R08,R09 | R10`. Every hard-SDD arrow points from a later stage to an earlier prerequisite stage. |
+| **Revalidation trigger** | an edge cannot be justified from responsibility definitions under the accepted notation, a genuine hard SDD cycle appears, a relationship changes classification, or accepted source semantic-definition dependencies change. |
 
 ## CID-WB-B4-DAD-025 — Shared Foundation reuse, technology deferral and MDE/revalidation boundary
 
@@ -786,4 +791,4 @@ High-migration Provider / Protocol / Storage / Index Lock-in
 → 0
 ```
 
-The DAD set is therefore lawful for this bounded producing session and ready for the mandatory Review/Audit stage.
+The DAD set remains lawful for this bounded correction session. Global Acceptance is `NOT CLAIMED`; corrected dependency evidence awaits mandatory Review/Audit rerun and independent GAC re-review.
