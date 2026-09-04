@@ -1,16 +1,16 @@
 # ns_evermore Global Architecture State
 
-- Status: `CURRENT / GAC-EPOCH-0117`
+- Status: `CURRENT / GAC-EPOCH-0118`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
 
 # WHAT IS TRUE NOW
 
 ```text
 Current Global State Epoch
-→ GAC-EPOCH-0117
+→ GAC-EPOCH-0118
 
 State Verified Through HEAD
-→ 8260ebdcb89fc5d8f23a13e60cabc9d5f72a71f4
+→ 7d9b4e25ac298a19343836b2dff36738206b1450
 
 Genesis Constitution
 → GLOBAL_ACCEPTED / NORMATIVE
@@ -33,20 +33,32 @@ Five Product Component Internal Designs
 Runtime / Domain Stable Contract Design / Batch 1
 → GLOBAL_ACCEPTED
 
-Accepted Batch-1 Stable Contracts
-→ RCP-01 / RCP-02 / RCP-03 / RCP-04 / RCP-19 / RCP-24
+Runtime / Domain Stable Contract Design / Batch 2
+→ GLOBAL_ACCEPTED
 
-Runtime / Domain Stable Contract Design / Batch 2 Entry Readiness
-→ SATISFIED
+Accepted Stable Contracts
+→ 12 / 24
+
+Remaining Stable Contract Design Batches
+→ 3
+
+Runtime / Domain Stable Contract Design Exhaustion
+→ NOT DECLARED
+
+RCP-01..24 Full Cross-component Closure
+→ NOT DECLARED
+
+System-level SDK Detailed Design Readiness
+→ NOT_SATISFIED
 
 Decision Registry
-→ 0.0.41 / GLOBAL_CURRENT / NORMATIVE
+→ 0.0.42 / GLOBAL_CURRENT / NORMATIVE
 
 Current Authorized Phase
-→ NGRP-001 — Runtime / Domain Stable Contract Design / Batch 2
+→ NONE
 
 Authorization Scope
-→ RCP-05 / RCP-07 / RCP-08 / RCP-09 / RCP-10 / RCP-23 ONLY
+→ NONE
 
 Open MDE
 → 0
@@ -61,74 +73,146 @@ Known Working-branch Drift through State Verified HEAD
 → NONE
 ```
 
-# Authorization Transition
+# Global Acceptance Transition
 
 ```text
-GAC-TR-0128 → GAC-EPOCH-0117
+GAC-TR-0129 → GAC-EPOCH-0118
 ```
 
 Transition meaning:
 
 ```text
-explicitly authorize exactly one bounded Runtime / Domain Stable Contract Design / Batch 2 producing session
-→ RCP-05 / RCP-07 / RCP-08 / RCP-09 / RCP-10 / RCP-23 only
+accept Runtime / Domain Stable Contract Design / Batch 2
+→ activate Decision Registry 0.0.42
+→ establish 12 / 24 accepted Stable Contracts
+→ clear Batch-2 producing authorization
+→ keep Batch 3 unauthorized pending separate entry-readiness assessment
 ```
 
-Authorization evidence:
+Global Acceptance evidence:
 
-`docs/architecture_reviews/ns_evermore_ngrp_001_runtime_domain_stable_contract_design_batch_2_authorization_0.0.1.md`
+`docs/architecture_reviews/ns_evermore_ngrp_001_runtime_domain_stable_contract_design_batch_2_global_acceptance_0.0.1.md`
+
+Ledger continuation:
+
+`docs/governance/global_architecture/ns_evermore_global_architecture_ledger_continuation_0.0.30.md`
 
 Transition coordinates:
 
 ```text
 Input Epoch
-→ GAC-EPOCH-0116
+→ GAC-EPOCH-0117
 
-Authorization Recovery HEAD
-→ bd2fff2fb572767a666e89a6486d683a7f6bf374
+Batch-2 Authorization Seal / Producing Entry HEAD
+→ 4a04475559ac1af15277f813247d2ee3a5d2eef0
 
-Authorization Evidence Commit
-→ 86b41994b51f4df0c33bda5ccca3afecd293378f
+Producing Final HEAD
+→ f4b79e43ceae0647db1123b650f2f4196e8ae670
 
-Authorization Working State Commit
-→ 367e7a8927675ad99fdaf3e415e4f6b19cab717a
+Global Acceptance Evidence Commit
+→ 5b4ca1f0730c193c9fd540243f832410026b3630
 
-Authorization Ledger Commit / State Verified Through HEAD
-→ 8260ebdcb89fc5d8f23a13e60cabc9d5f72a71f4
+Decision Registry 0.0.42 Commit
+→ 182867ed2758e0df01c3eba2f6754230d54c6733
 
-Ledger Continuation
-→ docs/governance/global_architecture/ns_evermore_global_architecture_ledger_continuation_0.0.29.md
+Acceptance Working State Commit
+→ 06eae33d01c842b4474d9b23a659a281e3364690
+
+Acceptance Ledger Commit / State Verified Through HEAD
+→ 7d9b4e25ac298a19343836b2dff36738206b1450
 ```
 
-# Authorized Batch-2 Stable Contract Scope
+# Accepted Stable Contract Baseline
+
+## Batch 1 — GLOBAL_ACCEPTED
+
+```text
+RCP-01 — Governance Context
+RCP-02 — Admission Evidence
+RCP-03 — Presence
+RCP-04 — Node Readiness
+RCP-19 — Desired / Applied Config
+RCP-24 — Human / SDK Intent
+```
+
+Normative Batch-1 producing baseline remains the authorized `0.0.2` correction reissuance.
+
+## Batch 2 — GLOBAL_ACCEPTED
+
+Normative producing baseline:
+
+```text
+Candidate 0.0.1
+→ d81977670880630196b65a0a20d0a5dd4267f724
+
+DAD Evidence 0.0.1
+→ f23b08729598b503a865bb42a216af9cae29b113
+
+Review / Audit 0.0.1
+→ e8c03a136a8e8d9020c2dfc8d7b727f04fd88090
+
+Handoff 0.0.1 / Producing Final HEAD
+→ f4b79e43ceae0647db1123b650f2f4196e8ae670
+```
+
+Accepted Batch-2 Stable Contracts:
 
 ```text
 RCP-05 — Dispatch Evidence
+→ GLOBAL_ACCEPTED
+→ FULL CROSS-BOUNDARY STABLE CONTRACT CLOSED AT CURRENT CONTRACT-DESIGN LEVEL
+
 RCP-07 — Node Attempt
+→ GLOBAL_ACCEPTED
+→ FULL CROSS-BOUNDARY STABLE CONTRACT CLOSED AT CURRENT CONTRACT-DESIGN LEVEL
+
 RCP-08 — Node Effect Evidence
+→ GLOBAL_ACCEPTED
+→ FULL CROSS-BOUNDARY STABLE CONTRACT CLOSED AT CURRENT CONTRACT-DESIGN LEVEL
+
 RCP-09 — Agent Runtime
+→ GLOBAL_ACCEPTED
+→ FULL CROSS-BOUNDARY STABLE CONTRACT CLOSED AT CURRENT CONTRACT-DESIGN LEVEL
+
 RCP-10 — Provider Mediation
+→ GLOBAL_ACCEPTED
+→ FULL CROSS-BOUNDARY STABLE CONTRACT CLOSED AT CURRENT CONTRACT-DESIGN LEVEL
+
 RCP-23 — Server-native Runtime Evidence
+→ GLOBAL_ACCEPTED
+→ FULL CROSS-BOUNDARY STABLE CONTRACT CLOSED AT CURRENT CONTRACT-DESIGN LEVEL
+```
+
+# Accepted Batch-2 Dependency Baseline
+
+```text
+RCP-08 → RCP-07
+RCP-10 → RCP-09
 ```
 
 ```text
-Authorized RCP Count
-→ 6
+RCP-07 ↔ RCP-05
+→ CACD / CEL / CXAR where Dispatch is applicable
+→ NOT mandatory CSDD
 ```
-
-# Accepted Upstream Batch-1 Contracts
 
 ```text
-RCP-01 Governance Context
-RCP-02 Admission Evidence
-RCP-03 Presence
-RCP-04 Node Readiness
-RCP-19 Desired / Applied Config
-RCP-24 Human / SDK Intent
-→ GLOBAL_ACCEPTED / NORMATIVE UPSTREAM
+Hard Contract CSDD Graph
+→ ACYCLIC
+
+Authority Cycle
+→ NONE
+
+SoT Cycle
+→ NONE
+
+Final Actual-state Ownership Cycle
+→ NONE
 ```
 
-# Batch-2 Producer / Final-owner Topology
+Runtime/evidence direction, history and re-observation do not become reverse semantic-definition authority.
+
+# Accepted Batch-2 Authority / SoT / Final-owner Topology
 
 ```text
 RCP-05 Dispatch coordination
@@ -137,145 +221,234 @@ RCP-05 Dispatch coordination
 RCP-07 Node Attempt
 → ns_node / N2 / ND-R02
 
-RCP-08 protected Node Effect / genuine Node-origin source fact
+RCP-08 genuine Node-origin protected Effect / local source fact
 → ns_node / N3 / ND-R03
 
-RCP-09 Agent Runtime
+RCP-09 Agent Runtime source facts
 → ns_agent / A2 / AG-R01
 
 RCP-10 Provider Mediation bounded observations
 → ns_agent / A3 / AG-R02
 
-RCP-23 server-native Runtime Evidence producer partitions
+RCP-23 server-native producer partitions
 → S5 / SV-R01
 → S7 / SV-R03
 → S10 / SV-R06
 ```
 
+Preserved external authorities include:
+
+```text
+Formal Execution Admission
+→ S8 / SV-R04
+
+Presence / Reachability
+→ R1 / RT-R01
+
+Node Readiness
+→ N1 / ND-R01
+
+Canonical Managed Desired
+→ S9 / SV-R05
+
+Agent Definition / canonical revision
+→ A1 / ns_agent
+
+External/customer factual SoT
+→ applicable original source owner
+
+IAM / Policy / Trust
+→ accepted ns_server governance authorities
+```
+
+```text
+Authority Transfer by Global Acceptance
+→ 0
+
+SoT Transfer
+→ 0
+
+Final Actual-state Ownership Transfer
+→ 0
+```
+
+# Accepted Dispatch / Attempt / Effect Semantics
+
 Permanent:
 
 ```text
-Common Contract != Common Authority
-Correlation != Ownership
-Projection != Source of Truth
-```
-
-# Batch-2 Dependency Baseline
-
-Hard CSDD:
-
-```text
-RCP-08 → RCP-07
-RCP-10 → RCP-09
-```
-
-Dependency classification refinement:
-
-```text
-RCP-07 relationship to RCP-05
-→ CACD / CEL / CXAR where Dispatch is applicable
-→ NOT mandatory CSDD
-```
-
-Valid dependency-first synthesis:
-
-```text
-Stage 0
-→ RCP-05
-→ RCP-07
-→ RCP-09
-→ RCP-23
-
-Stage 1
-→ RCP-08 after RCP-07
-→ RCP-10 after RCP-09
-```
-
-```text
-Hard Contract CSDD Graph
-→ ACYCLIC
-
-Authority Cycle
-→ NONE_FOUND
-
-SoT Cycle
-→ NONE_FOUND
-
-Final Actual-state Ownership Cycle
-→ NONE_FOUND
-```
-
-# Permanent Contract Non-collapse
-
-```text
-Admission != Dispatch != Attempt != Effect
-
+Admission != Scheduling != Routing != Dispatch != Attempt != Effect
 Dispatch Received != Attempt Originated
 Dispatch Handoff != Attempt Started
+Dispatch Success != Execution Started
 Attempt != Protected Effect
 Attempt Success != Protected Effect automatically
 Protected Effect != Business Semantic Success automatically
+Retry != prior Attempt mutation
+```
 
+RCP-07 is not universally defined by RT-R02 Dispatch. When Dispatch participates, exact correlation is required through typed CACD/CEL/CXAR relationships.
+
+RCP-08 depends semantically on RCP-07 for Attempt-to-Effect correlation. Effect evidence returned to Attempt history is CEL/CHPL.
+
+External factual SoT remains source-owned:
+
+```text
+ND-R03 local observation/evidence/reference/provenance
+!= external factual SoT
+```
+
+# Accepted Agent Runtime / Provider Mediation Semantics
+
+Permanent:
+
+```text
 Agent Definition != Agent Operation
-Agent Operation != Agent Runtime Attempt
+Agent Operation != Agent Runtime Attempt / Continuation Episode
 Agent Runtime Attempt != Harness Invocation
 Harness Invocation != Provider Mediation Interaction
-Model Output != Agent Decision
-Agent Decision != Admission
-
 Provider / Model != Agent
-Provider success != Agent semantic success automatically
+Provider Output != Agent Decision
+Agent Decision != Admission
+Provider Success != Agent Semantic Success automatically
+Provider Observation != Agent Authority
+Provider Replacement != Agent Definition Rewrite
+```
 
+```text
+RCP-10 → RCP-09
+→ CSDD
+
+Provider evidence return to Agent Runtime
+→ CEL / CACD
+→ NOT reverse CSDD
+```
+
+`ns_evermore Harness / NSH` remains only an accepted internal `ns_agent` architecture concept and gains no new Product/Runtime/Foundation/SDK authority.
+
+# Accepted RCP-23 Producer Partition Semantics
+
+```text
+S5 / SV-R01
+→ Business Application semantic Runtime Evidence
+
+S7 / SV-R03
+→ Data / Knowledge / ETL semantic Runtime Evidence
+
+S10 / SV-R06
+→ Server-local Background Runtime Evidence
+```
+
+Permanent:
+
+```text
 SV-R01 != SV-R03 != SV-R06
-Universal Server Runtime Actual-state SoT
-→ NOT CREATED
+Common Contract != Common Authority
+Common Contract != Common Actual-state Owner
+Universal Server Runtime Actual-state SoT → NOT CREATED
+Universal Server Operation → NOT CREATED
+Universal Server Attempt → NOT CREATED
+Universal Server Runtime Status / State Machine → NOT CREATED
 ```
 
-# Producing-session Boundary
+The Contract unifies evidence/conformance obligations only. Producer-specific lifecycle/outcome semantics and final ownership remain partition-specific. No generic fourth producer is pre-authorized.
 
-The authorized bounded session may synthesize representation-neutral full cross-boundary Stable Contract semantics only.
+# Security / Privacy / Offline / Recovery Baseline
 
-It may not select concrete API/wire/schema, provider SDK, broker/queue, scheduler/worker/process topology, physical identity format, database/event-store schema, algorithms, deployment topology or System-level SDK API shape.
-
-If synthesis requires new Product capability/component/runtime role/RCP, Authority/SoT/final-owner transfer, universal winner/fail/once/retry law, new mandatory Shared Foundation semantic, or accepted upstream architecture modification:
+Protected existence may itself be sensitive. Permanent:
 
 ```text
-STOP
-→ RETURN TO GAC / Owner
+Reference Possession != Permission
+Diagnostic Visibility != Disclosure Authority
+Redacted Evidence != Unredacted Authority
+Observed Evidence != Source Authority
+Secret Reference != Secret Material
 ```
 
-# Maximum Legal Producing End State
+Authorization-filtered absence/redaction must not silently become source `FALSE`, `NOT_FOUND`, `NO_ATTEMPT`, `NO_EFFECT` or provider-unavailable truth.
+
+Private/offline semantics remain viable without mandatory public SaaS, public Internet or hosted control plane.
 
 ```text
-NGRP-001
-— Runtime / Domain Stable Contract Design
-/ Batch 2
-/ RCP-05 + RCP-07 + RCP-08 + RCP-09 + RCP-10 + RCP-23
-
-→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Reconnect != Reconciled
+Recovery != SoT Transfer
+Re-observation != Canonicalization
+Replay != Retroactive Authorization
+Latest Timestamp / Arrival != Canonical Winner
+Later Success != prior Failure deletion
 ```
 
-Then:
+RCP-20 remains downstream.
+
+# Quality / Audit Result
 
 ```text
-STOP
-→ RETURN TO GAC
+Producer / Consumer closure
+→ 6 / 6 PASS
+
+Review / Audit
+→ 31 PASS / 0 FAIL / 0 BLOCKED
+
+Missing / Ambiguous Contract Dimension
+→ 0
+
+Open MDE
+→ 0
+
+Unpersisted Owner Decision
+→ 0
+
+Mandatory Missing Shared Foundation Semantic
+→ NONE_FOUND
+
+Technology / Representation Leakage
+→ 0
+
+Implementation Leakage
+→ 0
 ```
 
-# Explicitly Not Authorized
+# Stable Contract Program Position
 
 ```text
-Runtime / Domain Stable Contract Design / Batch 3
-→ NOT AUTHORIZED
+Batch 1
+→ GLOBAL_ACCEPTED
 
-Batch 4 / Batch 5
-→ NOT AUTHORIZED
+Batch 2
+→ GLOBAL_ACCEPTED
 
+Accepted Stable Contracts
+→ 12 / 24
+
+Batch 3
+→ RCP-06 / RCP-11 / RCP-12 / RCP-13 / RCP-14 / RCP-15
+→ NOT YET ASSESSED FOR ENTRY AFTER BATCH-2 ACCEPTANCE
+
+Batch 4
+→ RCP-16 / RCP-17 / RCP-18 / RCP-20 / RCP-21
+→ BLOCKED ON PRIOR BATCH ACCEPTANCE
+
+Batch 5
+→ RCP-22
+→ BLOCKED ON PRIOR BATCH ACCEPTANCE
+```
+
+Batch-2 acceptance satisfies one sequencing prerequisite for Batch-3 entry. It does not establish Batch-3 readiness or authorization.
+
+# Explicitly Not Declared / Not Authorized
+
+```text
 Runtime / Domain Stable Contract Design Exhaustion
 → NOT DECLARED
 
 RCP-01..24 Full Cross-component Closure
 → NOT DECLARED
+
+Runtime / Domain Stable Contract Design / Batch 3 producing
+→ NOT AUTHORIZED
+
+Runtime / Domain Stable Contract Design / Batch 4 / Batch 5
+→ NOT AUTHORIZED
 
 System-level SDK Detailed Design Readiness
 → NOT_SATISFIED
@@ -286,17 +459,38 @@ System-level SDK Detailed Design
 Design-to-Implementation Readiness
 → NOT AUTHORIZED
 
-Implementation Planning / IWP / Coding
+Implementation Planning
 → NOT AUTHORIZED
+
+IWP
+→ NOT AUTHORIZED
+
+Coding
+→ NOT AUTHORIZED
+```
+
+# Logical Ledger Continuity
+
+```text
+Primary Ledger 0.0.1
+→ immutable through GAC-TR-0099
+
+Continuation 0.0.1..0.0.29
+→ immutable through GAC-TR-0128
+
+Continuation 0.0.30
+→ GAC-TR-0129 → GAC-EPOCH-0118
+→ current latest immutable continuation
 ```
 
 # Unique Next Legal Action
 
+The only next material action is:
+
 ```text
-start exactly one bounded Runtime / Domain Stable Contract Design / Batch 2 producing session
-→ fresh Repository recovery
-→ verify remote HEAD equals this GAC-EPOCH-0117 State seal
-→ produce Candidate / DAD / Review / Handoff only
-→ stop at COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
-→ return to GAC
+perform a separate GAC Runtime / Domain Stable Contract Design / Batch-3 entry-readiness assessment
 ```
+
+That assessment must independently recover current Repository authority and determine the exact Batch-3 dependency/producer/consumer readiness, drift/MDE/Foundation state and whether a separate Batch-3 producing authorization may subsequently be issued.
+
+No Batch-3 producing session is authorized by `GAC-EPOCH-0118`.
