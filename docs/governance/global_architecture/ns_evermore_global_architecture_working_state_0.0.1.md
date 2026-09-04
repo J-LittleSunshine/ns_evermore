@@ -1,8 +1,8 @@
 # ns_evermore Global Architecture Working State
 
-- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0116_STABLE_CONTRACT_BATCH_2_AUTHORIZATION_APPROVED_PENDING_LEDGER_AND_SEAL`
+- Status: `WORKING_CHECKPOINT / GAC-EPOCH-0117_STABLE_CONTRACT_BATCH_2_GLOBAL_ACCEPTANCE_APPROVED_PENDING_LEDGER_AND_SEAL`
 - Branch: `architecture/ns-evermore-genesis-0.0.1`
-- Current Authoritative Global State: `GAC-EPOCH-0116`
+- Current Authoritative Global State: `GAC-EPOCH-0117`
 - Working-state Authority: `COORDINATION_ONLY / NOT_AUTHORIZATION_TOKEN`
 
 # Current Accepted Baseline
@@ -12,7 +12,7 @@ Runtime / Domain Stable Contract Design / Batch 1
 → GLOBAL_ACCEPTED
 
 Decision Registry
-→ 0.0.41 / GLOBAL_CURRENT / NORMATIVE
+→ 0.0.42 / GLOBAL_CURRENT / NORMATIVE / pending State activation
 
 Batch-2 Entry Readiness
 → SATISFIED
@@ -24,20 +24,41 @@ Unpersisted Owner Decision
 → 0
 ```
 
-# Fresh Authorization Recovery
+# Fresh Global Acceptance Recovery
 
 ```text
-Authorization Recovery HEAD
-→ bd2fff2fb572767a666e89a6486d683a7f6bf374
+Batch-2 Authorization Seal / Producing Entry HEAD
+→ 4a04475559ac1af15277f813247d2ee3a5d2eef0
 
-Current Global State
-→ GAC-EPOCH-0116
+Current Authoritative State at review entry
+→ GAC-EPOCH-0117
 
 State Verified Through HEAD
-→ 552c97b01ead2e4d50b4723a9db76b9273413113
+→ 8260ebdcb89fc5d8f23a13e60cabc9d5f72a71f4
 
-Batch-2 Entry Readiness
-→ SATISFIED
+Candidate 0.0.1
+→ d81977670880630196b65a0a20d0a5dd4267f724
+
+DAD Evidence 0.0.1
+→ f23b08729598b503a865bb42a216af9cae29b113
+
+Review / Audit 0.0.1
+→ e8c03a136a8e8d9020c2dfc8d7b727f04fd88090
+
+Producing Final HEAD / Handoff 0.0.1
+→ f4b79e43ceae0647db1123b650f2f4196e8ae670
+
+Producing range
+→ exactly 4 commits / 4 added files
+
+Existing-file modification
+→ 0
+
+Deletion
+→ 0
+
+Governance mutation by producing session
+→ 0
 
 Unexpected Drift
 → NONE
@@ -46,40 +67,71 @@ Unauthorized Progression
 → NONE
 ```
 
-# Authorization Evidence
+# GAC Global Acceptance Evidence
 
 ```text
 Evidence
-→ docs/architecture_reviews/ns_evermore_ngrp_001_runtime_domain_stable_contract_design_batch_2_authorization_0.0.1.md
+→ docs/architecture_reviews/ns_evermore_ngrp_001_runtime_domain_stable_contract_design_batch_2_global_acceptance_0.0.1.md
 
 Evidence Commit
-→ 86b41994b51f4df0c33bda5ccca3afecd293378f
+→ 5b4ca1f0730c193c9fd540243f832410026b3630
 
-Authorization Result
-→ APPROVED / pending Ledger + State seal
+GAC Result
+→ GLOBAL_ACCEPT
 ```
 
-# Authorized Producing Scope
+# Decision Registry
 
 ```text
-NGRP-001
-— Runtime / Domain Stable Contract Design
-/ Batch 2
-/ Dispatch / Attempt / Effect / Agent Runtime / Provider Mediation / Server Runtime Evidence
+Revision
+→ 0.0.42 / GLOBAL_CURRENT / NORMATIVE / pending State activation
+
+Registry Commit
+→ 182867ed2758e0df01c3eba2f6754230d54c6733
+
+Supersedes
+→ 0.0.41
 ```
 
-Authorized RCPs:
+Registry `0.0.42` preserves all accepted `0.0.41` decisions and adds the globally accepted Runtime / Domain Stable Contract Design / Batch-2 baseline.
+
+# Accepted Batch-2 Stable Contracts
 
 ```text
 RCP-05 — Dispatch Evidence
+→ GLOBAL_ACCEPTED
+
 RCP-07 — Node Attempt
+→ GLOBAL_ACCEPTED
+
 RCP-08 — Node Effect Evidence
+→ GLOBAL_ACCEPTED
+
 RCP-09 — Agent Runtime
+→ GLOBAL_ACCEPTED
+
 RCP-10 — Provider Mediation
+→ GLOBAL_ACCEPTED
+
 RCP-23 — Server-native Runtime Evidence
+→ GLOBAL_ACCEPTED
 ```
 
-# Hard Contract Dependency Baseline
+```text
+Accepted Batch-1 Stable Contracts
+→ 6
+
+Accepted Batch-2 Stable Contracts
+→ 6
+
+Combined Accepted Stable Contracts
+→ 12 / 24
+
+Remaining Contract Design Batches
+→ 3
+```
+
+# Accepted Batch-2 Dependency Baseline
 
 ```text
 RCP-08 → RCP-07
@@ -95,9 +147,18 @@ RCP-07 ↔ RCP-05
 ```text
 Hard Contract CSDD Graph
 → ACYCLIC
+
+Authority Cycle
+→ NONE
+
+SoT Cycle
+→ NONE
+
+Final Actual-state Ownership Cycle
+→ NONE
 ```
 
-# Authority Preservation
+# Authority / SoT / Final-owner Result
 
 ```text
 RCP-05 Dispatch coordination
@@ -130,22 +191,45 @@ Final Actual-state Ownership Transfer
 → 0
 ```
 
-# Producing-session Maximum Legal State
+# Quality / Non-regression Result
 
 ```text
-NGRP-001
-— Runtime / Domain Stable Contract Design
-/ Batch 2
-/ RCP-05 + RCP-07 + RCP-08 + RCP-09 + RCP-10 + RCP-23
+Producer / Consumer closure
+→ 6 / 6 PASS
 
-→ COMPLETED / AWAITING_GLOBAL_ACCEPTANCE
+Review tally
+→ 31 PASS / 0 FAIL / 0 BLOCKED
+
+Mandatory Missing Shared Foundation Semantic
+→ NONE_FOUND
+
+Security / Privacy / Protected-existence Non-leak
+→ PASS
+
+Secret Reference Boundary
+→ PASS
+
+Offline / Private
+→ PASS
+
+Recovery / Re-observation Non-canonicalization
+→ PASS
+
+Compatibility / Migration / Conformance
+→ PASS
+
+Technology / Representation Leakage
+→ 0
+
+Implementation Leakage
+→ 0
 ```
 
-# Explicit Non-authorizations
+# Downstream Boundary
 
 ```text
-Batch 3 / 4 / 5
-→ NOT AUTHORIZED
+Runtime / Domain Stable Contract Design / Batch 2
+→ GLOBAL_ACCEPTED pending final governance seal
 
 Runtime / Domain Stable Contract Design Exhaustion
 → NOT DECLARED
@@ -153,24 +237,56 @@ Runtime / Domain Stable Contract Design Exhaustion
 RCP-01..24 Full Cross-component Closure
 → NOT DECLARED
 
+Runtime / Domain Stable Contract Design / Batch 3
+→ NOT AUTHORIZED
+
+Batch 4 / Batch 5
+→ NOT AUTHORIZED
+
+System-level SDK Detailed Design Readiness
+→ NOT_SATISFIED
+
 System-level SDK Detailed Design
+→ NOT AUTHORIZED
+
+Design-to-Implementation Readiness
 → NOT AUTHORIZED
 
 Implementation Planning / IWP / Coding
 → NOT AUTHORIZED
 ```
 
-# Prospective Authorization Transition
+Batch-2 Global Acceptance satisfies one sequencing prerequisite for a separate Batch-3 entry-readiness assessment only.
+
+# Prospective Acceptance Transition
 
 ```text
 Next Logical Transition
-→ GAC-TR-0128
+→ GAC-TR-0129
 
 Next Global State Epoch
-→ GAC-EPOCH-0117
+→ GAC-EPOCH-0118
 
 Next Ledger Continuation
-→ ns_evermore_global_architecture_ledger_continuation_0.0.29.md
+→ ns_evermore_global_architecture_ledger_continuation_0.0.30.md
+
+Transition Meaning
+→ declare Runtime / Domain Stable Contract Design / Batch 2 GLOBAL_ACCEPTED
+→ activate Decision Registry 0.0.42
+→ clear Current Authorized Phase after Batch-2 completion
+→ leave Batch 3 unauthorized
 ```
 
-Until Ledger and final State seal are persisted, authoritative State remains `GAC-EPOCH-0116` and Batch-2 producing must not start.
+Until Ledger and final State seal are persisted, authoritative State remains `GAC-EPOCH-0117`.
+
+# Unique Next Legal Persistence Action
+
+```text
+verify Global Acceptance evidence + Registry + this Working State are clean GAC-only deltas
+→ append immutable Ledger continuation 0.0.30 with GAC-TR-0129
+→ write GAC-EPOCH-0118 Global Architecture State acceptance seal
+→ verify remote HEAD equals final State seal
+→ STOP
+```
+
+After the acceptance seal, the unique next material GAC action is a separate Runtime / Domain Stable Contract Design / Batch-3 entry-readiness assessment.
